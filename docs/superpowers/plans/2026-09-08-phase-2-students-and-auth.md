@@ -394,21 +394,23 @@ describe("academy scoping", () => {
     expect(isAcademyInScope(escalanteInstructor, escazu.id)).toBe(false);
     expect(isAcademyInScope(escalanteInstructor, escalante.id)).toBe(true);
 
-    // The actual query shape a real student-lookup action would use — assert
-    // it structurally cannot match an Escazú-only class session.
+    // Prove it against real seeded data, not just the type: Escazú has 18
+    // ClassSession rows (Phase 1's full schedule); Escalante has 0 (deliberately
+    // empty per spec §5). Query with ONLY the scope where-fragment applied — no
+    // additional academyId filter merged in, since that's how a real query
+    // actually uses this helper (the scope IS the academy filter) — and assert
+    // the Escalante-only session sees zero of Escazú's known-to-exist rows.
     const where = academyScopeWhere(escalanteInstructor);
-    const matches = await prisma.classSession.findMany({
-      where: { ...where, academyId: escazu.id },
-    });
-    expect(matches).toHaveLength(0);
+    const visibleToEscalanteInstructor = await prisma.classSession.findMany({ where });
+    expect(visibleToEscalanteInstructor).toHaveLength(0);
+    expect(visibleToEscalanteInstructor.some((s) => s.academyId === escazu.id)).toBe(false);
 
-    const ownMatches = await prisma.classSession.findMany({
-      where: { ...where, academyId: escalante.id },
+    const escazuInstructor: StaffSession = { userId: "x", role: "INSTRUCTOR", academyIds: [escazu.id] };
+    const visibleToEscazuInstructor = await prisma.classSession.findMany({
+      where: academyScopeWhere(escazuInstructor),
     });
-    // Escalante's schedule is deliberately empty per Phase 1 (§5) — the point
-    // here is that the *query itself* is a no-op for the out-of-scope academy
-    // and passes through unchanged for the in-scope one, not that any rows exist yet.
-    expect(Array.isArray(ownMatches)).toBe(true);
+    expect(visibleToEscazuInstructor).toHaveLength(18);
+    expect(visibleToEscazuInstructor.every((s) => s.academyId === escazu.id)).toBe(true);
   });
 
   it("a two-academy DIRECTOR's scope covers exactly their two assigned academies, no others", async () => {
