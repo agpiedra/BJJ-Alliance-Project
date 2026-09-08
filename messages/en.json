@@ -71,5 +71,53 @@
     "invalid": "Please check the form for errors.",
     "emailTaken": "An account with this email already exists.",
     "guardianRequiredForMinor": "Guardian name and phone are required for students under 18."
+  },
+  "students": {
+    "heading": "Students",
+    "empty": "No students match these filters.",
+    "filters": {
+      "search": "Search",
+      "belt": "Belt",
+      "status": "Status",
+      "academy": "Academy",
+      "allBelts": "All belts",
+      "allStatuses": "All statuses",
+      "bothAcademies": "Both",
+      "submit": "Filter"
+    },
+    "columns": {
+      "name": "Name",
+      "belt": "Belt",
+      "academy": "Academy",
+      "status": "Status",
+      "atBeltCount": "At-belt count",
+      "lastAttendance": "Last attendance",
+      "payment": "Payment"
+    },
+    "status": {
+      "PENDING": "Pending",
+      "ACTIVE": "Active",
+      "INACTIVE": "Inactive",
+      "ARCHIVED": "Archived"
+    },
+    "create": {
+      "toggle": "Create student",
+      "firstName": "First name",
+      "lastName": "Last name",
+      "phone": "Phone",
+      "email": "Email",
+      "homeAcademy": "Academy",
+      "currentBelt": "Current belt",
+      "currentStripes": "Current stripes",
+      "dateOfBirth": "Date of birth (optional)",
+      "guardianName": "Guardian name (required if under 18)",
+      "guardianPhone": "Guardian phone",
+      "emergencyContact": "Emergency contact (optional)",
+      "submit": "Create student",
+      "successCodeWarning": "This is the student's 4-digit check-in code. Hand it over now — it will not be shown again:",
+      "invalid": "Please check the form for errors.",
+      "forbiddenAcademy": "You are not assigned to that academy.",
+      "guardianRequiredForMinor": "Guardian name and phone are required for students under 18."
+    }
   }
 }

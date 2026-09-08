@@ -71,5 +71,53 @@
     "invalid": "Por favor revisa el formulario.",
     "emailTaken": "Ya existe una cuenta con este correo electrónico.",
     "guardianRequiredForMinor": "El nombre y teléfono del tutor son requeridos para menores de edad."
+  },
+  "students": {
+    "heading": "Estudiantes",
+    "empty": "Ningún estudiante coincide con estos filtros.",
+    "filters": {
+      "search": "Buscar",
+      "belt": "Cinturón",
+      "status": "Estado",
+      "academy": "Academia",
+      "allBelts": "Todos los cinturones",
+      "allStatuses": "Todos los estados",
+      "bothAcademies": "Ambas",
+      "submit": "Filtrar"
+    },
+    "columns": {
+      "name": "Nombre",
+      "belt": "Cinturón",
+      "academy": "Academia",
+      "status": "Estado",
+      "atBeltCount": "Asistencias en este cinturón",
+      "lastAttendance": "Última asistencia",
+      "payment": "Pago"
+    },
+    "status": {
+      "PENDING": "Pendiente",
+      "ACTIVE": "Activo",
+      "INACTIVE": "Inactivo",
+      "ARCHIVED": "Archivado"
+    },
+    "create": {
+      "toggle": "Crear estudiante",
+      "firstName": "Nombre",
+      "lastName": "Apellido",
+      "phone": "Teléfono",
+      "email": "Correo electrónico",
+      "homeAcademy": "Academia",
+      "currentBelt": "Cinturón actual",
+      "currentStripes": "Franjas actuales",
+      "dateOfBirth": "Fecha de nacimiento (opcional)",
+      "guardianName": "Nombre del tutor (requerido si es menor de edad)",
+      "guardianPhone": "Teléfono del tutor",
+      "emergencyContact": "Contacto de emergencia (opcional)",
+      "submit": "Crear estudiante",
+      "successCodeWarning": "Este es el código de 4 dígitos del estudiante para marcar asistencia. Entrégalo ahora — no se mostrará de nuevo:",
+      "invalid": "Por favor revisa el formulario.",
+      "forbiddenAcademy": "No estás asignado a esa academia.",
+      "guardianRequiredForMinor": "El nombre y teléfono del tutor son requeridos para menores de edad."
+    }
   }
 }
