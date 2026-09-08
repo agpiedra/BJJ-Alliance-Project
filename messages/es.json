@@ -6,6 +6,10 @@
     "heading": "Bienvenido a Alliance Jiu-Jitsu Costa Rica",
     "subheading": "Escazú y Escalante"
   },
+  "notFound": {
+    "heading": "Página no encontrada",
+    "description": "La página que buscas no existe."
+  },
   "belt": {
     "WHITE": "Blanco",
     "BLUE": "Azul",
