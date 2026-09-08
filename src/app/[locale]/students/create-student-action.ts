@@ -4,7 +4,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { generateStudentCode } from "@/lib/students/generate-code";
 import { isAcademyInScope, requireStaffSession } from "@/lib/auth/session";
-import { Belt, StudentStatus } from "@/generated/prisma/client";
+import { Belt, Prisma, StudentStatus } from "@/generated/prisma/client";
 import type { ActionState } from "@/lib/action-state";
 
 const createStudentSchema = z
@@ -67,26 +67,56 @@ export async function createStudent(
 
   const { code, codeHash } = await generateStudentCode();
 
-  // Staff created this student directly (in person or over the phone) —
-  // there's no self-signup review step to wait on, so this row starts
-  // ACTIVE rather than the PENDING that public /signup uses.
-  await prisma.student.create({
-    data: {
-      homeAcademyId: data.homeAcademyId,
-      firstName: data.firstName,
-      lastName: data.lastName,
-      phone: data.phone,
-      email: data.email,
-      currentBelt: data.currentBelt,
-      currentStripes: data.currentStripes,
-      dateOfBirth: data.dateOfBirth ? new Date(data.dateOfBirth) : undefined,
-      guardianName: data.guardianName,
-      guardianPhone: data.guardianPhone,
-      emergencyContact: data.emergencyContact,
-      codeHash,
-      status: StudentStatus.ACTIVE,
-      userId: null,
-    },
+  // The create and its audit row go in one interactive transaction, so an
+  // audit row can never exist without the student it describes, nor a
+  // student appear with no record of who created them.
+  await prisma.$transaction(async (tx) => {
+    // Staff created this student directly (in person or over the phone) —
+    // there's no self-signup review step to wait on, so this row starts
+    // ACTIVE rather than the PENDING that public /signup uses.
+    const student = await tx.student.create({
+      data: {
+        homeAcademyId: data.homeAcademyId,
+        firstName: data.firstName,
+        lastName: data.lastName,
+        phone: data.phone,
+        email: data.email,
+        currentBelt: data.currentBelt,
+        currentStripes: data.currentStripes,
+        dateOfBirth: data.dateOfBirth ? new Date(data.dateOfBirth) : undefined,
+        guardianName: data.guardianName,
+        guardianPhone: data.guardianPhone,
+        emergencyContact: data.emergencyContact,
+        codeHash,
+        status: StudentStatus.ACTIVE,
+        userId: null,
+      },
+    });
+
+    await tx.auditLog.create({
+      data: {
+        actorId: session.userId,
+        academyId: student.homeAcademyId,
+        action: "student.create",
+        entityType: "Student",
+        entityId: student.id,
+        // SQL NULL, not the JSON literal `null` — Prisma rejects a bare JS
+        // `null` for a nullable Json column.
+        before: Prisma.DbNull,
+        // Non-sensitive fields only. `codeHash` is deliberately excluded —
+        // it is the student's check-in secret in its only stored form, and
+        // copying it into an append-only audit table would create a second
+        // place it could leak from (see the note on `regenerateStudentCode`).
+        after: {
+          firstName: student.firstName,
+          lastName: student.lastName,
+          homeAcademyId: student.homeAcademyId,
+          currentBelt: student.currentBelt,
+          currentStripes: student.currentStripes,
+          status: student.status,
+        },
+      },
+    });
   });
 
   return { ok: true, code };

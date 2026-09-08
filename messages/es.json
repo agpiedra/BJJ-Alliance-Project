@@ -72,7 +72,8 @@
     "successNote": "Un miembro del personal revisará tu cuenta antes de activarla.",
     "invalid": "Por favor revisa el formulario.",
     "emailTaken": "Ya existe una cuenta con este correo electrónico.",
-    "guardianRequiredForMinor": "El nombre y teléfono del tutor son requeridos para menores de edad."
+    "guardianRequiredForMinor": "El nombre y teléfono del tutor son requeridos para menores de edad.",
+    "successLinkedNote": "Tu cuenta quedó vinculada al registro que ya tenía la academia. Seguí usando el código de 4 dígitos que el personal te entregó."
   },
   "students": {
     "heading": "Estudiantes",
@@ -145,7 +146,8 @@
         "submit": "Guardar cambios",
         "success": "Cambios guardados.",
         "invalid": "Por favor revisa el formulario.",
-        "notFound": "No se pudo actualizar este estudiante."
+        "notFound": "No se pudo actualizar este estudiante.",
+        "beltReadOnly": "El cinturón y los grados se cambian desde el flujo de promociones, no desde este formulario."
       },
       "archive": {
         "button": "Archivar estudiante",
@@ -158,7 +160,18 @@
         "confirm": "¿Regenerar el código de 4 dígitos? El código anterior dejará de funcionar.",
         "successCodeWarning": "Este es el nuevo código de 4 dígitos del estudiante. Entrégalo ahora — no se mostrará de nuevo:",
         "notFound": "No se pudo regenerar el código de este estudiante."
+      },
+      "approve": {
+        "button": "Aprobar estudiante",
+        "success": "Estudiante aprobado.",
+        "notFound": "No se pudo aprobar este estudiante.",
+        "notPending": "Este estudiante ya no está pendiente de aprobación."
       }
     }
+  },
+  "error": {
+    "heading": "Algo salió mal",
+    "description": "Ocurrió un error inesperado.",
+    "retry": "Reintentar"
   }
 }

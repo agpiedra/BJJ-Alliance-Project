@@ -7,24 +7,49 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getStudentForStaff } from "./get-student";
 import { EditStudentForm } from "./edit-student-form";
 import { ArchiveStudentButton } from "./archive-student-button";
+import { ApproveStudentButton } from "./approve-student-button";
 import { RegenerateCodeButton } from "./regenerate-code-button";
 
 // Staff data an admin/director/instructor could change without a redeploy —
 // never frozen at build time, same reasoning as the roster page.
 export const dynamic = "force-dynamic";
 
-function formatDate(date: Date | null): string | null {
+/**
+ * A DATE-ONLY field (`dateOfBirth`) — no meaningful time component, so a
+ * raw UTC slice is correct and a timezone conversion would be the bug:
+ * Postgres hands back midnight UTC, and shifting that into UTC-6 would roll
+ * it back to the previous day.
+ */
+function formatDateOnly(date: Date | null): string | null {
   if (!date) return null;
   return date.toISOString().slice(0, 10);
+}
+
+/**
+ * A TIMESTAMP field (`joinedAt`) — must be rendered in the academy's wall
+ * clock, never `toISOString().slice(0, 10)`. Costa Rica is UTC-6 with no
+ * DST, so a student who joined at 19:00 CR has a UTC timestamp already on
+ * the NEXT calendar day; the naive slice displays their join date as a day
+ * late. Same bug class Phase 1's schema comment on
+ * `AttendanceRecord.date` warns about.
+ */
+function formatTimestampInAcademyZone(date: Date | null, locale: string): string | null {
+  if (!date) return null;
+  return new Intl.DateTimeFormat(locale === "es" ? "es-CR" : "en-US", {
+    timeZone: "America/Costa_Rica",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
 }
 
 export default async function StudentDetailPage({
   params,
 }: {
-  params: Promise<{ id: string }>;
+  params: Promise<{ locale: string; id: string }>;
 }) {
   const session = await requireStaffSession();
-  const { id } = await params;
+  const { locale, id } = await params;
 
   // getStudentForStaff returns null both when the id doesn't exist at all
   // and when it exists but is outside this session's academy scope — the
@@ -60,6 +85,11 @@ export default async function StudentDetailPage({
         <Badge variant="outline">{tStatus(student.status)}</Badge>
       </div>
 
+      {/* Read-only. Belt and stripes are NOT editable from this page:
+          changing them is Phase 4's promotion flow, which must also write a
+          `Promotion` row and reset `beltAwardedAt`. A plain field edit would
+          desync rank from promotion history and from the
+          attendance-since-promotion counter Phase 3 derives. */}
       <BeltGraphic belt={student.currentBelt} stripes={student.currentStripes} />
 
       <Card>
@@ -86,11 +116,11 @@ export default async function StudentDetailPage({
             </div>
             <div>
               <dt className="text-sm text-muted-foreground">{tDetail("profile.joinedAt")}</dt>
-              <dd>{formatDate(student.joinedAt) ?? "—"}</dd>
+              <dd>{formatTimestampInAcademyZone(student.joinedAt, locale) ?? "—"}</dd>
             </div>
             <div>
               <dt className="text-sm text-muted-foreground">{t("create.dateOfBirth")}</dt>
-              <dd>{formatDate(student.dateOfBirth) ?? "—"}</dd>
+              <dd>{formatDateOnly(student.dateOfBirth) ?? "—"}</dd>
             </div>
             <div>
               <dt className="text-sm text-muted-foreground">{t("create.guardianName")}</dt>
@@ -144,6 +174,10 @@ export default async function StudentDetailPage({
 
       {canEdit && (
         <div className="flex flex-col gap-4">
+          {/* Only a PENDING student can be approved — the server action
+              re-asserts that precondition itself; this just avoids offering
+              a button that would always fail. */}
+          {student.status === "PENDING" && <ApproveStudentButton studentId={student.id} />}
           <EditStudentForm student={student} />
           <ArchiveStudentButton
             studentId={student.id}

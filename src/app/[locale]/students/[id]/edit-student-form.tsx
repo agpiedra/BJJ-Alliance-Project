@@ -4,11 +4,8 @@ import { useActionState } from "react";
 import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { updateStudent } from "./actions";
-import { Belt } from "@/generated/prisma/browser";
+import type { Belt } from "@/generated/prisma/browser";
 import type { ActionState } from "@/lib/action-state";
-
-const BELT_OPTIONS = Object.values(Belt);
-const STRIPE_OPTIONS = [0, 1, 2, 3, 4];
 
 const INITIAL_STATE: ActionState = {};
 
@@ -95,36 +92,22 @@ export function EditStudentForm({ student }: { student: EditableStudent }) {
             className="rounded border px-3 py-2"
           />
         </label>
-        <label className="flex flex-col gap-1">
-          <span>{tField("currentBelt")}</span>
-          <select
-            name="currentBelt"
-            required
-            defaultValue={student.currentBelt}
-            className="rounded border px-3 py-2"
-          >
-            {BELT_OPTIONS.map((belt) => (
-              <option key={belt} value={belt}>
-                {tBelt(belt)}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="flex flex-col gap-1">
-          <span>{tField("currentStripes")}</span>
-          <select
-            name="currentStripes"
-            required
-            defaultValue={student.currentStripes}
-            className="rounded border px-3 py-2"
-          >
-            {STRIPE_OPTIONS.map((count) => (
-              <option key={count} value={count}>
-                {count}
-              </option>
-            ))}
-          </select>
-        </label>
+        {/* Belt and stripes are DISPLAY-ONLY here — no form control, so
+            nothing about rank is submitted to `updateStudent` (its schema
+            no longer accepts either field). Changing them is Phase 4's
+            promotion flow, which must also write a `Promotion` row and
+            reset `beltAwardedAt`; a silent field edit would leave rank
+            disagreeing with promotion history. */}
+        <div className="flex flex-col gap-1">
+          <span className="text-sm text-muted-foreground">{tField("currentBelt")}</span>
+          <p>{tBelt(student.currentBelt)}</p>
+        </div>
+        <div className="flex flex-col gap-1">
+          <span className="text-sm text-muted-foreground">{tField("currentStripes")}</span>
+          <p>{student.currentStripes}</p>
+        </div>
+        <p className="text-sm text-muted-foreground">{t("beltReadOnly")}</p>
+
         <label className="flex flex-col gap-1">
           <span>{tField("dateOfBirth")}</span>
           <input
