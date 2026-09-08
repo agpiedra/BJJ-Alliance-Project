@@ -108,6 +108,8 @@ model User {
   auditLogs              AuditLog[]
   promotionsAwarded      Promotion[]
   paymentPeriodsRecorded PaymentPeriod[]
+
+  attendanceRecordsCreated AttendanceRecord[]
 }
 
 model StaffAssignment {
@@ -181,6 +183,11 @@ model AttendanceRecord {
   academyId      String
   classSessionId String?
   occurredAt     DateTime
+  /// Calendar date in America/Costa_Rica (UTC-6, no DST), NOT a naive UTC
+  /// slice of occurredAt — most evening classes (18:00+ CR) fall on the next
+  /// UTC calendar day. Whoever writes this field (Phase 3) must derive it via
+  /// Luxon + the project's America/Costa_Rica zone helper, never
+  /// `occurredAt.toISOString().slice(0, 10)`.
   date           DateTime         @db.Date
   type           AttendanceType
   delta          Int              @default(1)
@@ -192,6 +199,7 @@ model AttendanceRecord {
   student      Student       @relation(fields: [studentId], references: [id])
   academy      Academy       @relation(fields: [academyId], references: [id])
   classSession ClassSession? @relation(fields: [classSessionId], references: [id])
+  createdBy    User?         @relation(fields: [createdById], references: [id])
 
   @@unique([studentId, classSessionId, date])
   @@index([studentId, occurredAt])
@@ -223,11 +231,17 @@ model BeltRequirement {
   belt                 Belt
   attendancesPerStripe Int
   maxStripes           Int
+  /// Attendances required at the current belt AFTER the 4th stripe, NOT the
+  /// spec table's cumulative "total to become exam-eligible" (e.g. White's
+  /// spec total of 150 = 4 stripes × 30 + this field's 30 more).
   attendancesForExam   Int
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
 
-  academy Academy? @relation(fields: [academyId], references: [id])
+  /// NULL academyId is a meaningful sentinel ("Alliance-wide default"), not an
+  /// absence — onDelete: Restrict so deleting an academy can never silently
+  /// promote its per-academy override into the global default.
+  academy Academy? @relation(fields: [academyId], references: [id], onDelete: Restrict)
 
   @@unique([academyId, belt])
 }

@@ -1,0 +1,26 @@
+{
+  "app": {
+    "title": "Alliance Jiu-Jitsu Costa Rica"
+  },
+  "home": {
+    "heading": "Bienvenido a Alliance Jiu-Jitsu Costa Rica",
+    "subheading": "Escazú y Escalante"
+  },
+  "notFound": {
+    "heading": "Página no encontrada",
+    "description": "La página que buscas no existe."
+  },
+  "belt": {
+    "WHITE": "Blanco",
+    "BLUE": "Azul",
+    "PURPLE": "Morado",
+    "BROWN": "Café",
+    "BLACK": "Negro"
+  },
+  "beltGraphic": {
+    "label": "Cinturón {belt}, {stripes, plural, =0 {sin franjas} one {# franja} other {# franjas}}"
+  },
+  "devBelts": {
+    "heading": "Vista previa de cinturones"
+  }
+}

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import bcrypt from "bcryptjs";
-import { generateRandomToken, hashSecret } from "@/lib/crypto";
+import { digestLookupSecret, generateRandomToken, hashSecret } from "@/lib/crypto";
 
 describe("crypto helpers", () => {
   it("hashes a secret so the hash differs from the plaintext but verifies against it", async () => {
@@ -22,5 +22,19 @@ describe("crypto helpers", () => {
 
   it("generates a different token on each call", () => {
     expect(generateRandomToken()).not.toBe(generateRandomToken());
+  });
+});
+
+describe("digestLookupSecret", () => {
+  it("is deterministic: the same secret and pepper always produce the same digest", () => {
+    expect(digestLookupSecret("1234", "pepper-a")).toBe(digestLookupSecret("1234", "pepper-a"));
+  });
+
+  it("produces different digests for different peppers, given the same secret", () => {
+    expect(digestLookupSecret("1234", "pepper-a")).not.toBe(digestLookupSecret("1234", "pepper-b"));
+  });
+
+  it("produces different digests for different secrets, given the same pepper", () => {
+    expect(digestLookupSecret("1234", "pepper-a")).not.toBe(digestLookupSecret("5678", "pepper-a"));
   });
 });
