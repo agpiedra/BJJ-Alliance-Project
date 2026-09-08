@@ -2,10 +2,13 @@ import "dotenv/config";
 import { PrismaClient, Role } from "../src/generated/prisma/client";
 import type { Belt, ClassType, DayOfWeek } from "../src/generated/prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
-import { generateRandomToken, hashSecret } from "../src/lib/crypto";
+import { digestLookupSecret, generateRandomToken, hashSecret } from "../src/lib/crypto";
+import { requireEnv } from "../src/lib/env";
 
-const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL! });
+const adapter = new PrismaPg({ connectionString: requireEnv("DATABASE_URL") });
 const prisma = new PrismaClient({ adapter });
+
+const CODE_PEPPER = requireEnv("CODE_PEPPER");
 
 const BELT_REQUIREMENTS: Array<{
   belt: Belt;
@@ -60,7 +63,7 @@ async function main() {
       name: "Alliance Escazú",
       slug: "escazu",
       timezone: "America/Costa_Rica",
-      kioskTokenHash: await hashSecret(generateRandomToken()),
+      kioskTokenHash: digestLookupSecret(generateRandomToken(), CODE_PEPPER),
     },
   });
 
@@ -71,7 +74,7 @@ async function main() {
       name: "Alliance Escalante",
       slug: "escalante",
       timezone: "America/Costa_Rica",
-      kioskTokenHash: await hashSecret(generateRandomToken()),
+      kioskTokenHash: digestLookupSecret(generateRandomToken(), CODE_PEPPER),
     },
   });
 
