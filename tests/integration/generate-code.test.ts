@@ -39,7 +39,7 @@ describe("generateStudentCode retry-on-collision", () => {
         let call = 0;
         return {
           ...actual,
-          randomInt: (_min: number, _max: number) => {
+          randomInt: () => {
             call += 1;
             // First attempt collides with the seeded row above; second
             // attempt is free and should be the one actually returned.
