@@ -1257,9 +1257,11 @@ git push origin feat/phase-2-students-and-auth
 
 ### Task 7: Student roster (list + manual creation)
 
-**Files:**
-- Create: `src/app/[locale]/students/page.tsx`, `src/app/[locale]/students/actions.ts`, `tests/integration/students-roster.test.ts`
+**Files (as actually shipped — corrected post-implementation; originally this section named a single `actions.ts`):**
+- Create: `src/app/[locale]/students/page.tsx`, `src/app/[locale]/students/actions.ts` (plain `listStudents`, no `"use server"` — never imported by a client component), `src/app/[locale]/students/create-student-action.ts` (the `"use server"` `createStudent` action, split into its own module), `tests/integration/students-roster.test.ts`
 - Modify: `messages/es.json`, `messages/en.json`
+
+**Why the split:** a plain Prisma-touching function and a `"use server"` action living in one file that a client form component also imports from causes a real Turbopack build failure (Prisma's driver adapter — `pg`/`dns`/`fs`/`tls` — leaks into the client bundle). It's also the correct security posture independent of the build issue: `listStudents` takes a `StaffSession` parameter directly, and a module with zero `"use server"` directives and zero client importers is the only way to guarantee it can never become a client-reachable action taking a forged session payload. Reproduced and confirmed by this task's own review — see the ledger.
 
 **Interfaces:**
 - Consumes: `requireStaffSession`, `academyScopeWhere` from `@/lib/auth/session` (Task 2); `generateStudentCode` from `@/lib/students/generate-code` (Task 6); `hashSecret` is NOT used here (students created by staff also get a password? — no: per spec §4.6, staff-created students get only the generated code, no portal password yet, matching `Student.userId` being nullable for exactly this case. Do not create a `User` row for staff-created students — only for self-signup, Task 6).
@@ -1303,8 +1305,8 @@ git push origin feat/phase-2-students-and-auth
 
 ### Task 8: Student detail (view, edit, archive, regenerate code)
 
-**Files:**
-- Create: `src/app/[locale]/students/[id]/page.tsx`, `src/app/[locale]/students/[id]/actions.ts`
+**Files (as actually shipped — corrected post-implementation):**
+- Create: `src/app/[locale]/students/[id]/page.tsx`, `src/app/[locale]/students/[id]/actions.ts` (the `"use server"` actions: `updateStudent`, `archiveStudent`, `regenerateStudentCode`, `approveStudent` — the last added in the final review's fix wave), `src/app/[locale]/students/[id]/get-student.ts` (plain `getStudentForStaff`, split out for the same build/security reason as Task 7's split — see that task's note)
 - Modify: `messages/es.json`, `messages/en.json`
 
 **Interfaces:**
