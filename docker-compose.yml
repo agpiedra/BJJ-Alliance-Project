@@ -1,0 +1,15 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: alliance
+      POSTGRES_PASSWORD: alliance_dev_password
+      POSTGRES_DB: alliance_bjj
+    ports:
+      - "5432:5432"
+    volumes:
+      - alliance_pgdata:/var/lib/postgresql/data
+
+volumes:
+  alliance_pgdata:
