@@ -22,5 +22,19 @@
   },
   "devBelts": {
     "heading": "Belt preview"
+  },
+  "auth": {
+    "login": {
+      "heading": "Sign in",
+      "email": "Email",
+      "password": "Password",
+      "submit": "Sign in",
+      "invalidCredentials": "Incorrect email or password.",
+      "forgotPassword": "Forgot your password?"
+    }
+  },
+  "dashboard": {
+    "heading": "Dashboard",
+    "welcome": "Welcome, {email}"
   }
 }

@@ -22,5 +22,19 @@
   },
   "devBelts": {
     "heading": "Vista previa de cinturones"
+  },
+  "auth": {
+    "login": {
+      "heading": "Iniciar sesión",
+      "email": "Correo electrónico",
+      "password": "Contraseña",
+      "submit": "Entrar",
+      "invalidCredentials": "Correo o contraseña incorrectos.",
+      "forgotPassword": "¿Olvidaste tu contraseña?"
+    }
+  },
+  "dashboard": {
+    "heading": "Panel de control",
+    "welcome": "Bienvenido, {email}"
   }
 }
