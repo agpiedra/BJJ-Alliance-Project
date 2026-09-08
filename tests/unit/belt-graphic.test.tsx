@@ -10,11 +10,12 @@ function renderBelt(
   locale: "es" | "en",
   belt: "WHITE" | "BLUE" | "PURPLE" | "BROWN" | "BLACK",
   stripes: number,
+  maxStripes?: number,
 ) {
   const messages = locale === "es" ? esMessages : enMessages;
   return render(
     <NextIntlClientProvider locale={locale} messages={messages}>
-      <BeltGraphic belt={belt} stripes={stripes} />
+      <BeltGraphic belt={belt} stripes={stripes} maxStripes={maxStripes} />
     </NextIntlClientProvider>,
   );
 }
@@ -48,5 +49,10 @@ describe("BeltGraphic", () => {
   it("clamps negative stripes up to 0", () => {
     renderBelt("en", "WHITE", -3);
     expect(screen.getByText("White belt, no stripes")).toBeInTheDocument();
+  });
+
+  it("clamps stripes to a caller-supplied maxStripes instead of the default 4", () => {
+    renderBelt("en", "BLACK", 3, 0);
+    expect(screen.getByText("Black belt, no stripes")).toBeInTheDocument();
   });
 });

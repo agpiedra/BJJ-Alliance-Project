@@ -29,14 +29,20 @@ const BAR_FILL: Record<Belt, string> = {
 export interface BeltGraphicProps {
   belt: Belt;
   stripes: number;
+  /**
+   * Per-belt stripe ceiling. Defaults to 4 for callers that have no
+   * BeltRequirement row on hand; real limits live in data (BeltRequirement
+   * .maxStripes — BLACK is 0), never hardcoded here.
+   */
+  maxStripes?: number;
   className?: string;
 }
 
-export function BeltGraphic({ belt, stripes, className }: BeltGraphicProps) {
+export function BeltGraphic({ belt, stripes, maxStripes = 4, className }: BeltGraphicProps) {
   const t = useTranslations("belt");
   const tGraphic = useTranslations("beltGraphic");
 
-  const clampedStripes = Math.max(0, Math.min(4, Math.round(stripes)));
+  const clampedStripes = Math.max(0, Math.min(maxStripes, Math.round(stripes)));
   const beltName = t(belt);
   const label = tGraphic("label", { belt: beltName, stripes: clampedStripes });
 
