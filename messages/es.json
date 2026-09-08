@@ -118,6 +118,43 @@
       "invalid": "Por favor revisa el formulario.",
       "forbiddenAcademy": "No estás asignado a esa academia.",
       "guardianRequiredForMinor": "El nombre y teléfono del tutor son requeridos para menores de edad."
+    },
+    "detail": {
+      "profile": {
+        "heading": "Perfil",
+        "joinedAt": "Fecha de ingreso",
+        "notes": "Notas"
+      },
+      "promotionHistory": {
+        "heading": "Historial de promociones"
+      },
+      "attendanceHistory": {
+        "heading": "Historial de asistencia"
+      },
+      "paymentHistory": {
+        "heading": "Historial de pagos"
+      },
+      "comingLater": "Disponible en una fase posterior.",
+      "edit": {
+        "toggle": "Editar estudiante",
+        "notes": "Notas",
+        "submit": "Guardar cambios",
+        "success": "Cambios guardados.",
+        "invalid": "Por favor revisa el formulario.",
+        "notFound": "No se pudo actualizar este estudiante."
+      },
+      "archive": {
+        "button": "Archivar estudiante",
+        "confirm": "¿Archivar este estudiante? Esta acción se puede revertir editando el estado más adelante.",
+        "success": "Estudiante archivado.",
+        "notFound": "No se pudo archivar este estudiante."
+      },
+      "regenerateCode": {
+        "button": "Regenerar código",
+        "confirm": "¿Regenerar el código de 4 dígitos? El código anterior dejará de funcionar.",
+        "successCodeWarning": "Este es el nuevo código de 4 dígitos del estudiante. Entrégalo ahora — no se mostrará de nuevo:",
+        "notFound": "No se pudo regenerar el código de este estudiante."
+      }
     }
   }
 }
