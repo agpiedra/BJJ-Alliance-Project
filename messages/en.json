@@ -48,7 +48,9 @@
   },
   "dashboard": {
     "heading": "Dashboard",
-    "welcome": "Welcome, {email}"
+    "welcome": "Welcome, {email}",
+    "pendingApprovals": "{count, plural, =0 {No students awaiting approval} one {# student awaiting approval} other {# students awaiting approval}}",
+    "pendingApprovalsLink": "View pending students"
   },
   "signup": {
     "heading": "Create student account",
@@ -92,7 +94,9 @@
       "status": "Status",
       "atBeltCount": "At-belt count",
       "lastAttendance": "Last attendance",
-      "payment": "Payment"
+      "payment": "Payment",
+      "actions": "Actions",
+      "viewLink": "View"
     },
     "status": {
       "PENDING": "Pending",

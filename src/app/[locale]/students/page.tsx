@@ -1,4 +1,4 @@
-import { getTranslations } from "next-intl/server";
+import { getLocale, getTranslations } from "next-intl/server";
 import { requireStaffSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/prisma";
 import { BeltGraphic } from "@/components/belt-graphic/belt-graphic";
@@ -63,6 +63,7 @@ export default async function StudentsPage({
   const t = await getTranslations("students");
   const tBelt = await getTranslations("belt");
   const tStatus = await getTranslations("students.status");
+  const locale = await getLocale();
 
   const canCreate = session.role === "ADMIN" || session.role === "DIRECTOR";
 
@@ -140,6 +141,9 @@ export default async function StudentsPage({
               <th className="py-2 pr-4">{t("columns.atBeltCount")}</th>
               <th className="py-2 pr-4">{t("columns.lastAttendance")}</th>
               <th className="py-2 pr-4">{t("columns.payment")}</th>
+              <th className="py-2 pr-4">
+                <span className="sr-only">{t("columns.actions")}</span>
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -160,6 +164,11 @@ export default async function StudentsPage({
                 <td className="py-2 pr-4">—</td>
                 <td className="py-2 pr-4">—</td>
                 <td className="py-2 pr-4">—</td>
+                <td className="py-2 pr-4">
+                  <a href={`/${locale}/students/${student.id}`} className="underline">
+                    {t("columns.viewLink")}
+                  </a>
+                </td>
               </tr>
             ))}
           </tbody>

@@ -48,7 +48,9 @@
   },
   "dashboard": {
     "heading": "Panel de control",
-    "welcome": "Bienvenido, {email}"
+    "welcome": "Bienvenido, {email}",
+    "pendingApprovals": "{count, plural, =0 {Ningún estudiante esperando aprobación} one {# estudiante esperando aprobación} other {# estudiantes esperando aprobación}}",
+    "pendingApprovalsLink": "Ver estudiantes pendientes"
   },
   "signup": {
     "heading": "Crear cuenta de estudiante",
@@ -92,7 +94,9 @@
       "status": "Estado",
       "atBeltCount": "Asistencias en este cinturón",
       "lastAttendance": "Última asistencia",
-      "payment": "Pago"
+      "payment": "Pago",
+      "actions": "Acciones",
+      "viewLink": "Ver"
     },
     "status": {
       "PENDING": "Pendiente",
