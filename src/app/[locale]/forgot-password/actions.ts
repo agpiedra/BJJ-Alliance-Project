@@ -28,6 +28,14 @@ export async function requestPasswordReset(
     const rawToken = generateRandomToken();
     const tokenHash = digestLookupSecret(rawToken, requireEnv("CODE_PEPPER"));
 
+    // Invalidate any of this user's existing unused reset tokens before
+    // issuing a new one, so requesting a second link closes the replay
+    // window the first link would otherwise keep open for up to an hour.
+    await prisma.passwordResetToken.updateMany({
+      where: { userId: user.id, usedAt: null },
+      data: { usedAt: new Date() },
+    });
+
     await prisma.passwordResetToken.create({
       data: {
         userId: user.id,
@@ -36,7 +44,7 @@ export async function requestPasswordReset(
       },
     });
 
-    const resetLink = `http://localhost:3000/${locale}/reset-password?token=${rawToken}`;
+    const resetLink = `${requireEnv("APP_URL")}/${locale}/reset-password?token=${rawToken}`;
     // Stub for Phase 8's real email provider — printed, not sent, until then.
     console.log(`[password-reset] Reset link for ${user.email}: ${resetLink}`);
   }
