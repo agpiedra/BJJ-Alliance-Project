@@ -77,6 +77,29 @@ export default {
     signIn: "/login",
   },
   trustHost: true,
+  // The jwt/session callbacks MUST live here, not only in auth.ts — the edge
+  // middleware (Task 3) builds its own separate NextAuth(authConfig) instance
+  // from this file alone. Without these callbacks here too, that edge
+  // instance falls back to Auth.js's default session shape, which never
+  // copies token.role/token.id onto session.user — so req.auth.user.role is
+  // always undefined in middleware even though the JWT cookie itself
+  // genuinely contains the role, and the staff guard in Task 3 bounces every
+  // real login straight back to /login. (Found and fixed during Task 4 —
+  // this is corrected here for anyone reading Task 1 after the fact.)
+  callbacks: {
+    async jwt({ token, user }) {
+      if (user) {
+        token.id = user.id;
+        token.role = (user as { role: string }).role;
+      }
+      return token;
+    },
+    async session({ session, token }) {
+      session.user.id = token.id as string;
+      session.user.role = token.role as string;
+      return session;
+    },
+  },
 } satisfies NextAuthConfig;
 ```
 
@@ -138,22 +161,10 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       },
     }),
   ],
-  callbacks: {
-    async jwt({ token, user }) {
-      if (user) {
-        token.id = user.id;
-        token.role = (user as { role: string }).role;
-      }
-      return token;
-    },
-    async session({ session, token }) {
-      session.user.id = token.id as string;
-      session.user.role = token.role as string;
-      return session;
-    },
-  },
 });
 ```
+
+(The `jwt`/`session` callbacks now live in `authConfig` itself, spread in above — not duplicated here. See the note on `auth.config.ts` in Step 3 for why.)
 
 - [ ] **Step 6: Add the API route handler**
 

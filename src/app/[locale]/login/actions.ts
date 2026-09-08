@@ -5,6 +5,7 @@ import { AuthError } from "next-auth";
 import { z } from "zod";
 import { signIn } from "@/auth";
 import type { ActionState } from "@/lib/action-state";
+import { sanitizeCallbackUrl } from "@/lib/callback-url";
 
 const loginSchema = z.object({
   email: z.string().email(),
@@ -17,6 +18,8 @@ export async function login(
   _prevState: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
+  const safeCallbackUrl = sanitizeCallbackUrl(callbackUrl);
+
   const parsed = loginSchema.safeParse({
     email: formData.get("email"),
     password: formData.get("password"),
@@ -39,5 +42,5 @@ export async function login(
     throw error;
   }
 
-  redirect(callbackUrl || `/${locale}/dashboard`);
+  redirect(safeCallbackUrl || `/${locale}/dashboard`);
 }
