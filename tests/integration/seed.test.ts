@@ -12,12 +12,16 @@ describe("seed data", () => {
     expect(academies.map((a) => a.slug)).toEqual(["escalante", "escazu"]);
   });
 
-  it("seeds a global BeltRequirement row for all five belts with no academy override", async () => {
+  it("seeds correct global BeltRequirement values for all five belts", async () => {
     const requirements = await prisma.beltRequirement.findMany({ where: { academyId: null } });
     expect(requirements).toHaveLength(5);
-    const white = requirements.find((r) => r.belt === "WHITE");
-    expect(white?.attendancesPerStripe).toBe(30);
-    expect(white?.maxStripes).toBe(4);
+
+    const byBelt = Object.fromEntries(requirements.map((r) => [r.belt, r]));
+    expect(byBelt.WHITE).toMatchObject({ attendancesPerStripe: 30, maxStripes: 4, attendancesForExam: 30 });
+    expect(byBelt.BLUE).toMatchObject({ attendancesPerStripe: 65, maxStripes: 4, attendancesForExam: 65 });
+    expect(byBelt.PURPLE).toMatchObject({ attendancesPerStripe: 75, maxStripes: 4, attendancesForExam: 75 });
+    expect(byBelt.BROWN).toMatchObject({ attendancesPerStripe: 85, maxStripes: 4, attendancesForExam: 85 });
+    expect(byBelt.BLACK).toMatchObject({ attendancesPerStripe: 0, maxStripes: 0, attendancesForExam: 0 });
   });
 
   it("seeds Escazú's full 18-session class schedule and leaves Escalante empty", async () => {
@@ -29,6 +33,25 @@ describe("seed data", () => {
 
     expect(escazuSessions).toHaveLength(18);
     expect(escalanteSessions).toHaveLength(0);
+  });
+
+  it("seeds specific Escazú class sessions with correct day, time, name, and type", async () => {
+    const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+
+    const mondaySixAm = await prisma.classSession.findFirstOrThrow({
+      where: { academyId: escazu.id, dayOfWeek: "MONDAY", startTime: "06:00" },
+    });
+    expect(mondaySixAm).toMatchObject({ name: "GI", type: "GI", countsTowardPromotion: true });
+
+    const wednesdayCompetition = await prisma.classSession.findFirstOrThrow({
+      where: { academyId: escazu.id, name: "Competición" },
+    });
+    expect(wednesdayCompetition).toMatchObject({ dayOfWeek: "WEDNESDAY", startTime: "18:30", type: "COMPETITION", countsTowardPromotion: true });
+
+    const saturdayStriking = await prisma.classSession.findFirstOrThrow({
+      where: { academyId: escazu.id, name: "Striking" },
+    });
+    expect(saturdayStriking).toMatchObject({ dayOfWeek: "SATURDAY", startTime: "09:00", type: "STRIKING", countsTowardPromotion: false });
   });
 
   it("marks Saturday Striking as not counting toward promotion, everything else as counting", async () => {

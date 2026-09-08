@@ -82,7 +82,11 @@ async function main() {
     if (existingRequirement) {
       await prisma.beltRequirement.update({
         where: { id: existingRequirement.id },
-        data: requirement,
+        data: {
+          attendancesPerStripe: requirement.attendancesPerStripe,
+          maxStripes: requirement.maxStripes,
+          attendancesForExam: requirement.attendancesForExam,
+        },
       });
     } else {
       await prisma.beltRequirement.create({
