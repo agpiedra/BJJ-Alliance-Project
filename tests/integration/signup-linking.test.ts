@@ -22,7 +22,7 @@ function formData(fields: Record<string, string>): FormData {
   return fd;
 }
 
-describe("signup — a staff-created student who later self-signs-up is LINKED, never duplicated", () => {
+describe("signup — a staff-created student's email is REFUSED, never duplicated and never auto-claimed", () => {
   afterAll(async () => {
     const students = await prisma.student.findMany({
       where: { email: { in: cleanupEmails } },
@@ -33,8 +33,7 @@ describe("signup — a staff-created student who later self-signs-up is LINKED, 
     await prisma.user.deleteMany({ where: { email: { in: cleanupEmails } } });
   });
 
-  it("claims the existing userId-less row, keeps staff's codeHash/belt/academy, and creates exactly one Student", async () => {
-    const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+  it("refuses the signup, creates no User, and leaves the existing userId-less Student completely untouched", async () => {
     const escalante = await prisma.academy.findUniqueOrThrow({ where: { slug: "escalante" } });
     const suffix = `${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
     const email = `signup-link-${suffix}@example.com`;
@@ -58,14 +57,15 @@ describe("signup — a staff-created student who later self-signs-up is LINKED, 
       },
     });
 
-    // The same person now self-registers — deliberately submitting DIFFERENT
-    // (and lower) belt/stripes and the OTHER academy, exactly what a naive
-    // create-both-rows path would have written over staff's data.
+    // Someone self-registers at that email. In this phase nothing has proved
+    // they control it, so this must NOT hand them the existing record — that
+    // would be account takeover by email guess, on a row that is already
+    // ACTIVE and would therefore skip staff review entirely.
     const result = await signup(
       {},
       formData({
         firstName: "SelfSignup",
-        lastName: "Claimed",
+        lastName: "Attempt",
         phone: "88886666",
         email,
         homeAcademySlug: "escazu",
@@ -75,42 +75,38 @@ describe("signup — a staff-created student who later self-signs-up is LINKED, 
       }),
     );
 
-    expect(result.ok).toBe(true);
-    expect(result.linked).toBe(true);
-    // No new code is issued on the link path — the staff-issued one still works.
+    // (a) the new, explicit refusal — not a success, not a silent link
+    expect(result.ok).toBeUndefined();
     expect(result.code).toBeUndefined();
+    expect(result.error).toBe("emailLinkedToExistingStudent");
+    expect(result.fieldErrors?.email).toEqual(["emailLinkedToExistingStudent"]);
 
-    // (a) exactly ONE Student row at this email, not two
+    // (b) NO User row was created at that email
+    expect(await prisma.user.findUnique({ where: { email } })).toBeNull();
+
+    // (c) the existing Student row is completely unchanged — still exactly
+    //     one row, still unclaimed, every field as staff left it
     const students = await prisma.student.findMany({ where: { email } });
     expect(students).toHaveLength(1);
-    const linked = students[0];
-    expect(linked.id).toBe(staffCreated.id);
+    const untouched = students[0];
+    expect(untouched.id).toBe(staffCreated.id);
+    expect(untouched.userId).toBeNull();
+    expect(untouched.codeHash).toBe(staffCodeHash);
+    expect(untouched.currentBelt).toBe("PURPLE");
+    expect(untouched.currentStripes).toBe(3);
+    expect(untouched.homeAcademyId).toBe(escalante.id);
+    expect(untouched.status).toBe("ACTIVE");
+    expect(untouched.firstName).toBe("StaffEntered");
+    expect(untouched.lastName).toBe("Purple");
+    expect(untouched.phone).toBe("88887777");
+    // `updatedAt` proves no write touched the row at all, not merely that the
+    // values happen to match.
+    expect(untouched.updatedAt.getTime()).toBe(staffCreated.updatedAt.getTime());
 
-    // (b) it now carries the new user's id
-    const user = await prisma.user.findUniqueOrThrow({ where: { email } });
-    expect(user.role).toBe("STUDENT");
-    expect(linked.userId).toBe(user.id);
-
-    // (c) everything staff owned is byte-for-byte unchanged — the signup
-    //     form's WHITE / 0 stripes / Escazú values were discarded, not applied
-    expect(linked.codeHash).toBe(staffCodeHash);
-    expect(linked.currentBelt).toBe("PURPLE");
-    expect(linked.currentStripes).toBe(3);
-    expect(linked.homeAcademyId).toBe(escalante.id);
-    expect(linked.homeAcademyId).not.toBe(escazu.id);
-    expect(linked.status).toBe("ACTIVE");
-    expect(linked.firstName).toBe("StaffEntered");
-
-    // The link is audited, attributed to the student's own brand-new user id
-    // (this is a self-service event — there is no staff actor).
-    const audits = await prisma.auditLog.findMany({
-      where: { entityId: linked.id, action: "student.linkedSelfSignup" },
-    });
-    expect(audits).toHaveLength(1);
-    expect(audits[0].entityType).toBe("Student");
-    expect(audits[0].actorId).toBe(user.id);
-    expect(audits[0].academyId).toBe(escalante.id);
-    expect(JSON.stringify(audits[0].after)).not.toContain(staffCodeHash);
+    // Nothing was written, so there is nothing to audit — in particular the
+    // old `student.linkedSelfSignup` event no longer exists on any path.
+    expect(await prisma.auditLog.count({ where: { entityId: staffCreated.id } })).toBe(0);
+    expect(await prisma.auditLog.count({ where: { action: "student.linkedSelfSignup" } })).toBe(0);
   });
 
   it("still creates both rows normally when no staff-created record exists at that email", async () => {
@@ -133,7 +129,7 @@ describe("signup — a staff-created student who later self-signs-up is LINKED, 
     );
 
     expect(result.ok).toBe(true);
-    expect(result.linked).toBeUndefined();
+    expect(result.error).toBeUndefined();
     expect(result.code).toMatch(/^\d{4}$/);
 
     const students = await prisma.student.findMany({ where: { email } });
@@ -160,6 +156,8 @@ describe("signup — a staff-created student who later self-signs-up is LINKED, 
     };
 
     expect((await signup({}, formData(base))).ok).toBe(true);
+    // The first signup set `userId`, so the userId-less lookup misses and the
+    // pre-existing `emailTaken` User check is what refuses this one.
     const second = await signup({}, formData(base));
     expect(second.error).toBe("emailTaken");
     expect(await prisma.student.count({ where: { email } })).toBe(1);

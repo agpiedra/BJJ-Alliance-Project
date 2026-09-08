@@ -73,7 +73,7 @@
     "invalid": "Please check the form for errors.",
     "emailTaken": "An account with this email already exists.",
     "guardianRequiredForMinor": "Guardian name and phone are required for students under 18.",
-    "successLinkedNote": "Your account was linked to the record the academy already had for you. Keep using the 4-digit code staff gave you."
+    "emailLinkedToExistingStudent": "This email is already associated with a student record. Contact your academy to link your account."
   },
   "students": {
     "heading": "Students",

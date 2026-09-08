@@ -73,7 +73,7 @@
     "invalid": "Por favor revisa el formulario.",
     "emailTaken": "Ya existe una cuenta con este correo electrónico.",
     "guardianRequiredForMinor": "El nombre y teléfono del tutor son requeridos para menores de edad.",
-    "successLinkedNote": "Tu cuenta quedó vinculada al registro que ya tenía la academia. Seguí usando el código de 4 dígitos que el personal te entregó."
+    "emailLinkedToExistingStudent": "Este correo ya está asociado a un registro de estudiante. Contacta a tu academia para vincular tu cuenta."
   },
   "students": {
     "heading": "Estudiantes",

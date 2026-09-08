@@ -34,13 +34,6 @@ const signupSchema = z
 export type SignupState = {
   ok?: true;
   code?: string;
-  /**
-   * Set when this signup CLAIMED an existing staff-created Student row
-   * rather than creating a new one. No `code` accompanies it — the student
-   * keeps the check-in code staff already handed them, so the success
-   * screen must say that instead of showing a blank code.
-   */
-  linked?: true;
   error?: string;
   fieldErrors?: Record<string, string[]>;
 };
@@ -61,60 +54,35 @@ export async function signup(_prevState: SignupState, formData: FormData): Promi
   }
 
   // A student staff already entered by hand (in person or over the phone)
-  // who is only now creating their own portal login. Without this check
-  // they'd end up with TWO Student rows at the same email: the staff one
-  // holding their real belt, academy and handed-over check-in code, and a
-  // second self-signup one that the roster, attendance and promotion
-  // history would then be split across. `userId: null` is what distinguishes
-  // "staff-created, not yet claimed" from a row that already belongs to
-  // someone's account.
+  // who has not yet claimed a portal login. Without this check they'd end up
+  // with TWO Student rows at the same email: the staff one holding their real
+  // belt, academy and handed-over check-in code, and a second self-signup one
+  // that the roster, attendance and promotion history would then be split
+  // across. `userId: null` is what distinguishes "staff-created, not yet
+  // claimed" from a row that already belongs to someone's account.
+  //
+  // This signup is REFUSED, and nothing is written — no `User`, no change to
+  // the existing `Student`, not even an audit row (there is no mutation to
+  // audit). Auto-linking on an email match would be an account-takeover
+  // vector: this phase has no email verification, so anyone who knows or
+  // guesses a staff-registered student's email could claim their record —
+  // and, because the record is typically already ACTIVE, would land an
+  // immediately-live account that skipped the staff review a normal PENDING
+  // self-signup requires. That is strictly worse than the duplicate rows this
+  // check exists to prevent. Real account linking needs actual identity
+  // verification (a verified email, or a staff-mediated flow) and is Phase 8
+  // territory; "refuse and send them to their academy" is the safe answer
+  // here, and it still fixes the duplicate-row bug outright.
   const existingStudentWithoutAccount = await prisma.student.findFirst({
     where: { email: data.email, userId: null },
+    select: { id: true },
   });
 
   if (existingStudentWithoutAccount) {
-    await prisma.$transaction(async (tx) => {
-      const user = await tx.user.create({
-        data: {
-          email: data.email,
-          passwordHash: await hashSecret(data.password),
-          role: Role.STUDENT,
-        },
-      });
-
-      // ONLY `userId` is written. `codeHash`, `currentBelt`,
-      // `currentStripes`, `homeAcademyId` and `status` were set by staff and
-      // are the source of truth — the signup form's own values for those are
-      // discarded on this path, never allowed to overwrite them. Otherwise a
-      // purple belt could self-signup as "white, 0 stripes" and silently
-      // reset their own rank, or move themselves to another academy, and the
-      // 4-digit code staff already handed them would stop working.
-      await tx.student.update({
-        where: { id: existingStudentWithoutAccount.id },
-        data: { userId: user.id },
-      });
-
-      await tx.auditLog.create({
-        data: {
-          // The acting principal here is the student themselves, not a staff
-          // member — this is a self-service event, and the brand-new user id
-          // is the only honest actor to attribute it to.
-          actorId: user.id,
-          academyId: existingStudentWithoutAccount.homeAcademyId,
-          action: "student.linkedSelfSignup",
-          entityType: "Student",
-          entityId: existingStudentWithoutAccount.id,
-          before: { userId: null },
-          after: { userId: user.id },
-        },
-      });
-    });
-
-    // No new code is issued on this path and none is returned: the student
-    // already has the one staff handed them, and `codeHash` was left
-    // untouched, so surfacing a freshly generated code here would show them
-    // a code that does not work.
-    return { ok: true, linked: true };
+    return {
+      error: "emailLinkedToExistingStudent",
+      fieldErrors: { email: ["emailLinkedToExistingStudent"] },
+    };
   }
 
   const homeAcademy = await prisma.academy.findUniqueOrThrow({ where: { slug: data.homeAcademySlug } });

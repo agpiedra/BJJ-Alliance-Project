@@ -22,17 +22,8 @@ export function SignupForm({ academies }: { academies: Academy[] }) {
     return (
       <main className="flex min-h-screen flex-col items-center justify-center gap-4 p-6 text-center">
         <h1 className="text-2xl font-bold">{t("successHeading")}</h1>
-        {/* A signup that CLAIMED an existing staff-created record issues no
-            new code — the student keeps the one staff already handed them,
-            so showing the code panel here would render it blank. */}
-        {state.linked ? (
-          <p>{t("successLinkedNote")}</p>
-        ) : (
-          <>
-            <p>{t("successCodeWarning")}</p>
-            <p className="text-4xl font-mono font-bold tracking-widest">{state.code}</p>
-          </>
-        )}
+        <p>{t("successCodeWarning")}</p>
+        <p className="text-4xl font-mono font-bold tracking-widest">{state.code}</p>
         <p className="text-sm text-muted-foreground">{t("successNote")}</p>
       </main>
     );
