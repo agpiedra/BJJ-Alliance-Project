@@ -1,0 +1,23 @@
+# Node / Next.js
+node_modules/
+.next/
+out/
+build/
+dist/
+
+# Env
+.env
+.env.local
+.env.*.local
+
+# Prisma
+prisma/*.db
+prisma/migrations/dev/
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+
+# Claude Code / tooling artifacts — not project content
+.claude/
+.claude-flow/
