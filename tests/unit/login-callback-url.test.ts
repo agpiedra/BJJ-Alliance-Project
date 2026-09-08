@@ -33,4 +33,29 @@ describe("sanitizeCallbackUrl", () => {
   it("rejects a bare host with no leading slash", () => {
     expect(sanitizeCallbackUrl("evil.example")).toBeUndefined();
   });
+
+  it("rejects a leading-backslash bypass", () => {
+    expect(sanitizeCallbackUrl("/\\evil.example")).toBeUndefined();
+  });
+
+  it("rejects a backslash bypass with a control character prefix", () => {
+    expect(sanitizeCallbackUrl("/\t//evil.example")).toBeUndefined();
+  });
+
+  it("still allows a normal relative path with a query string", () => {
+    expect(sanitizeCallbackUrl("/es/students?status=PENDING")).toBe("/es/students?status=PENDING");
+  });
+
+  // Belt-and-braces around the WHATWG backslash equivalence the string-based
+  // predecessor missed — every one of these resolves off-site in a browser.
+  it("rejects further backslash / control-character open-redirect payloads", () => {
+    expect(sanitizeCallbackUrl("/\\\\evil.example")).toBeUndefined();
+    expect(sanitizeCallbackUrl("/\r\n\\evil.example")).toBeUndefined();
+    expect(sanitizeCallbackUrl("\\\\evil.example")).toBeUndefined();
+    expect(sanitizeCallbackUrl("/\t/\\evil.example")).toBeUndefined();
+  });
+
+  it("rejects a non-http scheme", () => {
+    expect(sanitizeCallbackUrl("javascript:alert(1)")).toBeUndefined();
+  });
 });
