@@ -22,5 +22,156 @@
   },
   "devBelts": {
     "heading": "Vista previa de cinturones"
+  },
+  "auth": {
+    "login": {
+      "heading": "Iniciar sesión",
+      "email": "Correo electrónico",
+      "password": "Contraseña",
+      "submit": "Entrar",
+      "invalidCredentials": "Correo o contraseña incorrectos.",
+      "forgotPassword": "¿Olvidaste tu contraseña?"
+    },
+    "forgotPassword": {
+      "heading": "Recuperar contraseña",
+      "email": "Correo electrónico",
+      "submit": "Enviar enlace",
+      "genericConfirmation": "Si ese correo existe en nuestro sistema, se envió un enlace para restablecer la contraseña."
+    },
+    "resetPassword": {
+      "heading": "Restablecer contraseña",
+      "newPassword": "Nueva contraseña",
+      "submit": "Restablecer",
+      "invalidToken": "Este enlace no es válido o ya expiró.",
+      "success": "Tu contraseña fue restablecida. Ya puedes iniciar sesión."
+    }
+  },
+  "dashboard": {
+    "heading": "Panel de control",
+    "welcome": "Bienvenido, {email}",
+    "pendingApprovals": "{count, plural, =0 {Ningún estudiante esperando aprobación} one {# estudiante esperando aprobación} other {# estudiantes esperando aprobación}}",
+    "pendingApprovalsLink": "Ver estudiantes pendientes"
+  },
+  "signup": {
+    "heading": "Crear cuenta de estudiante",
+    "firstName": "Nombre",
+    "lastName": "Apellido",
+    "phone": "Teléfono",
+    "email": "Correo electrónico",
+    "homeAcademy": "Academia",
+    "currentBelt": "Cinturón actual",
+    "currentStripes": "Franjas actuales",
+    "password": "Contraseña",
+    "dateOfBirth": "Fecha de nacimiento (opcional)",
+    "guardianName": "Nombre del tutor (requerido si es menor de edad)",
+    "guardianPhone": "Teléfono del tutor",
+    "emergencyContact": "Contacto de emergencia (opcional)",
+    "submit": "Crear cuenta",
+    "successHeading": "¡Cuenta creada!",
+    "successCodeWarning": "Este es tu código de 4 dígitos para marcar asistencia. Guárdalo — no se mostrará de nuevo:",
+    "successNote": "Un miembro del personal revisará tu cuenta antes de activarla.",
+    "invalid": "Por favor revisa el formulario.",
+    "emailTaken": "Ya existe una cuenta con este correo electrónico.",
+    "guardianRequiredForMinor": "El nombre y teléfono del tutor son requeridos para menores de edad.",
+    "emailLinkedToExistingStudent": "Este correo ya está asociado a un registro de estudiante. Contacta a tu academia para vincular tu cuenta."
+  },
+  "students": {
+    "heading": "Estudiantes",
+    "empty": "Ningún estudiante coincide con estos filtros.",
+    "filters": {
+      "search": "Buscar",
+      "belt": "Cinturón",
+      "status": "Estado",
+      "academy": "Academia",
+      "allBelts": "Todos los cinturones",
+      "allStatuses": "Todos los estados",
+      "bothAcademies": "Ambas",
+      "submit": "Filtrar"
+    },
+    "columns": {
+      "name": "Nombre",
+      "belt": "Cinturón",
+      "academy": "Academia",
+      "status": "Estado",
+      "atBeltCount": "Asistencias en este cinturón",
+      "lastAttendance": "Última asistencia",
+      "payment": "Pago",
+      "actions": "Acciones",
+      "viewLink": "Ver"
+    },
+    "status": {
+      "PENDING": "Pendiente",
+      "ACTIVE": "Activo",
+      "INACTIVE": "Inactivo",
+      "ARCHIVED": "Archivado"
+    },
+    "create": {
+      "toggle": "Crear estudiante",
+      "firstName": "Nombre",
+      "lastName": "Apellido",
+      "phone": "Teléfono",
+      "email": "Correo electrónico",
+      "homeAcademy": "Academia",
+      "currentBelt": "Cinturón actual",
+      "currentStripes": "Franjas actuales",
+      "dateOfBirth": "Fecha de nacimiento (opcional)",
+      "guardianName": "Nombre del tutor (requerido si es menor de edad)",
+      "guardianPhone": "Teléfono del tutor",
+      "emergencyContact": "Contacto de emergencia (opcional)",
+      "submit": "Crear estudiante",
+      "successCodeWarning": "Este es el código de 4 dígitos del estudiante para marcar asistencia. Entrégalo ahora — no se mostrará de nuevo:",
+      "invalid": "Por favor revisa el formulario.",
+      "forbiddenAcademy": "No estás asignado a esa academia.",
+      "guardianRequiredForMinor": "El nombre y teléfono del tutor son requeridos para menores de edad."
+    },
+    "detail": {
+      "profile": {
+        "heading": "Perfil",
+        "joinedAt": "Fecha de ingreso",
+        "notes": "Notas"
+      },
+      "promotionHistory": {
+        "heading": "Historial de promociones"
+      },
+      "attendanceHistory": {
+        "heading": "Historial de asistencia"
+      },
+      "paymentHistory": {
+        "heading": "Historial de pagos"
+      },
+      "comingLater": "Disponible en una fase posterior.",
+      "edit": {
+        "toggle": "Editar estudiante",
+        "notes": "Notas",
+        "submit": "Guardar cambios",
+        "success": "Cambios guardados.",
+        "invalid": "Por favor revisa el formulario.",
+        "notFound": "No se pudo actualizar este estudiante.",
+        "beltReadOnly": "El cinturón y los grados se cambian desde el flujo de promociones, no desde este formulario."
+      },
+      "archive": {
+        "button": "Archivar estudiante",
+        "confirm": "¿Archivar este estudiante? Esta acción se puede revertir editando el estado más adelante.",
+        "success": "Estudiante archivado.",
+        "notFound": "No se pudo archivar este estudiante."
+      },
+      "regenerateCode": {
+        "button": "Regenerar código",
+        "confirm": "¿Regenerar el código de 4 dígitos? El código anterior dejará de funcionar.",
+        "successCodeWarning": "Este es el nuevo código de 4 dígitos del estudiante. Entrégalo ahora — no se mostrará de nuevo:",
+        "notFound": "No se pudo regenerar el código de este estudiante."
+      },
+      "approve": {
+        "button": "Aprobar estudiante",
+        "success": "Estudiante aprobado.",
+        "notFound": "No se pudo aprobar este estudiante.",
+        "notPending": "Este estudiante ya no está pendiente de aprobación."
+      }
+    }
+  },
+  "error": {
+    "heading": "Algo salió mal",
+    "description": "Ocurrió un error inesperado.",
+    "retry": "Reintentar"
   }
 }

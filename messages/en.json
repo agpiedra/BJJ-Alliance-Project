@@ -22,5 +22,156 @@
   },
   "devBelts": {
     "heading": "Belt preview"
+  },
+  "auth": {
+    "login": {
+      "heading": "Sign in",
+      "email": "Email",
+      "password": "Password",
+      "submit": "Sign in",
+      "invalidCredentials": "Incorrect email or password.",
+      "forgotPassword": "Forgot your password?"
+    },
+    "forgotPassword": {
+      "heading": "Reset password",
+      "email": "Email",
+      "submit": "Send reset link",
+      "genericConfirmation": "If that email exists in our system, a password reset link has been sent."
+    },
+    "resetPassword": {
+      "heading": "Reset password",
+      "newPassword": "New password",
+      "submit": "Reset password",
+      "invalidToken": "This link is invalid or has expired.",
+      "success": "Your password has been reset. You can now sign in."
+    }
+  },
+  "dashboard": {
+    "heading": "Dashboard",
+    "welcome": "Welcome, {email}",
+    "pendingApprovals": "{count, plural, =0 {No students awaiting approval} one {# student awaiting approval} other {# students awaiting approval}}",
+    "pendingApprovalsLink": "View pending students"
+  },
+  "signup": {
+    "heading": "Create student account",
+    "firstName": "First name",
+    "lastName": "Last name",
+    "phone": "Phone",
+    "email": "Email",
+    "homeAcademy": "Academy",
+    "currentBelt": "Current belt",
+    "currentStripes": "Current stripes",
+    "password": "Password",
+    "dateOfBirth": "Date of birth (optional)",
+    "guardianName": "Guardian name (required if under 18)",
+    "guardianPhone": "Guardian phone",
+    "emergencyContact": "Emergency contact (optional)",
+    "submit": "Create account",
+    "successHeading": "Account created!",
+    "successCodeWarning": "This is your 4-digit check-in code. Save it — it will not be shown again:",
+    "successNote": "A staff member will review your account before it's activated.",
+    "invalid": "Please check the form for errors.",
+    "emailTaken": "An account with this email already exists.",
+    "guardianRequiredForMinor": "Guardian name and phone are required for students under 18.",
+    "emailLinkedToExistingStudent": "This email is already associated with a student record. Contact your academy to link your account."
+  },
+  "students": {
+    "heading": "Students",
+    "empty": "No students match these filters.",
+    "filters": {
+      "search": "Search",
+      "belt": "Belt",
+      "status": "Status",
+      "academy": "Academy",
+      "allBelts": "All belts",
+      "allStatuses": "All statuses",
+      "bothAcademies": "Both",
+      "submit": "Filter"
+    },
+    "columns": {
+      "name": "Name",
+      "belt": "Belt",
+      "academy": "Academy",
+      "status": "Status",
+      "atBeltCount": "At-belt count",
+      "lastAttendance": "Last attendance",
+      "payment": "Payment",
+      "actions": "Actions",
+      "viewLink": "View"
+    },
+    "status": {
+      "PENDING": "Pending",
+      "ACTIVE": "Active",
+      "INACTIVE": "Inactive",
+      "ARCHIVED": "Archived"
+    },
+    "create": {
+      "toggle": "Create student",
+      "firstName": "First name",
+      "lastName": "Last name",
+      "phone": "Phone",
+      "email": "Email",
+      "homeAcademy": "Academy",
+      "currentBelt": "Current belt",
+      "currentStripes": "Current stripes",
+      "dateOfBirth": "Date of birth (optional)",
+      "guardianName": "Guardian name (required if under 18)",
+      "guardianPhone": "Guardian phone",
+      "emergencyContact": "Emergency contact (optional)",
+      "submit": "Create student",
+      "successCodeWarning": "This is the student's 4-digit check-in code. Hand it over now — it will not be shown again:",
+      "invalid": "Please check the form for errors.",
+      "forbiddenAcademy": "You are not assigned to that academy.",
+      "guardianRequiredForMinor": "Guardian name and phone are required for students under 18."
+    },
+    "detail": {
+      "profile": {
+        "heading": "Profile",
+        "joinedAt": "Joined",
+        "notes": "Notes"
+      },
+      "promotionHistory": {
+        "heading": "Promotion history"
+      },
+      "attendanceHistory": {
+        "heading": "Attendance history"
+      },
+      "paymentHistory": {
+        "heading": "Payment history"
+      },
+      "comingLater": "Coming in a later phase.",
+      "edit": {
+        "toggle": "Edit student",
+        "notes": "Notes",
+        "submit": "Save changes",
+        "success": "Changes saved.",
+        "invalid": "Please check the form for errors.",
+        "notFound": "Could not update this student.",
+        "beltReadOnly": "Belt and stripes are changed through the promotion flow, not this form."
+      },
+      "archive": {
+        "button": "Archive student",
+        "confirm": "Archive this student? This can be reversed by editing status later.",
+        "success": "Student archived.",
+        "notFound": "Could not archive this student."
+      },
+      "regenerateCode": {
+        "button": "Regenerate code",
+        "confirm": "Regenerate the 4-digit code? The old code will stop working.",
+        "successCodeWarning": "This is the student's new 4-digit check-in code. Hand it over now — it will not be shown again:",
+        "notFound": "Could not regenerate this student's code."
+      },
+      "approve": {
+        "button": "Approve student",
+        "success": "Student approved.",
+        "notFound": "Could not approve this student.",
+        "notPending": "This student is no longer pending approval."
+      }
+    }
+  },
+  "error": {
+    "heading": "Something went wrong",
+    "description": "An unexpected error occurred.",
+    "retry": "Try again"
   }
 }

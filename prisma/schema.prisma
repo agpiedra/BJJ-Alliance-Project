@@ -110,6 +110,20 @@ model User {
   paymentPeriodsRecorded PaymentPeriod[]
 
   attendanceRecordsCreated AttendanceRecord[]
+  passwordResetTokens      PasswordResetToken[]
+}
+
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
 }
 
 model StaffAssignment {
