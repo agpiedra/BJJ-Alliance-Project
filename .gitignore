@@ -40,9 +40,9 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-# Env files (never commit real secrets/local DB credentials)
-.env
-.env.local
-
 # Prisma
 /prisma/dev.db
+
+# Claude Code tooling
+.claude/
+.claude-flow/
