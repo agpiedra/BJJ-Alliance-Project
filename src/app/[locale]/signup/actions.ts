@@ -34,6 +34,13 @@ const signupSchema = z
 export type SignupState = {
   ok?: true;
   code?: string;
+  /**
+   * Set when this signup CLAIMED an existing staff-created Student row
+   * rather than creating a new one. No `code` accompanies it — the student
+   * keeps the check-in code staff already handed them, so the success
+   * screen must say that instead of showing a blank code.
+   */
+  linked?: true;
   error?: string;
   fieldErrors?: Record<string, string[]>;
 };
@@ -51,6 +58,63 @@ export async function signup(_prevState: SignupState, formData: FormData): Promi
   const existingEmail = await prisma.user.findUnique({ where: { email: data.email } });
   if (existingEmail) {
     return { error: "emailTaken", fieldErrors: { email: ["emailTaken"] } };
+  }
+
+  // A student staff already entered by hand (in person or over the phone)
+  // who is only now creating their own portal login. Without this check
+  // they'd end up with TWO Student rows at the same email: the staff one
+  // holding their real belt, academy and handed-over check-in code, and a
+  // second self-signup one that the roster, attendance and promotion
+  // history would then be split across. `userId: null` is what distinguishes
+  // "staff-created, not yet claimed" from a row that already belongs to
+  // someone's account.
+  const existingStudentWithoutAccount = await prisma.student.findFirst({
+    where: { email: data.email, userId: null },
+  });
+
+  if (existingStudentWithoutAccount) {
+    await prisma.$transaction(async (tx) => {
+      const user = await tx.user.create({
+        data: {
+          email: data.email,
+          passwordHash: await hashSecret(data.password),
+          role: Role.STUDENT,
+        },
+      });
+
+      // ONLY `userId` is written. `codeHash`, `currentBelt`,
+      // `currentStripes`, `homeAcademyId` and `status` were set by staff and
+      // are the source of truth — the signup form's own values for those are
+      // discarded on this path, never allowed to overwrite them. Otherwise a
+      // purple belt could self-signup as "white, 0 stripes" and silently
+      // reset their own rank, or move themselves to another academy, and the
+      // 4-digit code staff already handed them would stop working.
+      await tx.student.update({
+        where: { id: existingStudentWithoutAccount.id },
+        data: { userId: user.id },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          // The acting principal here is the student themselves, not a staff
+          // member — this is a self-service event, and the brand-new user id
+          // is the only honest actor to attribute it to.
+          actorId: user.id,
+          academyId: existingStudentWithoutAccount.homeAcademyId,
+          action: "student.linkedSelfSignup",
+          entityType: "Student",
+          entityId: existingStudentWithoutAccount.id,
+          before: { userId: null },
+          after: { userId: user.id },
+        },
+      });
+    });
+
+    // No new code is issued on this path and none is returned: the student
+    // already has the one staff handed them, and `codeHash` was left
+    // untouched, so surfacing a freshly generated code here would show them
+    // a code that does not work.
+    return { ok: true, linked: true };
   }
 
   const homeAcademy = await prisma.academy.findUniqueOrThrow({ where: { slug: data.homeAcademySlug } });
