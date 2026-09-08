@@ -49,5 +49,27 @@
   "dashboard": {
     "heading": "Dashboard",
     "welcome": "Welcome, {email}"
+  },
+  "signup": {
+    "heading": "Create student account",
+    "firstName": "First name",
+    "lastName": "Last name",
+    "phone": "Phone",
+    "email": "Email",
+    "homeAcademy": "Academy",
+    "currentBelt": "Current belt",
+    "currentStripes": "Current stripes",
+    "password": "Password",
+    "dateOfBirth": "Date of birth (optional)",
+    "guardianName": "Guardian name (required if under 18)",
+    "guardianPhone": "Guardian phone",
+    "emergencyContact": "Emergency contact (optional)",
+    "submit": "Create account",
+    "successHeading": "Account created!",
+    "successCodeWarning": "This is your 4-digit check-in code. Save it — it will not be shown again:",
+    "successNote": "A staff member will review your account before it's activated.",
+    "invalid": "Please check the form for errors.",
+    "emailTaken": "An account with this email already exists.",
+    "guardianRequiredForMinor": "Guardian name and phone are required for students under 18."
   }
 }

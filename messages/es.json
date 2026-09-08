@@ -49,5 +49,27 @@
   "dashboard": {
     "heading": "Panel de control",
     "welcome": "Bienvenido, {email}"
+  },
+  "signup": {
+    "heading": "Crear cuenta de estudiante",
+    "firstName": "Nombre",
+    "lastName": "Apellido",
+    "phone": "Teléfono",
+    "email": "Correo electrónico",
+    "homeAcademy": "Academia",
+    "currentBelt": "Cinturón actual",
+    "currentStripes": "Franjas actuales",
+    "password": "Contraseña",
+    "dateOfBirth": "Fecha de nacimiento (opcional)",
+    "guardianName": "Nombre del tutor (requerido si es menor de edad)",
+    "guardianPhone": "Teléfono del tutor",
+    "emergencyContact": "Contacto de emergencia (opcional)",
+    "submit": "Crear cuenta",
+    "successHeading": "¡Cuenta creada!",
+    "successCodeWarning": "Este es tu código de 4 dígitos para marcar asistencia. Guárdalo — no se mostrará de nuevo:",
+    "successNote": "Un miembro del personal revisará tu cuenta antes de activarla.",
+    "invalid": "Por favor revisa el formulario.",
+    "emailTaken": "Ya existe una cuenta con este correo electrónico.",
+    "guardianRequiredForMinor": "El nombre y teléfono del tutor son requeridos para menores de edad."
   }
 }
