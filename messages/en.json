@@ -31,6 +31,19 @@
       "submit": "Sign in",
       "invalidCredentials": "Incorrect email or password.",
       "forgotPassword": "Forgot your password?"
+    },
+    "forgotPassword": {
+      "heading": "Reset password",
+      "email": "Email",
+      "submit": "Send reset link",
+      "genericConfirmation": "If that email exists in our system, a password reset link has been sent."
+    },
+    "resetPassword": {
+      "heading": "Reset password",
+      "newPassword": "New password",
+      "submit": "Reset password",
+      "invalidToken": "This link is invalid or has expired.",
+      "success": "Your password has been reset. You can now sign in."
     }
   },
   "dashboard": {

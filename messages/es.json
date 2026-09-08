@@ -31,6 +31,19 @@
       "submit": "Entrar",
       "invalidCredentials": "Correo o contraseña incorrectos.",
       "forgotPassword": "¿Olvidaste tu contraseña?"
+    },
+    "forgotPassword": {
+      "heading": "Recuperar contraseña",
+      "email": "Correo electrónico",
+      "submit": "Enviar enlace",
+      "genericConfirmation": "Si ese correo existe en nuestro sistema, se envió un enlace para restablecer la contraseña."
+    },
+    "resetPassword": {
+      "heading": "Restablecer contraseña",
+      "newPassword": "Nueva contraseña",
+      "submit": "Restablecer",
+      "invalidToken": "Este enlace no es válido o ya expiró.",
+      "success": "Tu contraseña fue restablecida. Ya puedes iniciar sesión."
     }
   },
   "dashboard": {
