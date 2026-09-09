@@ -59,20 +59,72 @@ describe("kiosk rate limiting (reserve/finalize, keyed on the kiosk token digest
     expect(row.ipAddress).toBe(AUDIT_IP);
   });
 
-  it("finalizeKioskAttempt(true) upgrades that exact row; finalize(false) leaves it a failure", async () => {
+  it("finalize('success') upgrades that exact row; finalize('invalid_code') leaves it a counting failure", async () => {
     const hash = uniqueTokenHash("finalize");
 
     const success = await reserveKioskAttempt(escazuId, hash, AUDIT_IP);
     expect(success.allowed).toBe(true);
     if (!success.allowed) return;
-    await finalizeKioskAttempt(success.attemptId, true);
-    expect((await prisma.kioskAttempt.findUniqueOrThrow({ where: { id: success.attemptId } })).success).toBe(true);
+    await finalizeKioskAttempt(success.attemptId, "success");
+    const successRow = await prisma.kioskAttempt.findUniqueOrThrow({ where: { id: success.attemptId } });
+    expect(successRow.success).toBe(true);
+    expect(successRow.countsAsFailure).toBe(false);
 
     const failure = await reserveKioskAttempt(escazuId, hash, AUDIT_IP);
     expect(failure.allowed).toBe(true);
     if (!failure.allowed) return;
-    await finalizeKioskAttempt(failure.attemptId, false);
-    expect((await prisma.kioskAttempt.findUniqueOrThrow({ where: { id: failure.attemptId } })).success).toBe(false);
+    await finalizeKioskAttempt(failure.attemptId, "invalid_code");
+    const failureRow = await prisma.kioskAttempt.findUniqueOrThrow({ where: { id: failure.attemptId } });
+    expect(failureRow.success).toBe(false);
+    expect(failureRow.countsAsFailure).toBe(true);
+  });
+
+  it.each(["already_checked_in", "no_active_class"] as const)(
+    "does NOT lock out after 5 consecutive '%s' outcomes — a valid code is not a guess",
+    async (outcome) => {
+      const hash = uniqueTokenHash(`valid-code-failure-${outcome}`);
+
+      for (let i = 0; i < 5; i++) {
+        const reservation = await reserveKioskAttempt(escazuId, hash, AUDIT_IP);
+        expect(reservation.allowed).toBe(true);
+        if (!reservation.allowed) return;
+        await finalizeKioskAttempt(reservation.attemptId, outcome);
+        const row = await prisma.kioskAttempt.findUniqueOrThrow({ where: { id: reservation.attemptId } });
+        // Still logged as a failed attempt (spec §4.1's audit trail)...
+        expect(row.success).toBe(false);
+        // ...but explicitly excluded from the lockout anchor.
+        expect(row.countsAsFailure).toBe(false);
+      }
+
+      // Five late arrivals, or one student double-tapping five times, must not
+      // take the whole academy's kiosk offline.
+      const sixth = await reserveKioskAttempt(escazuId, hash, AUDIT_IP);
+      expect(sixth.allowed).toBe(true);
+      expect(await countAttempts(hash)).toBe(6);
+    },
+  );
+
+  it("does NOT let gate-rejected attempts renew a lockout — a request the gate refused was never a guess", async () => {
+    const hash = uniqueTokenHash("blocked-cannot-renew");
+
+    // Rows exactly as `reserveKioskAttempt` writes them when it refuses a
+    // caller: logged, but never evaluated against a real code. Under the
+    // previous `success: false`-is-the-whole-story rule these re-anchored the
+    // lockout on every read, so anyone able to fire 5 requests a minute could
+    // hold an academy's kiosk offline indefinitely.
+    await prisma.kioskAttempt.createMany({
+      data: Array.from({ length: 8 }, (_, i) => ({
+        academyId: escazuId,
+        kioskTokenHash: hash,
+        ipAddress: AUDIT_IP,
+        success: false,
+        countsAsFailure: false,
+        createdAt: new Date(Date.now() - (8 - i) * 1000),
+      })),
+    });
+
+    const legitimate = await reserveKioskAttempt(escazuId, hash, AUDIT_IP);
+    expect(legitimate.allowed).toBe(true);
   });
 
   it("never rate-limits a burst of SUCCESSFUL check-ins — a class rush on one shared tablet", async () => {
@@ -83,7 +135,7 @@ describe("kiosk rate limiting (reserve/finalize, keyed on the kiosk token digest
       const reservation = await reserveKioskAttempt(escazuId, hash, AUDIT_IP);
       expect(reservation.allowed).toBe(true);
       if (!reservation.allowed) return;
-      await finalizeKioskAttempt(reservation.attemptId, true);
+      await finalizeKioskAttempt(reservation.attemptId, "success");
     }
 
     // And the very next student still gets through.
@@ -93,23 +145,32 @@ describe("kiosk rate limiting (reserve/finalize, keyed on the kiosk token digest
     expect(await countAttempts(hash)).toBe(BURST + 1);
   });
 
-  it("locks out after exactly 5 FAILURES within 60s, and successes in between don't bring it forward", async () => {
+  it("locks out after exactly 5 genuine invalid_code guesses within 60s, and successes in between don't bring it forward", async () => {
     const hash = uniqueTokenHash("lockout");
 
-    // 4 failures interleaved with 3 successes: 7 attempts, still under the
-    // failure threshold, so nothing is blocked yet.
-    for (const isSuccess of [false, true, false, true, false, true, false]) {
+    // 4 wrong-code guesses interleaved with 3 successes: 7 attempts, still
+    // under the failure threshold, so nothing is blocked yet.
+    const pattern = [
+      "invalid_code",
+      "success",
+      "invalid_code",
+      "success",
+      "invalid_code",
+      "success",
+      "invalid_code",
+    ] as const;
+    for (const outcome of pattern) {
       const reservation = await reserveKioskAttempt(escazuId, hash, AUDIT_IP);
       expect(reservation.allowed).toBe(true);
       if (!reservation.allowed) return;
-      await finalizeKioskAttempt(reservation.attemptId, isSuccess);
+      await finalizeKioskAttempt(reservation.attemptId, outcome);
     }
 
     // The 5th failure is itself allowed (it's the one that trips the lockout).
     const fifth = await reserveKioskAttempt(escazuId, hash, AUDIT_IP);
     expect(fifth.allowed).toBe(true);
     if (!fifth.allowed) return;
-    await finalizeKioskAttempt(fifth.attemptId, false);
+    await finalizeKioskAttempt(fifth.attemptId, "invalid_code");
 
     const blocked = await reserveKioskAttempt(escazuId, hash, AUDIT_IP);
     expect(blocked.allowed).toBe(false);
@@ -136,6 +197,15 @@ describe("kiosk rate limiting (reserve/finalize, keyed on the kiosk token digest
 
     // 5 seeded + the rejected one, which must NOT be silently dropped.
     expect(await countAttempts(hash)).toBe(6);
+
+    // ...but the rejected row is excluded from the anchor, so logging it can't
+    // feed back into the lockout that produced it.
+    const rejected = await prisma.kioskAttempt.findFirstOrThrow({
+      where: { kioskTokenHash: hash },
+      orderBy: { createdAt: "desc" },
+    });
+    expect(rejected.success).toBe(false);
+    expect(rejected.countsAsFailure).toBe(false);
   });
 
   it("lets the window slide: failures older than 60s no longer lock the key out", async () => {
@@ -181,7 +251,7 @@ describe("kiosk rate limiting (reserve/finalize, keyed on the kiosk token digest
       const reservation = await reserveKioskAttempt(escazuId, lockedHash, AUDIT_IP);
       expect(reservation.allowed).toBe(true);
       if (!reservation.allowed) return;
-      await finalizeKioskAttempt(reservation.attemptId, false);
+      await finalizeKioskAttempt(reservation.attemptId, "invalid_code");
     }
     const lockedOut = await reserveKioskAttempt(escazuId, lockedHash, AUDIT_IP);
     expect(lockedOut.allowed).toBe(false);
@@ -201,7 +271,7 @@ describe("kiosk rate limiting (reserve/finalize, keyed on the kiosk token digest
       const reservation = await reserveKioskAttempt(escazuId, hash, `198.51.100.${i}`);
       expect(reservation.allowed).toBe(true);
       if (!reservation.allowed) return;
-      await finalizeKioskAttempt(reservation.attemptId, false);
+      await finalizeKioskAttempt(reservation.attemptId, "invalid_code");
     }
 
     // A brand-new IP, same token: still locked out.

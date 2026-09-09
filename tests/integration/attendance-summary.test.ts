@@ -247,7 +247,11 @@ describe("getAtBeltSummary", () => {
     const summary = await getAtBeltSummary(student.id);
     // 3 counting + 2 adjustment; the 4 Striking check-ins are excluded.
     expect(summary.atBeltCount).toBe(5);
-    expect(summary.lifetimeCount).toBe(5);
+    // lifetimeCount is deliberately NOT filtered: it is the plain
+    // physical-attendance total the student detail page renders as "Lifetime
+    // attendances" / "Asistencias totales", and no belt math reads it. So all
+    // 3 + 4 check-ins plus the +2 adjustment.
+    expect(summary.lifetimeCount).toBe(9);
 
     // ...but the ledger itself still holds every physical check-in.
     expect(await prisma.attendanceRecord.count({ where: { studentId: student.id } })).toBe(8);

@@ -312,7 +312,23 @@ model KioskAttempt {
   /// never trusted for a security decision (see `kioskTokenHash`).
   ipAddress String
   success   Boolean
-  createdAt DateTime @default(now())
+  /// Whether this row counts toward the 5-failure lockout anchor.
+  ///
+  /// `success: false` alone is too coarse: `already_checked_in` and
+  /// `no_active_class` both mean the submitted code was VALID and resolved to a
+  /// real active student, and a gate-rejected attempt never had its code
+  /// evaluated at all. Counting any of those let five late arrivals, five
+  /// double-taps, or a scripted flood of already-blocked requests keep an
+  /// entire academy's kiosk locked out. Only a genuine wrong-code guess
+  /// (`invalid_code`) is a brute-force signal.
+  ///
+  /// Defaults to `true` so the provisional row `reserveKioskAttempt` claims
+  /// before the code is evaluated is presumed a guess failure: that is what
+  /// caps a burst of CONCURRENT reservations at five, since none of them has
+  /// been finalized yet when the next one reads the window.
+  /// `finalizeKioskAttempt` clears it once the real outcome is known.
+  countsAsFailure Boolean  @default(true)
+  createdAt       DateTime @default(now())
 
   academy Academy @relation(fields: [academyId], references: [id])
 

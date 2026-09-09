@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { headers } from "next/headers";
 import { prisma } from "@/lib/prisma";
 import { digestLookupSecret } from "@/lib/crypto";
 import { requireEnv } from "@/lib/env";
@@ -50,8 +49,14 @@ export async function POST(request: Request) {
   // Step 3: best-effort audit metadata only. `x-forwarded-for` is
   // client-supplied and is NOT part of the rate-limit key — see
   // `reserveKioskAttempt`, which keys on the verified token digest above.
-  const headerList = await headers();
-  const forwardedFor = headerList.get("x-forwarded-for");
+  //
+  // Read off the `Request` rather than `next/headers`' `headers()`: they are
+  // the same headers here (this route is excluded from the middleware matcher,
+  // so nothing rewrites them upstream), but `headers()` throws outside a real
+  // request scope, which made this handler impossible to call directly from an
+  // integration test — and this is the exact seam the S2 brute-force-ordering
+  // bug lived in twice.
+  const forwardedFor = request.headers.get("x-forwarded-for");
   const ipAddress = forwardedFor ? forwardedFor.split(",")[0].trim() : "unknown";
 
   // Step 4: the atomic gate, BEFORE the submitted code is evaluated. A
@@ -74,10 +79,13 @@ export async function POST(request: Request) {
   });
 
   // Step 6: record this attempt's real outcome against the row already
-  // reserved in step 4. (No reconciliation branch is needed here any more:
-  // with the gate ahead of the guess there is no longer a case where a real,
-  // committed check-in could be hidden behind a rate-limit rejection.)
-  await finalizeKioskAttempt(reservation.attemptId, result.ok);
+  // reserved in step 4. The specific reason matters, not just ok/not-ok: only
+  // `invalid_code` is a wrong-guess signal that may extend the lockout, while
+  // `already_checked_in` and `no_active_class` mean the code was valid.
+  // (No reconciliation branch is needed here any more: with the gate ahead of
+  // the guess there is no longer a case where a real, committed check-in could
+  // be hidden behind a rate-limit rejection.)
+  await finalizeKioskAttempt(reservation.attemptId, result.ok ? "success" : result.error);
 
   if (result.ok) {
     return NextResponse.json(result, { status: 200 });

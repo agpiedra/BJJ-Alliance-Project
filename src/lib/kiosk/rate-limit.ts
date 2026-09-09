@@ -13,11 +13,30 @@ export type RateLimitRejection = {
 
 export type ReserveResult = { allowed: true; attemptId: string } | RateLimitRejection;
 
+/**
+ * The real outcome of an attempt previously claimed by `reserveKioskAttempt`.
+ *
+ * Only `invalid_code` is a brute-force signal. `already_checked_in` and `no_active_class`
+ * both mean the submitted code was VALID and resolved to a real, active student — the
+ * former is a student double-tapping, the latter a student arriving outside any class
+ * window (which the narrower ±30-minute window made measurably more common). Neither is a
+ * guess, so neither may extend the lockout.
+ */
+export type KioskAttemptOutcome = "success" | "invalid_code" | "already_checked_in" | "no_active_class";
+
+/** Outcomes that leave the reserved row counting toward the lockout anchor. */
+const OUTCOME_COUNTS_AS_FAILURE: Record<KioskAttemptOutcome, boolean> = {
+  success: false,
+  invalid_code: true,
+  already_checked_in: false,
+  no_active_class: false,
+};
+
 type WindowAttempt = { createdAt: Date };
 
 /**
  * Pure decision function over the caller-supplied, ascending-by-createdAt list of
- * FAILED attempts inside the trailing window.
+ * COUNTING failures inside the trailing window (see `countsAsFailure`).
  *
  * Both thresholds count failures ONLY — successful check-ins never count toward either.
  * A single shared kiosk tablet legitimately does 10+ successful check-ins a minute during
@@ -26,6 +45,13 @@ type WindowAttempt = { createdAt: Date };
  * minute got a lockout screen instead of a check-in. An attacker guessing codes produces
  * overwhelmingly failures until they guess right, so failure-only counting preserves the
  * actual protection.
+ *
+ * "Failure" here is narrower still than `success: false`: it is a genuine wrong-code
+ * guess. Valid-code failures (`already_checked_in`, `no_active_class`) and attempts the
+ * gate itself refused are logged but excluded, because the anchor is re-derived from
+ * whatever currently sits in the window — so counting them let five late arrivals, five
+ * double-taps, or a scripted flood of already-rejected requests hold an entire academy's
+ * kiosk in a self-renewing lockout.
  *
  * `locked_out` is checked first so that when both the lockout and the total-failures
  * rate-limit conditions are true simultaneously, the more specific "locked_out" reason
@@ -77,11 +103,11 @@ function evaluateRateLimit(recentFailures: WindowAttempt[]): { allowed: true } |
  *
  * A rejected attempt is ALSO written (as `success: false`) rather than dropped: spec §4.1
  * requires every failed attempt to be logged, and the attempts made during an active
- * lockout are exactly the ones an operator most needs to see. A consequence worth naming:
- * because those rows are themselves failures, a caller that keeps hammering through a
- * lockout keeps the lockout alive. That only affects a scripted attacker — the kiosk UI
- * removes the keypad entirely during the countdown, so a legitimate device cannot generate
- * this traffic.
+ * lockout are exactly the ones an operator most needs to see. It is written with
+ * `countsAsFailure: false`, though: the gate refused it before any code was evaluated, so
+ * it is not evidence of a guess. Counting it made the lockout self-renewing — anyone able
+ * to fire five requests a minute could hold an entire academy's kiosk offline
+ * indefinitely, including through requests that never reached `performCheckIn` at all.
  *
  * Everything runs inside one transaction serialized by a per-key advisory lock, so
  * concurrent callers for the same key queue up and each sees the fully committed state
@@ -100,18 +126,34 @@ export async function reserveKioskAttempt(
 
       const windowStart = new Date(Date.now() - RATE_LIMIT_WINDOW_SECONDS * 1000);
       const recentFailures = await tx.kioskAttempt.findMany({
-        where: { academyId, kioskTokenHash, success: false, createdAt: { gte: windowStart } },
+        where: {
+          academyId,
+          kioskTokenHash,
+          success: false,
+          countsAsFailure: true,
+          createdAt: { gte: windowStart },
+        },
         orderBy: { createdAt: "asc" },
         select: { createdAt: true },
       });
 
       const decision = evaluateRateLimit(recentFailures);
 
-      // Provisional row: `success: false` either way. If the attempt was allowed,
-      // `finalizeKioskAttempt` upgrades this exact row once the outcome is known; if it
-      // was rejected, the row is already correct and final.
+      // Provisional row: `success: false` either way. An ALLOWED attempt is claimed as
+      // `countsAsFailure: true` — presumed a guess until `finalizeKioskAttempt` learns
+      // otherwise, which is exactly what caps a burst of concurrent reservations at five
+      // (none of them has been finalized when the next one reads the window). A REJECTED
+      // attempt is logged but never counted: the gate refused it before any code was
+      // evaluated, so treating it as evidence of a guess is what made the lockout
+      // self-renewing.
       const attempt = await tx.kioskAttempt.create({
-        data: { academyId, kioskTokenHash, ipAddress, success: false },
+        data: {
+          academyId,
+          kioskTokenHash,
+          ipAddress,
+          success: false,
+          countsAsFailure: decision.allowed,
+        },
         select: { id: true },
       });
 
@@ -131,22 +173,29 @@ export async function reserveKioskAttempt(
  * Step 2 of 2. Records the real outcome of an attempt previously claimed by
  * `reserveKioskAttempt`.
  *
- * A `false` outcome is a no-op — the reserved row is already `success: false`. A `true`
- * outcome is a targeted single-row update by primary key: no lock is needed because only
- * the caller that reserved this row knows its id, and flipping a failure to a success can
- * only ever relax the window, never let an extra attempt through.
+ * An `invalid_code` outcome is a no-op — the reserved row already says exactly that (a
+ * failure that counts). Every other outcome clears `countsAsFailure`, and a `success`
+ * additionally flips `success`. Either way it is a targeted single-row update by primary
+ * key: no lock is needed because only the caller that reserved this row knows its id, and
+ * both edits can only ever relax the window, never let an extra attempt through.
  *
  * Guaranteed not to throw. This runs AFTER `performCheckIn` may have committed a real
  * `AttendanceRecord`, and this row is audit/metering metadata — failing the HTTP response
  * over it would tell a student their check-in failed when it genuinely succeeded. An
- * unexpected failure here leaves the row marked as a failure, which is the conservative
+ * unexpected failure here leaves the row as a counting failure, which is the conservative
  * direction (it can only tighten the limiter, never loosen it).
  */
-export async function finalizeKioskAttempt(attemptId: string, success: boolean): Promise<void> {
-  if (!success) return;
+export async function finalizeKioskAttempt(attemptId: string, outcome: KioskAttemptOutcome): Promise<void> {
+  const countsAsFailure = OUTCOME_COUNTS_AS_FAILURE[outcome];
+  const success = outcome === "success";
+  if (countsAsFailure && !success) return;
+
   try {
-    await prisma.kioskAttempt.update({ where: { id: attemptId }, data: { success: true } });
+    await prisma.kioskAttempt.update({
+      where: { id: attemptId },
+      data: { success, countsAsFailure },
+    });
   } catch (error) {
-    console.error("[kiosk-rate-limit] failed to finalize attempt", { attemptId, error });
+    console.error("[kiosk-rate-limit] failed to finalize attempt", { attemptId, outcome, error });
   }
 }

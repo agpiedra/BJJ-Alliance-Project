@@ -25,9 +25,18 @@ export interface AtBeltSummary {
  * no class to inherit a flag from and always count: they carry a
  * human-reviewed `reason` and exist precisely to correct the ledger.
  *
- * This filters the promotion-relevant AGGREGATION only. The ledger itself is
- * untouched — `performCheckIn` still records every physical check-in,
- * including Striking ones, because that is a true attendance fact.
+ * This filters `atBeltCount` ONLY — the one number belt math reads
+ * (`nextStripeAt` / `remainingToNextStripe` / `examEligible` all derive from
+ * it). It deliberately does NOT filter `lifetimeCount`, which no belt math
+ * touches: its only consumer renders it as "Lifetime attendances" /
+ * "Asistencias totales" on the student detail page, a plain physical-attendance
+ * total. The distinction between the two counts is temporal (before vs. after
+ * `beltAwardedAt`), not promotion-relevance, so hiding Striking classes from
+ * the lifetime total would just make it wrong.
+ *
+ * The ledger itself is untouched either way — `performCheckIn` still records
+ * every physical check-in, including Striking ones, because that is a true
+ * attendance fact.
  */
 const PROMOTION_RELEVANT: Prisma.AttendanceRecordWhereInput = {
   OR: [{ classSessionId: null }, { classSession: { countsTowardPromotion: true } }],
@@ -46,8 +55,10 @@ export async function getAtBeltSummary(studentId: string): Promise<AtBeltSummary
       where: { studentId, occurredAt: { gte: student.beltAwardedAt }, ...PROMOTION_RELEVANT },
       _sum: { delta: true },
     }),
+    // Unfiltered on purpose: every physical attendance ever, promotion-relevant
+    // or not (see PROMOTION_RELEVANT's comment).
     prisma.attendanceRecord.aggregate({
-      where: { studentId, ...PROMOTION_RELEVANT },
+      where: { studentId },
       _sum: { delta: true },
     }),
   ]);
