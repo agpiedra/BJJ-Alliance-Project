@@ -122,6 +122,47 @@ async function withStudentVanishingAfterScan<T>(vanishingStudentId: string, fn: 
   }
 }
 
+/**
+ * Simulates a genuinely missing global `BeltRequirement` row for `belt` —
+ * the round-2 regression case. Unlike `withStudentVanishingAfterScan` above
+ * (a benign, gracefully-excludable race), this must propagate loudly: it's
+ * a seed-data/configuration bug, not a race, and this codebase's fix must
+ * NOT conflate the two.
+ *
+ * Patches `appPrisma.beltRequirement.findFirstOrThrow` (the exact call
+ * `resolveBeltRequirementLike`/`resolveBeltRequirement` make internally for
+ * the academy-null global-default fallback) to throw a Prisma-P2025-shaped
+ * error, but ONLY when called for the targeted `{ academyId: null, belt }`
+ * lookup — any other call (e.g. a concurrent test's lookup for a different
+ * belt) falls through to the real implementation untouched. Restores the
+ * original implementation in `finally` regardless of outcome, and never
+ * touches real seeded `BeltRequirement` rows, so it can't leak into other
+ * concurrently-running test files.
+ */
+async function withMissingGlobalBeltRequirement<T>(belt: Belt, fn: () => Promise<T>): Promise<T> {
+  const beltRequirementDelegate = appPrisma.beltRequirement as unknown as {
+    findFirstOrThrow: (...args: unknown[]) => Promise<unknown>;
+  };
+  const originalFindFirstOrThrow = beltRequirementDelegate.findFirstOrThrow.bind(beltRequirementDelegate);
+  beltRequirementDelegate.findFirstOrThrow = async (...args: unknown[]) => {
+    const arg = args[0] as { where?: { academyId?: string | null; belt?: Belt } } | undefined;
+    if (arg?.where?.academyId === null && arg.where.belt === belt) {
+      throw Object.assign(
+        new Error(
+          "An operation failed because it depends on one or more records that were required but not found.",
+        ),
+        { name: "PrismaClientKnownRequestError", code: "P2025", clientVersion: "test" },
+      );
+    }
+    return originalFindFirstOrThrow(...args);
+  };
+  try {
+    return await fn();
+  } finally {
+    beltRequirementDelegate.findFirstOrThrow = originalFindFirstOrThrow;
+  }
+}
+
 describe("promotion queue", () => {
   afterAll(cleanup);
 
@@ -286,5 +327,25 @@ describe("promotion queue", () => {
     const survivor2InApproaching = findCandidate(approaching, survivor2.id);
     expect(survivor2InApproaching).toBeDefined();
     expect(survivor2InApproaching?.status).toBe("approaching");
+  });
+
+  it("a genuinely missing global BeltRequirement row for a belt propagates loudly instead of being silently excluded like a vanished student", async () => {
+    const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+    const admin: StaffSession = { userId: "x", role: "ADMIN", academyIds: "ALL" };
+    const beltAwardedAt = new Date("2026-08-01T12:00:00Z");
+    // PURPLE has no per-academy override seeded for Escazú — only the global
+    // default applies — so simulating that global row's absence actually
+    // exercises `resolveBeltRequirementLike`'s `findFirstOrThrow` fallback
+    // rather than short-circuiting on a per-academy override first.
+    const student = await makeStudent(escazu.id, { currentBelt: "PURPLE", currentStripes: 0, beltAwardedAt });
+    await addAttendances(student.id, escazu.id, 10, new Date(beltAwardedAt.getTime() + DAY_MS));
+
+    await expect(
+      withMissingGlobalBeltRequirement("PURPLE", () => listPromotionQueue(admin)),
+    ).rejects.toMatchObject({ code: "P2025" });
+
+    await expect(
+      withMissingGlobalBeltRequirement("PURPLE", () => listApproachingStudents(admin)),
+    ).rejects.toMatchObject({ code: "P2025" });
   });
 });
