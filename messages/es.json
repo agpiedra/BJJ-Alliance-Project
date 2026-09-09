@@ -166,6 +166,27 @@
         "success": "Estudiante aprobado.",
         "notFound": "No se pudo aprobar este estudiante.",
         "notPending": "Este estudiante ya no está pendiente de aprobación."
+      },
+      "atBeltSummary": {
+        "heading": "Progreso en el cinturón actual",
+        "atBeltCount": "Asistencias en este cinturón",
+        "lifetimeCount": "Asistencias totales",
+        "remainingToNextStripe": "Faltan para el siguiente grado",
+        "examEligible": "Elegible para examen",
+        "yes": "Sí",
+        "no": "No"
+      },
+      "adjustment": {
+        "toggle": "Agregar ajuste",
+        "delta": "Ajuste",
+        "deltaHint": "Un número positivo agrega asistencias, uno negativo las quita.",
+        "deltaInvalid": "Ingresa un número entero distinto de cero.",
+        "reason": "Motivo",
+        "reasonRequired": "El motivo es obligatorio.",
+        "submit": "Guardar ajuste",
+        "success": "Ajuste guardado.",
+        "invalid": "Por favor revisa el formulario.",
+        "notFound": "No se pudo agregar este ajuste."
       }
     }
   },

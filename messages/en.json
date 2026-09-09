@@ -166,6 +166,27 @@
         "success": "Student approved.",
         "notFound": "Could not approve this student.",
         "notPending": "This student is no longer pending approval."
+      },
+      "atBeltSummary": {
+        "heading": "Progress at current belt",
+        "atBeltCount": "Attendances at this belt",
+        "lifetimeCount": "Lifetime attendances",
+        "remainingToNextStripe": "Remaining to next stripe",
+        "examEligible": "Exam eligible",
+        "yes": "Yes",
+        "no": "No"
+      },
+      "adjustment": {
+        "toggle": "Add adjustment",
+        "delta": "Adjustment",
+        "deltaHint": "A positive number adds attendances, a negative number removes them.",
+        "deltaInvalid": "Enter a nonzero whole number.",
+        "reason": "Reason",
+        "reasonRequired": "A reason is required.",
+        "submit": "Save adjustment",
+        "success": "Adjustment saved.",
+        "invalid": "Please check the form for errors.",
+        "notFound": "Could not add this adjustment."
       }
     }
   },
