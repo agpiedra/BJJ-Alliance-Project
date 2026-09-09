@@ -91,6 +91,7 @@ model Academy {
   paymentPlans      PaymentPlan[]
   paymentPeriods    PaymentPeriod[]
   auditLogs         AuditLog[]
+  kioskAttempts     KioskAttempt[]
 }
 
 model User {
@@ -295,6 +296,18 @@ model PaymentPeriod {
 
   @@unique([studentId, year, month])
   @@index([academyId, year, month])
+}
+
+model KioskAttempt {
+  id        String   @id @default(cuid())
+  academyId String
+  ipAddress String
+  success   Boolean
+  createdAt DateTime @default(now())
+
+  academy Academy @relation(fields: [academyId], references: [id])
+
+  @@index([academyId, ipAddress, createdAt])
 }
 
 model AuditLog {
