@@ -16,8 +16,8 @@ import { ConfirmPromotionButton } from "./confirm-promotion-button";
 // "approaching" out; the Approaching section below doesn't show a status
 // column at all, since every row in it shares the same status).
 const QUEUE_STATUS_KEY: Record<"stripe-eligible" | "exam-eligible", string> = {
-  "stripe-eligible": "status.stripe-eligible",
-  "exam-eligible": "status.exam-eligible",
+  "stripe-eligible": "promotionQueue.status.stripe-eligible",
+  "exam-eligible": "promotionQueue.status.exam-eligible",
 };
 
 // Same reasoning as the roster page: the pending-approvals count is staff
