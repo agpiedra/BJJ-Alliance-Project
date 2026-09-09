@@ -187,7 +187,8 @@
     "networkError": "Couldn't connect. Please try again.",
     "genericError": "Something went wrong. Please try again.",
     "rateLimited": "Too many attempts. Please wait a moment.",
-    "lockedOut": "Temporarily locked out after too many failed attempts."
+    "lockedOut": "Temporarily locked out after too many failed attempts.",
+    "queuedOffline": "Saved! You're offline — this will sync automatically once the connection is back."
   },
   "adminKioskTokens": {
     "heading": "Kiosk device tokens",

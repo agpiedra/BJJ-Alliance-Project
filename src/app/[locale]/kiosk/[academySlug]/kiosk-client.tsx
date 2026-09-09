@@ -5,10 +5,12 @@ import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { BeltGraphic, type Belt } from "@/components/belt-graphic/belt-graphic";
+import { enqueueOfflineCheckIn, flushOfflineQueue } from "@/lib/kiosk/offline-queue";
 
 const CODE_LENGTH = 4;
 const SUCCESS_DISPLAY_MS = 6000;
 const ERROR_DISPLAY_MS = 4000;
+const QUEUED_DISPLAY_MS = 6000;
 
 /** The success (`ok: true`) shape of `POST /api/kiosk/check-in`'s JSON body. */
 interface CheckInSuccess {
@@ -39,7 +41,8 @@ type Phase =
   | { kind: "entry"; code: string; submitting: boolean }
   | { kind: "success"; result: CheckInSuccess }
   | { kind: "error"; reason: CheckInFailureReason }
-  | { kind: "locked"; reason: "rate_limited" | "locked_out"; retryAfterSeconds: number };
+  | { kind: "locked"; reason: "rate_limited" | "locked_out"; retryAfterSeconds: number }
+  | { kind: "queued" };
 
 export function KioskClient({
   academyName,
@@ -71,14 +74,57 @@ export function KioskClient({
   // that already replaced them with a different plan.
   useEffect(() => clearTimers, [clearTimers]);
 
+  // Register the service worker (best-effort, feature-detected — see
+  // public/sw.js: it exists only to satisfy PWA-installability checks, it
+  // does not own any offline logic).
+  useEffect(() => {
+    if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return;
+    navigator.serviceWorker.register("/sw.js").catch(() => {
+      // Installability is a nice-to-have, not required for the kiosk to
+      // function — swallow registration failures.
+    });
+  }, []);
+
+  // Flush any check-ins queued from a previous offline session once on
+  // mount, and again every time connectivity returns. This effect owns no
+  // component timers of its own, so it doesn't interact with clearTimers.
+  useEffect(() => {
+    void flushOfflineQueue();
+    const handleOnline = () => {
+      void flushOfflineQueue();
+    };
+    window.addEventListener("online", handleOnline);
+    return () => window.removeEventListener("online", handleOnline);
+  }, []);
+
   const resetToEntry = useCallback(() => {
     clearTimers();
     setPhase({ kind: "entry", code: "", submitting: false });
   }, [clearTimers]);
 
+  const queueCheckIn = useCallback(
+    async (code: string) => {
+      await enqueueOfflineCheckIn({ academySlug, token, code });
+      clearTimers();
+      setPhase({ kind: "queued" });
+      timeoutRef.current = setTimeout(resetToEntry, QUEUED_DISPLAY_MS);
+    },
+    [academySlug, token, clearTimers, resetToEntry],
+  );
+
   const submitCode = useCallback(
     async (code: string) => {
       setPhase({ kind: "entry", code, submitting: true });
+
+      // Fast pre-check: if the browser already knows it's offline, don't
+      // bother attempting the request at all — go straight to the queue.
+      // `navigator.onLine` can still be wrong in the other direction (it
+      // can report `true` on a captive portal or a dead connection), which
+      // is why the fetch failure below is the real, authoritative signal.
+      if (typeof navigator !== "undefined" && navigator.onLine === false) {
+        await queueCheckIn(code);
+        return;
+      }
 
       let response: Response;
       try {
@@ -88,9 +134,11 @@ export function KioskClient({
           body: JSON.stringify({ academySlug, token, code }),
         });
       } catch {
-        clearTimers();
-        setPhase({ kind: "error", reason: "network_error" });
-        timeoutRef.current = setTimeout(resetToEntry, ERROR_DISPLAY_MS);
+        // A thrown fetch is a genuine network-level failure — the device is
+        // offline (or the server is unreachable). Queue the attempt instead
+        // of showing an error: the student showed up and must not lose
+        // credit for the class over wifi.
+        await queueCheckIn(code);
         return;
       }
 
@@ -139,7 +187,7 @@ export function KioskClient({
       setPhase({ kind: "error", reason });
       timeoutRef.current = setTimeout(resetToEntry, ERROR_DISPLAY_MS);
     },
-    [academySlug, token, clearTimers, resetToEntry],
+    [academySlug, token, clearTimers, resetToEntry, queueCheckIn],
   );
 
   const pressDigit = (digit: string) => {
@@ -177,6 +225,14 @@ export function KioskClient({
       )}
 
       {phase.kind === "success" && <SuccessView result={phase.result} />}
+
+      {phase.kind === "queued" && (
+        <Card className="w-full max-w-sm">
+          <CardContent className="flex flex-col items-center gap-2 py-8 text-center">
+            <p className="text-lg font-medium">{t("queuedOffline")}</p>
+          </CardContent>
+        </Card>
+      )}
 
       {phase.kind === "error" && (
         <Card className="w-full max-w-sm">

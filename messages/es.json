@@ -187,7 +187,8 @@
     "networkError": "No se pudo conectar. Intenta de nuevo.",
     "genericError": "Ocurrió un error. Intenta de nuevo.",
     "rateLimited": "Demasiados intentos. Espera un momento.",
-    "lockedOut": "Bloqueado temporalmente por demasiados intentos fallidos."
+    "lockedOut": "Bloqueado temporalmente por demasiados intentos fallidos.",
+    "queuedOffline": "¡Guardado! Estás sin conexión — esto se sincronizará automáticamente cuando vuelva la conexión."
   },
   "adminKioskTokens": {
     "heading": "Tokens de dispositivo del kiosco",
