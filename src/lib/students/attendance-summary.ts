@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import type { Prisma } from "@/generated/prisma/client";
+import { computeBeltProgress } from "@/lib/students/eligibility";
 
 export interface AtBeltSummary {
   currentBelt: string;
@@ -66,24 +67,7 @@ export async function getAtBeltSummary(studentId: string): Promise<AtBeltSummary
   const atBeltCount = atBeltAgg._sum.delta ?? 0;
   const lifetimeCount = lifetimeAgg._sum.delta ?? 0;
 
-  const atMaxStripes = student.currentStripes >= requirement.maxStripes;
-  const attendancesIntoCurrentStripeSpan = atBeltCount - student.currentStripes * requirement.attendancesPerStripe;
-
-  let nextStripeAt: number | null = null;
-  let remainingToNextStripe: number | null = null;
-  let examEligible = false;
-
-  if (!atMaxStripes && requirement.attendancesPerStripe > 0) {
-    nextStripeAt = (student.currentStripes + 1) * requirement.attendancesPerStripe;
-    remainingToNextStripe = Math.max(0, nextStripeAt - atBeltCount);
-  } else if (atMaxStripes && requirement.attendancesForExam > 0) {
-    // Past the 4th stripe: examEligible once `attendancesForExam` more
-    // attendances have accrued since the 4th stripe was earned.
-    examEligible = attendancesIntoCurrentStripeSpan >= requirement.attendancesForExam;
-    if (!examEligible) {
-      remainingToNextStripe = Math.max(0, requirement.attendancesForExam - attendancesIntoCurrentStripeSpan);
-    }
-  }
+  const progress = computeBeltProgress(atBeltCount, student.currentStripes, requirement);
 
   return {
     currentBelt: student.currentBelt,
@@ -92,9 +76,7 @@ export async function getAtBeltSummary(studentId: string): Promise<AtBeltSummary
     lifetimeCount,
     attendancesPerStripe: requirement.attendancesPerStripe,
     maxStripes: requirement.maxStripes,
-    nextStripeAt,
-    remainingToNextStripe,
-    examEligible,
+    ...progress,
   };
 }
 
