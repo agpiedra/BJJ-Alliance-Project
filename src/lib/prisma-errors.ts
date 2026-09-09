@@ -15,6 +15,18 @@ export function isUniqueConstraintError(error: unknown): boolean {
   return hasPrismaCode(error, "P2002");
 }
 
+/**
+ * `findUniqueOrThrow`/`findFirstOrThrow` raise this (Prisma P2025) when
+ * nothing matches. Used by `promotion-queue.ts`'s per-student classification
+ * to tolerate a row vanishing between an admin-wide scan and that row's own
+ * per-student lookup (a genuine, reproducible TOCTOU — see that file's
+ * `classifyActiveStudents`) without letting one vanished row fail every
+ * other student's classification in the same batch.
+ */
+export function isNotFoundError(error: unknown): boolean {
+  return hasPrismaCode(error, "P2025");
+}
+
 function hasPrismaCode(error: unknown, code: string): boolean {
   return (
     typeof error === "object" &&

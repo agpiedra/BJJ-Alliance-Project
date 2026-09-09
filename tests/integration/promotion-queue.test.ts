@@ -8,6 +8,7 @@ import { digestLookupSecret } from "../../src/lib/crypto";
 import { toAttendanceDate } from "../../src/lib/scheduling/zone";
 import type { StaffSession } from "../../src/lib/auth/session";
 import type { PromotionCandidate } from "../../src/lib/students/promotion-queue";
+import { prisma as appPrisma } from "../../src/lib/prisma";
 
 const { listPromotionQueue, listApproachingStudents } = await import(
   "../../src/lib/students/promotion-queue"
@@ -78,6 +79,47 @@ async function addAttendances(studentId: string, academyId: string, count: numbe
 
 function findCandidate(list: PromotionCandidate[], studentId: string) {
   return list.find((c) => c.studentId === studentId);
+}
+
+/**
+ * Deterministically reproduces the TOCTOU race this file's promotion-queue
+ * fix defends against: `classifyActiveStudents` runs one admin-wide
+ * `prisma.student.findMany` scan, then — in a second step — looks up each
+ * scanned student individually. A student that existed for the scan but is
+ * gone by its own per-row lookup used to throw `P2025` and, because every
+ * per-student lookup shared one `Promise.all`, sink every OTHER student's
+ * classification in the same batch too.
+ *
+ * `appPrisma` (imported from `@/lib/prisma`) is the exact module-singleton
+ * Prisma client `promotion-queue.ts` calls internally — not the separate
+ * `PrismaClient` this file otherwise uses for fixture setup — so patching
+ * its `student.findMany` here intercepts the real scan. The patched
+ * implementation lets the real query run to completion (so the result still
+ * contains `vanishingStudentId`, exactly as if the row still existed at scan
+ * time), then hard-deletes that row before returning — guaranteeing the row
+ * is gone by the time `classifyActiveStudents`'s per-student `Promise.all`
+ * starts its own lookup for it, with no reliance on real concurrency or
+ * timing.
+ */
+async function withStudentVanishingAfterScan<T>(vanishingStudentId: string, fn: () => Promise<T>): Promise<T> {
+  const studentDelegate = appPrisma.student as unknown as {
+    findMany: (...args: unknown[]) => Promise<unknown>;
+  };
+  const originalFindMany = studentDelegate.findMany.bind(studentDelegate);
+  let alreadyDeleted = false;
+  studentDelegate.findMany = async (...args: unknown[]) => {
+    const result = await originalFindMany(...args);
+    if (!alreadyDeleted) {
+      alreadyDeleted = true;
+      await prisma.student.delete({ where: { id: vanishingStudentId } });
+    }
+    return result;
+  };
+  try {
+    return await fn();
+  } finally {
+    studentDelegate.findMany = originalFindMany;
+  }
 }
 
 describe("promotion queue", () => {
@@ -213,5 +255,36 @@ describe("promotion queue", () => {
     const approaching = await listApproachingStudents(admin);
     expect(findCandidate(queue, student.id)).toBeUndefined();
     expect(findCandidate(approaching, student.id)).toBeUndefined();
+  });
+
+  it("a student hard-deleted between the admin-wide scan and its own per-row lookup is excluded from listPromotionQueue/listApproachingStudents without throwing, and without losing any OTHER student's result", async () => {
+    const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+    const admin: StaffSession = { userId: "x", role: "ADMIN", academyIds: "ALL" };
+    const beltAwardedAt = new Date("2026-07-01T12:00:00Z");
+
+    // listPromotionQueue: a genuinely stripe-eligible survivor sharing the
+    // same batch as a student that vanishes mid-scan.
+    const survivor = await makeStudent(escazu.id, { currentBelt: "WHITE", currentStripes: 0, beltAwardedAt });
+    await addAttendances(survivor.id, escazu.id, 30, new Date(beltAwardedAt.getTime() + DAY_MS));
+    const vanishing = await makeStudent(escazu.id, { currentBelt: "WHITE", currentStripes: 0, beltAwardedAt });
+
+    const queue = await withStudentVanishingAfterScan(vanishing.id, () => listPromotionQueue(admin));
+    expect(findCandidate(queue, vanishing.id)).toBeUndefined();
+    const survivorInQueue = findCandidate(queue, survivor.id);
+    expect(survivorInQueue).toBeDefined();
+    expect(survivorInQueue?.status).toBe("stripe-eligible");
+
+    // listApproachingStudents: same race, a fresh vanishing student (the
+    // first is already gone for real now, which wouldn't exercise the race
+    // a second time) alongside a genuinely "approaching" survivor.
+    const survivor2 = await makeStudent(escazu.id, { currentBelt: "WHITE", currentStripes: 0, beltAwardedAt });
+    await addAttendances(survivor2.id, escazu.id, 27, new Date(beltAwardedAt.getTime() + DAY_MS));
+    const vanishing2 = await makeStudent(escazu.id, { currentBelt: "WHITE", currentStripes: 0, beltAwardedAt });
+
+    const approaching = await withStudentVanishingAfterScan(vanishing2.id, () => listApproachingStudents(admin));
+    expect(findCandidate(approaching, vanishing2.id)).toBeUndefined();
+    const survivor2InApproaching = findCandidate(approaching, survivor2.id);
+    expect(survivor2InApproaching).toBeDefined();
+    expect(survivor2InApproaching?.status).toBe("approaching");
   });
 });

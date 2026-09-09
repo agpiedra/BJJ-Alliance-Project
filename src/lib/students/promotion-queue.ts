@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { academyScopeWhere, type StaffSession } from "@/lib/auth/session";
 import { getAtBeltSummary } from "@/lib/students/attendance-summary";
 import { classifyEligibility, type EligibilityStatus } from "@/lib/students/eligibility";
+import { isNotFoundError } from "@/lib/prisma-errors";
 import type { Belt } from "@/generated/prisma/client";
 
 export interface PromotionCandidate {
@@ -59,34 +60,54 @@ async function classifyActiveStudents(session: StaffSession): Promise<
 
   const results = await Promise.all(
     students.map(async (student) => {
-      const [summary, requirement] = await Promise.all([
-        getAtBeltSummary(student.id),
-        resolveBeltRequirementLike(student.currentBelt, student.homeAcademyId),
-      ]);
-      const status = classifyEligibility(
-        { nextStripeAt: summary.nextStripeAt, remainingToNextStripe: summary.remainingToNextStripe, examEligible: summary.examEligible },
-        student.currentStripes,
-        requirement,
-      );
-      return {
-        status,
-        candidate: {
-          studentId: student.id,
-          firstName: student.firstName,
-          lastName: student.lastName,
-          homeAcademyId: student.homeAcademyId,
-          homeAcademyName: student.homeAcademy.name,
-          currentBelt: student.currentBelt,
-          currentStripes: student.currentStripes,
-          status: status as "stripe-eligible" | "exam-eligible" | "approaching",
-          atBeltCount: summary.atBeltCount,
-          remainingToNextStripe: summary.remainingToNextStripe,
-        },
-      };
+      // This admin-wide scan and this per-student lookup are not atomic: a
+      // student present in the `findMany` above can be gone by the time this
+      // runs (e.g. another test file's fixture teardown hard-deleting its own
+      // rows mid-scan — confirmed reproducible, see
+      // tests/integration/promotion-queue.test.ts's vanished-student case).
+      // `getAtBeltSummary`/`resolveBeltRequirementLike` both use
+      // `findUniqueOrThrow`/`findFirstOrThrow` under the hood and throw
+      // Prisma P2025 in that case. Every per-student lookup shares this one
+      // `Promise.all`, so an uncaught rejection here would fail the entire
+      // batch — losing every OTHER (unrelated) student's classification too.
+      // A vanished student trivially isn't eligible for anything, so we
+      // catch just the not-found case, drop that student (via the `null`
+      // filtered out below), and let any other error keep propagating.
+      try {
+        const [summary, requirement] = await Promise.all([
+          getAtBeltSummary(student.id),
+          resolveBeltRequirementLike(student.currentBelt, student.homeAcademyId),
+        ]);
+        const status = classifyEligibility(
+          { nextStripeAt: summary.nextStripeAt, remainingToNextStripe: summary.remainingToNextStripe, examEligible: summary.examEligible },
+          student.currentStripes,
+          requirement,
+        );
+        return {
+          status,
+          candidate: {
+            studentId: student.id,
+            firstName: student.firstName,
+            lastName: student.lastName,
+            homeAcademyId: student.homeAcademyId,
+            homeAcademyName: student.homeAcademy.name,
+            currentBelt: student.currentBelt,
+            currentStripes: student.currentStripes,
+            status: status as "stripe-eligible" | "exam-eligible" | "approaching",
+            atBeltCount: summary.atBeltCount,
+            remainingToNextStripe: summary.remainingToNextStripe,
+          },
+        };
+      } catch (error) {
+        if (isNotFoundError(error)) {
+          return null;
+        }
+        throw error;
+      }
     }),
   );
 
-  return results;
+  return results.filter((r): r is { candidate: PromotionCandidate; status: EligibilityStatus } => r !== null);
 }
 
 export async function listPromotionQueue(session: StaffSession): Promise<PromotionCandidate[]> {
