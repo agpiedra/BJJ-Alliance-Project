@@ -67,7 +67,10 @@
     "heading": "Panel de control",
     "welcome": "Bienvenido, {email}",
     "pendingApprovals": "{count, plural, =0 {Ningún estudiante esperando aprobación} one {# estudiante esperando aprobación} other {# estudiantes esperando aprobación}}",
-    "pendingApprovalsLink": "Ver estudiantes pendientes"
+    "pendingApprovalsLink": "Ver estudiantes pendientes",
+    "adminSection": "Administración",
+    "adminKioskTokensLink": "Tokens de kiosco",
+    "adminScheduleLink": "Horario de clases"
   },
   "signup": {
     "heading": "Crear cuenta de estudiante",
@@ -197,13 +200,14 @@
         "toggle": "Agregar ajuste",
         "delta": "Ajuste",
         "deltaHint": "Un número positivo agrega asistencias, uno negativo las quita.",
-        "deltaInvalid": "Ingresa un número entero distinto de cero.",
+        "deltaInvalid": "Ingresa un número entero distinto de cero entre -1000 y 1000.",
         "reason": "Motivo",
         "reasonRequired": "El motivo es obligatorio.",
         "submit": "Guardar ajuste",
         "success": "Ajuste guardado.",
         "invalid": "Por favor revisa el formulario.",
-        "notFound": "No se pudo agregar este ajuste."
+        "notFound": "No se pudo agregar este ajuste.",
+        "archived": "Este estudiante está archivado — no se puede ajustar su asistencia."
       }
     }
   },
@@ -227,7 +231,9 @@
     "rateLimited": "Demasiados intentos. Espera un momento.",
     "lockedOut": "Bloqueado temporalmente por demasiados intentos fallidos.",
     "queuedOffline": "¡Guardado! Estás sin conexión — esto se sincronizará automáticamente cuando vuelva la conexión.",
-    "queueFailed": "No pudimos guardar tu check-in en este dispositivo. Por favor avisa en la recepción."
+    "queueFailed": "No pudimos guardar tu check-in en este dispositivo. Por favor avisa en la recepción.",
+    "syncDropped": "{count, plural, one {# check-in no se pudo sincronizar — por favor avisa en la recepción} other {# check-ins no se pudieron sincronizar — por favor avisa en la recepción}}",
+    "syncDroppedDismiss": "Descartar"
   },
   "adminKioskTokens": {
     "heading": "Tokens de dispositivo del kiosco",

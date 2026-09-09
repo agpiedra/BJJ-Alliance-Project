@@ -4,122 +4,210 @@ import { PrismaClient } from "../../src/generated/prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { requireEnv } from "../../src/lib/env";
 
-const { checkKioskRateLimit, recordKioskAttempt } = await import("../../src/lib/kiosk/rate-limit");
+const { reserveKioskAttempt, finalizeKioskAttempt } = await import("../../src/lib/kiosk/rate-limit");
 
 const adapter = new PrismaPg({ connectionString: requireEnv("DATABASE_URL") });
 const prisma = new PrismaClient({ adapter });
 
 let escazuId: string;
+let otherAcademyId: string;
 
 beforeAll(async () => {
   const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
   escazuId = escazu.id;
+  const other = await prisma.academy.findFirstOrThrow({ where: { slug: { not: "escazu" } } });
+  otherAcademyId = other.id;
 });
 
-function uniqueIp(tag: string) {
-  return `10.99.${Math.floor(Math.random() * 255)}.${Date.now() % 255}-${tag}`;
+/**
+ * The rate-limit key is now the VERIFIED kiosk token's digest, not the
+ * caller's (spoofable) IP. These are synthetic digests carrying a shared
+ * prefix so the suite can clean up after itself without touching either
+ * academy's real `kioskTokenHash` or any other test's rows.
+ */
+const TEST_HASH_PREFIX = "test-token-hash-";
+
+function uniqueTokenHash(tag: string) {
+  return `${TEST_HASH_PREFIX}${tag}-${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
 }
 
+/** IP is audit-only metadata now — deliberately the same constant everywhere. */
+const AUDIT_IP = "203.0.113.7";
+
 afterEach(async () => {
-  await prisma.kioskAttempt.deleteMany({ where: { ipAddress: { startsWith: "10.99." } } });
+  await prisma.kioskAttempt.deleteMany({ where: { kioskTokenHash: { startsWith: TEST_HASH_PREFIX } } });
 });
 
-describe("kiosk rate limiting", () => {
-  it("allows a fresh IP with no prior attempts", async () => {
-    const ip = uniqueIp("fresh");
-    const result = await checkKioskRateLimit(escazuId, ip);
-    expect(result).toEqual({ allowed: true });
+function countAttempts(kioskTokenHash: string, academyId = escazuId) {
+  return prisma.kioskAttempt.count({ where: { academyId, kioskTokenHash } });
+}
+
+describe("kiosk rate limiting (reserve/finalize, keyed on the kiosk token digest)", () => {
+  it("allows a fresh token with no prior attempts, and reserves a provisional failure row", async () => {
+    const hash = uniqueTokenHash("fresh");
+
+    const reservation = await reserveKioskAttempt(escazuId, hash, AUDIT_IP);
+
+    expect(reservation.allowed).toBe(true);
+    if (!reservation.allowed) return;
+
+    const row = await prisma.kioskAttempt.findUniqueOrThrow({ where: { id: reservation.attemptId } });
+    // Reserved BEFORE the code is evaluated, so it starts out as a failure —
+    // the gate is genuinely in front of the guess.
+    expect(row.success).toBe(false);
+    expect(row.kioskTokenHash).toBe(hash);
+    expect(row.ipAddress).toBe(AUDIT_IP);
   });
 
-  it("rate-limits after 10 attempts (any mix of success/fail) within the window", async () => {
-    const ip = uniqueIp("ratelimit");
-    // Keep failures under the lockout threshold (5) so this exercises the rate-limit path in
-    // isolation; the precedence between the two conditions is covered separately below.
-    for (let i = 0; i < 10; i++) {
-      await recordKioskAttempt(escazuId, ip, i < 6);
-    }
-    const result = await checkKioskRateLimit(escazuId, ip);
-    expect(result.allowed).toBe(false);
-    if (!result.allowed) {
-      expect(result.reason).toBe("rate_limited");
-      expect(result.retryAfterSeconds).toBeGreaterThanOrEqual(1);
-      expect(result.retryAfterSeconds).toBeLessThanOrEqual(60);
-    }
+  it("finalizeKioskAttempt(true) upgrades that exact row; finalize(false) leaves it a failure", async () => {
+    const hash = uniqueTokenHash("finalize");
+
+    const success = await reserveKioskAttempt(escazuId, hash, AUDIT_IP);
+    expect(success.allowed).toBe(true);
+    if (!success.allowed) return;
+    await finalizeKioskAttempt(success.attemptId, true);
+    expect((await prisma.kioskAttempt.findUniqueOrThrow({ where: { id: success.attemptId } })).success).toBe(true);
+
+    const failure = await reserveKioskAttempt(escazuId, hash, AUDIT_IP);
+    expect(failure.allowed).toBe(true);
+    if (!failure.allowed) return;
+    await finalizeKioskAttempt(failure.attemptId, false);
+    expect((await prisma.kioskAttempt.findUniqueOrThrow({ where: { id: failure.attemptId } })).success).toBe(false);
   });
 
-  it("locks out after exactly 5 failures (fewer than 10 total attempts) within 60s", async () => {
-    const ip = uniqueIp("lockout");
-    for (let i = 0; i < 5; i++) {
-      await recordKioskAttempt(escazuId, ip, false);
+  it("never rate-limits a burst of SUCCESSFUL check-ins — a class rush on one shared tablet", async () => {
+    const hash = uniqueTokenHash("class-rush");
+    const BURST = 15; // comfortably past both the old 10/60s ceiling and the 5-failure lockout
+
+    for (let i = 0; i < BURST; i++) {
+      const reservation = await reserveKioskAttempt(escazuId, hash, AUDIT_IP);
+      expect(reservation.allowed).toBe(true);
+      if (!reservation.allowed) return;
+      await finalizeKioskAttempt(reservation.attemptId, true);
     }
-    const result = await checkKioskRateLimit(escazuId, ip);
-    expect(result.allowed).toBe(false);
-    if (!result.allowed) {
-      expect(result.reason).toBe("locked_out");
-      expect(result.retryAfterSeconds).toBeGreaterThanOrEqual(1);
-      expect(result.retryAfterSeconds).toBeLessThanOrEqual(60);
-    }
+
+    // And the very next student still gets through.
+    const next = await reserveKioskAttempt(escazuId, hash, AUDIT_IP);
+    expect(next.allowed).toBe(true);
+
+    expect(await countAttempts(hash)).toBe(BURST + 1);
   });
 
-  it("prefers locked_out over rate_limited when both conditions apply simultaneously", async () => {
-    const ip = uniqueIp("precedence");
-    const now = Date.now();
-    // 5 failures + 3 successes + 2 more failures = 10 attempts within the window, with 7 of
-    // them failures — both the >=10-total and >=5-failures conditions are true. Seeded
-    // directly (bypassing recordKioskAttempt's own gating, which would otherwise refuse to
-    // insert once locked out) so this test only exercises the reason-precedence decision.
-    const successPattern = [false, false, false, false, false, true, true, true, false, false];
+  it("locks out after exactly 5 FAILURES within 60s, and successes in between don't bring it forward", async () => {
+    const hash = uniqueTokenHash("lockout");
+
+    // 4 failures interleaved with 3 successes: 7 attempts, still under the
+    // failure threshold, so nothing is blocked yet.
+    for (const isSuccess of [false, true, false, true, false, true, false]) {
+      const reservation = await reserveKioskAttempt(escazuId, hash, AUDIT_IP);
+      expect(reservation.allowed).toBe(true);
+      if (!reservation.allowed) return;
+      await finalizeKioskAttempt(reservation.attemptId, isSuccess);
+    }
+
+    // The 5th failure is itself allowed (it's the one that trips the lockout).
+    const fifth = await reserveKioskAttempt(escazuId, hash, AUDIT_IP);
+    expect(fifth.allowed).toBe(true);
+    if (!fifth.allowed) return;
+    await finalizeKioskAttempt(fifth.attemptId, false);
+
+    const blocked = await reserveKioskAttempt(escazuId, hash, AUDIT_IP);
+    expect(blocked.allowed).toBe(false);
+    if (blocked.allowed) return;
+    expect(blocked.reason).toBe("locked_out");
+    expect(blocked.retryAfterSeconds).toBeGreaterThanOrEqual(1);
+    expect(blocked.retryAfterSeconds).toBeLessThanOrEqual(60);
+  });
+
+  it("logs a BLOCKED attempt too — spec §4.1's 'log every failed attempt' covers lockout traffic", async () => {
+    const hash = uniqueTokenHash("log-blocked");
     await prisma.kioskAttempt.createMany({
-      data: successPattern.map((success, i) => ({
+      data: Array.from({ length: 5 }, (_, i) => ({
         academyId: escazuId,
-        ipAddress: ip,
-        success,
-        createdAt: new Date(now - (successPattern.length - i) * 1000),
+        kioskTokenHash: hash,
+        ipAddress: AUDIT_IP,
+        success: false,
+        createdAt: new Date(Date.now() - (5 - i) * 1000),
       })),
     });
 
-    const result = await checkKioskRateLimit(escazuId, ip);
-    expect(result.allowed).toBe(false);
-    if (!result.allowed) {
-      expect(result.reason).toBe("locked_out");
-    }
+    const blocked = await reserveKioskAttempt(escazuId, hash, AUDIT_IP);
+    expect(blocked.allowed).toBe(false);
+
+    // 5 seeded + the rejected one, which must NOT be silently dropped.
+    expect(await countAttempts(hash)).toBe(6);
   });
 
-  it("never records more than 5 attempts as allowed under concurrent load before lockout engages", async () => {
-    const ip = uniqueIp("concurrency");
-    const CONCURRENT_CALLS = 15;
+  it("lets the window slide: failures older than 60s no longer lock the key out", async () => {
+    const hash = uniqueTokenHash("sliding");
+    const wellOutsideWindow = Date.now() - 120_000;
+    await prisma.kioskAttempt.createMany({
+      data: Array.from({ length: 8 }, (_, i) => ({
+        academyId: escazuId,
+        kioskTokenHash: hash,
+        ipAddress: AUDIT_IP,
+        success: false,
+        createdAt: new Date(wellOutsideWindow + i * 1000),
+      })),
+    });
+
+    const reservation = await reserveKioskAttempt(escazuId, hash, AUDIT_IP);
+    expect(reservation.allowed).toBe(true);
+  });
+
+  it("caps allowed attempts at 5 under concurrent load — the gate holds before any guess is evaluated", async () => {
+    const hash = uniqueTokenHash("concurrency");
+    const CONCURRENT_CALLS = 20;
 
     const results = await Promise.all(
-      Array.from({ length: CONCURRENT_CALLS }, () => recordKioskAttempt(escazuId, ip, false)),
+      Array.from({ length: CONCURRENT_CALLS }, () => reserveKioskAttempt(escazuId, hash, AUDIT_IP)),
     );
 
-    const allowedCount = results.filter((r) => r.allowed).length;
-    const lockedOutCount = results.filter((r) => !r.allowed && r.reason === "locked_out").length;
-    expect(allowedCount).toBeLessThanOrEqual(5);
-    expect(allowedCount + lockedOutCount).toBe(CONCURRENT_CALLS);
+    const allowed = results.filter((r) => r.allowed);
+    const lockedOut = results.filter((r) => !r.allowed && r.reason === "locked_out");
+    expect(allowed).toHaveLength(5);
+    expect(allowed.length + lockedOut.length).toBe(CONCURRENT_CALLS);
 
-    // The atomic gate must also have refused to insert once locked out, not merely reported it.
-    const recordedCount = await prisma.kioskAttempt.count({ where: { academyId: escazuId, ipAddress: ip } });
-    expect(recordedCount).toBe(allowedCount);
-    expect(recordedCount).toBeLessThanOrEqual(5);
+    // Every attempt — allowed or blocked — is on the record.
+    expect(await countAttempts(hash)).toBe(CONCURRENT_CALLS);
+    // ...and every reserved id is distinct, so no two callers can finalize the same row.
+    const ids = new Set(allowed.map((r) => (r.allowed ? r.attemptId : "")));
+    expect(ids.size).toBe(5);
   });
 
-  it("scopes rate limiting per academy+IP: a different IP or a different academy is unaffected", async () => {
-    const lockedIp = uniqueIp("scope-locked");
+  it("scopes per (academy, kiosk token): a different token, or the same token at another academy, is unaffected", async () => {
+    const lockedHash = uniqueTokenHash("scope-locked");
     for (let i = 0; i < 5; i++) {
-      await recordKioskAttempt(escazuId, lockedIp, false);
+      const reservation = await reserveKioskAttempt(escazuId, lockedHash, AUDIT_IP);
+      expect(reservation.allowed).toBe(true);
+      if (!reservation.allowed) return;
+      await finalizeKioskAttempt(reservation.attemptId, false);
     }
-    const lockedResult = await checkKioskRateLimit(escazuId, lockedIp);
-    expect(lockedResult.allowed).toBe(false);
+    const lockedOut = await reserveKioskAttempt(escazuId, lockedHash, AUDIT_IP);
+    expect(lockedOut.allowed).toBe(false);
 
-    // A different IP at the same academy is unaffected.
-    const otherIp = uniqueIp("scope-other-ip");
-    const otherIpResult = await checkKioskRateLimit(escazuId, otherIp);
-    expect(otherIpResult).toEqual({ allowed: true });
+    // A different kiosk token at the same academy is unaffected.
+    const otherHash = uniqueTokenHash("scope-other-token");
+    expect((await reserveKioskAttempt(escazuId, otherHash, AUDIT_IP)).allowed).toBe(true);
 
-    // The same IP at a different academy is unaffected.
-    const otherAcademy = await prisma.academy.findFirstOrThrow({ where: { slug: { not: "escazu" } } });
-    const otherAcademyResult = await checkKioskRateLimit(otherAcademy.id, lockedIp);
-    expect(otherAcademyResult).toEqual({ allowed: true });
+    // The same token hash at a different academy is unaffected.
+    expect((await reserveKioskAttempt(otherAcademyId, lockedHash, AUDIT_IP)).allowed).toBe(true);
+  });
+
+  it("is NOT keyed on the caller-supplied IP — rotating it per request no longer evades the counter", async () => {
+    const hash = uniqueTokenHash("ip-rotation");
+
+    for (let i = 0; i < 5; i++) {
+      const reservation = await reserveKioskAttempt(escazuId, hash, `198.51.100.${i}`);
+      expect(reservation.allowed).toBe(true);
+      if (!reservation.allowed) return;
+      await finalizeKioskAttempt(reservation.attemptId, false);
+    }
+
+    // A brand-new IP, same token: still locked out.
+    const blocked = await reserveKioskAttempt(escazuId, hash, "198.51.100.250");
+    expect(blocked.allowed).toBe(false);
+    if (blocked.allowed) return;
+    expect(blocked.reason).toBe("locked_out");
   });
 });

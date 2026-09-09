@@ -15,11 +15,20 @@ const pepper = requireEnv("CODE_PEPPER");
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 const cleanupStudentIds: string[] = [];
+// A private academy for the countsTowardPromotion case — adding ClassSessions
+// to the shared seeded Escazú academy would race seed.test.ts /
+// session-scoping.test.ts's exact-row-count assertions under vitest's
+// file-level parallelism.
+const cleanupAcademyIds: string[] = [];
 
 async function cleanup() {
   if (cleanupStudentIds.length > 0) {
     await prisma.attendanceRecord.deleteMany({ where: { studentId: { in: cleanupStudentIds } } });
     await prisma.student.deleteMany({ where: { id: { in: cleanupStudentIds } } });
+  }
+  if (cleanupAcademyIds.length > 0) {
+    await prisma.classSession.deleteMany({ where: { academyId: { in: cleanupAcademyIds } } });
+    await prisma.academy.deleteMany({ where: { id: { in: cleanupAcademyIds } } });
   }
 }
 
@@ -160,5 +169,87 @@ describe("getAtBeltSummary", () => {
     expect(summary.atBeltCount).toBe(150);
     expect(summary.examEligible).toBe(true);
     expect(summary.remainingToNextStripe).toBeNull();
+  });
+
+  it("counts only classes flagged countsTowardPromotion, plus every classSession-less manual adjustment", async () => {
+    const suffix = `${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
+    const academy = await prisma.academy.create({
+      data: {
+        name: `Summary Fixture ${suffix}`,
+        slug: `summary-fixture-${suffix}`,
+        kioskTokenHash: `summary-fixture-hash-${suffix}`,
+      },
+    });
+    cleanupAcademyIds.push(academy.id);
+
+    const [counting, notCounting] = await Promise.all([
+      prisma.classSession.create({
+        data: {
+          academyId: academy.id,
+          dayOfWeek: "MONDAY",
+          startTime: "12:00",
+          durationMinutes: 60,
+          name: "GI",
+          type: "GI",
+          countsTowardPromotion: true,
+        },
+      }),
+      prisma.classSession.create({
+        data: {
+          academyId: academy.id,
+          dayOfWeek: "SATURDAY",
+          startTime: "09:00",
+          durationMinutes: 60,
+          name: "Striking",
+          type: "STRIKING",
+          countsTowardPromotion: false,
+        },
+      }),
+    ]);
+
+    const beltAwardedAt = new Date("2026-01-01T12:00:00Z");
+    const student = await makeStudent(academy.id, { currentStripes: 0, beltAwardedAt });
+
+    // 3 counting check-ins, 4 non-counting ones, and a +2 manual adjustment
+    // with no classSessionId at all.
+    const rows = [
+      ...Array.from({ length: 3 }, (_, i) => ({ classSessionId: counting.id, dayOffset: i + 1 })),
+      ...Array.from({ length: 4 }, (_, i) => ({ classSessionId: notCounting.id, dayOffset: i + 10 })),
+    ].map(({ classSessionId, dayOffset }) => {
+      const occurredAt = new Date(beltAwardedAt.getTime() + dayOffset * DAY_MS);
+      return {
+        studentId: student.id,
+        academyId: academy.id,
+        classSessionId,
+        occurredAt,
+        date: toAttendanceDate(occurredAt),
+        type: "CHECKIN" as const,
+        delta: 1,
+        source: "KIOSK" as const,
+      };
+    });
+    await prisma.attendanceRecord.createMany({ data: rows });
+
+    const adjustedAt = new Date(beltAwardedAt.getTime() + 20 * DAY_MS);
+    await prisma.attendanceRecord.create({
+      data: {
+        studentId: student.id,
+        academyId: academy.id,
+        occurredAt: adjustedAt,
+        date: toAttendanceDate(adjustedAt),
+        type: "ADJUSTMENT",
+        delta: 2,
+        reason: "human-reviewed correction",
+        source: "STAFF",
+      },
+    });
+
+    const summary = await getAtBeltSummary(student.id);
+    // 3 counting + 2 adjustment; the 4 Striking check-ins are excluded.
+    expect(summary.atBeltCount).toBe(5);
+    expect(summary.lifetimeCount).toBe(5);
+
+    // ...but the ledger itself still holds every physical check-in.
+    expect(await prisma.attendanceRecord.count({ where: { studentId: student.id } })).toBe(8);
   });
 });

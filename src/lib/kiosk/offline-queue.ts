@@ -123,11 +123,30 @@ function isFailureBody(body: unknown): body is { ok: false; error: string } {
 type ReplayOutcome = "definitive" | "retry";
 
 /**
+ * The result of replaying one entry.
+ *
+ * `dropped` marks the subset of `definitive` outcomes where the student's
+ * attendance was permanently LOST — the server gave a final answer that isn't
+ * a real verdict on the code itself (a rotated kiosk token, a class window
+ * that closed before connectivity came back, a malformed request). Those are
+ * reported up to the UI so a human can be told, because a devtools
+ * `console.warn` on an unattended kiosk tablet is a channel nobody reads.
+ *
+ * A 200, an `already_checked_in`, or an `invalid_code` are NOT drops: nothing
+ * was lost in the first two, and the third is a genuine, final answer about
+ * the code the student typed.
+ */
+interface ReplayResult {
+  outcome: ReplayOutcome;
+  dropped: boolean;
+}
+
+/**
  * Replay classification rules (see module doc for the general principle).
  * Each branch documents *why* that response is definitive vs. a
  * connectivity-shaped condition worth retrying.
  */
-async function replayEntry(entry: StoredCheckIn): Promise<ReplayOutcome> {
+async function replayEntry(entry: StoredCheckIn): Promise<ReplayResult> {
   let response: Response;
   try {
     response = await fetch(CHECK_IN_ENDPOINT, {
@@ -137,17 +156,24 @@ async function replayEntry(entry: StoredCheckIn): Promise<ReplayOutcome> {
         academySlug: entry.academySlug,
         token: entry.token,
         code: entry.code,
+        // The instant the student ACTUALLY tapped, not the instant
+        // connectivity came back. Without it the server records the replay
+        // time, which mis-stamps occurredAt/date and can attribute the
+        // check-in to a later class (or reject it as no_active_class). The
+        // server validates it and falls back to its own clock if it's absent,
+        // in the future, or implausibly stale.
+        queuedAt: entry.queuedAt,
       }),
     });
   } catch {
     // Thrown fetch = network-level failure: still offline, or the server is
     // unreachable. Not a verdict on this check-in at all — retry later.
-    return "retry";
+    return { outcome: "retry", dropped: false };
   }
 
   if (response.status === 200) {
     // Success: the check-in landed. Done.
-    return "definitive";
+    return { outcome: "definitive", dropped: false };
   }
 
   let body: unknown;
@@ -158,7 +184,7 @@ async function replayEntry(entry: StoredCheckIn): Promise<ReplayOutcome> {
     // server-side problem, not a real answer about this check-in. Don't
     // guess; leave it queued rather than risk silently discarding a real
     // attendance attempt.
-    return "retry";
+    return { outcome: "retry", dropped: false };
   }
 
   const reason = isFailureBody(body) ? body.error : undefined;
@@ -190,10 +216,13 @@ async function replayEntry(entry: StoredCheckIn): Promise<ReplayOutcome> {
         entry,
         reason,
       });
-    } else if (reason !== "already_checked_in" && reason !== "invalid_code") {
-      console.warn("[kiosk-offline-queue] offline check-in dropped: invalid_request", { entry, reason });
+      return { outcome: "definitive", dropped: true };
     }
-    return "definitive";
+    if (reason !== "already_checked_in" && reason !== "invalid_code") {
+      console.warn("[kiosk-offline-queue] offline check-in dropped: invalid_request", { entry, reason });
+      return { outcome: "definitive", dropped: true };
+    }
+    return { outcome: "definitive", dropped: false };
   }
 
   if (response.status === 401 || response.status === 404) {
@@ -204,7 +233,7 @@ async function replayEntry(entry: StoredCheckIn): Promise<ReplayOutcome> {
     // check-in silently vanishing with no trace is exactly the kind of
     // thing the front desk needs to be able to investigate later.
     console.warn("[kiosk-offline-queue] offline check-in dropped: invalid_token", { entry, reason });
-    return "definitive";
+    return { outcome: "definitive", dropped: true };
   }
 
   if (response.status === 429) {
@@ -212,28 +241,39 @@ async function replayEntry(entry: StoredCheckIn): Promise<ReplayOutcome> {
     // contract (they carry retryAfterSeconds) — NOT a verdict on this
     // check-in. Leave it queued and stop flushing; the next `online` event
     // (or a later flush) will retry once the window passes.
-    return "retry";
+    return { outcome: "retry", dropped: false };
   }
 
   // Any other/unexpected status: be conservative. Don't discard a real
   // attendance attempt over an unrecognized response — retry later.
-  return "retry";
+  return { outcome: "retry", dropped: false };
 }
 
 let isFlushing = false;
+
+/** What a flush pass did, for the UI to surface to a human. */
+export interface FlushSummary {
+  /**
+   * How many queued check-ins were permanently discarded during this pass
+   * without the student getting credit. Non-zero means somebody was told
+   * "saved, will sync" and it never did — the front desk needs to know.
+   */
+  dropped: number;
+}
 
 /**
  * Replay every queued check-in, in order, one at a time. Stops (leaving the
  * current and all later entries queued) the first time a request looks like
  * a connectivity failure, so a later `online` event can retry the whole
  * remaining queue from the front. Re-entrant calls are no-ops while a flush
- * is already in progress.
+ * is already in progress (and report zero drops, since they did nothing).
  */
-export async function flushOfflineQueue(): Promise<void> {
-  if (!isIndexedDbAvailable()) return;
-  if (isFlushing) return;
+export async function flushOfflineQueue(): Promise<FlushSummary> {
+  if (!isIndexedDbAvailable()) return { dropped: 0 };
+  if (isFlushing) return { dropped: 0 };
 
   isFlushing = true;
+  let dropped = 0;
   try {
     const db = await openDb();
     let entries: StoredCheckIn[];
@@ -244,10 +284,11 @@ export async function flushOfflineQueue(): Promise<void> {
     }
 
     for (const entry of entries) {
-      const outcome = await replayEntry(entry);
-      if (outcome === "retry") {
-        return;
+      const result = await replayEntry(entry);
+      if (result.outcome === "retry") {
+        return { dropped };
       }
+      if (result.dropped) dropped++;
 
       const deleteDb = await openDb();
       try {
@@ -259,4 +300,6 @@ export async function flushOfflineQueue(): Promise<void> {
   } finally {
     isFlushing = false;
   }
+
+  return { dropped };
 }

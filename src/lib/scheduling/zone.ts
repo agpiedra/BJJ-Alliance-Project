@@ -11,6 +11,21 @@ export const ZONE = "America/Costa_Rica";
  * check-ins. See prisma/schema.prisma's comment on AttendanceRecord.date.
  */
 export function toAttendanceDate(occurredAt: Date): Date {
-  const crDate = DateTime.fromJSDate(occurredAt, { zone: "utc" }).setZone(ZONE);
-  return DateTime.utc(crDate.year, crDate.month, crDate.day).toJSDate();
+  return attendanceDateFromZoned(DateTime.fromJSDate(occurredAt, { zone: "utc" }).setZone(ZONE));
+}
+
+/**
+ * The same `@db.Date`-shaped UTC-midnight Date, but derived from an
+ * already-CR-zoned `DateTime` instead of a raw instant.
+ *
+ * Needed because a class occurrence's ledger day is NOT always the CR calendar
+ * day of the check-in instant: a ±30-minute window can straddle CR midnight, so
+ * two check-ins to the SAME class occurrence would otherwise land on two
+ * different `date` values and slip past the
+ * `@@unique([studentId, classSessionId, date])` constraint — two ledger rows
+ * for one class. Callers stamp from the occurrence's matched anchor day
+ * instead (see `selectActiveSessionOccurrence`).
+ */
+export function attendanceDateFromZoned(zoned: DateTime): Date {
+  return DateTime.utc(zoned.year, zoned.month, zoned.day).toJSDate();
 }

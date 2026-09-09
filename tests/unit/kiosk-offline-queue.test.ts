@@ -162,11 +162,28 @@ describe("offline-queue", () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [, init] = fetchMock.mock.calls[0];
-    expect(JSON.parse(init.body)).toEqual({ academySlug: "demo", token: "tok", code: "1234" });
+    expect(JSON.parse(init.body)).toMatchObject({ academySlug: "demo", token: "tok", code: "1234" });
 
     // A second flush finds nothing left to replay.
     await flushOfflineQueue();
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("sends the entry's original queuedAt so the server records the real attendance instant", async () => {
+    const before = Date.now();
+    await enqueueOfflineCheckIn({ academySlug: "demo", token: "tok", code: "1234" });
+    const after = Date.now();
+
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, { ok: true }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await flushOfflineQueue();
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(typeof body.queuedAt).toBe("number");
+    // It's the enqueue instant, not the replay instant.
+    expect(body.queuedAt).toBeGreaterThanOrEqual(before);
+    expect(body.queuedAt).toBeLessThanOrEqual(after);
   });
 
   it("replays entries strictly in FIFO order, one at a time", async () => {
@@ -381,6 +398,37 @@ describe("offline-queue", () => {
 
     await flushOfflineQueue();
     expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it("reports a drop count for permanently-lost entries so the UI can tell a human", async () => {
+    await enqueueOfflineCheckIn({ academySlug: "demo", token: "tok", code: "1111" });
+    await enqueueOfflineCheckIn({ academySlug: "demo", token: "tok", code: "2222" });
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(jsonResponse(400, { ok: false, error: "no_active_class" }))
+        .mockResolvedValueOnce(jsonResponse(401, { ok: false, error: "invalid_token" })),
+    );
+
+    expect(await flushOfflineQueue()).toEqual({ dropped: 2 });
+  });
+
+  it("does NOT count a success, already_checked_in or invalid_code as a drop", async () => {
+    await enqueueOfflineCheckIn({ academySlug: "demo", token: "tok", code: "1111" });
+    await enqueueOfflineCheckIn({ academySlug: "demo", token: "tok", code: "2222" });
+    await enqueueOfflineCheckIn({ academySlug: "demo", token: "tok", code: "3333" });
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(jsonResponse(200, { ok: true }))
+        .mockResolvedValueOnce(jsonResponse(400, { ok: false, error: "already_checked_in" }))
+        .mockResolvedValueOnce(jsonResponse(400, { ok: false, error: "invalid_code" })),
+    );
+
+    expect(await flushOfflineQueue()).toEqual({ dropped: 0 });
   });
 
   it("does not replay entries in parallel (each awaited before the next starts)", async () => {

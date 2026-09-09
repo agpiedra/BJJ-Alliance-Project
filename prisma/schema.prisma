@@ -299,15 +299,24 @@ model PaymentPeriod {
 }
 
 model KioskAttempt {
-  id        String   @id @default(cuid())
+  id        String @id @default(cuid())
   academyId String
+  /// The rate-limit / lockout KEY: the HMAC digest of the kiosk token the
+  /// attempt was presented with (the same value stored in
+  /// `Academy.kioskTokenHash`). Keyed on the verified token rather than the
+  /// caller's IP because `x-forwarded-for` is client-supplied and can be
+  /// rotated per request to evade the counter entirely — and, with no reverse
+  /// proxy in front, degenerates to one shared "unknown" bucket for everyone.
+  kioskTokenHash String
+  /// Best-effort audit metadata ONLY — never part of the rate-limit key, and
+  /// never trusted for a security decision (see `kioskTokenHash`).
   ipAddress String
   success   Boolean
   createdAt DateTime @default(now())
 
   academy Academy @relation(fields: [academyId], references: [id])
 
-  @@index([academyId, ipAddress, createdAt])
+  @@index([academyId, kioskTokenHash, createdAt])
 }
 
 model AuditLog {

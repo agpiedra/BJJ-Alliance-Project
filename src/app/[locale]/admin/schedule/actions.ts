@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { requireStaffSession } from "@/lib/auth/session";
 import { DayOfWeek, ClassType, Prisma } from "@/generated/prisma/client";
 import type { ActionState } from "@/lib/action-state";
+import { isUniqueConstraintError } from "@/lib/prisma-errors";
 
 // "HH:mm", 24h — the exact wall-clock shape `getCheckInWindow`
 // (src/lib/scheduling/check-in-window.ts) already parses via
@@ -36,15 +37,6 @@ const updateClassSessionSchema = z.object({
 });
 
 const classSessionIdSchema = z.object({ classSessionId: z.string().min(1) });
-
-function isUniqueConstraintError(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { code: unknown }).code === "P2002"
-  );
-}
 
 /**
  * ADMIN-only (spec §5: class-schedule structure is academy policy, not a

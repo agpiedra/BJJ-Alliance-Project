@@ -61,6 +61,13 @@ export function KioskClient({
 }) {
   const t = useTranslations("kiosk");
   const [phase, setPhase] = useState<Phase>({ kind: "entry", code: "", submitting: false });
+  // Count of queued check-ins permanently lost on replay. Deliberately NOT a
+  // `phase` — it must survive every phase transition and stay on screen until
+  // a human dismisses it (or the page reloads), unlike the auto-expiring
+  // success/error/queued cards. Session-only state is enough: it exists to
+  // catch a staff member's eye now, and the entries themselves are already
+  // gone from IndexedDB by the time it renders.
+  const [droppedCount, setDroppedCount] = useState(0);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -94,9 +101,13 @@ export function KioskClient({
   // mount, and again every time connectivity returns. This effect owns no
   // component timers of its own, so it doesn't interact with clearTimers.
   useEffect(() => {
-    void flushOfflineQueue();
+    const flush = async () => {
+      const { dropped } = await flushOfflineQueue();
+      if (dropped > 0) setDroppedCount((current) => current + dropped);
+    };
+    void flush();
     const handleOnline = () => {
-      void flushOfflineQueue();
+      void flush();
     };
     window.addEventListener("online", handleOnline);
     return () => window.removeEventListener("online", handleOnline);
@@ -239,6 +250,26 @@ export function KioskClient({
 
   return (
     <main className="flex min-h-screen flex-col items-center justify-center gap-6 p-6">
+      {/* Persistent, staff-facing. Deliberately outside the `phase` state
+          machine so it never auto-dismisses: a lost check-in has to be
+          reported to a person, and nobody watches a kiosk tablet's console. */}
+      {droppedCount > 0 && (
+        <div
+          role="status"
+          className="fixed inset-x-0 top-0 z-50 flex items-center justify-center gap-3 bg-destructive px-4 py-2 text-sm text-destructive-foreground"
+        >
+          <span>{t("syncDropped", { count: droppedCount })}</span>
+          <Button
+            type="button"
+            size="sm"
+            variant="secondary"
+            onClick={() => setDroppedCount(0)}
+          >
+            {t("syncDroppedDismiss")}
+          </Button>
+        </div>
+      )}
+
       <h1 className="text-center text-3xl font-bold">{academyName}</h1>
 
       {phase.kind === "entry" && (

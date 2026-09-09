@@ -67,7 +67,10 @@
     "heading": "Dashboard",
     "welcome": "Welcome, {email}",
     "pendingApprovals": "{count, plural, =0 {No students awaiting approval} one {# student awaiting approval} other {# students awaiting approval}}",
-    "pendingApprovalsLink": "View pending students"
+    "pendingApprovalsLink": "View pending students",
+    "adminSection": "Administration",
+    "adminKioskTokensLink": "Kiosk tokens",
+    "adminScheduleLink": "Class schedule"
   },
   "signup": {
     "heading": "Create student account",
@@ -197,13 +200,14 @@
         "toggle": "Add adjustment",
         "delta": "Adjustment",
         "deltaHint": "A positive number adds attendances, a negative number removes them.",
-        "deltaInvalid": "Enter a nonzero whole number.",
+        "deltaInvalid": "Enter a nonzero whole number between -1000 and 1000.",
         "reason": "Reason",
         "reasonRequired": "A reason is required.",
         "submit": "Save adjustment",
         "success": "Adjustment saved.",
         "invalid": "Please check the form for errors.",
-        "notFound": "Could not add this adjustment."
+        "notFound": "Could not add this adjustment.",
+        "archived": "This student is archived — attendance can't be adjusted."
       }
     }
   },
@@ -227,7 +231,9 @@
     "rateLimited": "Too many attempts. Please wait a moment.",
     "lockedOut": "Temporarily locked out after too many failed attempts.",
     "queuedOffline": "Saved! You're offline — this will sync automatically once the connection is back.",
-    "queueFailed": "We couldn't save your check-in on this device. Please tell the front desk."
+    "queueFailed": "We couldn't save your check-in on this device. Please tell the front desk.",
+    "syncDropped": "{count, plural, one {# check-in could not be synced — please tell the front desk} other {# check-ins could not be synced — please tell the front desk}}",
+    "syncDroppedDismiss": "Dismiss"
   },
   "adminKioskTokens": {
     "heading": "Kiosk device tokens",

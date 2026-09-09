@@ -3,8 +3,9 @@ import { headers } from "next/headers";
 import { prisma } from "@/lib/prisma";
 import { digestLookupSecret } from "@/lib/crypto";
 import { requireEnv } from "@/lib/env";
-import { checkKioskRateLimit, recordKioskAttempt } from "@/lib/kiosk/rate-limit";
+import { finalizeKioskAttempt, reserveKioskAttempt } from "@/lib/kiosk/rate-limit";
 import { performCheckIn } from "@/lib/kiosk/perform-check-in";
+import { resolveAttendanceInstant } from "@/lib/kiosk/queued-at";
 
 // This route touches Prisma (via performCheckIn / rate-limit.ts), which
 // requires the Node runtime — do not add `export const runtime = "edge"` here.
@@ -21,14 +22,14 @@ import { performCheckIn } from "@/lib/kiosk/perform-check-in";
  *   429  { ok: false; error: "rate_limited" | "locked_out"; retryAfterSeconds: number }
  */
 export async function POST(request: Request) {
-  let body: { academySlug?: unknown; token?: unknown; code?: unknown };
+  let body: { academySlug?: unknown; token?: unknown; code?: unknown; queuedAt?: unknown };
   try {
     body = await request.json();
   } catch {
     return NextResponse.json({ ok: false, error: "invalid_request" }, { status: 400 });
   }
 
-  const { academySlug, token, code } = body;
+  const { academySlug, token, code, queuedAt } = body;
   if (typeof academySlug !== "string" || typeof token !== "string" || typeof code !== "string") {
     return NextResponse.json({ ok: false, error: "invalid_request" }, { status: 400 });
   }
@@ -46,48 +47,37 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false, error: "invalid_token" }, { status: 401 });
   }
 
-  // Step 3: extract the caller's IP for rate-limiting, keyed by (academyId, ipAddress).
+  // Step 3: best-effort audit metadata only. `x-forwarded-for` is
+  // client-supplied and is NOT part of the rate-limit key — see
+  // `reserveKioskAttempt`, which keys on the verified token digest above.
   const headerList = await headers();
   const forwardedFor = headerList.get("x-forwarded-for");
   const ipAddress = forwardedFor ? forwardedFor.split(",")[0].trim() : "unknown";
 
-  // Step 4: cheap pre-flight rate-limit check. A pure fast-fail optimization —
-  // NOT the authoritative decision (see recordKioskAttempt below) — so a
-  // request already over the threshold never even reaches performCheckIn.
-  const preflight = await checkKioskRateLimit(academy.id, ipAddress);
-  if (!preflight.allowed) {
+  // Step 4: the atomic gate, BEFORE the submitted code is evaluated. A
+  // rejected caller never reaches performCheckIn, so a flood of concurrent
+  // guesses can't race past the limiter to find a working code.
+  const reservation = await reserveKioskAttempt(academy.id, presentedHash, ipAddress);
+  if (!reservation.allowed) {
     return NextResponse.json(
-      { ok: false, error: preflight.reason, retryAfterSeconds: preflight.retryAfterSeconds },
+      { ok: false, error: reservation.reason, retryAfterSeconds: reservation.retryAfterSeconds },
       { status: 429 },
     );
   }
 
-  // Step 5: run the actual check-in.
-  const result = await performCheckIn({ academyId: academy.id, code, source: "KIOSK" });
+  // Step 5: run the actual check-in, against the real attendance instant.
+  const result = await performCheckIn({
+    academyId: academy.id,
+    code,
+    source: "KIOSK",
+    now: resolveAttendanceInstant(queuedAt),
+  });
 
-  // Step 6: the atomic, authoritative rate-limit decision, recorded against
-  // this attempt's real outcome.
-  const atomicResult = await recordKioskAttempt(academy.id, ipAddress, result.ok);
-
-  // Step 7: reconcile the two outcomes.
-  if (!atomicResult.allowed) {
-    if (result.ok) {
-      // A real AttendanceRecord was already committed to the DB before the
-      // atomic rate-limit gate rejected this attempt (it raced past the
-      // preflight check but lost the atomic one). We must never contradict a
-      // real DB write in the HTTP response — hiding a genuinely successful
-      // check-in behind a rate-limit error would leave the student in a
-      // confusing "did I check in or not" state. Return success as normal.
-      return NextResponse.json(result, { status: 200 });
-    }
-    // No DB side effect to preserve: a failed/abusive attempt that has now
-    // crossed the abuse threshold gets the more actionable "back off" signal
-    // instead of its specific failure reason.
-    return NextResponse.json(
-      { ok: false, error: atomicResult.reason, retryAfterSeconds: atomicResult.retryAfterSeconds },
-      { status: 429 },
-    );
-  }
+  // Step 6: record this attempt's real outcome against the row already
+  // reserved in step 4. (No reconciliation branch is needed here any more:
+  // with the gate ahead of the guess there is no longer a case where a real,
+  // committed check-in could be hidden behind a rate-limit rejection.)
+  await finalizeKioskAttempt(reservation.attemptId, result.ok);
 
   if (result.ok) {
     return NextResponse.json(result, { status: 200 });

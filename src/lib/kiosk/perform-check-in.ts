@@ -1,9 +1,10 @@
 import { prisma } from "@/lib/prisma";
 import { digestLookupSecret } from "@/lib/crypto";
 import { requireEnv } from "@/lib/env";
-import { toAttendanceDate } from "@/lib/scheduling/zone";
-import { isWithinCheckInWindow } from "@/lib/scheduling/check-in-window";
+import { attendanceDateFromZoned } from "@/lib/scheduling/zone";
+import { selectActiveSessionOccurrence } from "@/lib/scheduling/check-in-window";
 import { getAtBeltSummary, type AtBeltSummary } from "@/lib/students/attendance-summary";
+import { isUniqueConstraintError } from "@/lib/prisma-errors";
 import { AttendanceType, StudentStatus, type AttendanceSource } from "@/generated/prisma/client";
 
 export type CheckInResult =
@@ -41,13 +42,26 @@ export async function performCheckIn(input: {
     where: { academyId: input.academyId, active: true },
   });
 
-  const activeSession = sessions.find((s) => isWithinCheckInWindow(s, now));
+  // Deterministic: `findMany` returns rows in no guaranteed order, and
+  // overlapping check-in windows are genuinely reachable (adjacent hourly
+  // classes touch at their boundary; the admin schedule editor can create
+  // real overlaps), so "whichever row came back first" could attribute the
+  // same tap to different classes on identical requests.
+  const occurrence = selectActiveSessionOccurrence(sessions, now);
 
-  if (!activeSession) {
+  if (!occurrence) {
     return { ok: false, error: "no_active_class" };
   }
 
-  const attendanceDate = toAttendanceDate(now);
+  const activeSession = occurrence.session;
+  // Stamped from the matched occurrence's OWN calendar day, never from
+  // `now`'s. A window that straddles CR midnight would otherwise give two
+  // check-ins to the same class occurrence two different `date` values,
+  // slipping past the (studentId, classSessionId, date) unique constraint and
+  // double-crediting one class — and a check-in just before midnight for a
+  // just-after-midnight class would be filed under the wrong day entirely.
+  // `occurredAt` stays the real wall-clock instant.
+  const attendanceDate = attendanceDateFromZoned(occurrence.anchorDate);
   const summaryBefore = await getAtBeltSummary(student.id);
 
   try {
@@ -92,13 +106,4 @@ export async function performCheckIn(input: {
     isVisitor: student.homeAcademyId !== input.academyId,
     homeAcademyName: student.homeAcademy.name,
   };
-}
-
-function isUniqueConstraintError(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { code: unknown }).code === "P2002"
-  );
 }

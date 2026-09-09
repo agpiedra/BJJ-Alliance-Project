@@ -3,13 +3,29 @@
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { isAcademyInScope, requireStaffSession } from "@/lib/auth/session";
-import { AttendanceSource, AttendanceType, Prisma } from "@/generated/prisma/client";
+import { AttendanceSource, AttendanceType, Prisma, StudentStatus } from "@/generated/prisma/client";
 import { toAttendanceDate } from "@/lib/scheduling/zone";
 import type { ActionState } from "@/lib/action-state";
 
+/**
+ * ±1000 is a deliberately generous ceiling for a MANUAL attendance
+ * correction: the largest legitimate one imaginable is backfilling a belt's
+ * worth of classes (a Brown belt's exam threshold is 425 total), so 1000
+ * leaves ample headroom while keeping the value far inside Postgres `int4`.
+ * Without a bound an out-of-int4 value reached Prisma and threw an
+ * unhandled PrismaClientValidationError (a 500) instead of a graceful
+ * `{ error: "invalid", fieldErrors }`.
+ */
+const DELTA_LIMIT = 1000;
+
 const adjustmentSchema = z.object({
   studentId: z.string().min(1),
-  delta: z.coerce.number().int().refine((n) => n !== 0),
+  delta: z.coerce
+    .number()
+    .int()
+    .min(-DELTA_LIMIT)
+    .max(DELTA_LIMIT)
+    .refine((n) => n !== 0),
   reason: z.string().min(1),
 });
 
@@ -53,11 +69,20 @@ export async function addAttendanceAdjustment(
 
   const student = await prisma.student.findUnique({
     where: { id: data.studentId },
-    select: { id: true, homeAcademyId: true },
+    select: { id: true, homeAcademyId: true, status: true },
   });
 
   if (!student || !isAcademyInScope(session, student.homeAcademyId)) {
     return { error: "notFound" };
+  }
+
+  // An archived student is out of the academy — no new attendance or ledger
+  // activity should accrue to them. Reported distinctly from `notFound`
+  // (which is also the out-of-scope answer) because this one is a real,
+  // actionable state a staff member can see on the same page: the student
+  // exists and is visible, the action is simply not allowed for them.
+  if (student.status === StudentStatus.ARCHIVED) {
+    return { error: "archived" };
   }
 
   const now = new Date();
