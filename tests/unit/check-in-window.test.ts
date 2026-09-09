@@ -45,4 +45,22 @@ describe("isWithinCheckInWindow", () => {
     // Tuesday 2026-03-10 06:00 CR = 12:00 UTC — one day later, same clock time
     expect(isWithinCheckInWindow(mondaySixAm, new Date("2026-03-10T12:00:00.000Z"))).toBe(false);
   });
+
+  it("accepts a check-in whose window crosses CR midnight on the tail end", () => {
+    const wednesdayLateNight = { dayOfWeek: "WEDNESDAY" as const, startTime: "23:50", durationMinutes: 60 };
+    // Window end = Wed 23:50 + 60min + 30min = Thu 01:20 CR = 2026-06-18T07:20:00.000Z
+    expect(isWithinCheckInWindow(wednesdayLateNight, new Date("2026-06-18T07:20:00.000Z"))).toBe(true);
+  });
+
+  it("accepts a check-in whose window crosses CR midnight on the head end", () => {
+    const tuesdayJustAfterMidnight = { dayOfWeek: "TUESDAY" as const, startTime: "00:05", durationMinutes: 10 };
+    // 25 minutes before a Tuesday 00:05 start = Monday 23:40 CR = 2026-06-16T05:40:00.000Z
+    expect(isWithinCheckInWindow(tuesdayJustAfterMidnight, new Date("2026-06-16T05:40:00.000Z"))).toBe(true);
+  });
+
+  it("still rejects a check-in on the wrong day even near a midnight-crossing session", () => {
+    const wednesdayLateNight = { dayOfWeek: "WEDNESDAY" as const, startTime: "23:50", durationMinutes: 60 };
+    // Well outside any window: Thu 03:00 CR, more than an hour after the Thu 01:20 window end
+    expect(isWithinCheckInWindow(wednesdayLateNight, new Date("2026-06-18T09:00:00.000Z"))).toBe(false);
+  });
 });

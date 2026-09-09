@@ -44,15 +44,28 @@ export function getCheckInWindow(session: SessionTiming, referenceDate: Date): {
 }
 
 /**
- * True if `now` falls within this session's check-in window, given that
- * `now`'s CR calendar day matches the session's scheduled day of week.
- * Callers should already have filtered sessions to today's dayOfWeek before
- * calling this (see Task 5's `findActiveClassSession`).
+ * True if `now` falls within this session's check-in window. A session's
+ * ±30-minute window can cross CR midnight (e.g. a 22:30 start with a long
+ * duration, or a start in the first ~29 minutes after midnight), so we
+ * can't just check whether `now`'s own CR calendar day matches
+ * `session.dayOfWeek` — the window that actually contains `now` might be
+ * anchored to the day before or after. Instead, try anchoring the window
+ * to yesterday/today/tomorrow (in CR time) relative to `now`, and accept
+ * whichever anchor both matches `session.dayOfWeek` and actually contains
+ * `now`.
  */
 export function isWithinCheckInWindow(session: SessionTiming, now: Date): boolean {
   const nowInZone = DateTime.fromJSDate(now, { zone: "utc" }).setZone(ZONE);
-  if (DAY_INDEX[session.dayOfWeek] !== nowInZone.weekday) return false;
 
-  const window = getCheckInWindow(session, now);
-  return now >= window.start && now <= window.end;
+  for (const dayOffset of [-1, 0, 1]) {
+    const candidateDay = nowInZone.plus({ days: dayOffset });
+    if (DAY_INDEX[session.dayOfWeek] !== candidateDay.weekday) continue;
+
+    const window = getCheckInWindow(session, candidateDay.toJSDate());
+    if (now >= window.start && now <= window.end) {
+      return true;
+    }
+  }
+
+  return false;
 }
