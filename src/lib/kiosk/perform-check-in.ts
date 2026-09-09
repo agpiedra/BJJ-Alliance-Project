@@ -13,6 +13,10 @@ export type CheckInResult =
       summary: AtBeltSummary;
       earnedStripe: boolean;
       isVisitor: boolean;
+      /** The checking-in student's home academy name — populated unconditionally
+       * (not just for visitors), so the kiosk UI can render a visitor badge
+       * ("Visitante de [homeAcademyName]") without a second round-trip. */
+      homeAcademyName: string;
     }
   | { ok: false; error: "invalid_code" | "no_active_class" | "already_checked_in" };
 
@@ -24,7 +28,10 @@ export async function performCheckIn(input: {
 }): Promise<CheckInResult> {
   const now = input.now ?? new Date();
   const codeHash = digestLookupSecret(input.code, requireEnv("CODE_PEPPER"));
-  const student = await prisma.student.findUnique({ where: { codeHash } });
+  const student = await prisma.student.findUnique({
+    where: { codeHash },
+    include: { homeAcademy: { select: { name: true } } },
+  });
 
   if (!student || student.status !== StudentStatus.ACTIVE) {
     return { ok: false, error: "invalid_code" };
@@ -83,6 +90,7 @@ export async function performCheckIn(input: {
     // remainingToNextStripe once a student is at max stripes.
     earnedStripe: summaryBefore.remainingToNextStripe === 1 && summaryAfter.remainingToNextStripe !== 1,
     isVisitor: student.homeAcademyId !== input.academyId,
+    homeAcademyName: student.homeAcademy.name,
   };
 }
 

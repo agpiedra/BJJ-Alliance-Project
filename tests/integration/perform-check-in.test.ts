@@ -105,6 +105,7 @@ describe("performCheckIn", () => {
       expect(result.summary.currentBelt).toBe("WHITE");
       expect(result.summary.atBeltCount).toBe(1);
       expect(result.isVisitor).toBe(false);
+      expect(result.homeAcademyName).toBe(escazu.name);
     }
   });
 
@@ -199,6 +200,7 @@ describe("performCheckIn", () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.isVisitor).toBe(true);
+      expect(result.homeAcademyName).toBe(escalante.name);
     }
 
     const record = await prisma.attendanceRecord.findFirstOrThrow({ where: { studentId: student.id } });

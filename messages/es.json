@@ -169,6 +169,26 @@
       }
     }
   },
+  "kiosk": {
+    "enterCode": "Ingresa tu código de 4 dígitos",
+    "clear": "Borrar",
+    "backspace": "Borrar el último dígito",
+    "submitting": "Verificando...",
+    "successHeading": "¡Bienvenido!",
+    "earnedStripeHeading": "¡Nueva franja!",
+    "atBeltCount": "{count, plural, one {# asistencia en este cinturón} other {# asistencias en este cinturón}}",
+    "remainingToNextStripe": "{count, plural, =0 {Ya puedes recibir tu próxima franja} one {Falta # asistencia para tu próxima franja} other {Faltan # asistencias para tu próxima franja}}",
+    "examEligible": "¡Elegible para examen!",
+    "visitorBadge": "Visitante de {academy}",
+    "invalidCode": "Código inválido",
+    "alreadyCheckedIn": "Ya marcaste asistencia hoy",
+    "noActiveClass": "No hay clase activa",
+    "invalidToken": "Este kiosco no está configurado correctamente. Contacta a un administrador.",
+    "networkError": "No se pudo conectar. Intenta de nuevo.",
+    "genericError": "Ocurrió un error. Intenta de nuevo.",
+    "rateLimited": "Demasiados intentos. Espera un momento.",
+    "lockedOut": "Bloqueado temporalmente por demasiados intentos fallidos."
+  },
   "adminKioskTokens": {
     "heading": "Tokens de dispositivo del kiosco",
     "description": "Regenera el enlace de marcado de asistencia para la tablet de una academia. Regenerarlo reemplaza el enlace anterior — cualquier tablet que aún lo use dejará de funcionar hasta que se recargue con el nuevo.",

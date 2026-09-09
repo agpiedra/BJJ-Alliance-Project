@@ -169,6 +169,26 @@
       }
     }
   },
+  "kiosk": {
+    "enterCode": "Enter your 4-digit code",
+    "clear": "Clear",
+    "backspace": "Delete last digit",
+    "submitting": "Checking in...",
+    "successHeading": "Welcome!",
+    "earnedStripeHeading": "New stripe!",
+    "atBeltCount": "{count, plural, one {# attendance at this belt} other {# attendances at this belt}}",
+    "remainingToNextStripe": "{count, plural, =0 {You're eligible for your next stripe} one {# attendance to go for your next stripe} other {# attendances to go for your next stripe}}",
+    "examEligible": "Exam eligible!",
+    "visitorBadge": "Visitor from {academy}",
+    "invalidCode": "Invalid code",
+    "alreadyCheckedIn": "Already checked in today",
+    "noActiveClass": "No active class",
+    "invalidToken": "This kiosk isn't configured correctly. Contact an administrator.",
+    "networkError": "Couldn't connect. Please try again.",
+    "genericError": "Something went wrong. Please try again.",
+    "rateLimited": "Too many attempts. Please wait a moment.",
+    "lockedOut": "Temporarily locked out after too many failed attempts."
+  },
   "adminKioskTokens": {
     "heading": "Kiosk device tokens",
     "description": "Regenerate the check-in link for an academy's tablet. Regenerating replaces the old link — any tablet still using it will stop working until it's reloaded with the new one.",
