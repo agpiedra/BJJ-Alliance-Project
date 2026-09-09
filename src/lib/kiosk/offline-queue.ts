@@ -79,12 +79,26 @@ function deleteEntry(db: IDBDatabase, id: number): Promise<void> {
 
 /**
  * Queue a check-in that couldn't be submitted because the device appears to
- * be offline. Silently no-ops if IndexedDB isn't available in this
- * environment — there is nowhere safe to persist the attempt in that case,
- * and the caller has already shown the student the "will sync" state.
+ * be offline.
+ *
+ * Returns `true` iff the entry was genuinely, durably persisted to
+ * IndexedDB, and `false` if IndexedDB isn't available in this environment
+ * (a handful of locked-down/embedded webviews lack it) — there is nowhere
+ * safe to persist the attempt in that case. The caller MUST check this
+ * return value: it is the only way to tell "safely queued" from "silently
+ * lost" apart, and showing the reassuring "will sync" message without
+ * checking it would falsely tell a student their check-in is safe when it
+ * was never recorded anywhere.
+ *
+ * A genuine IndexedDB failure while persisting (e.g. `QuotaExceededError`,
+ * or a blocked/corrupted database — the transaction's `onerror` path) is
+ * deliberately NOT folded into the `false` return: it rejects the returned
+ * promise instead, so callers can tell "this environment can never queue"
+ * apart from "queuing failed this one time," even though both currently
+ * lead callers to the same user-facing fallback.
  */
-export async function enqueueOfflineCheckIn(payload: OfflineCheckInPayload): Promise<void> {
-  if (!isIndexedDbAvailable()) return;
+export async function enqueueOfflineCheckIn(payload: OfflineCheckInPayload): Promise<boolean> {
+  if (!isIndexedDbAvailable()) return false;
 
   const db = await openDb();
   try {
@@ -97,6 +111,7 @@ export async function enqueueOfflineCheckIn(payload: OfflineCheckInPayload): Pro
   } finally {
     db.close();
   }
+  return true;
 }
 
 function isFailureBody(body: unknown): body is { ok: false; error: string } {
@@ -151,26 +166,44 @@ async function replayEntry(entry: StoredCheckIn): Promise<ReplayOutcome> {
   if (response.status === 400) {
     // invalid_code / already_checked_in are genuine, final answers from the
     // server about this specific code — not connectivity failures — so the
-    // entry is resolved either way.
+    // entry is resolved either way. These are the expected/non-actionable
+    // outcomes (a real, final verdict about the code itself) and are
+    // intentionally NOT logged — logging them would be noise.
     //
     // no_active_class during a REPLAY (as opposed to the original,
     // real-time submission) means the class window ended before
     // connectivity came back. Nothing further can make this succeed, so
-    // it's treated as definitive too, rather than retried forever.
+    // it's treated as definitive too, rather than retried forever. Unlike
+    // already_checked_in, this silently costs the student their
+    // attendance credit with no other record of the attempt, so it's
+    // logged for the front desk to be able to investigate a "I checked in
+    // and it says I didn't" report.
     //
-    // invalid_request would mean our own request body was malformed —
-    // enqueueOfflineCheckIn only ever stores well-formed
-    // {academySlug, token, code} strings, so this would indicate a bug,
-    // not a transient state; retrying an identical malformed request can
-    // never succeed, so it's dropped rather than retried forever.
-    void reason;
+    // invalid_request (or an unrecognized/malformed failure body) would
+    // mean our own request body was malformed — enqueueOfflineCheckIn only
+    // ever stores well-formed {academySlug, token, code} strings, so this
+    // would indicate a bug, not a transient state; retrying an identical
+    // malformed request can never succeed, so it's dropped rather than
+    // retried forever, and logged since it indicates a real bug.
+    if (reason === "no_active_class") {
+      console.warn("[kiosk-offline-queue] offline check-in dropped: class window ended before replay", {
+        entry,
+        reason,
+      });
+    } else if (reason !== "already_checked_in" && reason !== "invalid_code") {
+      console.warn("[kiosk-offline-queue] offline check-in dropped: invalid_request", { entry, reason });
+    }
     return "definitive";
   }
 
   if (response.status === 401 || response.status === 404) {
-    // invalid_token: the academy slug or kiosk token is wrong. This is a
+    // invalid_token: the academy slug or kiosk token is wrong (e.g. an
+    // admin rotated the kiosk token between queuing and replay). This is a
     // configuration problem that won't be fixed by waiting and retrying —
-    // drop it rather than retry forever.
+    // drop it rather than retry forever, but log it: a real student's
+    // check-in silently vanishing with no trace is exactly the kind of
+    // thing the front desk needs to be able to investigate later.
+    console.warn("[kiosk-offline-queue] offline check-in dropped: invalid_token", { entry, reason });
     return "definitive";
   }
 

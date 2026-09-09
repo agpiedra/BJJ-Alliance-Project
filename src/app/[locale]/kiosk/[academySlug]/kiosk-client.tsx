@@ -35,7 +35,12 @@ type CheckInFailureReason =
   | "invalid_token"
   | "rate_limited"
   | "locked_out"
-  | "network_error";
+  | "network_error"
+  // Client-only: the device is offline (or looked offline) AND the attempt
+  // could not be durably queued either — either IndexedDB isn't available
+  // in this environment, or the enqueue itself threw (e.g. a quota/DB
+  // error). Never derived from a server response.
+  | "queue_failed";
 
 type Phase =
   | { kind: "entry"; code: string; submitting: boolean }
@@ -104,8 +109,30 @@ export function KioskClient({
 
   const queueCheckIn = useCallback(
     async (code: string) => {
-      await enqueueOfflineCheckIn({ academySlug, token, code });
+      // enqueueOfflineCheckIn can fail two ways: it resolves `false` when
+      // IndexedDB simply isn't available in this environment, or it can
+      // reject (e.g. a QuotaExceededError, or a blocked/corrupted DB).
+      // Both leave the check-in unpersisted, so both fall back to the same
+      // "could not be saved" error — never the reassuring "queued" message
+      // — otherwise the student is told their check-in is safe when it was
+      // never recorded anywhere and never will be. Catching here also
+      // guarantees `submitting` always gets cleared, so a rejected enqueue
+      // can never freeze the kiosk on the next student.
+      let persisted: boolean;
+      try {
+        persisted = await enqueueOfflineCheckIn({ academySlug, token, code });
+      } catch {
+        persisted = false;
+      }
+
       clearTimers();
+
+      if (!persisted) {
+        setPhase({ kind: "error", reason: "queue_failed" });
+        timeoutRef.current = setTimeout(resetToEntry, ERROR_DISPLAY_MS);
+        return;
+      }
+
       setPhase({ kind: "queued" });
       timeoutRef.current = setTimeout(resetToEntry, QUEUED_DISPLAY_MS);
     },
@@ -268,6 +295,8 @@ function errorMessageKey(reason: CheckInFailureReason): string {
       return "invalidToken";
     case "network_error":
       return "networkError";
+    case "queue_failed":
+      return "queueFailed";
     case "invalid_request":
     default:
       return "genericError";

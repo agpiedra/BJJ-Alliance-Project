@@ -258,6 +258,131 @@ describe("offline-queue", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1); // the entry survived and was retried
   });
 
+  it("signals failure (returns false) instead of silently no-opping when IndexedDB is unavailable", async () => {
+    vi.unstubAllGlobals();
+    vi.stubGlobal("indexedDB", undefined);
+
+    const persisted = await enqueueOfflineCheckIn({ academySlug: "demo", token: "tok", code: "1234" });
+
+    expect(persisted).toBe(false);
+  });
+
+  it("returns true when an entry is genuinely persisted", async () => {
+    const persisted = await enqueueOfflineCheckIn({ academySlug: "demo", token: "tok", code: "1234" });
+
+    expect(persisted).toBe(true);
+  });
+
+  it("rejects (rather than silently swallowing) a genuine IndexedDB write failure", async () => {
+    // A minimal, purpose-built stub simulating a QuotaExceededError-shaped
+    // failure: opening the DB succeeds, but the write transaction's
+    // onerror fires instead of oncomplete. Independent of the shared fake
+    // above, which has no concept of a failing write.
+    const dbStub = {
+      objectStoreNames: { contains: () => true },
+      createObjectStore: () => {},
+      transaction: () => {
+        const tx: { oncomplete: (() => void) | null; onerror: (() => void) | null; error: Error } = {
+          oncomplete: null,
+          onerror: null,
+          error: new Error("QuotaExceededError"),
+        };
+        queueMicrotask(() => tx.onerror?.());
+        return {
+          error: tx.error,
+          objectStore: () => ({ add: () => {} }),
+          get oncomplete() {
+            return tx.oncomplete;
+          },
+          set oncomplete(fn) {
+            tx.oncomplete = fn;
+          },
+          get onerror() {
+            return tx.onerror;
+          },
+          set onerror(fn) {
+            tx.onerror = fn;
+          },
+        };
+      },
+      close: () => {},
+    };
+    const failingIndexedDb = {
+      open: () => {
+        const request: {
+          result: unknown;
+          onupgradeneeded: (() => void) | null;
+          onsuccess: (() => void) | null;
+          onerror: (() => void) | null;
+        } = { result: dbStub, onupgradeneeded: null, onsuccess: null, onerror: null };
+        queueMicrotask(() => request.onsuccess?.());
+        return request;
+      },
+    };
+    vi.stubGlobal("indexedDB", failingIndexedDb);
+
+    await expect(
+      enqueueOfflineCheckIn({ academySlug: "demo", token: "tok", code: "1234" }),
+    ).rejects.toBeDefined();
+  });
+
+  it("logs a console.warn when a replay drops an entry as invalid_token (e.g. a rotated kiosk token)", async () => {
+    await enqueueOfflineCheckIn({ academySlug: "demo", token: "tok", code: "1234" });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(401, { ok: false, error: "invalid_token" })));
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await flushOfflineQueue();
+
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(warnSpy.mock.calls[0][0]).toContain("invalid_token");
+  });
+
+  it("logs a console.warn when a replay drops an entry as no_active_class", async () => {
+    await enqueueOfflineCheckIn({ academySlug: "demo", token: "tok", code: "1234" });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(jsonResponse(400, { ok: false, error: "no_active_class" })),
+    );
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await flushOfflineQueue();
+
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(warnSpy.mock.calls[0][1]).toMatchObject({ reason: "no_active_class" });
+  });
+
+  it("logs a console.warn when a replay drops an entry as invalid_request", async () => {
+    await enqueueOfflineCheckIn({ academySlug: "demo", token: "tok", code: "1234" });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(jsonResponse(400, { ok: false, error: "invalid_request" })),
+    );
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await flushOfflineQueue();
+
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(warnSpy.mock.calls[0][0]).toContain("invalid_request");
+  });
+
+  it("does NOT log for the expected/non-actionable outcomes (success, already_checked_in)", async () => {
+    await enqueueOfflineCheckIn({ academySlug: "demo", token: "tok", code: "1234" });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(200, { ok: true })));
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await flushOfflineQueue();
+    expect(warnSpy).not.toHaveBeenCalled();
+
+    await enqueueOfflineCheckIn({ academySlug: "demo", token: "tok", code: "5678" });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(jsonResponse(400, { ok: false, error: "already_checked_in" })),
+    );
+
+    await flushOfflineQueue();
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
   it("does not replay entries in parallel (each awaited before the next starts)", async () => {
     await enqueueOfflineCheckIn({ academySlug: "demo", token: "tok", code: "1111" });
     await enqueueOfflineCheckIn({ academySlug: "demo", token: "tok", code: "2222" });

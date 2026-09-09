@@ -188,7 +188,8 @@
     "genericError": "Something went wrong. Please try again.",
     "rateLimited": "Too many attempts. Please wait a moment.",
     "lockedOut": "Temporarily locked out after too many failed attempts.",
-    "queuedOffline": "Saved! You're offline — this will sync automatically once the connection is back."
+    "queuedOffline": "Saved! You're offline — this will sync automatically once the connection is back.",
+    "queueFailed": "We couldn't save your check-in on this device. Please tell the front desk."
   },
   "adminKioskTokens": {
     "heading": "Kiosk device tokens",

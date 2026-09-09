@@ -188,7 +188,8 @@
     "genericError": "Ocurrió un error. Intenta de nuevo.",
     "rateLimited": "Demasiados intentos. Espera un momento.",
     "lockedOut": "Bloqueado temporalmente por demasiados intentos fallidos.",
-    "queuedOffline": "¡Guardado! Estás sin conexión — esto se sincronizará automáticamente cuando vuelva la conexión."
+    "queuedOffline": "¡Guardado! Estás sin conexión — esto se sincronizará automáticamente cuando vuelva la conexión.",
+    "queueFailed": "No pudimos guardar tu check-in en este dispositivo. Por favor avisa en la recepción."
   },
   "adminKioskTokens": {
     "heading": "Tokens de dispositivo del kiosco",
