@@ -360,4 +360,79 @@ describe("promotion queue", () => {
       withMissingGlobalBeltRequirement("PURPLE", () => listApproachingStudents(admin)),
     ).rejects.toMatchObject({ name: "MissingBeltRequirementError" });
   });
+
+  it("a PENDING student and an ARCHIVED student, both otherwise stripe/exam-eligible, are excluded from both lists while a genuinely ACTIVE student with equivalent attendance appears — proving the ACTIVE-only filter is real, not incidental", async () => {
+    // Final whole-branch review finding N-1's entire justification for
+    // `confirmPromotion`'s own server-side status guard leans on
+    // `classifyActiveStudents`'s `status: "ACTIVE"` filter (this file's
+    // `makeStudent` always seeds `status: "ACTIVE"` — every other test in
+    // this file only ever proves the filter's absence would matter, never
+    // that the filter itself is doing real work with a non-ACTIVE row
+    // actually present in the data).
+    const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+    const admin: StaffSession = { userId: "x", role: "ADMIN", academyIds: "ALL" };
+    const beltAwardedAt = new Date("2026-09-01T12:00:00Z");
+
+    async function makeStudentWithStatus(status: "PENDING" | "ARCHIVED" | "ACTIVE") {
+      const suffix = `${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
+      const student = await prisma.student.create({
+        data: {
+          homeAcademyId: escazu.id,
+          firstName: "PromotionQueueStatusFilterTest",
+          lastName: `Student-${status}-${suffix}`,
+          phone: "88880000",
+          email: `promotion-queue-status-${status}-${suffix}@example.com`.toLowerCase(),
+          currentBelt: "WHITE",
+          currentStripes: 0,
+          beltAwardedAt,
+          status,
+          codeHash: digestLookupSecret(`promotion-queue-status-${status}-${suffix}`, pepper),
+        },
+      });
+      cleanupStudentIds.push(student.id);
+      return student;
+    }
+
+    // Stripe-eligible attendance (30) for a PENDING student and an ARCHIVED
+    // student — both would appear in listPromotionQueue if the ACTIVE filter
+    // weren't real.
+    const pendingStudent = await makeStudentWithStatus("PENDING");
+    await addAttendances(pendingStudent.id, escazu.id, 30, new Date(beltAwardedAt.getTime() + DAY_MS));
+
+    const archivedStudent = await makeStudentWithStatus("ARCHIVED");
+    await addAttendances(archivedStudent.id, escazu.id, 30, new Date(beltAwardedAt.getTime() + DAY_MS));
+
+    // "Approaching" attendance (27, 3 short) for a second PENDING/ARCHIVED
+    // pair — both would appear in listApproachingStudents if the ACTIVE
+    // filter weren't real.
+    const pendingApproaching = await makeStudentWithStatus("PENDING");
+    await addAttendances(pendingApproaching.id, escazu.id, 27, new Date(beltAwardedAt.getTime() + DAY_MS));
+
+    const archivedApproaching = await makeStudentWithStatus("ARCHIVED");
+    await addAttendances(archivedApproaching.id, escazu.id, 27, new Date(beltAwardedAt.getTime() + DAY_MS));
+
+    // Genuinely ACTIVE controls with the exact same attendance shapes — must
+    // appear, proving the absence of the PENDING/ARCHIVED rows above is
+    // because of the status filter and not some other reason (e.g. an
+    // unrelated query bug hiding every student).
+    const activeStripeEligible = await makeStudentWithStatus("ACTIVE");
+    await addAttendances(activeStripeEligible.id, escazu.id, 30, new Date(beltAwardedAt.getTime() + DAY_MS));
+
+    const activeApproaching = await makeStudentWithStatus("ACTIVE");
+    await addAttendances(activeApproaching.id, escazu.id, 27, new Date(beltAwardedAt.getTime() + DAY_MS));
+
+    const queue = await listPromotionQueue(admin);
+    expect(findCandidate(queue, pendingStudent.id)).toBeUndefined();
+    expect(findCandidate(queue, archivedStudent.id)).toBeUndefined();
+    const activeCandidate = findCandidate(queue, activeStripeEligible.id);
+    expect(activeCandidate).toBeDefined();
+    expect(activeCandidate?.status).toBe("stripe-eligible");
+
+    const approaching = await listApproachingStudents(admin);
+    expect(findCandidate(approaching, pendingApproaching.id)).toBeUndefined();
+    expect(findCandidate(approaching, archivedApproaching.id)).toBeUndefined();
+    const activeApproachingCandidate = findCandidate(approaching, activeApproaching.id);
+    expect(activeApproachingCandidate).toBeDefined();
+    expect(activeApproachingCandidate?.status).toBe("approaching");
+  });
 });

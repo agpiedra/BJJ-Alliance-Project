@@ -2,6 +2,7 @@
 
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
+import { StudentStatus } from "@/generated/prisma/client";
 import { isAcademyInScope, requireStaffSession } from "@/lib/auth/session";
 import { getAtBeltSummary } from "@/lib/students/attendance-summary";
 import {
@@ -118,16 +119,41 @@ export async function confirmPromotion(
 
   const data = parsed.data;
 
-  // Read A: used ONLY for the scope check (`homeAcademyId`). Its
-  // `currentBelt`/`currentStripes` are deliberately not selected — see the
-  // doc comment above (finding I-1).
+  // Read A: used ONLY for the scope check (`homeAcademyId`) and the status
+  // gate immediately below. Its `currentBelt`/`currentStripes` are
+  // deliberately not selected — see the doc comment above (finding I-1).
   const student = await prisma.student.findUnique({
     where: { id: data.studentId },
-    select: { id: true, homeAcademyId: true },
+    select: { id: true, homeAcademyId: true, status: true },
   });
 
   if (!student || !isAcademyInScope(session, student.homeAcademyId)) {
     return { error: "notFound" };
+  }
+
+  // Final whole-branch review finding N-1: a PENDING student (a self-signup
+  // awaiting staff approval) or an ARCHIVED student (someone who has left
+  // the academy) must never be permanently promoted — `listPromotionQueue`/
+  // `listApproachingStudents` already only ever surface ACTIVE students
+  // (`promotion-queue.ts`'s `classifyActiveStudents`), so this is the one
+  // corner the write action itself must guard, since nothing upstream does.
+  // Deliberately `!== ACTIVE` rather than `=== ARCHIVED`: PENDING is equally
+  // reachable (a self-signup can legitimately accrue adjustment-based
+  // attendance to a threshold through ordinary staff action before anyone
+  // approves them) and must be rejected too, not just ARCHIVED.
+  //
+  // This check alone is NOT sufficient against the stale-queue race this
+  // action's whole design defends against: another staff member could
+  // archive this exact student strictly between this read and the
+  // transaction's write below. That half of the fix is the `status:
+  // StudentStatus.ACTIVE` clause added to the `tx.student.updateMany` WHERE
+  // predicate further down — the same atomic guard mechanism that already
+  // closes the belt/stripe race (finding I-2), re-evaluated by Postgres
+  // after this transaction's row lock is acquired, so a status change
+  // racing the write is caught there and returns a graceful
+  // `{error: "conflict"}`, not a corrupted promotion.
+  if (student.status !== StudentStatus.ACTIVE) {
+    return { error: "notActive" };
   }
 
   // Read B (inside getAtBeltSummary): the single source of truth for both
@@ -186,9 +212,16 @@ export async function confirmPromotion(
       // Scoped by id AND the exact from-state this promotion transitions
       // out of (finding I-2) — a concurrent confirm/adjustment that already
       // changed the student's belt/stripes makes this match zero rows.
+      // `status: ACTIVE` closes the N-1 stale-archive/pending race: this
+      // action's own upfront read (above) can never observe a status change
+      // that lands strictly between that read and this write, so the
+      // WHERE predicate itself is the only thing that can catch it — a
+      // loser here matches zero rows exactly like a belt/stripe mismatch
+      // does, and gets the same graceful `{error: "conflict"}`.
       const result = await tx.student.updateMany({
         where: {
           id: student.id,
+          status: StudentStatus.ACTIVE,
           currentBelt: resolvedTarget.fromBelt,
           currentStripes: resolvedTarget.fromStripes,
         },

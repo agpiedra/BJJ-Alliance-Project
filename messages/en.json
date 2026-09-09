@@ -84,13 +84,15 @@
       },
       "status": {
         "stripe-eligible": "Stripe eligible",
-        "exam-eligible": "Exam eligible"
+        "exam-eligible": "Exam eligible",
+        "approaching": "Approaching"
       },
       "confirmButton": "Confirm promotion",
       "confirm": "Confirm this promotion? This will be recorded permanently in the student's promotion history.",
       "success": "Promotion confirmed.",
       "error": {
         "notFound": "Could not confirm this promotion: student not found.",
+        "notActive": "This student is not currently active (pending approval or archived) and cannot be promoted. Refresh the page to see the current queue.",
         "notEligible": "This student is no longer eligible for this promotion. Their progress may have changed since this list was loaded — refresh the page to see the current queue.",
         "conflict": "This promotion was already confirmed by someone else just now. Refresh the page to see the current status.",
         "generic": "Could not confirm this promotion."

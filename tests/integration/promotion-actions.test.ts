@@ -87,7 +87,13 @@ async function makeStaffUser(role: "ADMIN" | "DIRECTOR" | "INSTRUCTOR", label: s
 
 async function makeStudent(
   academyId: string,
-  overrides: { currentBelt: Belt; currentStripes: number; beltAwardedAt: Date; lastName?: string },
+  overrides: {
+    currentBelt: Belt;
+    currentStripes: number;
+    beltAwardedAt: Date;
+    lastName?: string;
+    status?: "PENDING" | "ACTIVE" | "INACTIVE" | "ARCHIVED";
+  },
 ) {
   const suffix = `${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
   const student = await prisma.student.create({
@@ -100,7 +106,7 @@ async function makeStudent(
       currentBelt: overrides.currentBelt,
       currentStripes: overrides.currentStripes,
       beltAwardedAt: overrides.beltAwardedAt,
-      status: "ACTIVE",
+      status: overrides.status ?? "ACTIVE",
       codeHash: digestLookupSecret(`promotion-action-${suffix}`, pepper),
     },
   });
@@ -455,5 +461,112 @@ describe("confirmPromotion", () => {
 
     const audits = await auditRowsFor(student.id, "student.promote");
     expect(audits).toHaveLength(1);
+  });
+
+  it("finding N-1: a PENDING student (self-signup awaiting staff approval) with qualifying attendance is rejected with notActive, writing no Promotion row and leaving Student unchanged", async () => {
+    const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+    const admin = await makeStaffUser("ADMIN", "confirm-pending-admin");
+    const beltAwardedAt = new Date("2026-09-01T12:00:00Z");
+    const student = await makeStudent(escazu.id, {
+      currentBelt: "WHITE",
+      currentStripes: 0,
+      beltAwardedAt,
+      status: "PENDING",
+    });
+    // Exactly at the stripe threshold — would be genuinely eligible if this
+    // student were ACTIVE. A PENDING self-signup can legitimately accrue
+    // adjustment-based attendance to a threshold through ordinary staff
+    // action before anyone approves them, so this is a realistic scenario,
+    // not a hand-crafted one.
+    await addAttendances(student.id, escazu.id, 30, new Date(beltAwardedAt.getTime() + DAY_MS));
+
+    currentSession = { user: { id: admin.id, role: "ADMIN" } };
+    const result = await confirmPromotion({}, formData({ studentId: student.id }));
+    expect(result.error).toBe("notActive");
+
+    const after = await prisma.student.findUniqueOrThrow({ where: { id: student.id } });
+    expect(after.status).toBe("PENDING");
+    expect(after.currentBelt).toBe("WHITE");
+    expect(after.currentStripes).toBe(0);
+    expect(after.beltAwardedAt.getTime()).toBe(beltAwardedAt.getTime());
+
+    expect(await promotionsFor(student.id)).toHaveLength(0);
+    expect(await auditRowsFor(student.id, "student.promote")).toHaveLength(0);
+  });
+
+  it("finding N-1: an ARCHIVED student (someone who has left the academy) with qualifying attendance is rejected with notActive, writing no Promotion row and leaving Student unchanged", async () => {
+    const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+    const admin = await makeStaffUser("ADMIN", "confirm-archived-admin");
+    const beltAwardedAt = new Date("2026-09-02T12:00:00Z");
+    const student = await makeStudent(escazu.id, {
+      currentBelt: "WHITE",
+      currentStripes: 0,
+      beltAwardedAt,
+      status: "ARCHIVED",
+    });
+    await addAttendances(student.id, escazu.id, 30, new Date(beltAwardedAt.getTime() + DAY_MS));
+
+    currentSession = { user: { id: admin.id, role: "ADMIN" } };
+    const result = await confirmPromotion({}, formData({ studentId: student.id }));
+    expect(result.error).toBe("notActive");
+
+    const after = await prisma.student.findUniqueOrThrow({ where: { id: student.id } });
+    expect(after.status).toBe("ARCHIVED");
+    expect(after.currentBelt).toBe("WHITE");
+    expect(after.currentStripes).toBe(0);
+    expect(after.beltAwardedAt.getTime()).toBe(beltAwardedAt.getTime());
+
+    expect(await promotionsFor(student.id)).toHaveLength(0);
+    expect(await auditRowsFor(student.id, "student.promote")).toHaveLength(0);
+  });
+
+  it("finding N-1 race regression: a student archived by ANOTHER staff member strictly between confirmPromotion's upfront read and its transaction's write must not produce a committed promotion — the status-scoped updateMany catches it exactly like a belt/stripe mismatch, returning a graceful {error: 'conflict'}", async () => {
+    const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+    const admin = await makeStaffUser("ADMIN", "confirm-n1-race-admin");
+    const beltAwardedAt = new Date("2026-09-03T12:00:00Z");
+    // Genuinely ACTIVE and genuinely eligible at the moment confirmPromotion
+    // is called — the upfront read (read A) observes status: ACTIVE.
+    const student = await makeStudent(escazu.id, { currentBelt: "WHITE", currentStripes: 0, beltAwardedAt });
+    await addAttendances(student.id, escazu.id, 30, new Date(beltAwardedAt.getTime() + DAY_MS));
+
+    // Deterministically force the interleaving the same way the I-1
+    // regression test above does: intercept the exact `appPrisma.student
+    // .findUnique` call confirmPromotion's read A makes, let it resolve
+    // normally (observing status: ACTIVE, since the archive below hasn't
+    // happened yet), then — strictly between that resolution and anything
+    // else confirmPromotion does — perform a real, separate write (as if
+    // another staff member's own action ran concurrently) that archives the
+    // student. This reproduces "a student archived by another staff member
+    // in the exact race window between confirmPromotion's upfront
+    // scope-check read and its later write" without relying on real
+    // concurrency/timing.
+    const originalFindUnique = appPrisma.student.findUnique.bind(appPrisma.student) as (
+      args: never,
+    ) => Promise<unknown>;
+    vi.spyOn(appPrisma.student, "findUnique").mockImplementationOnce(((args: never) =>
+      (async () => {
+        const result = await originalFindUnique(args);
+        await prisma.student.update({ where: { id: student.id }, data: { status: "ARCHIVED" } });
+        return result;
+      })()) as never);
+
+    currentSession = { user: { id: admin.id, role: "ADMIN" } };
+    const result = await confirmPromotion({}, formData({ studentId: student.id }));
+
+    // Must be a graceful conflict, never {ok:true} — {ok:true} here would
+    // mean a permanent Promotion/AuditLog pair was written for a student
+    // that is, at the moment of writing, no longer ACTIVE.
+    expect(result.error).toBe("conflict");
+
+    const after = await prisma.student.findUniqueOrThrow({ where: { id: student.id } });
+    // The status change from the race is real and persists...
+    expect(after.status).toBe("ARCHIVED");
+    // ...but the promotion itself must NOT have been applied.
+    expect(after.currentBelt).toBe("WHITE");
+    expect(after.currentStripes).toBe(0);
+    expect(after.beltAwardedAt.getTime()).toBe(beltAwardedAt.getTime());
+
+    expect(await promotionsFor(student.id)).toHaveLength(0);
+    expect(await auditRowsFor(student.id, "student.promote")).toHaveLength(0);
   });
 });

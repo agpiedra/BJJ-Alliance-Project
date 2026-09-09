@@ -84,13 +84,15 @@
       },
       "status": {
         "stripe-eligible": "Elegible para grado",
-        "exam-eligible": "Elegible para examen"
+        "exam-eligible": "Elegible para examen",
+        "approaching": "Acercándose"
       },
       "confirmButton": "Confirmar promoción",
       "confirm": "¿Confirmar esta promoción? Quedará registrada de forma permanente en el historial de promociones del estudiante.",
       "success": "Promoción confirmada.",
       "error": {
         "notFound": "No se pudo confirmar esta promoción: estudiante no encontrado.",
+        "notActive": "Este estudiante no está activo actualmente (pendiente de aprobación o archivado) y no puede ser promovido. Actualice la página para ver la cola actual.",
         "notEligible": "Este estudiante ya no es elegible para esta promoción. Su progreso pudo haber cambiado desde que se cargó esta lista — actualice la página para ver la cola actual.",
         "conflict": "Esta promoción ya fue confirmada por otra persona hace un momento. Actualice la página para ver el estado actual.",
         "generic": "No se pudo confirmar esta promoción."

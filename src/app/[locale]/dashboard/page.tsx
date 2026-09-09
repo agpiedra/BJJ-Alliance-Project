@@ -9,16 +9,7 @@ import {
   type PromotionCandidate,
 } from "@/lib/students/promotion-queue";
 import { ConfirmPromotionButton } from "./confirm-promotion-button";
-
-// Maps PromotionCandidate.status ("stripe-eligible" | "exam-eligible" |
-// "approaching") to its message key under dashboard.promotionQueue.status —
-// only the first two are ever rendered (the queue section filters
-// "approaching" out; the Approaching section below doesn't show a status
-// column at all, since every row in it shares the same status).
-const QUEUE_STATUS_KEY: Record<"stripe-eligible" | "exam-eligible", string> = {
-  "stripe-eligible": "promotionQueue.status.stripe-eligible",
-  "exam-eligible": "promotionQueue.status.exam-eligible",
-};
+import { PromotionStatusLabel } from "./promotion-status-label";
 
 // Same reasoning as the roster page: the pending-approvals count is staff
 // data that can change without a redeploy, so this page must never be
@@ -109,9 +100,7 @@ export default async function DashboardPage() {
                     </td>
                     <td className="py-2 pr-4">{candidate.homeAcademyName}</td>
                     <td className="py-2 pr-4">
-                      {t(
-                        QUEUE_STATUS_KEY[candidate.status as "stripe-eligible" | "exam-eligible"],
-                      )}
+                      <PromotionStatusLabel status={candidate.status} />
                     </td>
                     <td className="py-2 pr-4">{candidate.atBeltCount}</td>
                     {/* Server-side gate is the real enforcement
