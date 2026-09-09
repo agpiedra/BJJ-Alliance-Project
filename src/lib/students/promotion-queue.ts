@@ -4,6 +4,7 @@ import { getAtBeltSummary } from "@/lib/students/attendance-summary";
 import {
   classifyEligibility,
   MissingBeltRequirementError,
+  type BeltRequirementLike,
   type EligibilityStatus,
 } from "@/lib/students/eligibility";
 import { isNotFoundError } from "@/lib/prisma-errors";
@@ -20,34 +21,6 @@ export interface PromotionCandidate {
   status: "stripe-eligible" | "exam-eligible" | "approaching";
   atBeltCount: number;
   remainingToNextStripe: number | null;
-}
-
-/**
- * Same belt-requirement resolution as `attendance-summary.ts`'s private
- * `resolveBeltRequirement` (per-academy override falls back to the
- * academy-null global default) — exported here (unlike that copy) so Task 3
- * (promotion confirmation) can import this exact logic instead of adding a
- * third duplicate. Not worth consolidating the two existing copies right now
- * (out of scope for this task); just don't add a fourth.
- */
-export async function resolveBeltRequirementLike(belt: Belt, homeAcademyId: string) {
-  const perAcademy = await prisma.beltRequirement.findUnique({
-    where: { academyId_belt: { academyId: homeAcademyId, belt } },
-  });
-  if (perAcademy) return perAcademy;
-  try {
-    return await prisma.beltRequirement.findFirstOrThrow({ where: { academyId: null, belt } });
-  } catch (error) {
-    // Same rationale as attendance-summary.ts's `resolveBeltRequirement`:
-    // this lookup's own P2025 can only mean the global-default row is
-    // missing (a config bug), so it's rethrown as a distinctly-typed error
-    // rather than left as Prisma's generic P2025 — see
-    // `MissingBeltRequirementError`'s doc comment (eligibility.ts).
-    if (isNotFoundError(error)) {
-      throw new MissingBeltRequirementError(belt);
-    }
-    throw error;
-  }
 }
 
 async function classifyActiveStudents(session: StaffSession): Promise<
@@ -93,23 +66,36 @@ async function classifyActiveStudents(session: StaffSession): Promise<
       // so there is no window at all in which the two calls can observe
       // different states of the world.
       //
-      // The remaining problem a plain broad catch would reintroduce: both
-      // `getAtBeltSummary` (student lookup) and `resolveBeltRequirementLike`
-      // (global BeltRequirement fallback) can raise Prisma's generic P2025
-      // "not found" — but only one of those is benign. A missing global
-      // `BeltRequirement` row is a seed-data/config bug that must propagate
-      // loudly, not be silently treated like a vanished student. That's now
-      // solved by TYPE rather than by call site: `resolveBeltRequirementLike`
-      // (and `getAtBeltSummary`'s own belt-requirement resolution) throw a
-      // distinctly-typed `MissingBeltRequirementError` for their P2025,
-      // instead of leaving it as a generic P2025 — so any plain P2025 that
-      // reaches this catch can only have come from `getAtBeltSummary`'s
-      // internal `findUniqueOrThrow(student)`, i.e. the student vanished.
+      // The remaining problem a plain broad catch would reintroduce:
+      // `getAtBeltSummary` itself internally resolves BOTH the student row
+      // AND the belt requirement, and can raise Prisma's generic P2025
+      // "not found" for either — but only one of those is benign. A missing
+      // global `BeltRequirement` row is a seed-data/config bug that must
+      // propagate loudly, not be silently treated like a vanished student.
+      // That's solved by TYPE rather than by call site: `getAtBeltSummary`'s
+      // internal belt-requirement resolution throws a distinctly-typed
+      // `MissingBeltRequirementError` for ITS P2025, instead of leaving it as
+      // a generic P2025 — so any plain P2025 that reaches this catch can only
+      // have come from `getAtBeltSummary`'s internal
+      // `findUniqueOrThrow(student)`, i.e. the student vanished.
+      //
+      // There is now only ONE call (`getAtBeltSummary`) needed per student,
+      // not two — it already carries `attendancesPerStripe`/`maxStripes`/
+      // `attendancesForExam` from its own belt-requirement resolution, so the
+      // `BeltRequirementLike` object `classifyEligibility` needs is built
+      // directly from its return value rather than from a second, separate
+      // lookup. This also structurally removes the `Promise.all`
+      // first-rejection-ordering non-determinism the two-call version had,
+      // and the snapshot/fresh-belt mismatch risk of resolving the belt
+      // requirement against a value that could differ from what
+      // `getAtBeltSummary` itself read.
       try {
-        const [summary, requirement] = await Promise.all([
-          getAtBeltSummary(student.id),
-          resolveBeltRequirementLike(student.currentBelt, student.homeAcademyId),
-        ]);
+        const summary = await getAtBeltSummary(student.id);
+        const requirement: BeltRequirementLike = {
+          attendancesPerStripe: summary.attendancesPerStripe,
+          maxStripes: summary.maxStripes,
+          attendancesForExam: summary.attendancesForExam,
+        };
         const status = classifyEligibility(
           { nextStripeAt: summary.nextStripeAt, remainingToNextStripe: summary.remainingToNextStripe, examEligible: summary.examEligible },
           student.currentStripes,

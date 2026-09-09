@@ -10,6 +10,7 @@ export interface AtBeltSummary {
   lifetimeCount: number;
   attendancesPerStripe: number;
   maxStripes: number;
+  attendancesForExam: number;
   nextStripeAt: number | null;
   remainingToNextStripe: number | null;
   examEligible: boolean;
@@ -77,6 +78,7 @@ export async function getAtBeltSummary(studentId: string): Promise<AtBeltSummary
     lifetimeCount,
     attendancesPerStripe: requirement.attendancesPerStripe,
     maxStripes: requirement.maxStripes,
+    attendancesForExam: requirement.attendancesForExam,
     ...progress,
   };
 }

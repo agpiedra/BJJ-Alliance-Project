@@ -1,0 +1,340 @@
+import "dotenv/config";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { PrismaClient } from "../../src/generated/prisma/client";
+import type { Belt } from "../../src/generated/prisma/client";
+import { PrismaPg } from "@prisma/adapter-pg";
+import { requireEnv } from "../../src/lib/env";
+import { digestLookupSecret, hashSecret } from "../../src/lib/crypto";
+import { toAttendanceDate } from "../../src/lib/scheduling/zone";
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+// `confirmPromotion` reaches `requireStaffSession()` -> `getStaffSession()`
+// -> next-auth's `auth()`, which needs a real HTTP request's cookies to
+// resolve a JWT session — unavailable in a plain integration test. Mocking
+// `@/auth`'s `auth()` lets this Server Action be exercised directly against
+// the real DB, matching `tests/integration/student-detail-actions.test.ts`'s
+// established pattern for a cookie-bound write action, while still using
+// real `User` / `StaffAssignment` rows underneath so `getStaffSession()`'s
+// own DB queries run unmodified.
+let currentSession: { user: { id: string; role: string } } | null = null;
+
+vi.mock("@/auth", () => ({
+  auth: () => Promise.resolve(currentSession),
+}));
+
+const { confirmPromotion } = await import("../../src/app/[locale]/dashboard/promotion-actions");
+const { getAtBeltSummary } = await import("../../src/lib/students/attendance-summary");
+
+const adapter = new PrismaPg({ connectionString: requireEnv("DATABASE_URL") });
+const prisma = new PrismaClient({ adapter });
+const pepper = requireEnv("CODE_PEPPER");
+
+function formData(fields: Record<string, string>): FormData {
+  const fd = new FormData();
+  for (const [key, value] of Object.entries(fields)) {
+    fd.set(key, value);
+  }
+  return fd;
+}
+
+const cleanupUserIds: string[] = [];
+const cleanupStudentIds: string[] = [];
+
+async function cleanup() {
+  if (cleanupStudentIds.length > 0 || cleanupUserIds.length > 0) {
+    await prisma.auditLog.deleteMany({
+      where: { OR: [{ entityId: { in: cleanupStudentIds } }, { actorId: { in: cleanupUserIds } }] },
+    });
+    await prisma.promotion.deleteMany({
+      where: { OR: [{ studentId: { in: cleanupStudentIds } }, { awardedById: { in: cleanupUserIds } }] },
+    });
+    await prisma.attendanceRecord.deleteMany({
+      where: { OR: [{ studentId: { in: cleanupStudentIds } }, { createdById: { in: cleanupUserIds } }] },
+    });
+  }
+  if (cleanupStudentIds.length > 0) {
+    await prisma.student.deleteMany({ where: { id: { in: cleanupStudentIds } } });
+  }
+  if (cleanupUserIds.length > 0) {
+    await prisma.staffAssignment.deleteMany({ where: { userId: { in: cleanupUserIds } } });
+    await prisma.user.deleteMany({ where: { id: { in: cleanupUserIds } } });
+  }
+}
+
+async function makeStaffUser(role: "ADMIN" | "DIRECTOR" | "INSTRUCTOR", label: string, academyId?: string) {
+  const suffix = `${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
+  const user = await prisma.user.create({
+    data: {
+      email: `${label}-${suffix}@example.com`,
+      passwordHash: await hashSecret("irrelevant-password-123"),
+      role,
+    },
+  });
+  cleanupUserIds.push(user.id);
+  if (academyId && role !== "ADMIN") {
+    await prisma.staffAssignment.create({
+      data: { userId: user.id, academyId, role: role === "DIRECTOR" ? "DIRECTOR" : "INSTRUCTOR" },
+    });
+  }
+  return user;
+}
+
+async function makeStudent(
+  academyId: string,
+  overrides: { currentBelt: Belt; currentStripes: number; beltAwardedAt: Date; lastName?: string },
+) {
+  const suffix = `${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
+  const student = await prisma.student.create({
+    data: {
+      homeAcademyId: academyId,
+      firstName: "PromotionActionTest",
+      lastName: overrides.lastName ?? `Student-${suffix}`,
+      phone: "88880000",
+      email: `promotion-action-${suffix}@example.com`,
+      currentBelt: overrides.currentBelt,
+      currentStripes: overrides.currentStripes,
+      beltAwardedAt: overrides.beltAwardedAt,
+      status: "ACTIVE",
+      codeHash: digestLookupSecret(`promotion-action-${suffix}`, pepper),
+    },
+  });
+  cleanupStudentIds.push(student.id);
+  return student;
+}
+
+/**
+ * Writes `count` synthetic CHECKIN rows with `classSessionId: null`, one per
+ * day starting at `startAt` — same shape as `promotion-queue.test.ts`'s
+ * fixture helper, so a test can hit an exact attendance count without
+ * needing that many distinct real class occurrences to exist.
+ */
+async function addAttendances(studentId: string, academyId: string, count: number, startAt: Date) {
+  if (count === 0) return;
+  const rows = Array.from({ length: count }, (_, i) => {
+    const occurredAt = new Date(startAt.getTime() + i * DAY_MS);
+    return {
+      studentId,
+      academyId,
+      occurredAt,
+      date: toAttendanceDate(occurredAt),
+      type: "CHECKIN" as const,
+      delta: 1,
+      source: "STAFF" as const,
+    };
+  });
+  await prisma.attendanceRecord.createMany({ data: rows });
+}
+
+async function addAdjustment(studentId: string, academyId: string, delta: number, occurredAt: Date) {
+  await prisma.attendanceRecord.create({
+    data: {
+      studentId,
+      academyId,
+      occurredAt,
+      date: toAttendanceDate(occurredAt),
+      type: "ADJUSTMENT",
+      delta,
+      reason: "test correction",
+      source: "STAFF",
+    },
+  });
+}
+
+function promotionsFor(studentId: string) {
+  return prisma.promotion.findMany({ where: { studentId }, orderBy: { awardedAt: "asc" } });
+}
+
+function auditRowsFor(studentId: string, action: string) {
+  return prisma.auditLog.findMany({ where: { entityId: studentId, action }, orderBy: { createdAt: "asc" } });
+}
+
+describe("confirmPromotion", () => {
+  afterAll(cleanup);
+
+  beforeEach(() => {
+    currentSession = null;
+  });
+
+  it("a student exactly at a stripe threshold: confirming increments currentStripes, leaves belt/beltAwardedAt unchanged, writes Promotion + AuditLog rows", async () => {
+    const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+    const admin = await makeStaffUser("ADMIN", "confirm-stripe-admin");
+    const beltAwardedAt = new Date("2026-01-01T12:00:00Z");
+    const student = await makeStudent(escazu.id, { currentBelt: "WHITE", currentStripes: 0, beltAwardedAt });
+
+    // WHITE requires 30 attendancesPerStripe (global default) — exactly at
+    // the threshold, not one short and not one over.
+    await addAttendances(student.id, escazu.id, 30, new Date(beltAwardedAt.getTime() + DAY_MS));
+
+    currentSession = { user: { id: admin.id, role: "ADMIN" } };
+    const result = await confirmPromotion({}, formData({ studentId: student.id, notes: "stripe review" }));
+    expect(result.ok).toBe(true);
+
+    const after = await prisma.student.findUniqueOrThrow({ where: { id: student.id } });
+    expect(after.currentStripes).toBe(1);
+    expect(after.currentBelt).toBe("WHITE");
+    expect(after.beltAwardedAt.getTime()).toBe(beltAwardedAt.getTime());
+
+    const promotions = await promotionsFor(student.id);
+    expect(promotions).toHaveLength(1);
+    expect(promotions[0]).toMatchObject({
+      academyId: escazu.id,
+      fromBelt: "WHITE",
+      fromStripes: 0,
+      toBelt: "WHITE",
+      toStripes: 1,
+      awardedById: admin.id,
+      notes: "stripe review",
+    });
+
+    const audits = await auditRowsFor(student.id, "student.promote");
+    expect(audits).toHaveLength(1);
+    expect(audits[0].actorId).toBe(admin.id);
+    expect(audits[0].academyId).toBe(escazu.id);
+    expect(audits[0].before).toMatchObject({ belt: "WHITE", stripes: 0 });
+    expect(audits[0].after).toMatchObject({ belt: "WHITE", stripes: 1 });
+  });
+
+  it("a student exactly at the exam threshold (4 stripes): confirming advances currentBelt, resets currentStripes to 0 and beltAwardedAt to now, writes Promotion + AuditLog rows", async () => {
+    const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+    const admin = await makeStaffUser("ADMIN", "confirm-exam-admin");
+    const beltAwardedAt = new Date("2026-02-01T12:00:00Z");
+    // 4 * 30 (attendancesPerStripe) + 30 (attendancesForExam) = 150, exactly
+    // at the exam threshold — matches promotion-queue.test.ts's equivalent
+    // fixture.
+    const student = await makeStudent(escazu.id, { currentBelt: "WHITE", currentStripes: 4, beltAwardedAt });
+    await addAttendances(student.id, escazu.id, 150, new Date(beltAwardedAt.getTime() + DAY_MS));
+
+    const before = await getAtBeltSummary(student.id);
+    expect(before.examEligible).toBe(true);
+
+    currentSession = { user: { id: admin.id, role: "ADMIN" } };
+    const beforeConfirm = Date.now();
+    const result = await confirmPromotion({}, formData({ studentId: student.id }));
+    expect(result.ok).toBe(true);
+
+    const after = await prisma.student.findUniqueOrThrow({ where: { id: student.id } });
+    expect(after.currentBelt).toBe("BLUE");
+    expect(after.currentStripes).toBe(0);
+    expect(after.beltAwardedAt.getTime()).toBeGreaterThanOrEqual(beforeConfirm);
+    expect(after.beltAwardedAt.getTime()).toBeLessThanOrEqual(Date.now());
+
+    const promotions = await promotionsFor(student.id);
+    expect(promotions).toHaveLength(1);
+    expect(promotions[0]).toMatchObject({
+      academyId: escazu.id,
+      fromBelt: "WHITE",
+      fromStripes: 4,
+      toBelt: "BLUE",
+      toStripes: 0,
+      awardedById: admin.id,
+      notes: null,
+    });
+
+    const audits = await auditRowsFor(student.id, "student.promote");
+    expect(audits).toHaveLength(1);
+    expect(audits[0].before).toMatchObject({ belt: "WHITE", stripes: 4 });
+    expect(audits[0].after).toMatchObject({ belt: "BLUE", stripes: 0 });
+  });
+
+  it("the stale-eligibility race: a negative adjustment dropping the student back below the threshold BEFORE confirmPromotion is called must be rejected with notEligible, writing NO Promotion row and leaving Student unchanged", async () => {
+    const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+    const admin = await makeStaffUser("ADMIN", "confirm-race-admin");
+    const beltAwardedAt = new Date("2026-03-01T12:00:00Z");
+    const student = await makeStudent(escazu.id, { currentBelt: "WHITE", currentStripes: 0, beltAwardedAt });
+
+    // Genuinely eligible at first: exactly 30 attendances.
+    await addAttendances(student.id, escazu.id, 30, new Date(beltAwardedAt.getTime() + DAY_MS));
+    const eligibleSummary = await getAtBeltSummary(student.id);
+    expect(eligibleSummary.remainingToNextStripe).toBe(0);
+
+    // A correction lands before the confirm click reaches the server —
+    // drops the student back below the threshold it had just crossed.
+    await addAdjustment(student.id, escazu.id, -5, new Date(beltAwardedAt.getTime() + 31 * DAY_MS));
+    const staleSummary = await getAtBeltSummary(student.id);
+    expect(staleSummary.remainingToNextStripe).toBe(5);
+
+    currentSession = { user: { id: admin.id, role: "ADMIN" } };
+    const result = await confirmPromotion({}, formData({ studentId: student.id }));
+    expect(result.error).toBe("notEligible");
+
+    const after = await prisma.student.findUniqueOrThrow({ where: { id: student.id } });
+    expect(after.currentBelt).toBe("WHITE");
+    expect(after.currentStripes).toBe(0);
+    expect(after.beltAwardedAt.getTime()).toBe(beltAwardedAt.getTime());
+
+    expect(await promotionsFor(student.id)).toHaveLength(0);
+    expect(await auditRowsFor(student.id, "student.promote")).toHaveLength(0);
+  });
+
+  it("a merely 'approaching' student (not yet at a threshold) is rejected with notEligible the same way, regardless of how the request was constructed", async () => {
+    const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+    const admin = await makeStaffUser("ADMIN", "confirm-approaching-admin");
+    const beltAwardedAt = new Date("2026-04-01T12:00:00Z");
+    const student = await makeStudent(escazu.id, { currentBelt: "WHITE", currentStripes: 0, beltAwardedAt });
+
+    // 3 attendances short of the next stripe — "approaching", not eligible.
+    await addAttendances(student.id, escazu.id, 27, new Date(beltAwardedAt.getTime() + DAY_MS));
+
+    currentSession = { user: { id: admin.id, role: "ADMIN" } };
+    const result = await confirmPromotion({}, formData({ studentId: student.id }));
+    expect(result.error).toBe("notEligible");
+
+    const after = await prisma.student.findUniqueOrThrow({ where: { id: student.id } });
+    expect(after.currentStripes).toBe(0);
+    expect(await promotionsFor(student.id)).toHaveLength(0);
+    expect(await auditRowsFor(student.id, "student.promote")).toHaveLength(0);
+  });
+
+  it("an INSTRUCTOR session is rejected (role gate), mutating nothing — spec §3 excludes INSTRUCTOR from promotions", async () => {
+    const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+    const instructor = await makeStaffUser("INSTRUCTOR", "confirm-instructor", escazu.id);
+    const beltAwardedAt = new Date("2026-05-01T12:00:00Z");
+    const student = await makeStudent(escazu.id, { currentBelt: "WHITE", currentStripes: 0, beltAwardedAt });
+    await addAttendances(student.id, escazu.id, 30, new Date(beltAwardedAt.getTime() + DAY_MS));
+
+    currentSession = { user: { id: instructor.id, role: "INSTRUCTOR" } };
+    await expect(confirmPromotion({}, formData({ studentId: student.id }))).rejects.toThrow("FORBIDDEN");
+
+    const after = await prisma.student.findUniqueOrThrow({ where: { id: student.id } });
+    expect(after.currentStripes).toBe(0);
+    expect(await promotionsFor(student.id)).toHaveLength(0);
+  });
+
+  it("a DIRECTOR whose StaffAssignment doesn't cover the student's academy is rejected with notFound, mutating nothing", async () => {
+    const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+    const escalante = await prisma.academy.findUniqueOrThrow({ where: { slug: "escalante" } });
+    const outOfScopeDirector = await makeStaffUser("DIRECTOR", "confirm-scope-director", escalante.id);
+    const beltAwardedAt = new Date("2026-06-01T12:00:00Z");
+    const student = await makeStudent(escazu.id, { currentBelt: "WHITE", currentStripes: 0, beltAwardedAt });
+    await addAttendances(student.id, escazu.id, 30, new Date(beltAwardedAt.getTime() + DAY_MS));
+
+    currentSession = { user: { id: outOfScopeDirector.id, role: "DIRECTOR" } };
+    const result = await confirmPromotion({}, formData({ studentId: student.id }));
+    expect(result.error).toBe("notFound");
+
+    const after = await prisma.student.findUniqueOrThrow({ where: { id: student.id } });
+    expect(after.currentStripes).toBe(0);
+    expect(await promotionsFor(student.id)).toHaveLength(0);
+    expect(await auditRowsFor(student.id, "student.promote")).toHaveLength(0);
+  });
+
+  it("an in-scope DIRECTOR can confirm a promotion", async () => {
+    const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+    const director = await makeStaffUser("DIRECTOR", "confirm-inscope-director", escazu.id);
+    const beltAwardedAt = new Date("2026-07-01T12:00:00Z");
+    const student = await makeStudent(escazu.id, { currentBelt: "WHITE", currentStripes: 0, beltAwardedAt });
+    await addAttendances(student.id, escazu.id, 30, new Date(beltAwardedAt.getTime() + DAY_MS));
+
+    currentSession = { user: { id: director.id, role: "DIRECTOR" } };
+    const result = await confirmPromotion({}, formData({ studentId: student.id }));
+    expect(result.ok).toBe(true);
+
+    const after = await prisma.student.findUniqueOrThrow({ where: { id: student.id } });
+    expect(after.currentStripes).toBe(1);
+
+    const promotions = await promotionsFor(student.id);
+    expect(promotions).toHaveLength(1);
+    expect(promotions[0].awardedById).toBe(director.id);
+  });
+});

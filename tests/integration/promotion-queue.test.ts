@@ -130,8 +130,11 @@ async function withStudentVanishingAfterScan<T>(vanishingStudentId: string, fn: 
  * NOT conflate the two.
  *
  * Patches `appPrisma.beltRequirement.findFirstOrThrow` (the exact call
- * `resolveBeltRequirementLike`/`resolveBeltRequirement` make internally for
- * the academy-null global-default fallback) to throw a Prisma-P2025-shaped
+ * `attendance-summary.ts`'s private `resolveBeltRequirement` makes
+ * internally, via `getAtBeltSummary`, for the academy-null global-default
+ * fallback — the only belt-requirement resolution point since Task 3
+ * consolidated `promotion-queue.ts`'s former separate
+ * `resolveBeltRequirementLike` into it) to throw a Prisma-P2025-shaped
  * error, but ONLY when called for the targeted `{ academyId: null, belt }`
  * lookup — any other call (e.g. a concurrent test's lookup for a different
  * belt) falls through to the real implementation untouched. Restores the
@@ -335,15 +338,18 @@ describe("promotion queue", () => {
     const beltAwardedAt = new Date("2026-08-01T12:00:00Z");
     // PURPLE has no per-academy override seeded for Escazú — only the global
     // default applies — so simulating that global row's absence actually
-    // exercises `resolveBeltRequirementLike`'s `findFirstOrThrow` fallback
-    // rather than short-circuiting on a per-academy override first.
+    // exercises `getAtBeltSummary`'s internal `resolveBeltRequirement`
+    // `findFirstOrThrow` fallback rather than short-circuiting on a
+    // per-academy override first.
     const student = await makeStudent(escazu.id, { currentBelt: "PURPLE", currentStripes: 0, beltAwardedAt });
     await addAttendances(student.id, escazu.id, 10, new Date(beltAwardedAt.getTime() + DAY_MS));
 
-    // As of fix round 3, `resolveBeltRequirementLike`/`resolveBeltRequirement`
-    // catch this lookup's P2025 and rethrow a distinctly-typed
-    // `MissingBeltRequirementError` instead — see promotion-queue.ts's
-    // `classifyActiveStudents` for why call-site discrimination (round 2)
+    // As of fix round 3, `resolveBeltRequirement` (attendance-summary.ts,
+    // called internally by `getAtBeltSummary` — the sole belt-requirement
+    // resolution point since Task 3's consolidation) catches this lookup's
+    // P2025 and rethrows a distinctly-typed `MissingBeltRequirementError`
+    // instead — see promotion-queue.ts's `classifyActiveStudents` for why
+    // call-site discrimination (round 2)
     // was replaced with type discrimination. The propagation itself is
     // unchanged: it still fails the whole batch loudly.
     await expect(
