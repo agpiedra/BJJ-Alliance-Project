@@ -1,13 +1,16 @@
 import { prisma } from "@/lib/prisma";
-import type { Prisma } from "@/generated/prisma/client";
+import { Belt, type Prisma } from "@/generated/prisma/client";
+import { computeBeltProgress, MissingBeltRequirementError } from "@/lib/students/eligibility";
+import { isNotFoundError } from "@/lib/prisma-errors";
 
 export interface AtBeltSummary {
-  currentBelt: string;
+  currentBelt: Belt;
   currentStripes: number;
   atBeltCount: number;
   lifetimeCount: number;
   attendancesPerStripe: number;
   maxStripes: number;
+  attendancesForExam: number;
   nextStripeAt: number | null;
   remainingToNextStripe: number | null;
   examEligible: boolean;
@@ -66,24 +69,7 @@ export async function getAtBeltSummary(studentId: string): Promise<AtBeltSummary
   const atBeltCount = atBeltAgg._sum.delta ?? 0;
   const lifetimeCount = lifetimeAgg._sum.delta ?? 0;
 
-  const atMaxStripes = student.currentStripes >= requirement.maxStripes;
-  const attendancesIntoCurrentStripeSpan = atBeltCount - student.currentStripes * requirement.attendancesPerStripe;
-
-  let nextStripeAt: number | null = null;
-  let remainingToNextStripe: number | null = null;
-  let examEligible = false;
-
-  if (!atMaxStripes && requirement.attendancesPerStripe > 0) {
-    nextStripeAt = (student.currentStripes + 1) * requirement.attendancesPerStripe;
-    remainingToNextStripe = Math.max(0, nextStripeAt - atBeltCount);
-  } else if (atMaxStripes && requirement.attendancesForExam > 0) {
-    // Past the 4th stripe: examEligible once `attendancesForExam` more
-    // attendances have accrued since the 4th stripe was earned.
-    examEligible = attendancesIntoCurrentStripeSpan >= requirement.attendancesForExam;
-    if (!examEligible) {
-      remainingToNextStripe = Math.max(0, requirement.attendancesForExam - attendancesIntoCurrentStripeSpan);
-    }
-  }
+  const progress = computeBeltProgress(atBeltCount, student.currentStripes, requirement);
 
   return {
     currentBelt: student.currentBelt,
@@ -92,9 +78,8 @@ export async function getAtBeltSummary(studentId: string): Promise<AtBeltSummary
     lifetimeCount,
     attendancesPerStripe: requirement.attendancesPerStripe,
     maxStripes: requirement.maxStripes,
-    nextStripeAt,
-    remainingToNextStripe,
-    examEligible,
+    attendancesForExam: requirement.attendancesForExam,
+    ...progress,
   };
 }
 
@@ -104,7 +89,19 @@ async function resolveBeltRequirement(belt: string, homeAcademyId: string) {
   });
   if (perAcademy) return perAcademy;
 
-  return prisma.beltRequirement.findFirstOrThrow({
-    where: { academyId: null, belt: belt as never },
-  });
+  try {
+    return await prisma.beltRequirement.findFirstOrThrow({
+      where: { academyId: null, belt: belt as never },
+    });
+  } catch (error) {
+    // This lookup's own P2025 always means the global-default row is
+    // missing — a config bug, never a benign race — so it's rethrown as a
+    // distinctly-typed error rather than left as Prisma's generic P2025.
+    // See `MissingBeltRequirementError`'s doc comment (eligibility.ts) for
+    // why callers depend on this being a distinguishable TYPE.
+    if (isNotFoundError(error)) {
+      throw new MissingBeltRequirementError(belt);
+    }
+    throw error;
+  }
 }

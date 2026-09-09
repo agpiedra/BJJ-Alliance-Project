@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getAtBeltSummary } from "@/lib/students/attendance-summary";
 import { getStudentForStaff } from "./get-student";
+import { getPromotionHistory } from "./get-promotion-history";
 import { EditStudentForm } from "./edit-student-form";
 import { ArchiveStudentButton } from "./archive-student-button";
 import { ApproveStudentButton } from "./approve-student-button";
@@ -64,6 +65,7 @@ export default async function StudentDetailPage({
   }
 
   const summary = await getAtBeltSummary(student.id);
+  const promotionHistory = await getPromotionHistory(student.id);
 
   const t = await getTranslations("students");
   const tDetail = await getTranslations("students.detail");
@@ -177,16 +179,58 @@ export default async function StudentDetailPage({
         </CardContent>
       </Card>
 
-      {/* Phases 4/6 own this data; these sections are placeholders until the
-          promotion workflow and payment tracking ship. Attendance history
-          itself is Phase 3's own ledger (adjustments included), but a
-          browsable list of it is not part of this task. */}
+      {/* Real data as of Task 5 — every Promotion row for this student,
+          newest first. The other two placeholder cards below (attendance
+          history, payment history) are still genuinely unbuilt (Phases 4/6
+          own the rest of that work); only this card's `comingLater` reliance
+          is removed, since that phrase specifically means "doesn't exist
+          yet," which is no longer true here. */}
       <Card>
         <CardHeader>
           <CardTitle>{tDetail("promotionHistory.heading")}</CardTitle>
         </CardHeader>
         <CardContent>
-          <p className="text-muted-foreground">{tDetail("comingLater")}</p>
+          {promotionHistory.length === 0 ? (
+            <p className="text-muted-foreground">{tDetail("promotionHistory.empty")}</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm">
+                <thead>
+                  <tr className="text-muted-foreground">
+                    <th className="pb-2 pr-4 font-medium">
+                      {tDetail("promotionHistory.columnDate")}
+                    </th>
+                    <th className="pb-2 pr-4 font-medium">
+                      {tDetail("promotionHistory.columnChange")}
+                    </th>
+                    <th className="pb-2 pr-4 font-medium">
+                      {tDetail("promotionHistory.columnBy")}
+                    </th>
+                    <th className="pb-2 font-medium">
+                      {tDetail("promotionHistory.columnNotes")}
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {promotionHistory.map((promotion) => (
+                    <tr key={promotion.id} className="border-t">
+                      <td className="py-2 pr-4 align-top whitespace-nowrap">
+                        {formatTimestampInAcademyZone(promotion.awardedAt, locale)}
+                      </td>
+                      <td className="py-2 pr-4 align-top whitespace-nowrap">
+                        {tBelt(promotion.fromBelt)} {promotion.fromStripes} →{" "}
+                        {tBelt(promotion.toBelt)} {promotion.toStripes}
+                      </td>
+                      <td className="py-2 pr-4 align-top">{promotion.awardedByName}</td>
+                      <td className="py-2 align-top whitespace-pre-wrap">
+                        {promotion.notes ?? "—"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </CardContent>
       </Card>
       <Card>

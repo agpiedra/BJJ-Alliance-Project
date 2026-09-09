@@ -70,7 +70,44 @@
     "pendingApprovalsLink": "View pending students",
     "adminSection": "Administration",
     "adminKioskTokensLink": "Kiosk tokens",
-    "adminScheduleLink": "Class schedule"
+    "adminScheduleLink": "Class schedule",
+    "promotionQueue": {
+      "heading": "Promotion queue",
+      "empty": "No students are currently eligible for a stripe or belt promotion.",
+      "columns": {
+        "name": "Name",
+        "academy": "Academy",
+        "belt": "Belt",
+        "status": "Status",
+        "atBeltCount": "At-belt count",
+        "actions": "Actions"
+      },
+      "status": {
+        "stripe-eligible": "Stripe eligible",
+        "exam-eligible": "Exam eligible",
+        "approaching": "Approaching"
+      },
+      "confirmButton": "Confirm promotion",
+      "confirm": "Confirm this promotion? This will be recorded permanently in the student's promotion history.",
+      "success": "Promotion confirmed.",
+      "error": {
+        "notFound": "Could not confirm this promotion: student not found.",
+        "notActive": "This student is not currently active (pending approval or archived) and cannot be promoted. Refresh the page to see the current queue.",
+        "notEligible": "This student is no longer eligible for this promotion. Their progress may have changed since this list was loaded — refresh the page to see the current queue.",
+        "conflict": "This promotion was already confirmed by someone else just now. Refresh the page to see the current status.",
+        "generic": "Could not confirm this promotion."
+      }
+    },
+    "approaching": {
+      "heading": "Approaching",
+      "empty": "No students are approaching their next stripe or exam threshold.",
+      "columns": {
+        "name": "Name",
+        "academy": "Academy",
+        "belt": "Belt",
+        "remainingToNextStripe": "Classes remaining"
+      }
+    }
   },
   "signup": {
     "heading": "Create student account",
@@ -151,7 +188,12 @@
         "notes": "Notes"
       },
       "promotionHistory": {
-        "heading": "Promotion history"
+        "heading": "Promotion history",
+        "empty": "No promotions yet.",
+        "columnDate": "Date",
+        "columnChange": "Change",
+        "columnBy": "Awarded by",
+        "columnNotes": "Notes"
       },
       "attendanceHistory": {
         "heading": "Attendance history"
