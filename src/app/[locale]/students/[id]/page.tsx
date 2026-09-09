@@ -5,6 +5,7 @@ import { BeltGraphic } from "@/components/belt-graphic/belt-graphic";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getAtBeltSummary } from "@/lib/students/attendance-summary";
+import { formatTimestampInAcademyZone } from "@/lib/format-date";
 import { getStudentForStaff } from "./get-student";
 import { getPromotionHistory } from "./get-promotion-history";
 import { EditStudentForm } from "./edit-student-form";
@@ -26,24 +27,6 @@ export const dynamic = "force-dynamic";
 function formatDateOnly(date: Date | null): string | null {
   if (!date) return null;
   return date.toISOString().slice(0, 10);
-}
-
-/**
- * A TIMESTAMP field (`joinedAt`) — must be rendered in the academy's wall
- * clock, never `toISOString().slice(0, 10)`. Costa Rica is UTC-6 with no
- * DST, so a student who joined at 19:00 CR has a UTC timestamp already on
- * the NEXT calendar day; the naive slice displays their join date as a day
- * late. Same bug class Phase 1's schema comment on
- * `AttendanceRecord.date` warns about.
- */
-function formatTimestampInAcademyZone(date: Date | null, locale: string): string | null {
-  if (!date) return null;
-  return new Intl.DateTimeFormat(locale === "es" ? "es-CR" : "en-US", {
-    timeZone: "America/Costa_Rica",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(date);
 }
 
 export default async function StudentDetailPage({

@@ -253,6 +253,39 @@
       }
     }
   },
+  "portal": {
+    "greeting": "¡Hola, {name}!",
+    "statusNotice": {
+      "PENDING": "Tu cuenta está pendiente de aprobación por tu academia. Tu progreso abajo está actualizado, pero algunas funciones pueden estar limitadas hasta que seas aprobado.",
+      "INACTIVE": "Tu cuenta está marcada como inactiva. Contacta a tu academia si tienes preguntas.",
+      "ARCHIVED": "Tu cuenta ha sido archivada. Contacta a tu academia si crees que esto es un error."
+    },
+    "progress": {
+      "heading": "Tu progreso",
+      "atBeltCount": "{count, plural, one {# asistencia en este cinturón} other {# asistencias en este cinturón}}",
+      "towardNextStripe": "{current} de {target} asistencias hacia tu siguiente grado",
+      "remainingToNextStripe": "{count, plural, =0 {Eres elegible para tu siguiente grado} one {Falta # asistencia para tu siguiente grado} other {Faltan # asistencias para tu siguiente grado}}",
+      "examEligible": "¡Eres elegible para tu examen de cinturón!",
+      "lifetimeCount": "{count, plural, one {# asistencia total} other {# asistencias totales}}"
+    },
+    "attendanceHistory": {
+      "heading": "Historial de asistencia",
+      "empty": "Todavía no hay asistencias registradas.",
+      "type": {
+        "CHECKIN": "Check-in de clase",
+        "ADJUSTMENT": "Ajuste manual"
+      }
+    },
+    "promotionHistory": {
+      "heading": "Historial de promociones",
+      "empty": "Todavía no hay promociones.",
+      "awardedBy": "Otorgada por {name}"
+    },
+    "paymentStatus": {
+      "heading": "Estado de pago",
+      "comingLater": "Disponible en una fase posterior."
+    }
+  },
   "kiosk": {
     "enterCode": "Ingresa tu código de 4 dígitos",
     "clear": "Borrar",

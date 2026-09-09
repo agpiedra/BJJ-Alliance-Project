@@ -253,6 +253,39 @@
       }
     }
   },
+  "portal": {
+    "greeting": "Hi, {name}!",
+    "statusNotice": {
+      "PENDING": "Your account is pending approval by your academy. Your progress below is up to date, but some features may be limited until you're approved.",
+      "INACTIVE": "Your account is currently marked inactive. Contact your academy if you have questions.",
+      "ARCHIVED": "Your account has been archived. Contact your academy if you believe this is a mistake."
+    },
+    "progress": {
+      "heading": "Your progress",
+      "atBeltCount": "{count, plural, one {# attendance at this belt} other {# attendances at this belt}}",
+      "towardNextStripe": "{current} of {target} attendances toward your next stripe",
+      "remainingToNextStripe": "{count, plural, =0 {You're eligible for your next stripe} one {# attendance to go for your next stripe} other {# attendances to go for your next stripe}}",
+      "examEligible": "You're eligible for your belt exam!",
+      "lifetimeCount": "{count, plural, one {# lifetime attendance} other {# lifetime attendances}}"
+    },
+    "attendanceHistory": {
+      "heading": "Attendance history",
+      "empty": "No attendance recorded yet.",
+      "type": {
+        "CHECKIN": "Class check-in",
+        "ADJUSTMENT": "Manual adjustment"
+      }
+    },
+    "promotionHistory": {
+      "heading": "Promotion history",
+      "empty": "No promotions yet.",
+      "awardedBy": "Awarded by {name}"
+    },
+    "paymentStatus": {
+      "heading": "Payment status",
+      "comingLater": "Coming in a later phase."
+    }
+  },
   "kiosk": {
     "enterCode": "Enter your 4-digit code",
     "clear": "Clear",
