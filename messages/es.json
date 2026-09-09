@@ -186,7 +186,12 @@
         "notes": "Notas"
       },
       "promotionHistory": {
-        "heading": "Historial de promociones"
+        "heading": "Historial de promociones",
+        "empty": "Todavía no hay promociones.",
+        "columnDate": "Fecha",
+        "columnChange": "Cambio",
+        "columnBy": "Otorgada por",
+        "columnNotes": "Notas"
       },
       "attendanceHistory": {
         "heading": "Historial de asistencia"

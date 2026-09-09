@@ -186,7 +186,12 @@
         "notes": "Notes"
       },
       "promotionHistory": {
-        "heading": "Promotion history"
+        "heading": "Promotion history",
+        "empty": "No promotions yet.",
+        "columnDate": "Date",
+        "columnChange": "Change",
+        "columnBy": "Awarded by",
+        "columnNotes": "Notes"
       },
       "attendanceHistory": {
         "heading": "Attendance history"
