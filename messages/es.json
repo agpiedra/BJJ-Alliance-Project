@@ -70,7 +70,42 @@
     "pendingApprovalsLink": "Ver estudiantes pendientes",
     "adminSection": "Administración",
     "adminKioskTokensLink": "Tokens de kiosco",
-    "adminScheduleLink": "Horario de clases"
+    "adminScheduleLink": "Horario de clases",
+    "promotionQueue": {
+      "heading": "Cola de promociones",
+      "empty": "Ningún estudiante es elegible actualmente para una promoción de grado o examen.",
+      "columns": {
+        "name": "Nombre",
+        "academy": "Academia",
+        "belt": "Cinturón",
+        "status": "Estado",
+        "atBeltCount": "Clases en este grado",
+        "actions": "Acciones"
+      },
+      "status": {
+        "stripe-eligible": "Elegible para grado",
+        "exam-eligible": "Elegible para examen"
+      },
+      "confirmButton": "Confirmar promoción",
+      "confirm": "¿Confirmar esta promoción? Quedará registrada de forma permanente en el historial de promociones del estudiante.",
+      "success": "Promoción confirmada.",
+      "error": {
+        "notFound": "No se pudo confirmar esta promoción: estudiante no encontrado.",
+        "notEligible": "Este estudiante ya no es elegible para esta promoción. Su progreso pudo haber cambiado desde que se cargó esta lista — actualice la página para ver la cola actual.",
+        "conflict": "Esta promoción ya fue confirmada por otra persona hace un momento. Actualice la página para ver el estado actual.",
+        "generic": "No se pudo confirmar esta promoción."
+      }
+    },
+    "approaching": {
+      "heading": "Próximos a promoción",
+      "empty": "Ningún estudiante se está acercando a su próximo grado o examen.",
+      "columns": {
+        "name": "Nombre",
+        "academy": "Academia",
+        "belt": "Cinturón",
+        "remainingToNextStripe": "Clases restantes"
+      }
+    }
   },
   "signup": {
     "heading": "Crear cuenta de estudiante",
