@@ -40,6 +40,24 @@ export default async function DashboardPage() {
           {t("pendingApprovalsLink")}
         </a>
       </p>
+
+      {/* /admin/kiosk-tokens and /admin/schedule were both fully built but
+          reachable only by typing the URL. Shown to ADMIN sessions only,
+          matching each page's own `requireStaffSession(["ADMIN"])` gate —
+          this is navigation convenience, not the access control. Plain <a>
+          + `/${locale}/…` is this app's existing link convention (see the
+          pending-students link above); there is no shared nav shell yet. */}
+      {staffSession.role === "ADMIN" && (
+        <nav className="flex flex-col gap-2">
+          <h2 className="font-medium">{t("adminSection")}</h2>
+          <a href={`/${locale}/admin/kiosk-tokens`} className="underline">
+            {t("adminKioskTokensLink")}
+          </a>
+          <a href={`/${locale}/admin/schedule`} className="underline">
+            {t("adminScheduleLink")}
+          </a>
+        </nav>
+      )}
     </main>
   );
 }

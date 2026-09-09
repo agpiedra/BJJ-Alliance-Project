@@ -91,6 +91,7 @@ model Academy {
   paymentPlans      PaymentPlan[]
   paymentPeriods    PaymentPeriod[]
   auditLogs         AuditLog[]
+  kioskAttempts     KioskAttempt[]
 }
 
 model User {
@@ -295,6 +296,43 @@ model PaymentPeriod {
 
   @@unique([studentId, year, month])
   @@index([academyId, year, month])
+}
+
+model KioskAttempt {
+  id        String @id @default(cuid())
+  academyId String
+  /// The rate-limit / lockout KEY: the HMAC digest of the kiosk token the
+  /// attempt was presented with (the same value stored in
+  /// `Academy.kioskTokenHash`). Keyed on the verified token rather than the
+  /// caller's IP because `x-forwarded-for` is client-supplied and can be
+  /// rotated per request to evade the counter entirely — and, with no reverse
+  /// proxy in front, degenerates to one shared "unknown" bucket for everyone.
+  kioskTokenHash String
+  /// Best-effort audit metadata ONLY — never part of the rate-limit key, and
+  /// never trusted for a security decision (see `kioskTokenHash`).
+  ipAddress String
+  success   Boolean
+  /// Whether this row counts toward the 5-failure lockout anchor.
+  ///
+  /// `success: false` alone is too coarse: `already_checked_in` and
+  /// `no_active_class` both mean the submitted code was VALID and resolved to a
+  /// real active student, and a gate-rejected attempt never had its code
+  /// evaluated at all. Counting any of those let five late arrivals, five
+  /// double-taps, or a scripted flood of already-blocked requests keep an
+  /// entire academy's kiosk locked out. Only a genuine wrong-code guess
+  /// (`invalid_code`) is a brute-force signal.
+  ///
+  /// Defaults to `true` so the provisional row `reserveKioskAttempt` claims
+  /// before the code is evaluated is presumed a guess failure: that is what
+  /// caps a burst of CONCURRENT reservations at five, since none of them has
+  /// been finalized yet when the next one reads the window.
+  /// `finalizeKioskAttempt` clears it once the real outcome is known.
+  countsAsFailure Boolean  @default(true)
+  createdAt       DateTime @default(now())
+
+  academy Academy @relation(fields: [academyId], references: [id])
+
+  @@index([academyId, kioskTokenHash, createdAt])
 }
 
 model AuditLog {

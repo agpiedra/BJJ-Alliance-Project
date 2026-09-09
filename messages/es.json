@@ -17,6 +17,23 @@
     "BROWN": "Café",
     "BLACK": "Negro"
   },
+  "dayOfWeek": {
+    "MONDAY": "Lunes",
+    "TUESDAY": "Martes",
+    "WEDNESDAY": "Miércoles",
+    "THURSDAY": "Jueves",
+    "FRIDAY": "Viernes",
+    "SATURDAY": "Sábado",
+    "SUNDAY": "Domingo"
+  },
+  "classType": {
+    "GI": "Gi",
+    "NO_GI": "No-Gi",
+    "STRIKING": "Striking",
+    "KIDS": "Niños",
+    "OPEN_MAT": "Open Mat",
+    "COMPETITION": "Competición"
+  },
   "beltGraphic": {
     "label": "Cinturón {belt}, {stripes, plural, =0 {sin franjas} one {# franja} other {# franjas}}"
   },
@@ -50,7 +67,10 @@
     "heading": "Panel de control",
     "welcome": "Bienvenido, {email}",
     "pendingApprovals": "{count, plural, =0 {Ningún estudiante esperando aprobación} one {# estudiante esperando aprobación} other {# estudiantes esperando aprobación}}",
-    "pendingApprovalsLink": "Ver estudiantes pendientes"
+    "pendingApprovalsLink": "Ver estudiantes pendientes",
+    "adminSection": "Administración",
+    "adminKioskTokensLink": "Tokens de kiosco",
+    "adminScheduleLink": "Horario de clases"
   },
   "signup": {
     "heading": "Crear cuenta de estudiante",
@@ -166,7 +186,112 @@
         "success": "Estudiante aprobado.",
         "notFound": "No se pudo aprobar este estudiante.",
         "notPending": "Este estudiante ya no está pendiente de aprobación."
+      },
+      "atBeltSummary": {
+        "heading": "Progreso en el cinturón actual",
+        "atBeltCount": "Asistencias en este cinturón",
+        "lifetimeCount": "Asistencias totales",
+        "remainingToNextStripe": "Faltan para el siguiente grado",
+        "examEligible": "Elegible para examen",
+        "yes": "Sí",
+        "no": "No"
+      },
+      "adjustment": {
+        "toggle": "Agregar ajuste",
+        "delta": "Ajuste",
+        "deltaHint": "Un número positivo agrega asistencias, uno negativo las quita.",
+        "deltaInvalid": "Ingresa un número entero distinto de cero entre -1000 y 1000.",
+        "reason": "Motivo",
+        "reasonRequired": "El motivo es obligatorio.",
+        "submit": "Guardar ajuste",
+        "success": "Ajuste guardado.",
+        "invalid": "Por favor revisa el formulario.",
+        "notFound": "No se pudo agregar este ajuste.",
+        "archived": "Este estudiante está archivado — no se puede ajustar su asistencia."
       }
+    }
+  },
+  "kiosk": {
+    "enterCode": "Ingresa tu código de 4 dígitos",
+    "clear": "Borrar",
+    "backspace": "Borrar el último dígito",
+    "submitting": "Verificando...",
+    "successHeading": "¡Bienvenido!",
+    "earnedStripeHeading": "¡Nueva franja!",
+    "atBeltCount": "{count, plural, one {# asistencia en este cinturón} other {# asistencias en este cinturón}}",
+    "remainingToNextStripe": "{count, plural, =0 {Ya puedes recibir tu próxima franja} one {Falta # asistencia para tu próxima franja} other {Faltan # asistencias para tu próxima franja}}",
+    "examEligible": "¡Elegible para examen!",
+    "visitorBadge": "Visitante de {academy}",
+    "invalidCode": "Código inválido",
+    "alreadyCheckedIn": "Ya marcaste asistencia hoy",
+    "noActiveClass": "No hay clase activa",
+    "invalidToken": "Este kiosco no está configurado correctamente. Contacta a un administrador.",
+    "networkError": "No se pudo conectar. Intenta de nuevo.",
+    "genericError": "Ocurrió un error. Intenta de nuevo.",
+    "rateLimited": "Demasiados intentos. Espera un momento.",
+    "lockedOut": "Bloqueado temporalmente por demasiados intentos fallidos.",
+    "queuedOffline": "¡Guardado! Estás sin conexión — esto se sincronizará automáticamente cuando vuelva la conexión.",
+    "queueFailed": "No pudimos guardar tu check-in en este dispositivo. Por favor avisa en la recepción.",
+    "syncDropped": "{count, plural, one {# check-in no se pudo sincronizar — por favor avisa en la recepción} other {# check-ins no se pudieron sincronizar — por favor avisa en la recepción}}",
+    "syncDroppedDismiss": "Descartar"
+  },
+  "adminKioskTokens": {
+    "heading": "Tokens de dispositivo del kiosco",
+    "description": "Regenera el enlace de marcado de asistencia para la tablet de una academia. Regenerarlo reemplaza el enlace anterior — cualquier tablet que aún lo use dejará de funcionar hasta que se recargue con el nuevo.",
+    "button": "Regenerar token",
+    "confirm": "¿Regenerar el enlace del kiosco de esta academia? El enlace anterior dejará de funcionar de inmediato.",
+    "successTokenWarning": "Este es el nuevo enlace de marcado del kiosco. Cópialo en la tablet ahora — no se mostrará de nuevo:",
+    "notFound": "No se pudo regenerar el token del kiosco de esta academia."
+  },
+  "adminSchedule": {
+    "heading": "Horario de clases",
+    "description": "Administra las sesiones de clase de cada academia — día, hora, duración y tipo. Desactivar una sesión no borra su historial de asistencia.",
+    "academySelector": "Academia",
+    "selectorSubmit": "Ver horario",
+    "empty": "Esta academia no tiene sesiones de clase todavía.",
+    "table": {
+      "day": "Día",
+      "startTime": "Hora",
+      "duration": "Duración (min)",
+      "name": "Nombre",
+      "type": "Tipo",
+      "countsTowardPromotion": "Cuenta para promoción",
+      "status": "Estado",
+      "actions": "Acciones",
+      "active": "Activa",
+      "inactive": "Inactiva",
+      "yes": "Sí",
+      "no": "No"
+    },
+    "create": {
+      "toggle": "Crear sesión",
+      "dayOfWeek": "Día",
+      "startTime": "Hora de inicio",
+      "durationMinutes": "Duración (minutos)",
+      "name": "Nombre",
+      "type": "Tipo",
+      "countsTowardPromotion": "Cuenta para promoción",
+      "yes": "Sí",
+      "no": "No",
+      "submit": "Crear sesión",
+      "success": "Sesión creada.",
+      "invalid": "Por favor revisa el formulario.",
+      "duplicateSlot": "Ya existe una sesión con este día, hora y nombre en esta academia.",
+      "notFound": "No se pudo crear la sesión."
+    },
+    "edit": {
+      "toggle": "Editar",
+      "submit": "Guardar cambios",
+      "success": "Cambios guardados.",
+      "invalid": "Por favor revisa el formulario.",
+      "duplicateSlot": "Ya existe una sesión con este día, hora y nombre en esta academia.",
+      "notFound": "No se pudo actualizar esta sesión."
+    },
+    "deactivate": {
+      "button": "Desactivar",
+      "confirm": "¿Desactivar esta sesión? Ya no estará disponible para marcar asistencia, pero su historial se conserva.",
+      "success": "Sesión desactivada.",
+      "notFound": "No se pudo desactivar esta sesión."
     }
   },
   "error": {

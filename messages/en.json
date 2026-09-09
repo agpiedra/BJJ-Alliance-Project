@@ -17,6 +17,23 @@
     "BROWN": "Brown",
     "BLACK": "Black"
   },
+  "dayOfWeek": {
+    "MONDAY": "Monday",
+    "TUESDAY": "Tuesday",
+    "WEDNESDAY": "Wednesday",
+    "THURSDAY": "Thursday",
+    "FRIDAY": "Friday",
+    "SATURDAY": "Saturday",
+    "SUNDAY": "Sunday"
+  },
+  "classType": {
+    "GI": "Gi",
+    "NO_GI": "No-Gi",
+    "STRIKING": "Striking",
+    "KIDS": "Kids",
+    "OPEN_MAT": "Open Mat",
+    "COMPETITION": "Competition"
+  },
   "beltGraphic": {
     "label": "{belt} belt, {stripes, plural, =0 {no stripes} one {# stripe} other {# stripes}}"
   },
@@ -50,7 +67,10 @@
     "heading": "Dashboard",
     "welcome": "Welcome, {email}",
     "pendingApprovals": "{count, plural, =0 {No students awaiting approval} one {# student awaiting approval} other {# students awaiting approval}}",
-    "pendingApprovalsLink": "View pending students"
+    "pendingApprovalsLink": "View pending students",
+    "adminSection": "Administration",
+    "adminKioskTokensLink": "Kiosk tokens",
+    "adminScheduleLink": "Class schedule"
   },
   "signup": {
     "heading": "Create student account",
@@ -166,7 +186,112 @@
         "success": "Student approved.",
         "notFound": "Could not approve this student.",
         "notPending": "This student is no longer pending approval."
+      },
+      "atBeltSummary": {
+        "heading": "Progress at current belt",
+        "atBeltCount": "Attendances at this belt",
+        "lifetimeCount": "Lifetime attendances",
+        "remainingToNextStripe": "Remaining to next stripe",
+        "examEligible": "Exam eligible",
+        "yes": "Yes",
+        "no": "No"
+      },
+      "adjustment": {
+        "toggle": "Add adjustment",
+        "delta": "Adjustment",
+        "deltaHint": "A positive number adds attendances, a negative number removes them.",
+        "deltaInvalid": "Enter a nonzero whole number between -1000 and 1000.",
+        "reason": "Reason",
+        "reasonRequired": "A reason is required.",
+        "submit": "Save adjustment",
+        "success": "Adjustment saved.",
+        "invalid": "Please check the form for errors.",
+        "notFound": "Could not add this adjustment.",
+        "archived": "This student is archived — attendance can't be adjusted."
       }
+    }
+  },
+  "kiosk": {
+    "enterCode": "Enter your 4-digit code",
+    "clear": "Clear",
+    "backspace": "Delete last digit",
+    "submitting": "Checking in...",
+    "successHeading": "Welcome!",
+    "earnedStripeHeading": "New stripe!",
+    "atBeltCount": "{count, plural, one {# attendance at this belt} other {# attendances at this belt}}",
+    "remainingToNextStripe": "{count, plural, =0 {You're eligible for your next stripe} one {# attendance to go for your next stripe} other {# attendances to go for your next stripe}}",
+    "examEligible": "Exam eligible!",
+    "visitorBadge": "Visitor from {academy}",
+    "invalidCode": "Invalid code",
+    "alreadyCheckedIn": "Already checked in today",
+    "noActiveClass": "No active class",
+    "invalidToken": "This kiosk isn't configured correctly. Contact an administrator.",
+    "networkError": "Couldn't connect. Please try again.",
+    "genericError": "Something went wrong. Please try again.",
+    "rateLimited": "Too many attempts. Please wait a moment.",
+    "lockedOut": "Temporarily locked out after too many failed attempts.",
+    "queuedOffline": "Saved! You're offline — this will sync automatically once the connection is back.",
+    "queueFailed": "We couldn't save your check-in on this device. Please tell the front desk.",
+    "syncDropped": "{count, plural, one {# check-in could not be synced — please tell the front desk} other {# check-ins could not be synced — please tell the front desk}}",
+    "syncDroppedDismiss": "Dismiss"
+  },
+  "adminKioskTokens": {
+    "heading": "Kiosk device tokens",
+    "description": "Regenerate the check-in link for an academy's tablet. Regenerating replaces the old link — any tablet still using it will stop working until it's reloaded with the new one.",
+    "button": "Regenerate token",
+    "confirm": "Regenerate this academy's kiosk link? The old link will stop working immediately.",
+    "successTokenWarning": "This is the new kiosk check-in link. Copy it onto the tablet now — it will not be shown again:",
+    "notFound": "Could not regenerate this academy's kiosk token."
+  },
+  "adminSchedule": {
+    "heading": "Class schedule",
+    "description": "Manage each academy's class sessions — day, time, duration, and type. Deactivating a session does not delete its attendance history.",
+    "academySelector": "Academy",
+    "selectorSubmit": "View schedule",
+    "empty": "This academy has no class sessions yet.",
+    "table": {
+      "day": "Day",
+      "startTime": "Time",
+      "duration": "Duration (min)",
+      "name": "Name",
+      "type": "Type",
+      "countsTowardPromotion": "Counts toward promotion",
+      "status": "Status",
+      "actions": "Actions",
+      "active": "Active",
+      "inactive": "Inactive",
+      "yes": "Yes",
+      "no": "No"
+    },
+    "create": {
+      "toggle": "Create session",
+      "dayOfWeek": "Day",
+      "startTime": "Start time",
+      "durationMinutes": "Duration (minutes)",
+      "name": "Name",
+      "type": "Type",
+      "countsTowardPromotion": "Counts toward promotion",
+      "yes": "Yes",
+      "no": "No",
+      "submit": "Create session",
+      "success": "Session created.",
+      "invalid": "Please review the form.",
+      "duplicateSlot": "A session already exists at this day, time, and name for this academy.",
+      "notFound": "Could not create this session."
+    },
+    "edit": {
+      "toggle": "Edit",
+      "submit": "Save changes",
+      "success": "Changes saved.",
+      "invalid": "Please review the form.",
+      "duplicateSlot": "A session already exists at this day, time, and name for this academy.",
+      "notFound": "Could not update this session."
+    },
+    "deactivate": {
+      "button": "Deactivate",
+      "confirm": "Deactivate this session? It will no longer be available for check-in, but its history is kept.",
+      "success": "Session deactivated.",
+      "notFound": "Could not deactivate this session."
     }
   },
   "error": {

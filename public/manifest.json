@@ -1,0 +1,15 @@
+{
+  "name": "Alliance Jiu-Jitsu Costa Rica",
+  "short_name": "Alliance BJJ",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#0f172a",
+  "icons": [
+    {
+      "src": "/favicon.ico",
+      "sizes": "any",
+      "type": "image/x-icon"
+    }
+  ]
+}

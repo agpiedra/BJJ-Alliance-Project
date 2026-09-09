@@ -4,11 +4,13 @@ import { requireStaffSession } from "@/lib/auth/session";
 import { BeltGraphic } from "@/components/belt-graphic/belt-graphic";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { getAtBeltSummary } from "@/lib/students/attendance-summary";
 import { getStudentForStaff } from "./get-student";
 import { EditStudentForm } from "./edit-student-form";
 import { ArchiveStudentButton } from "./archive-student-button";
 import { ApproveStudentButton } from "./approve-student-button";
 import { RegenerateCodeButton } from "./regenerate-code-button";
+import { AddAdjustmentForm } from "./add-adjustment-form";
 
 // Staff data an admin/director/instructor could change without a redeploy —
 // never frozen at build time, same reasoning as the roster page.
@@ -60,6 +62,8 @@ export default async function StudentDetailPage({
   if (!student) {
     notFound();
   }
+
+  const summary = await getAtBeltSummary(student.id);
 
   const t = await getTranslations("students");
   const tDetail = await getTranslations("students.detail");
@@ -142,9 +146,41 @@ export default async function StudentDetailPage({
         </CardContent>
       </Card>
 
-      {/* Phases 3/4/6 own this data; these sections are placeholders until
-          the attendance ledger, promotion workflow, and payment tracking
-          ship. */}
+      {/* Task 2's getAtBeltSummary, surfaced here now that it exists — the
+          same figures the kiosk shows a student at check-in time, but for
+          staff reviewing this profile. */}
+      <Card>
+        <CardHeader>
+          <CardTitle>{tDetail("atBeltSummary.heading")}</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <dl className="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2">
+            <div>
+              <dt className="text-sm text-muted-foreground">{tDetail("atBeltSummary.atBeltCount")}</dt>
+              <dd>{summary.atBeltCount}</dd>
+            </div>
+            <div>
+              <dt className="text-sm text-muted-foreground">{tDetail("atBeltSummary.lifetimeCount")}</dt>
+              <dd>{summary.lifetimeCount}</dd>
+            </div>
+            <div>
+              <dt className="text-sm text-muted-foreground">
+                {tDetail("atBeltSummary.remainingToNextStripe")}
+              </dt>
+              <dd>{summary.remainingToNextStripe ?? "—"}</dd>
+            </div>
+            <div>
+              <dt className="text-sm text-muted-foreground">{tDetail("atBeltSummary.examEligible")}</dt>
+              <dd>{summary.examEligible ? tDetail("atBeltSummary.yes") : tDetail("atBeltSummary.no")}</dd>
+            </div>
+          </dl>
+        </CardContent>
+      </Card>
+
+      {/* Phases 4/6 own this data; these sections are placeholders until the
+          promotion workflow and payment tracking ship. Attendance history
+          itself is Phase 3's own ledger (adjustments included), but a
+          browsable list of it is not part of this task. */}
       <Card>
         <CardHeader>
           <CardTitle>{tDetail("promotionHistory.heading")}</CardTitle>
@@ -171,6 +207,12 @@ export default async function StudentDetailPage({
       </Card>
 
       <RegenerateCodeButton studentId={student.id} />
+
+      {/* Any staff role can add an adjustment (spec §3 grants attendance
+          marking/correction to INSTRUCTOR too) — deliberately NOT inside the
+          canEdit gate below, which is ADMIN/DIRECTOR only. The server-side
+          addAttendanceAdjustment is the real enforcement either way. */}
+      <AddAdjustmentForm studentId={student.id} />
 
       {canEdit && (
         <div className="flex flex-col gap-4">

@@ -4,6 +4,9 @@ import { PrismaClient } from "../../src/generated/prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { requireEnv } from "../../src/lib/env";
 import { digestLookupSecret, hashSecret } from "../../src/lib/crypto";
+import { toAttendanceDate } from "../../src/lib/scheduling/zone";
+
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 // `getStudentForStaff` / `updateStudent` / `archiveStudent` /
 // `approveStudent` / `regenerateStudentCode` all reach
@@ -29,7 +32,11 @@ const { getStudentForStaff } = await import("../../src/app/[locale]/students/[id
 const { updateStudent, archiveStudent, approveStudent, regenerateStudentCode } = await import(
   "../../src/app/[locale]/students/[id]/actions"
 );
+const { addAttendanceAdjustment } = await import(
+  "../../src/app/[locale]/students/[id]/adjustment-actions"
+);
 const { getStaffSession } = await import("../../src/lib/auth/session");
+const { getAtBeltSummary } = await import("../../src/lib/students/attendance-summary");
 
 const adapter = new PrismaPg({ connectionString: requireEnv("DATABASE_URL") });
 const prisma = new PrismaClient({ adapter });
@@ -50,12 +57,17 @@ const cleanupUserIds: string[] = [];
 const cleanupStudentIds: string[] = [];
 
 async function cleanup() {
-  // AuditLog rows FK to both User and Student — clear them first or the
-  // deletes below fail.
+  // AuditLog and AttendanceRecord rows FK to both User and Student — clear
+  // them first or the deletes below fail.
   if (cleanupStudentIds.length > 0 || cleanupUserIds.length > 0) {
     await prisma.auditLog.deleteMany({
       where: {
         OR: [{ entityId: { in: cleanupStudentIds } }, { actorId: { in: cleanupUserIds } }],
+      },
+    });
+    await prisma.attendanceRecord.deleteMany({
+      where: {
+        OR: [{ studentId: { in: cleanupStudentIds } }, { createdById: { in: cleanupUserIds } }],
       },
     });
   }
@@ -92,7 +104,13 @@ async function makeStaffUser(
 
 async function makeStudent(
   academyId: string,
-  overrides: Partial<{ status: "PENDING" | "ACTIVE" | "INACTIVE" | "ARCHIVED"; lastName: string }> = {},
+  overrides: Partial<{
+    status: "PENDING" | "ACTIVE" | "INACTIVE" | "ARCHIVED";
+    lastName: string;
+    currentBelt: "WHITE" | "BLUE" | "PURPLE" | "BROWN" | "BLACK";
+    currentStripes: number;
+    beltAwardedAt: Date;
+  }> = {},
 ) {
   const suffix = `${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
   const student = await prisma.student.create({
@@ -102,14 +120,34 @@ async function makeStudent(
       lastName: overrides.lastName ?? "Original",
       phone: "88880099",
       email: `detail-test-${suffix}@example.com`,
-      currentBelt: "PURPLE",
-      currentStripes: 1,
+      currentBelt: overrides.currentBelt ?? "PURPLE",
+      currentStripes: overrides.currentStripes ?? 1,
       codeHash: digestLookupSecret(`detail-test-${suffix}`, pepper),
       ...(overrides.status ? { status: overrides.status } : {}),
+      ...(overrides.beltAwardedAt ? { beltAwardedAt: overrides.beltAwardedAt } : {}),
     },
   });
   cleanupStudentIds.push(student.id);
   return student;
+}
+
+/** Writes `count` real CHECKIN rows, one per day starting at `startAt` — the
+ * same shape `tests/integration/attendance-summary.test.ts` uses to build up
+ * atBeltCount toward a stripe threshold. */
+async function addCheckins(studentId: string, academyId: string, count: number, startAt: Date) {
+  const rows = Array.from({ length: count }, (_, i) => {
+    const occurredAt = new Date(startAt.getTime() + i * DAY_MS);
+    return {
+      studentId,
+      academyId,
+      occurredAt,
+      date: toAttendanceDate(occurredAt),
+      type: "CHECKIN" as const,
+      delta: 1,
+      source: "STAFF" as const,
+    };
+  });
+  await prisma.attendanceRecord.createMany({ data: rows });
 }
 
 function auditRowsFor(studentId: string, action: string) {
@@ -429,6 +467,143 @@ describe("student detail actions", () => {
     it("returns null when the JWT names a user that no longer exists", async () => {
       currentSession = { user: { id: "this-user-id-does-not-exist", role: "ADMIN" } };
       expect(await getStaffSession()).toBeNull();
+    });
+  });
+
+  // Task 8: addAttendanceAdjustment. Unlike updateStudent/archiveStudent
+  // (ADMIN/DIRECTOR only), spec §3 grants attendance marking/correction to
+  // INSTRUCTOR too — this is the one write in this file an in-scope
+  // INSTRUCTOR is genuinely allowed to make.
+  describe("addAttendanceAdjustment", () => {
+    it("a positive adjustment increases atBeltCount, verified via getAtBeltSummary", async () => {
+      const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+      const admin = await makeStaffUser("ADMIN", "adj-positive-admin");
+      const student = await makeStudent(escazu.id, { lastName: "AdjPositive" });
+
+      const before = await getAtBeltSummary(student.id);
+
+      currentSession = { user: { id: admin.id, role: "ADMIN" } };
+      const result = await addAttendanceAdjustment(
+        {},
+        formData({ studentId: student.id, delta: "3", reason: "makeup classes" }),
+      );
+      expect(result.ok).toBe(true);
+
+      const after = await getAtBeltSummary(student.id);
+      expect(after.atBeltCount).toBe(before.atBeltCount + 3);
+      expect(after.lifetimeCount).toBe(before.lifetimeCount + 3);
+
+      const audits = await auditRowsFor(
+        (await prisma.attendanceRecord.findFirstOrThrow({
+          where: { studentId: student.id, type: "ADJUSTMENT" },
+        })).id,
+        "attendance.adjustment",
+      );
+      expect(audits).toHaveLength(1);
+      expect(audits[0].entityType).toBe("AttendanceRecord");
+      expect(audits[0].actorId).toBe(admin.id);
+      expect(audits[0].academyId).toBe(escazu.id);
+      expect(audits[0].before).toBeNull();
+      expect(audits[0].after).toMatchObject({ delta: 3, reason: "makeup classes" });
+    });
+
+    it("a negative adjustment decreases atBeltCount and can bring a student back below a threshold already crossed", async () => {
+      const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+      const admin = await makeStaffUser("ADMIN", "adj-negative-admin");
+      const beltAwardedAt = new Date("2026-03-01T12:00:00Z");
+      // WHITE requires 30 attendancesPerStripe (see prisma/seed) — 30
+      // CHECKIN rows crosses the first-stripe threshold exactly.
+      const student = await makeStudent(escazu.id, {
+        lastName: "AdjNegative",
+        currentBelt: "WHITE",
+        currentStripes: 0,
+        beltAwardedAt,
+      });
+
+      await addCheckins(student.id, escazu.id, 30, new Date(beltAwardedAt.getTime() + DAY_MS));
+      const crossed = await getAtBeltSummary(student.id);
+      expect(crossed.atBeltCount).toBe(30);
+      expect(crossed.remainingToNextStripe).toBe(0);
+
+      currentSession = { user: { id: admin.id, role: "ADMIN" } };
+      const result = await addAttendanceAdjustment(
+        {},
+        formData({ studentId: student.id, delta: "-5", reason: "duplicate check-ins removed" }),
+      );
+      expect(result.ok).toBe(true);
+
+      // Back below the threshold it had just crossed.
+      const after = await getAtBeltSummary(student.id);
+      expect(after.atBeltCount).toBe(25);
+      expect(after.remainingToNextStripe).toBe(5);
+    });
+
+    it("an in-scope INSTRUCTOR can successfully add an adjustment — the one write in this file INSTRUCTOR is allowed to make", async () => {
+      const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+      const instructor = await makeStaffUser("INSTRUCTOR", "adj-instructor", escazu.id);
+      const student = await makeStudent(escazu.id, { lastName: "AdjInstructor" });
+
+      currentSession = { user: { id: instructor.id, role: "INSTRUCTOR" } };
+      const result = await addAttendanceAdjustment(
+        {},
+        formData({ studentId: student.id, delta: "1", reason: "instructor correction" }),
+      );
+      expect(result.ok).toBe(true);
+
+      const record = await prisma.attendanceRecord.findFirstOrThrow({
+        where: { studentId: student.id, type: "ADJUSTMENT" },
+      });
+      expect(record.createdById).toBe(instructor.id);
+      expect(record.academyId).toBe(escazu.id);
+      expect(record.delta).toBe(1);
+    });
+
+    it("an out-of-scope DIRECTOR is rejected with notFound, and no AttendanceRecord is created", async () => {
+      const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+      const escalante = await prisma.academy.findUniqueOrThrow({ where: { slug: "escalante" } });
+      const outOfScopeDirector = await makeStaffUser("DIRECTOR", "adj-scope-director", escalante.id);
+      const student = await makeStudent(escazu.id, { lastName: "AdjScope" });
+
+      const countBefore = await prisma.attendanceRecord.count({ where: { studentId: student.id } });
+
+      currentSession = { user: { id: outOfScopeDirector.id, role: "DIRECTOR" } };
+      const result = await addAttendanceAdjustment(
+        {},
+        formData({ studentId: student.id, delta: "2", reason: "should not land" }),
+      );
+      expect(result.error).toBe("notFound");
+
+      const countAfter = await prisma.attendanceRecord.count({ where: { studentId: student.id } });
+      expect(countAfter).toBe(countBefore);
+    });
+
+    it("a missing or empty reason is rejected by zod validation before any DB write", async () => {
+      const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+      const admin = await makeStaffUser("ADMIN", "adj-invalid-admin");
+      const student = await makeStudent(escazu.id, { lastName: "AdjInvalid" });
+
+      const countBefore = await prisma.attendanceRecord.count({ where: { studentId: student.id } });
+
+      currentSession = { user: { id: admin.id, role: "ADMIN" } };
+
+      // Missing `reason` entirely.
+      const missingReason = await addAttendanceAdjustment(
+        {},
+        formData({ studentId: student.id, delta: "1" }),
+      );
+      expect(missingReason.error).toBe("invalid");
+      expect(missingReason.fieldErrors?.reason).toBeTruthy();
+
+      // Present but empty.
+      const emptyReason = await addAttendanceAdjustment(
+        {},
+        formData({ studentId: student.id, delta: "1", reason: "" }),
+      );
+      expect(emptyReason.error).toBe("invalid");
+      expect(emptyReason.fieldErrors?.reason).toBeTruthy();
+
+      const countAfter = await prisma.attendanceRecord.count({ where: { studentId: student.id } });
+      expect(countAfter).toBe(countBefore);
     });
   });
 });

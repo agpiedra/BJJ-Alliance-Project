@@ -7,7 +7,7 @@ import authConfig from "@/auth.config";
 const { auth } = NextAuth(authConfig);
 const handleI18nRouting = createMiddleware(routing);
 
-const PROTECTED_PREFIXES = ["/dashboard", "/students"];
+const PROTECTED_PREFIXES = ["/dashboard", "/students", "/admin"];
 
 function stripLocale(pathname: string): string {
   const match = pathname.match(/^\/(es|en)(\/.*)?$/);
