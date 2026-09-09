@@ -17,6 +17,23 @@
     "BROWN": "Brown",
     "BLACK": "Black"
   },
+  "dayOfWeek": {
+    "MONDAY": "Monday",
+    "TUESDAY": "Tuesday",
+    "WEDNESDAY": "Wednesday",
+    "THURSDAY": "Thursday",
+    "FRIDAY": "Friday",
+    "SATURDAY": "Saturday",
+    "SUNDAY": "Sunday"
+  },
+  "classType": {
+    "GI": "Gi",
+    "NO_GI": "No-Gi",
+    "STRIKING": "Striking",
+    "KIDS": "Kids",
+    "OPEN_MAT": "Open Mat",
+    "COMPETITION": "Competition"
+  },
   "beltGraphic": {
     "label": "{belt} belt, {stripes, plural, =0 {no stripes} one {# stripe} other {# stripes}}"
   },
@@ -219,6 +236,57 @@
     "confirm": "Regenerate this academy's kiosk link? The old link will stop working immediately.",
     "successTokenWarning": "This is the new kiosk check-in link. Copy it onto the tablet now — it will not be shown again:",
     "notFound": "Could not regenerate this academy's kiosk token."
+  },
+  "adminSchedule": {
+    "heading": "Class schedule",
+    "description": "Manage each academy's class sessions — day, time, duration, and type. Deactivating a session does not delete its attendance history.",
+    "academySelector": "Academy",
+    "selectorSubmit": "View schedule",
+    "empty": "This academy has no class sessions yet.",
+    "table": {
+      "day": "Day",
+      "startTime": "Time",
+      "duration": "Duration (min)",
+      "name": "Name",
+      "type": "Type",
+      "countsTowardPromotion": "Counts toward promotion",
+      "status": "Status",
+      "actions": "Actions",
+      "active": "Active",
+      "inactive": "Inactive",
+      "yes": "Yes",
+      "no": "No"
+    },
+    "create": {
+      "toggle": "Create session",
+      "dayOfWeek": "Day",
+      "startTime": "Start time",
+      "durationMinutes": "Duration (minutes)",
+      "name": "Name",
+      "type": "Type",
+      "countsTowardPromotion": "Counts toward promotion",
+      "yes": "Yes",
+      "no": "No",
+      "submit": "Create session",
+      "success": "Session created.",
+      "invalid": "Please review the form.",
+      "duplicateSlot": "A session already exists at this day, time, and name for this academy.",
+      "notFound": "Could not create this session."
+    },
+    "edit": {
+      "toggle": "Edit",
+      "submit": "Save changes",
+      "success": "Changes saved.",
+      "invalid": "Please review the form.",
+      "duplicateSlot": "A session already exists at this day, time, and name for this academy.",
+      "notFound": "Could not update this session."
+    },
+    "deactivate": {
+      "button": "Deactivate",
+      "confirm": "Deactivate this session? It will no longer be available for check-in, but its history is kept.",
+      "success": "Session deactivated.",
+      "notFound": "Could not deactivate this session."
+    }
   },
   "error": {
     "heading": "Something went wrong",

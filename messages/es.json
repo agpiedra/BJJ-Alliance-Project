@@ -17,6 +17,23 @@
     "BROWN": "Café",
     "BLACK": "Negro"
   },
+  "dayOfWeek": {
+    "MONDAY": "Lunes",
+    "TUESDAY": "Martes",
+    "WEDNESDAY": "Miércoles",
+    "THURSDAY": "Jueves",
+    "FRIDAY": "Viernes",
+    "SATURDAY": "Sábado",
+    "SUNDAY": "Domingo"
+  },
+  "classType": {
+    "GI": "Gi",
+    "NO_GI": "No-Gi",
+    "STRIKING": "Striking",
+    "KIDS": "Niños",
+    "OPEN_MAT": "Open Mat",
+    "COMPETITION": "Competición"
+  },
   "beltGraphic": {
     "label": "Cinturón {belt}, {stripes, plural, =0 {sin franjas} one {# franja} other {# franjas}}"
   },
@@ -219,6 +236,57 @@
     "confirm": "¿Regenerar el enlace del kiosco de esta academia? El enlace anterior dejará de funcionar de inmediato.",
     "successTokenWarning": "Este es el nuevo enlace de marcado del kiosco. Cópialo en la tablet ahora — no se mostrará de nuevo:",
     "notFound": "No se pudo regenerar el token del kiosco de esta academia."
+  },
+  "adminSchedule": {
+    "heading": "Horario de clases",
+    "description": "Administra las sesiones de clase de cada academia — día, hora, duración y tipo. Desactivar una sesión no borra su historial de asistencia.",
+    "academySelector": "Academia",
+    "selectorSubmit": "Ver horario",
+    "empty": "Esta academia no tiene sesiones de clase todavía.",
+    "table": {
+      "day": "Día",
+      "startTime": "Hora",
+      "duration": "Duración (min)",
+      "name": "Nombre",
+      "type": "Tipo",
+      "countsTowardPromotion": "Cuenta para promoción",
+      "status": "Estado",
+      "actions": "Acciones",
+      "active": "Activa",
+      "inactive": "Inactiva",
+      "yes": "Sí",
+      "no": "No"
+    },
+    "create": {
+      "toggle": "Crear sesión",
+      "dayOfWeek": "Día",
+      "startTime": "Hora de inicio",
+      "durationMinutes": "Duración (minutos)",
+      "name": "Nombre",
+      "type": "Tipo",
+      "countsTowardPromotion": "Cuenta para promoción",
+      "yes": "Sí",
+      "no": "No",
+      "submit": "Crear sesión",
+      "success": "Sesión creada.",
+      "invalid": "Por favor revisa el formulario.",
+      "duplicateSlot": "Ya existe una sesión con este día, hora y nombre en esta academia.",
+      "notFound": "No se pudo crear la sesión."
+    },
+    "edit": {
+      "toggle": "Editar",
+      "submit": "Guardar cambios",
+      "success": "Cambios guardados.",
+      "invalid": "Por favor revisa el formulario.",
+      "duplicateSlot": "Ya existe una sesión con este día, hora y nombre en esta academia.",
+      "notFound": "No se pudo actualizar esta sesión."
+    },
+    "deactivate": {
+      "button": "Desactivar",
+      "confirm": "¿Desactivar esta sesión? Ya no estará disponible para marcar asistencia, pero su historial se conserva.",
+      "success": "Sesión desactivada.",
+      "notFound": "No se pudo desactivar esta sesión."
+    }
   },
   "error": {
     "heading": "Algo salió mal",
