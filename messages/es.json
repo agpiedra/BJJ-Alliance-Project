@@ -169,6 +169,14 @@
       }
     }
   },
+  "adminKioskTokens": {
+    "heading": "Tokens de dispositivo del kiosco",
+    "description": "Regenera el enlace de marcado de asistencia para la tablet de una academia. Regenerarlo reemplaza el enlace anterior — cualquier tablet que aún lo use dejará de funcionar hasta que se recargue con el nuevo.",
+    "button": "Regenerar token",
+    "confirm": "¿Regenerar el enlace del kiosco de esta academia? El enlace anterior dejará de funcionar de inmediato.",
+    "successTokenWarning": "Este es el nuevo enlace de marcado del kiosco. Cópialo en la tablet ahora — no se mostrará de nuevo:",
+    "notFound": "No se pudo regenerar el token del kiosco de esta academia."
+  },
   "error": {
     "heading": "Algo salió mal",
     "description": "Ocurrió un error inesperado.",

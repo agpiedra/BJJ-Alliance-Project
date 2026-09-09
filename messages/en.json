@@ -169,6 +169,14 @@
       }
     }
   },
+  "adminKioskTokens": {
+    "heading": "Kiosk device tokens",
+    "description": "Regenerate the check-in link for an academy's tablet. Regenerating replaces the old link — any tablet still using it will stop working until it's reloaded with the new one.",
+    "button": "Regenerate token",
+    "confirm": "Regenerate this academy's kiosk link? The old link will stop working immediately.",
+    "successTokenWarning": "This is the new kiosk check-in link. Copy it onto the tablet now — it will not be shown again:",
+    "notFound": "Could not regenerate this academy's kiosk token."
+  },
   "error": {
     "heading": "Something went wrong",
     "description": "An unexpected error occurred.",
