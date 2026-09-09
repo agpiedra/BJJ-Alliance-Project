@@ -1,10 +1,10 @@
 import { prisma } from "@/lib/prisma";
-import type { Prisma } from "@/generated/prisma/client";
+import { Belt, type Prisma } from "@/generated/prisma/client";
 import { computeBeltProgress, MissingBeltRequirementError } from "@/lib/students/eligibility";
 import { isNotFoundError } from "@/lib/prisma-errors";
 
 export interface AtBeltSummary {
-  currentBelt: string;
+  currentBelt: Belt;
   currentStripes: number;
   atBeltCount: number;
   lifetimeCount: number;

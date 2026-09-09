@@ -8,6 +8,7 @@ import {
   classifyEligibility,
   resolvePromotionTarget,
   type BeltRequirementLike,
+  type PromotionTarget,
 } from "@/lib/students/eligibility";
 import type { ActionState } from "@/lib/action-state";
 
@@ -15,6 +16,24 @@ const confirmPromotionSchema = z.object({
   studentId: z.string().min(1),
   notes: z.string().optional(),
 });
+
+/**
+ * Thrown inside the transaction purely to roll it back when the scoped
+ * `updateMany` below matched no row — i.e. the student's belt/stripes no
+ * longer equal `target.fromBelt`/`target.fromStripes` at write time, because
+ * a concurrent confirm (or another mutation) already changed them since this
+ * call's own fresh read. Never surfaces to the caller — caught immediately
+ * after the transaction and turned into a graceful `{error: "conflict"}`.
+ * Matches `src/app/[locale]/students/[id]/actions.ts`'s `StudentWriteMissError`
+ * convention (a private sentinel error, never a raw exception reaching the
+ * client).
+ */
+class PromotionConflictError extends Error {
+  constructor() {
+    super("PROMOTION_CONFLICT");
+    this.name = "PromotionConflictError";
+  }
+}
 
 /**
  * ADMIN/DIRECTOR only — spec §3 explicitly excludes INSTRUCTOR from
@@ -28,10 +47,21 @@ const confirmPromotionSchema = z.object({
  * this action is that eligibility is recomputed FRESH, from the database,
  * at the moment of confirmation — never from anything the request carries.
  *
- * Same independent re-fetch-and-check-scope discipline as every other write
- * in this app: `student` is re-read here (never trusting a hidden form
- * field for `homeAcademyId`), and `isAcademyInScope` is re-checked against
- * that freshly-read value.
+ * `student` (read A) is re-read here purely to re-check scope — never
+ * trusting a hidden form field for `homeAcademyId` — and `isAcademyInScope`
+ * is re-checked against that freshly-read value. Read A's `currentBelt`/
+ * `currentStripes` are deliberately NOT used for anything else: fix round 1
+ * (finding I-1) found that `getAtBeltSummary` performs its OWN internal
+ * `findUniqueOrThrow` (read B) to compute `nextStripeAt`/
+ * `remainingToNextStripe`/`examEligible`, and the original code paired read
+ * A's belt/stripes with read B's progress numbers. A concurrent write
+ * between the two reads made that pairing internally inconsistent — proven
+ * to regress a student's stripe count and write a false, permanent
+ * `Promotion`/`AuditLog` row. Every value that feeds the eligibility
+ * decision (`classifyEligibility`, `resolvePromotionTarget`) and the audit
+ * `before` snapshot now comes from `summary.currentBelt`/
+ * `summary.currentStripes` (read B) instead — the SAME read that produced
+ * the progress numbers it's paired with.
  *
  * The stale-eligibility race this action defends against: a staff member
  * opens the promotion queue, sees a student is eligible, then before they
@@ -47,20 +77,29 @@ const confirmPromotionSchema = z.object({
  * belt-requirement lookup to keep in sync with it.
  *
  * If `resolvePromotionTarget` returns `null` (status is `"approaching"` or
- * `"none"`), the action rejects with `{error: "notEligible"}` and writes
- * nothing — this covers both the stale-eligibility race above AND a request
- * for a student who was never actually eligible in the first place,
- * regardless of how the request was constructed.
+ * `"none"`), or throws (the unreachable-today, admin-reconfigurable-in-the-
+ * future invariant violation of an exam-eligible BLACK belt with no next
+ * belt — see its own doc comment), the action rejects with
+ * `{error: "notEligible"}` and writes nothing — this covers the
+ * stale-eligibility race above, that invariant edge case, AND a request for
+ * a student who was never actually eligible in the first place, regardless
+ * of how the request was constructed.
  *
- * Unlike `updateStudent`/`archiveStudent`/`approveStudent`/
- * `regenerateStudentCode` (all scoped `updateMany` + row-count-check, since
- * a race could move/delete the row between the scope check and the write),
- * this is a plain `update` — matching Task 4's admin kiosk-token pattern
- * from Phase 3 for a similarly-shaped single-row update after an upfront
- * scope check. There is no client-submitted "which row" ambiguity here
- * beyond the `studentId` already validated against scope immediately before
- * the transaction opens, via a `findUnique` read whose result also seeds
- * this transaction's promotion target and audit `before` snapshot.
+ * Finding I-2: two concurrent confirms for the same student could both read
+ * the same "before" state and both successfully write under READ COMMITTED,
+ * producing two duplicate `Promotion` rows for one real promotion. Guarded
+ * the same way `updateStudent`/`archiveStudent`/`approveStudent`/
+ * `regenerateStudentCode` guard their own races: `tx.student.update` is now
+ * `tx.student.updateMany`, scoped by `id` AND the exact belt/stripe state
+ * this promotion transitions FROM (`target.fromBelt`/`target.fromStripes`,
+ * themselves sourced from `summary` per the I-1 fix above). Postgres
+ * re-evaluates that WHERE predicate after the winning transaction's row lock
+ * releases, so a losing concurrent call's `updateMany` matches zero rows —
+ * that's what closes the race, not a lock this code has to manage. A
+ * `count !== 1` throws `PromotionConflictError` inside the transaction,
+ * rolling back all three writes (`Promotion`, `Student`, `AuditLog`) so the
+ * loser produces zero side effects, never a partial or duplicate one. The
+ * catch below turns it into a graceful `{error: "conflict"}`.
  *
  * The `Promotion` row and its `AuditLog` row are written in the SAME
  * transaction as the `Student` update, so none of the three can exist
@@ -79,15 +118,20 @@ export async function confirmPromotion(
 
   const data = parsed.data;
 
+  // Read A: used ONLY for the scope check (`homeAcademyId`). Its
+  // `currentBelt`/`currentStripes` are deliberately not selected — see the
+  // doc comment above (finding I-1).
   const student = await prisma.student.findUnique({
     where: { id: data.studentId },
-    select: { id: true, currentBelt: true, currentStripes: true, homeAcademyId: true, beltAwardedAt: true },
+    select: { id: true, homeAcademyId: true },
   });
 
   if (!student || !isAcademyInScope(session, student.homeAcademyId)) {
     return { error: "notFound" };
   }
 
+  // Read B (inside getAtBeltSummary): the single source of truth for both
+  // the progress numbers AND the belt/stripes they were computed against.
   const summary = await getAtBeltSummary(student.id);
   const requirement: BeltRequirementLike = {
     attendancesPerStripe: summary.attendancesPerStripe,
@@ -100,50 +144,82 @@ export async function confirmPromotion(
       remainingToNextStripe: summary.remainingToNextStripe,
       examEligible: summary.examEligible,
     },
-    student.currentStripes,
+    summary.currentStripes,
     requirement,
   );
 
-  const target = resolvePromotionTarget(status, student.currentBelt, student.currentStripes);
+  let target: PromotionTarget | null;
+  try {
+    target = resolvePromotionTarget(status, summary.currentBelt, summary.currentStripes);
+  } catch {
+    // Invariant violation (exam-eligible with no next belt) — unreachable
+    // with today's seeded requirements, but a future admin-editable
+    // BLACK requirement could make it reachable. Graceful rejection instead
+    // of an unhandled 500.
+    return { error: "notEligible" };
+  }
 
   if (!target) {
     return { error: "notEligible" };
   }
 
-  await prisma.$transaction(async (tx) => {
-    await tx.promotion.create({
-      data: {
-        studentId: student.id,
-        academyId: student.homeAcademyId,
-        fromBelt: target.fromBelt,
-        fromStripes: target.fromStripes,
-        toBelt: target.toBelt,
-        toStripes: target.toStripes,
-        awardedById: session.userId,
-        notes: data.notes || null,
-      },
-    });
+  // Rebound to a `const` so the closure below keeps TypeScript's narrowing
+  // (a `let` captured by a nested function widens back to its declared
+  // `PromotionTarget | null` type inside the closure).
+  const resolvedTarget = target;
 
-    await tx.student.update({
-      where: { id: student.id },
-      data:
-        target.kind === "belt"
-          ? { currentBelt: target.toBelt, currentStripes: 0, beltAwardedAt: new Date() }
-          : { currentStripes: target.toStripes },
-    });
+  try {
+    await prisma.$transaction(async (tx) => {
+      await tx.promotion.create({
+        data: {
+          studentId: student.id,
+          academyId: student.homeAcademyId,
+          fromBelt: resolvedTarget.fromBelt,
+          fromStripes: resolvedTarget.fromStripes,
+          toBelt: resolvedTarget.toBelt,
+          toStripes: resolvedTarget.toStripes,
+          awardedById: session.userId,
+          notes: data.notes || null,
+        },
+      });
 
-    await tx.auditLog.create({
-      data: {
-        actorId: session.userId,
-        academyId: student.homeAcademyId,
-        action: "student.promote",
-        entityType: "Student",
-        entityId: student.id,
-        before: { belt: student.currentBelt, stripes: student.currentStripes },
-        after: { belt: target.toBelt, stripes: target.toStripes },
-      },
+      // Scoped by id AND the exact from-state this promotion transitions
+      // out of (finding I-2) — a concurrent confirm/adjustment that already
+      // changed the student's belt/stripes makes this match zero rows.
+      const result = await tx.student.updateMany({
+        where: {
+          id: student.id,
+          currentBelt: resolvedTarget.fromBelt,
+          currentStripes: resolvedTarget.fromStripes,
+        },
+        data:
+          resolvedTarget.kind === "belt"
+            ? { currentBelt: resolvedTarget.toBelt, currentStripes: 0, beltAwardedAt: new Date() }
+            : { currentStripes: resolvedTarget.toStripes },
+      });
+
+      if (result.count !== 1) {
+        throw new PromotionConflictError();
+      }
+
+      await tx.auditLog.create({
+        data: {
+          actorId: session.userId,
+          academyId: student.homeAcademyId,
+          action: "student.promote",
+          entityType: "Student",
+          entityId: student.id,
+          before: { belt: summary.currentBelt, stripes: summary.currentStripes },
+          after: { belt: resolvedTarget.toBelt, stripes: resolvedTarget.toStripes },
+        },
+      });
     });
-  });
+  } catch (error) {
+    if (error instanceof PromotionConflictError) {
+      return { error: "conflict" };
+    }
+    throw error;
+  }
 
   return { ok: true };
 }

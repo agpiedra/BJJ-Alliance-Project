@@ -96,9 +96,15 @@ async function classifyActiveStudents(session: StaffSession): Promise<
           maxStripes: summary.maxStripes,
           attendancesForExam: summary.attendancesForExam,
         };
+        // Read from `summary` (the same call that produced the progress
+        // numbers below), not the outer `findMany`'s `student.currentBelt`/
+        // `currentStripes` — same root cause as Phase 4 Task 3 fix round 1's
+        // finding I-1 (promotion-actions.ts), though here it's read-only
+        // display data (this list view writes nothing), so a stale pairing
+        // is cosmetic rather than a false permanent record.
         const status = classifyEligibility(
           { nextStripeAt: summary.nextStripeAt, remainingToNextStripe: summary.remainingToNextStripe, examEligible: summary.examEligible },
-          student.currentStripes,
+          summary.currentStripes,
           requirement,
         );
         return {
@@ -109,8 +115,8 @@ async function classifyActiveStudents(session: StaffSession): Promise<
             lastName: student.lastName,
             homeAcademyId: student.homeAcademyId,
             homeAcademyName: student.homeAcademy.name,
-            currentBelt: student.currentBelt,
-            currentStripes: student.currentStripes,
+            currentBelt: summary.currentBelt,
+            currentStripes: summary.currentStripes,
             status: status as "stripe-eligible" | "exam-eligible" | "approaching",
             atBeltCount: summary.atBeltCount,
             remainingToNextStripe: summary.remainingToNextStripe,

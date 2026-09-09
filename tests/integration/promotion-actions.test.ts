@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PrismaClient } from "../../src/generated/prisma/client";
 import type { Belt } from "../../src/generated/prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
@@ -25,6 +25,11 @@ vi.mock("@/auth", () => ({
 
 const { confirmPromotion } = await import("../../src/app/[locale]/dashboard/promotion-actions");
 const { getAtBeltSummary } = await import("../../src/lib/students/attendance-summary");
+// The SAME singleton `prisma` instance `confirmPromotion` uses internally
+// (via its own `import { prisma } from "@/lib/prisma"`) — spying on a method
+// of this object intercepts calls made from inside promotion-actions.ts too,
+// since both imports reference the identical PrismaClient instance.
+const { prisma: appPrisma } = await import("../../src/lib/prisma");
 
 const adapter = new PrismaPg({ connectionString: requireEnv("DATABASE_URL") });
 const prisma = new PrismaClient({ adapter });
@@ -154,6 +159,13 @@ describe("confirmPromotion", () => {
 
   beforeEach(() => {
     currentSession = null;
+  });
+
+  afterEach(() => {
+    // Restores any `vi.spyOn(appPrisma.student, ...)` from the I-1
+    // regression test below — this file has no global `restoreMocks`, so a
+    // leftover spy would otherwise bleed into later tests.
+    vi.restoreAllMocks();
   });
 
   it("a student exactly at a stripe threshold: confirming increments currentStripes, leaves belt/beltAwardedAt unchanged, writes Promotion + AuditLog rows", async () => {
@@ -336,5 +348,112 @@ describe("confirmPromotion", () => {
     const promotions = await promotionsFor(student.id);
     expect(promotions).toHaveLength(1);
     expect(promotions[0].awardedById).toBe(director.id);
+  });
+
+  it("finding I-1 regression: a concurrent stripe change landing between the scope-check read and getAtBeltSummary's internal read must not produce a mismatched decision", async () => {
+    const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+    const admin = await makeStaffUser("ADMIN", "confirm-i1-admin");
+    const beltAwardedAt = new Date("2026-08-01T12:00:00Z");
+    // Created at currentStripes=1 — the value confirmPromotion's scope-check
+    // read (read A) will observe.
+    const student = await makeStudent(escazu.id, { currentBelt: "WHITE", currentStripes: 1, beltAwardedAt });
+
+    // Enough attendance for a student truly AT currentStripes=3 (the value
+    // AFTER the concurrent write simulated below) to be exactly
+    // stripe-eligible: nextStripeAt = (3 + 1) * 30 = 120.
+    await addAttendances(student.id, escazu.id, 120, new Date(beltAwardedAt.getTime() + DAY_MS));
+
+    // Simulate a concurrent write (e.g. two manual stripe corrections by
+    // another staff member) landing strictly between confirmPromotion's read
+    // A (the scope-check `findUnique`) and read B (`getAtBeltSummary`'s
+    // internal `findUniqueOrThrow`), bumping currentStripes 1 -> 3.
+    //
+    // Before fix round 1 (finding I-1), this reproduced a real regression:
+    // read A's now-stale currentStripes=1 fed `classifyEligibility` /
+    // `resolvePromotionTarget` directly, building a promotion target of
+    // fromStripes:1 / toStripes:2 — even though the true, freshly-read
+    // (read B) state was already currentStripes=3. Confirming would have
+    // REGRESSED the stored value from 3 down to 2 and written a false
+    // Promotion/AuditLog pair recording fromStripes:1. The fix makes this
+    // structurally impossible: read A no longer selects currentBelt/
+    // currentStripes at all, and every value feeding the decision comes from
+    // `summary` (read B) alone.
+    // `findUnique` returns Prisma's fluent `Prisma__StudentClient` (not a
+    // plain `Promise`), which supports chained relation calls
+    // (`.homeAcademy()`, etc.) — irrelevant to this test, which only needs
+    // the awaited result, so the mock is typed loosely via `as never`
+    // rather than reproducing that fluent-client shape.
+    const originalFindUnique = appPrisma.student.findUnique.bind(appPrisma.student) as (
+      args: never,
+    ) => Promise<unknown>;
+    vi.spyOn(appPrisma.student, "findUnique").mockImplementationOnce(((args: never) =>
+      (async () => {
+        const result = await originalFindUnique(args);
+        await prisma.student.update({ where: { id: student.id }, data: { currentStripes: 3 } });
+        return result;
+      })()) as never);
+
+    currentSession = { user: { id: admin.id, role: "ADMIN" } };
+    const result = await confirmPromotion({}, formData({ studentId: student.id }));
+    expect(result.ok).toBe(true);
+
+    const after = await prisma.student.findUniqueOrThrow({ where: { id: student.id } });
+    expect(after.currentBelt).toBe("WHITE");
+    // Must be 4 (the true, read-B state of 3, incremented by exactly one) —
+    // never 2 (what the pre-fix stale-read-A pairing would have produced).
+    expect(after.currentStripes).toBe(4);
+
+    const promotions = await promotionsFor(student.id);
+    expect(promotions).toHaveLength(1);
+    expect(promotions[0]).toMatchObject({
+      fromBelt: "WHITE",
+      fromStripes: 3,
+      toBelt: "WHITE",
+      toStripes: 4,
+    });
+
+    const audits = await auditRowsFor(student.id, "student.promote");
+    expect(audits).toHaveLength(1);
+    expect(audits[0].before).toMatchObject({ belt: "WHITE", stripes: 3 });
+    expect(audits[0].after).toMatchObject({ belt: "WHITE", stripes: 4 });
+  });
+
+  it("finding I-2 regression: two genuinely concurrent confirms for the same eligible student produce exactly one success and one graceful conflict, with zero side effects from the loser", async () => {
+    const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+    const admin = await makeStaffUser("ADMIN", "confirm-concurrent-admin");
+    const beltAwardedAt = new Date("2026-08-15T12:00:00Z");
+    const student = await makeStudent(escazu.id, { currentBelt: "WHITE", currentStripes: 0, beltAwardedAt });
+    await addAttendances(student.id, escazu.id, 30, new Date(beltAwardedAt.getTime() + DAY_MS));
+
+    currentSession = { user: { id: admin.id, role: "ADMIN" } };
+
+    // Genuinely concurrent — no artificial delay. Postgres's own row-lock +
+    // WHERE-re-evaluation behavior (see the doc comment on
+    // `PromotionConflictError` in promotion-actions.ts) is what closes the
+    // race, not anything this test orchestrates.
+    const [resultA, resultB] = await Promise.all([
+      confirmPromotion({}, formData({ studentId: student.id, notes: "first" })),
+      confirmPromotion({}, formData({ studentId: student.id, notes: "second" })),
+    ]);
+
+    const results = [resultA, resultB];
+    const successes = results.filter((r) => r.ok === true);
+    const conflicts = results.filter((r) => r.error === "conflict");
+    expect(successes).toHaveLength(1);
+    expect(conflicts).toHaveLength(1);
+
+    const after = await prisma.student.findUniqueOrThrow({ where: { id: student.id } });
+    expect(after.currentBelt).toBe("WHITE");
+    // Exactly one stripe increment — never two, and never left unchanged.
+    expect(after.currentStripes).toBe(1);
+
+    // The loser's Promotion insert (and its AuditLog row) must have been
+    // rolled back along with its failed Student update — zero partial or
+    // duplicate side effects, not just "no duplicate Student mutation".
+    const promotions = await promotionsFor(student.id);
+    expect(promotions).toHaveLength(1);
+
+    const audits = await auditRowsFor(student.id, "student.promote");
+    expect(audits).toHaveLength(1);
   });
 });
