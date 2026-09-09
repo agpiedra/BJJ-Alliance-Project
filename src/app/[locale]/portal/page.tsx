@@ -8,6 +8,7 @@ import { getAtBeltSummary } from "@/lib/students/attendance-summary";
 import { getAttendanceHistory } from "@/lib/students/attendance-history";
 import { getOwnPromotionHistory } from "./get-promotion-history";
 import { formatTimestampInAcademyZone } from "@/lib/format-date";
+import { SelfCheckInButton } from "./self-check-in-button";
 
 // A student's own belt/status could change without a redeploy (staff can
 // promote them, adjust attendance, or flip their status any time) — never
@@ -66,13 +67,7 @@ export default async function StudentPortalPage({
         <BeltGraphic belt={student.currentBelt} stripes={student.currentStripes} maxStripes={summary.maxStripes} />
       </div>
 
-      {/*
-        TASK 3 SLOT: the self check-in button/section belongs here — right
-        after the belt graphic and before the progress card, so it's the
-        first actionable thing a student sees on this mobile page (the
-        primary reason they'd open /portal at the gym). Nothing is rendered
-        here yet; Task 3 owns building it.
-      */}
+      <SelfCheckInButton />
 
       <Card>
         <CardHeader>

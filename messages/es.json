@@ -284,6 +284,23 @@
     "paymentStatus": {
       "heading": "Estado de pago",
       "comingLater": "Disponible en una fase posterior."
+    },
+    "selfCheckIn": {
+      "heading": "Registrar asistencia",
+      "earnedStripeHeading": "¡Nuevo grado!",
+      "button": "Registrar asistencia ahora",
+      "submitting": "Registrando...",
+      "successMessage": "¡Asistencia registrada!",
+      "visitorBadge": "Visitante de {academy}",
+      "atBeltCount": "{count, plural, one {# asistencia en este cinturón} other {# asistencias en este cinturón}}",
+      "remainingToNextStripe": "{count, plural, =0 {Eres elegible para tu siguiente grado} one {Falta # asistencia para tu siguiente grado} other {Faltan # asistencias para tu siguiente grado}}",
+      "examEligible": "¡Eres elegible para tu examen de cinturón!",
+      "error": {
+        "invalid_code": "Algo salió mal. Por favor avisa en recepción.",
+        "no_active_class": "No hay ninguna clase activa en este momento.",
+        "already_checked_in": "Ya registraste tu asistencia para esta clase hoy.",
+        "generic": "Algo salió mal. Por favor intenta de nuevo."
+      }
     }
   },
   "kiosk": {

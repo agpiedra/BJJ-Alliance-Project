@@ -284,6 +284,23 @@
     "paymentStatus": {
       "heading": "Payment status",
       "comingLater": "Coming in a later phase."
+    },
+    "selfCheckIn": {
+      "heading": "Check in",
+      "earnedStripeHeading": "New stripe!",
+      "button": "Check in now",
+      "submitting": "Checking in...",
+      "successMessage": "You're checked in!",
+      "visitorBadge": "Visitor from {academy}",
+      "atBeltCount": "{count, plural, one {# attendance at this belt} other {# attendances at this belt}}",
+      "remainingToNextStripe": "{count, plural, =0 {You're eligible for your next stripe} one {# attendance to go for your next stripe} other {# attendances to go for your next stripe}}",
+      "examEligible": "You're eligible for your belt exam!",
+      "error": {
+        "invalid_code": "Something went wrong. Please tell the front desk.",
+        "no_active_class": "No class is active right now.",
+        "already_checked_in": "You've already checked in for this class today.",
+        "generic": "Something went wrong. Please try again."
+      }
     }
   },
   "kiosk": {

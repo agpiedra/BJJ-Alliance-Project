@@ -21,18 +21,21 @@ export type CheckInResult =
     }
   | { ok: false; error: "invalid_code" | "no_active_class" | "already_checked_in" };
 
-export async function performCheckIn(input: {
-  academyId: string;
-  code: string;
-  source: AttendanceSource;
-  now?: Date;
-}): Promise<CheckInResult> {
+export type PerformCheckInInput =
+  | { academyId: string; code: string; studentId?: never; source: AttendanceSource; now?: Date }
+  | { academyId: string; studentId: string; code?: never; source: AttendanceSource; now?: Date };
+
+export async function performCheckIn(input: PerformCheckInInput): Promise<CheckInResult> {
   const now = input.now ?? new Date();
-  const codeHash = digestLookupSecret(input.code, requireEnv("CODE_PEPPER"));
-  const student = await prisma.student.findUnique({
-    where: { codeHash },
-    include: { homeAcademy: { select: { name: true } } },
-  });
+  const student = input.code
+    ? await prisma.student.findUnique({
+        where: { codeHash: digestLookupSecret(input.code, requireEnv("CODE_PEPPER")) },
+        include: { homeAcademy: { select: { name: true } } },
+      })
+    : await prisma.student.findUnique({
+        where: { id: input.studentId },
+        include: { homeAcademy: { select: { name: true } } },
+      });
 
   if (!student || student.status !== StudentStatus.ACTIVE) {
     return { ok: false, error: "invalid_code" };
