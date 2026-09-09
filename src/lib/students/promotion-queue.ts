@@ -1,7 +1,12 @@
 import { prisma } from "@/lib/prisma";
 import { academyScopeWhere, type StaffSession } from "@/lib/auth/session";
 import { getAtBeltSummary } from "@/lib/students/attendance-summary";
-import { classifyEligibility, type EligibilityStatus } from "@/lib/students/eligibility";
+import {
+  classifyEligibility,
+  MissingBeltRequirementError,
+  type EligibilityStatus,
+} from "@/lib/students/eligibility";
+import { isNotFoundError } from "@/lib/prisma-errors";
 import type { Belt } from "@/generated/prisma/client";
 
 export interface PromotionCandidate {
@@ -30,7 +35,19 @@ export async function resolveBeltRequirementLike(belt: Belt, homeAcademyId: stri
     where: { academyId_belt: { academyId: homeAcademyId, belt } },
   });
   if (perAcademy) return perAcademy;
-  return prisma.beltRequirement.findFirstOrThrow({ where: { academyId: null, belt } });
+  try {
+    return await prisma.beltRequirement.findFirstOrThrow({ where: { academyId: null, belt } });
+  } catch (error) {
+    // Same rationale as attendance-summary.ts's `resolveBeltRequirement`:
+    // this lookup's own P2025 can only mean the global-default row is
+    // missing (a config bug), so it's rethrown as a distinctly-typed error
+    // rather than left as Prisma's generic P2025 — see
+    // `MissingBeltRequirementError`'s doc comment (eligibility.ts).
+    if (isNotFoundError(error)) {
+      throw new MissingBeltRequirementError(belt);
+    }
+    throw error;
+  }
 }
 
 async function classifyActiveStudents(session: StaffSession): Promise<
@@ -59,60 +76,76 @@ async function classifyActiveStudents(session: StaffSession): Promise<
 
   const results = await Promise.all(
     students.map(async (student) => {
-      // This admin-wide scan and this per-student lookup are not atomic: a
-      // student present in the `findMany` above can be gone by the time this
-      // runs (e.g. another test file's fixture teardown hard-deleting its own
-      // rows mid-scan — confirmed reproducible, see
+      // This admin-wide scan and this per-student work are not atomic: a
+      // student present in the `findMany` above can vanish at ANY point
+      // before or during the per-student work below (e.g. another test
+      // file's fixture teardown hard-deleting its own rows mid-scan —
+      // confirmed reproducible, see
       // tests/integration/promotion-queue.test.ts's vanished-student case).
-      // We resolve that race ourselves, first and cheaply, with a plain
-      // `findUnique` (a `null` result is an expected, non-throwing outcome
-      // here) rather than by catching Prisma's not-found error (P2025) from
-      // the calls below.
       //
-      // That matters because `getAtBeltSummary`/`resolveBeltRequirementLike`
-      // also raise P2025 internally (via `findUniqueOrThrow`/
-      // `findFirstOrThrow`) for a COMPLETELY different, non-benign reason:
-      // the academy-wide global `BeltRequirement` row for this belt is
-      // missing — a seed-data/configuration bug, not a race (see
-      // `resolveBeltRequirementLike`'s doc comment). A broad catch here would
-      // treat both cases identically and silently drop a student from every
-      // future classification for that belt, forever, with zero diagnostic
-      // signal. By ruling out the benign case up front, any P2025 that still
-      // reaches the `Promise.all` below is unambiguously the missing-
-      // belt-requirement case, and we deliberately do NOT catch it — it
-      // propagates out of `listPromotionQueue`/`listApproachingStudents`,
-      // failing the whole batch loudly, which is the correct tradeoff for a
-      // real configuration bug (unlike a lone vanished student).
-      const stillExists = await prisma.student.findUnique({
-        where: { id: student.id },
-        select: { id: true },
-      });
-      if (!stillExists) return null;
-
-      const [summary, requirement] = await Promise.all([
-        getAtBeltSummary(student.id),
-        resolveBeltRequirementLike(student.currentBelt, student.homeAcademyId),
-      ]);
-      const status = classifyEligibility(
-        { nextStripeAt: summary.nextStripeAt, remainingToNextStripe: summary.remainingToNextStripe, examEligible: summary.examEligible },
-        student.currentStripes,
-        requirement,
-      );
-      return {
-        status,
-        candidate: {
-          studentId: student.id,
-          firstName: student.firstName,
-          lastName: student.lastName,
-          homeAcademyId: student.homeAcademyId,
-          homeAcademyName: student.homeAcademy.name,
-          currentBelt: student.currentBelt,
-          currentStripes: student.currentStripes,
-          status: status as "stripe-eligible" | "exam-eligible" | "approaching",
-          atBeltCount: summary.atBeltCount,
-          remainingToNextStripe: summary.remainingToNextStripe,
-        },
-      };
+      // A prior version of this fix (round 2) split "check the student still
+      // exists" from "do the per-student work" into two separate calls. That
+      // closed the window the check covered but opened a NEW one: the
+      // student could still vanish between the check and the use, producing
+      // an uncaught crash that sank the whole batch — a narrower instance of
+      // the exact bug being fixed. Round 3 (this version) restores a single
+      // atomic try/catch around the whole per-student unit of work instead,
+      // so there is no window at all in which the two calls can observe
+      // different states of the world.
+      //
+      // The remaining problem a plain broad catch would reintroduce: both
+      // `getAtBeltSummary` (student lookup) and `resolveBeltRequirementLike`
+      // (global BeltRequirement fallback) can raise Prisma's generic P2025
+      // "not found" — but only one of those is benign. A missing global
+      // `BeltRequirement` row is a seed-data/config bug that must propagate
+      // loudly, not be silently treated like a vanished student. That's now
+      // solved by TYPE rather than by call site: `resolveBeltRequirementLike`
+      // (and `getAtBeltSummary`'s own belt-requirement resolution) throw a
+      // distinctly-typed `MissingBeltRequirementError` for their P2025,
+      // instead of leaving it as a generic P2025 — so any plain P2025 that
+      // reaches this catch can only have come from `getAtBeltSummary`'s
+      // internal `findUniqueOrThrow(student)`, i.e. the student vanished.
+      try {
+        const [summary, requirement] = await Promise.all([
+          getAtBeltSummary(student.id),
+          resolveBeltRequirementLike(student.currentBelt, student.homeAcademyId),
+        ]);
+        const status = classifyEligibility(
+          { nextStripeAt: summary.nextStripeAt, remainingToNextStripe: summary.remainingToNextStripe, examEligible: summary.examEligible },
+          student.currentStripes,
+          requirement,
+        );
+        return {
+          status,
+          candidate: {
+            studentId: student.id,
+            firstName: student.firstName,
+            lastName: student.lastName,
+            homeAcademyId: student.homeAcademyId,
+            homeAcademyName: student.homeAcademy.name,
+            currentBelt: student.currentBelt,
+            currentStripes: student.currentStripes,
+            status: status as "stripe-eligible" | "exam-eligible" | "approaching",
+            atBeltCount: summary.atBeltCount,
+            remainingToNextStripe: summary.remainingToNextStripe,
+          },
+        };
+      } catch (error) {
+        // Real configuration bug — must fail the whole batch loudly, not be
+        // swallowed as if this were a lone vanished student.
+        if (error instanceof MissingBeltRequirementError) {
+          throw error;
+        }
+        // Any other Prisma "not found" here can now only mean the student
+        // itself vanished (getAtBeltSummary's internal findUniqueOrThrow) —
+        // benign, exclude it from the batch.
+        if (isNotFoundError(error)) {
+          return null;
+        }
+        // Anything else is unexpected — don't broaden the catch beyond the
+        // two distinguishable cases above.
+        throw error;
+      }
     }),
   );
 

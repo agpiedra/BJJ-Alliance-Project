@@ -1,5 +1,28 @@
 import { Belt } from "@/generated/prisma/client";
 
+/**
+ * Thrown when neither a per-academy nor the academy-null global
+ * `BeltRequirement` row exists for a belt — a seed-data/configuration bug,
+ * never a benign condition. Distinctly typed (rather than left as Prisma's
+ * generic `P2025`) so callers that resolve a belt requirement alongside an
+ * independent, genuinely-racy lookup (see `promotion-queue.ts`'s
+ * `classifyActiveStudents`) can tell "the config is broken" apart from
+ * "the row I was looking at got deleted out from under me" by error TYPE
+ * rather than by which call site threw — see fix round 3 of Phase 4's Task 2
+ * for why call-site discrimination reintroduced a TOCTOU race.
+ *
+ * Lives here rather than in `prisma-errors.ts` because it's specific to this
+ * one domain lookup (not a generic Prisma predicate), and both
+ * `attendance-summary.ts` and `promotion-queue.ts` already import from this
+ * shared pure-logic module.
+ */
+export class MissingBeltRequirementError extends Error {
+  constructor(belt: string) {
+    super(`No BeltRequirement found for belt ${belt} (neither per-academy nor global)`);
+    this.name = "MissingBeltRequirementError";
+  }
+}
+
 export interface BeltRequirementLike {
   attendancesPerStripe: number;
   maxStripes: number;

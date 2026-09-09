@@ -340,12 +340,18 @@ describe("promotion queue", () => {
     const student = await makeStudent(escazu.id, { currentBelt: "PURPLE", currentStripes: 0, beltAwardedAt });
     await addAttendances(student.id, escazu.id, 10, new Date(beltAwardedAt.getTime() + DAY_MS));
 
+    // As of fix round 3, `resolveBeltRequirementLike`/`resolveBeltRequirement`
+    // catch this lookup's P2025 and rethrow a distinctly-typed
+    // `MissingBeltRequirementError` instead — see promotion-queue.ts's
+    // `classifyActiveStudents` for why call-site discrimination (round 2)
+    // was replaced with type discrimination. The propagation itself is
+    // unchanged: it still fails the whole batch loudly.
     await expect(
       withMissingGlobalBeltRequirement("PURPLE", () => listPromotionQueue(admin)),
-    ).rejects.toMatchObject({ code: "P2025" });
+    ).rejects.toMatchObject({ name: "MissingBeltRequirementError" });
 
     await expect(
       withMissingGlobalBeltRequirement("PURPLE", () => listApproachingStudents(admin)),
-    ).rejects.toMatchObject({ code: "P2025" });
+    ).rejects.toMatchObject({ name: "MissingBeltRequirementError" });
   });
 });

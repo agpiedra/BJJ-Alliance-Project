@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import type { Prisma } from "@/generated/prisma/client";
-import { computeBeltProgress } from "@/lib/students/eligibility";
+import { computeBeltProgress, MissingBeltRequirementError } from "@/lib/students/eligibility";
+import { isNotFoundError } from "@/lib/prisma-errors";
 
 export interface AtBeltSummary {
   currentBelt: string;
@@ -86,7 +87,19 @@ async function resolveBeltRequirement(belt: string, homeAcademyId: string) {
   });
   if (perAcademy) return perAcademy;
 
-  return prisma.beltRequirement.findFirstOrThrow({
-    where: { academyId: null, belt: belt as never },
-  });
+  try {
+    return await prisma.beltRequirement.findFirstOrThrow({
+      where: { academyId: null, belt: belt as never },
+    });
+  } catch (error) {
+    // This lookup's own P2025 always means the global-default row is
+    // missing — a config bug, never a benign race — so it's rethrown as a
+    // distinctly-typed error rather than left as Prisma's generic P2025.
+    // See `MissingBeltRequirementError`'s doc comment (eligibility.ts) for
+    // why callers depend on this being a distinguishable TYPE.
+    if (isNotFoundError(error)) {
+      throw new MissingBeltRequirementError(belt);
+    }
+    throw error;
+  }
 }
