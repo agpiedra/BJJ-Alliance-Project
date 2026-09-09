@@ -33,8 +33,10 @@ describe("kiosk rate limiting", () => {
 
   it("rate-limits after 10 attempts (any mix of success/fail) within the window", async () => {
     const ip = uniqueIp("ratelimit");
+    // Keep failures under the lockout threshold (5) so this exercises the rate-limit path in
+    // isolation; the precedence between the two conditions is covered separately below.
     for (let i = 0; i < 10; i++) {
-      await recordKioskAttempt(escazuId, ip, i % 2 === 0);
+      await recordKioskAttempt(escazuId, ip, i < 6);
     }
     const result = await checkKioskRateLimit(escazuId, ip);
     expect(result.allowed).toBe(false);
@@ -57,6 +59,49 @@ describe("kiosk rate limiting", () => {
       expect(result.retryAfterSeconds).toBeGreaterThanOrEqual(1);
       expect(result.retryAfterSeconds).toBeLessThanOrEqual(60);
     }
+  });
+
+  it("prefers locked_out over rate_limited when both conditions apply simultaneously", async () => {
+    const ip = uniqueIp("precedence");
+    const now = Date.now();
+    // 5 failures + 3 successes + 2 more failures = 10 attempts within the window, with 7 of
+    // them failures — both the >=10-total and >=5-failures conditions are true. Seeded
+    // directly (bypassing recordKioskAttempt's own gating, which would otherwise refuse to
+    // insert once locked out) so this test only exercises the reason-precedence decision.
+    const successPattern = [false, false, false, false, false, true, true, true, false, false];
+    await prisma.kioskAttempt.createMany({
+      data: successPattern.map((success, i) => ({
+        academyId: escazuId,
+        ipAddress: ip,
+        success,
+        createdAt: new Date(now - (successPattern.length - i) * 1000),
+      })),
+    });
+
+    const result = await checkKioskRateLimit(escazuId, ip);
+    expect(result.allowed).toBe(false);
+    if (!result.allowed) {
+      expect(result.reason).toBe("locked_out");
+    }
+  });
+
+  it("never records more than 5 attempts as allowed under concurrent load before lockout engages", async () => {
+    const ip = uniqueIp("concurrency");
+    const CONCURRENT_CALLS = 15;
+
+    const results = await Promise.all(
+      Array.from({ length: CONCURRENT_CALLS }, () => recordKioskAttempt(escazuId, ip, false)),
+    );
+
+    const allowedCount = results.filter((r) => r.allowed).length;
+    const lockedOutCount = results.filter((r) => !r.allowed && r.reason === "locked_out").length;
+    expect(allowedCount).toBeLessThanOrEqual(5);
+    expect(allowedCount + lockedOutCount).toBe(CONCURRENT_CALLS);
+
+    // The atomic gate must also have refused to insert once locked out, not merely reported it.
+    const recordedCount = await prisma.kioskAttempt.count({ where: { academyId: escazuId, ipAddress: ip } });
+    expect(recordedCount).toBe(allowedCount);
+    expect(recordedCount).toBeLessThanOrEqual(5);
   });
 
   it("scopes rate limiting per academy+IP: a different IP or a different academy is unaffected", async () => {
