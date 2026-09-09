@@ -1,0 +1,217 @@
+import "dotenv/config";
+import { afterAll, describe, expect, it } from "vitest";
+import { PrismaClient } from "../../src/generated/prisma/client";
+import type { Belt } from "../../src/generated/prisma/client";
+import { PrismaPg } from "@prisma/adapter-pg";
+import { requireEnv } from "../../src/lib/env";
+import { digestLookupSecret } from "../../src/lib/crypto";
+import { toAttendanceDate } from "../../src/lib/scheduling/zone";
+import type { StaffSession } from "../../src/lib/auth/session";
+import type { PromotionCandidate } from "../../src/lib/students/promotion-queue";
+
+const { listPromotionQueue, listApproachingStudents } = await import(
+  "../../src/lib/students/promotion-queue"
+);
+
+const adapter = new PrismaPg({ connectionString: requireEnv("DATABASE_URL") });
+const prisma = new PrismaClient({ adapter });
+const pepper = requireEnv("CODE_PEPPER");
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+const cleanupStudentIds: string[] = [];
+
+async function cleanup() {
+  if (cleanupStudentIds.length > 0) {
+    await prisma.attendanceRecord.deleteMany({ where: { studentId: { in: cleanupStudentIds } } });
+    await prisma.student.deleteMany({ where: { id: { in: cleanupStudentIds } } });
+  }
+}
+
+async function makeStudent(
+  academyId: string,
+  overrides: { currentBelt: Belt; currentStripes: number; beltAwardedAt: Date },
+) {
+  const suffix = `${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
+  const student = await prisma.student.create({
+    data: {
+      homeAcademyId: academyId,
+      firstName: "PromotionQueueTest",
+      lastName: `Student-${suffix}`,
+      phone: "88880000",
+      email: `promotion-queue-${suffix}@example.com`,
+      currentBelt: overrides.currentBelt,
+      currentStripes: overrides.currentStripes,
+      beltAwardedAt: overrides.beltAwardedAt,
+      status: "ACTIVE",
+      codeHash: digestLookupSecret(`promotion-queue-${suffix}`, pepper),
+    },
+  });
+  cleanupStudentIds.push(student.id);
+  return student;
+}
+
+/**
+ * Writes `count` synthetic CHECKIN rows with `classSessionId: null`, one per
+ * day starting at `startAt`. `classSessionId: null` rows are manual-style
+ * adjustments (see attendance-summary.ts's PROMOTION_RELEVANT comment) that
+ * always count toward `atBeltCount` and, being unconstrained by any real
+ * class schedule, let a test hit an exact attendance count without needing
+ * `count` distinct real class occurrences to exist.
+ */
+async function addAttendances(studentId: string, academyId: string, count: number, startAt: Date) {
+  if (count === 0) return;
+  const rows = Array.from({ length: count }, (_, i) => {
+    const occurredAt = new Date(startAt.getTime() + i * DAY_MS);
+    return {
+      studentId,
+      academyId,
+      occurredAt,
+      date: toAttendanceDate(occurredAt),
+      type: "CHECKIN" as const,
+      delta: 1,
+      source: "STAFF" as const,
+    };
+  });
+  await prisma.attendanceRecord.createMany({ data: rows });
+}
+
+function findCandidate(list: PromotionCandidate[], studentId: string) {
+  return list.find((c) => c.studentId === studentId);
+}
+
+describe("promotion queue", () => {
+  afterAll(cleanup);
+
+  it("a student exactly at a stripe threshold appears in listPromotionQueue as stripe-eligible", async () => {
+    const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+    const admin: StaffSession = { userId: "x", role: "ADMIN", academyIds: "ALL" };
+    const beltAwardedAt = new Date("2026-01-01T12:00:00Z");
+    const student = await makeStudent(escazu.id, { currentBelt: "WHITE", currentStripes: 0, beltAwardedAt });
+
+    // WHITE requires 30 attendancesPerStripe (global default) — exactly at
+    // the threshold, not one short and not one over.
+    await addAttendances(student.id, escazu.id, 30, new Date(beltAwardedAt.getTime() + DAY_MS));
+
+    const queue = await listPromotionQueue(admin);
+    const candidate = findCandidate(queue, student.id);
+    expect(candidate).toBeDefined();
+    expect(candidate?.status).toBe("stripe-eligible");
+    expect(candidate?.atBeltCount).toBe(30);
+    expect(candidate?.remainingToNextStripe).toBe(0);
+    expect(candidate?.currentBelt).toBe("WHITE");
+    expect(candidate?.currentStripes).toBe(0);
+    expect(candidate?.homeAcademyName).toBe(escazu.name);
+
+    const approaching = await listApproachingStudents(admin);
+    expect(findCandidate(approaching, student.id)).toBeUndefined();
+  });
+
+  it("a student exactly at the exam threshold (4 stripes, attendancesForExam more) appears as exam-eligible", async () => {
+    const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+    const admin: StaffSession = { userId: "x", role: "ADMIN", academyIds: "ALL" };
+    const beltAwardedAt = new Date("2026-02-01T12:00:00Z");
+    // beltAwardedAt marks when the BELT (not the 4th stripe) was awarded, so
+    // atBeltCount accrues from there across all 4 stripes too —
+    // computeBeltProgress's attendancesIntoCurrentStripeSpan subtracts
+    // currentStripes * attendancesPerStripe (4 * 30 = 120) back out. Exactly
+    // at the exam threshold means 120 (the 4 stripes) + 30 (WHITE's
+    // attendancesForExam) = 150 total, matching attendance-summary.test.ts's
+    // equivalent fixture and the schema's own comment on this field.
+    const student = await makeStudent(escazu.id, { currentBelt: "WHITE", currentStripes: 4, beltAwardedAt });
+
+    await addAttendances(student.id, escazu.id, 150, new Date(beltAwardedAt.getTime() + DAY_MS));
+
+    const queue = await listPromotionQueue(admin);
+    const candidate = findCandidate(queue, student.id);
+    expect(candidate).toBeDefined();
+    expect(candidate?.status).toBe("exam-eligible");
+    expect(candidate?.atBeltCount).toBe(150);
+    expect(candidate?.remainingToNextStripe).toBeNull();
+
+    const approaching = await listApproachingStudents(admin);
+    expect(findCandidate(approaching, student.id)).toBeUndefined();
+  });
+
+  it("a student 3 attendances from a threshold appears ONLY in listApproachingStudents", async () => {
+    const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+    const admin: StaffSession = { userId: "x", role: "ADMIN", academyIds: "ALL" };
+    const beltAwardedAt = new Date("2026-03-01T12:00:00Z");
+    const student = await makeStudent(escazu.id, { currentBelt: "WHITE", currentStripes: 0, beltAwardedAt });
+
+    // 30 - 3 = 27: 3 attendances short of the next stripe.
+    await addAttendances(student.id, escazu.id, 27, new Date(beltAwardedAt.getTime() + DAY_MS));
+
+    const approaching = await listApproachingStudents(admin);
+    const candidate = findCandidate(approaching, student.id);
+    expect(candidate).toBeDefined();
+    expect(candidate?.status).toBe("approaching");
+    expect(candidate?.remainingToNextStripe).toBe(3);
+
+    const queue = await listPromotionQueue(admin);
+    expect(findCandidate(queue, student.id)).toBeUndefined();
+  });
+
+  it("a student 20 attendances from any threshold appears in neither list", async () => {
+    const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+    const admin: StaffSession = { userId: "x", role: "ADMIN", academyIds: "ALL" };
+    const beltAwardedAt = new Date("2026-04-01T12:00:00Z");
+    const student = await makeStudent(escazu.id, { currentBelt: "WHITE", currentStripes: 0, beltAwardedAt });
+
+    // 30 - 20 = 10: 20 attendances short of the next stripe, beyond the
+    // default 5-attendance "approaching" window.
+    await addAttendances(student.id, escazu.id, 10, new Date(beltAwardedAt.getTime() + DAY_MS));
+
+    const queue = await listPromotionQueue(admin);
+    const approaching = await listApproachingStudents(admin);
+    expect(findCandidate(queue, student.id)).toBeUndefined();
+    expect(findCandidate(approaching, student.id)).toBeUndefined();
+  });
+
+  it("a DIRECTOR/INSTRUCTOR session scoped to Escazú never sees an Escalante-only eligible student; ADMIN sees both", async () => {
+    const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+    const escalante = await prisma.academy.findUniqueOrThrow({ where: { slug: "escalante" } });
+
+    const beltAwardedAt = new Date("2026-05-01T12:00:00Z");
+    const escazuStudent = await makeStudent(escazu.id, { currentBelt: "WHITE", currentStripes: 0, beltAwardedAt });
+    const escalanteStudent = await makeStudent(escalante.id, {
+      currentBelt: "WHITE",
+      currentStripes: 0,
+      beltAwardedAt,
+    });
+
+    // Both exactly stripe-eligible.
+    await Promise.all([
+      addAttendances(escazuStudent.id, escazu.id, 30, new Date(beltAwardedAt.getTime() + DAY_MS)),
+      addAttendances(escalanteStudent.id, escalante.id, 30, new Date(beltAwardedAt.getTime() + DAY_MS)),
+    ]);
+
+    const escazuInstructor: StaffSession = { userId: "x", role: "INSTRUCTOR", academyIds: [escazu.id] };
+    const scopedQueue = await listPromotionQueue(escazuInstructor);
+    expect(findCandidate(scopedQueue, escazuStudent.id)).toBeDefined();
+    expect(findCandidate(scopedQueue, escalanteStudent.id)).toBeUndefined();
+
+    const admin: StaffSession = { userId: "x", role: "ADMIN", academyIds: "ALL" };
+    const fullQueue = await listPromotionQueue(admin);
+    expect(findCandidate(fullQueue, escazuStudent.id)).toBeDefined();
+    expect(findCandidate(fullQueue, escalanteStudent.id)).toBeDefined();
+  });
+
+  it("a Black-belt student at any attendance count appears in neither list", async () => {
+    const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+    const admin: StaffSession = { userId: "x", role: "ADMIN", academyIds: "ALL" };
+    const beltAwardedAt = new Date("2026-06-01T12:00:00Z");
+    // BLACK's global default requirement is 0/0/0 — maxStripes 0 means
+    // currentStripes (0) already meets/exceeds it, and attendancesForExam 0
+    // means computeBeltProgress never marks examEligible. classifyEligibility
+    // should report "none" no matter how many attendances pile up.
+    const student = await makeStudent(escazu.id, { currentBelt: "BLACK", currentStripes: 0, beltAwardedAt });
+
+    await addAttendances(student.id, escazu.id, 500, new Date(beltAwardedAt.getTime() + DAY_MS));
+
+    const queue = await listPromotionQueue(admin);
+    const approaching = await listApproachingStudents(admin);
+    expect(findCandidate(queue, student.id)).toBeUndefined();
+    expect(findCandidate(approaching, student.id)).toBeUndefined();
+  });
+});
