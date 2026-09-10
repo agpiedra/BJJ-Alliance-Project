@@ -207,6 +207,37 @@
             "change": "Change"
           }
         }
+      },
+      "locations": {
+        "comparison": {
+          "heading": "Location comparison",
+          "empty": "No academies in scope for the selected filter.",
+          "table": {
+            "academy": "Academy",
+            "activeStudents": "Active students",
+            "totalAttendances": "Total attendances",
+            "avgPerClass": "Avg per class",
+            "paymentHealthPercent": "Payment health"
+          },
+          "csv": {
+            "academy": "Academy",
+            "activeStudents": "Active students",
+            "totalAttendances": "Total attendances",
+            "avgPerClass": "Avg per class",
+            "paymentHealthPercent": "Payment health"
+          }
+        },
+        "crossTraining": {
+          "heading": "Cross-training",
+          "empty": "No cross-training check-ins in the selected range.",
+          "summary": "{count, plural, one {# check-in} other {# check-ins}} at {visited} (home: {home})",
+          "csv": {
+            "student": "Student",
+            "homeAcademy": "Home academy",
+            "visitedAcademy": "Visited academy",
+            "visitCount": "Visits"
+          }
+        }
       }
     }
   },

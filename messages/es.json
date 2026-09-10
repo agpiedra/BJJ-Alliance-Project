@@ -207,6 +207,37 @@
             "change": "Cambio"
           }
         }
+      },
+      "locations": {
+        "comparison": {
+          "heading": "Comparación de sedes",
+          "empty": "No hay academias en el alcance para el filtro seleccionado.",
+          "table": {
+            "academy": "Academia",
+            "activeStudents": "Estudiantes activos",
+            "totalAttendances": "Asistencias totales",
+            "avgPerClass": "Promedio por clase",
+            "paymentHealthPercent": "Salud de pagos"
+          },
+          "csv": {
+            "academy": "Academia",
+            "activeStudents": "Estudiantes activos",
+            "totalAttendances": "Asistencias totales",
+            "avgPerClass": "Promedio por clase",
+            "paymentHealthPercent": "Salud de pagos"
+          }
+        },
+        "crossTraining": {
+          "heading": "Entrenamiento cruzado",
+          "empty": "No hay asistencias de entrenamiento cruzado en el período seleccionado.",
+          "summary": "{count, plural, one {# asistencia} other {# asistencias}} en {visited} (sede: {home})",
+          "csv": {
+            "student": "Estudiante",
+            "homeAcademy": "Academia de origen",
+            "visitedAcademy": "Academia visitada",
+            "visitCount": "Visitas"
+          }
+        }
       }
     }
   },

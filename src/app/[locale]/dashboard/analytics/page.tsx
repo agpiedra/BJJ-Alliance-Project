@@ -6,9 +6,11 @@ import { resolveAnalyticsFilters, type AnalyticsSearchParams } from "@/lib/analy
 import { getHeadlineTiles } from "@/lib/analytics/headline-tiles";
 import { getClassPopularity } from "@/lib/analytics/class-popularity";
 import { getBeltDistribution, getProgressionPlanningList, getPromotionsInRange } from "@/lib/analytics/progression";
+import { getLocationComparison, getCrossTraining } from "@/lib/analytics/locations";
 import { ExportCsvButton } from "./export-csv-button";
 import { ClassPopularityPanel } from "./class-popularity-panel";
 import { ProgressionPanel } from "./progression-panel";
+import { LocationsPanel } from "./locations-panel";
 
 // Same reasoning as the roster/dashboard pages: every panel here reflects
 // staff/student data that can change without a redeploy, so this page must
@@ -39,6 +41,16 @@ export default async function AnalyticsPage({
     getBeltDistribution(session, filters),
     getPromotionsInRange(session, filters),
   ]);
+
+  // ADMIN-only panel (spec's "Locations (admin only)" heading) — skip
+  // fetching this data entirely for a DIRECTOR session rather than
+  // fetch-and-hide; `getLocationComparison`/`getCrossTraining` would reject
+  // a DIRECTOR anyway (this is the one panel in the phase where DIRECTOR is
+  // rejected outright, not narrowed), so this check only saves the query.
+  const [locationComparison, crossTraining] =
+    session.role === "ADMIN"
+      ? await Promise.all([getLocationComparison(session, filters), getCrossTraining(session, filters)])
+      : [[], []];
 
   // `projectedDate`/`awardedAt` are Luxon `DateTime` instances — not
   // plain-serializable across the Server -> Client Component boundary, so
@@ -149,6 +161,10 @@ export default async function AnalyticsPage({
         beltDistribution={beltDistribution}
         promotionsInRange={promotionsInRangeRows}
       />
+
+      {session.role === "ADMIN" && (
+        <LocationsPanel comparison={locationComparison} crossTraining={crossTraining} />
+      )}
     </main>
   );
 }
