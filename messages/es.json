@@ -290,7 +290,6 @@
       "button": "Registrar asistencia ahora",
       "submitting": "Registrando...",
       "successMessage": "¡Asistencia registrada!",
-      "visitorBadge": "Visitante de {academy}",
       "atBeltCount": "{count, plural, one {# asistencia en este cinturón} other {# asistencias en este cinturón}}",
       "remainingToNextStripe": "{count, plural, =0 {Eres elegible para tu siguiente grado} one {Falta # asistencia para tu siguiente grado} other {Faltan # asistencias para tu siguiente grado}}",
       "examEligible": "¡Eres elegible para tu examen de cinturón!",

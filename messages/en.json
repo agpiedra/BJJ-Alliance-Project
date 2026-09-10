@@ -290,7 +290,6 @@
       "button": "Check in now",
       "submitting": "Checking in...",
       "successMessage": "You're checked in!",
-      "visitorBadge": "Visitor from {academy}",
       "atBeltCount": "{count, plural, one {# attendance at this belt} other {# attendances at this belt}}",
       "remainingToNextStripe": "{count, plural, =0 {You're eligible for your next stripe} one {# attendance to go for your next stripe} other {# attendances to go for your next stripe}}",
       "examEligible": "You're eligible for your belt exam!",
