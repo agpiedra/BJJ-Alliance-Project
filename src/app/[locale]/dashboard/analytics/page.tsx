@@ -5,8 +5,10 @@ import { Button } from "@/components/ui/button";
 import { resolveAnalyticsFilters, type AnalyticsSearchParams } from "@/lib/analytics/filters";
 import { getHeadlineTiles } from "@/lib/analytics/headline-tiles";
 import { getClassPopularity } from "@/lib/analytics/class-popularity";
+import { getBeltDistribution, getProgressionPlanningList, getPromotionsInRange } from "@/lib/analytics/progression";
 import { ExportCsvButton } from "./export-csv-button";
 import { ClassPopularityPanel } from "./class-popularity-panel";
+import { ProgressionPanel } from "./progression-panel";
 
 // Same reasoning as the roster/dashboard pages: every panel here reflects
 // staff/student data that can change without a redeploy, so this page must
@@ -30,10 +32,26 @@ export default async function AnalyticsPage({
   // can never surface a result an INSTRUCTOR shouldn't see, even if this
   // page's own gate above were ever bypassed or miscopied.
   const locale = await getLocale();
-  const [tiles, classPopularity] = await Promise.all([
+  const [tiles, classPopularity, planningList, beltDistribution, promotionsInRange] = await Promise.all([
     getHeadlineTiles(session, filters),
     getClassPopularity(session, filters, locale),
+    getProgressionPlanningList(session, filters),
+    getBeltDistribution(session, filters),
+    getPromotionsInRange(session, filters),
   ]);
+
+  // `projectedDate`/`awardedAt` are Luxon `DateTime` instances — not
+  // plain-serializable across the Server -> Client Component boundary, so
+  // they're converted to ISO strings here (see progression-panel.tsx's own
+  // comment on its row prop types).
+  const planningListRows = planningList.map((row) => ({
+    ...row,
+    projectedDate: row.projectedDate?.toISO() ?? null,
+  }));
+  const promotionsInRangeRows = promotionsInRange.map((row) => ({
+    ...row,
+    awardedAt: row.awardedAt.toISO()!,
+  }));
 
   // Only ADMIN gets the academy picker (spec's "Locations (admin only)"
   // line) — a DIRECTOR's session is already fully scoped to their own
@@ -125,6 +143,12 @@ export default async function AnalyticsPage({
       </section>
 
       <ClassPopularityPanel rows={classPopularity} />
+
+      <ProgressionPanel
+        planningList={planningListRows}
+        beltDistribution={beltDistribution}
+        promotionsInRange={promotionsInRangeRows}
+      />
     </main>
   );
 }

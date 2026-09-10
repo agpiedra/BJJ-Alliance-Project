@@ -168,6 +168,45 @@
           "previousAttendances": "Previous period",
           "trend": "Trend"
         }
+      },
+      "progression": {
+        "planningList": {
+          "heading": "Promotion planning list",
+          "empty": "No students are approaching a stripe or exam threshold.",
+          "table": {
+            "name": "Name",
+            "belt": "Belt",
+            "atBeltCount": "Attendances at belt",
+            "remainingToNextStripe": "Remaining",
+            "projectedDate": "Projected date"
+          },
+          "csv": {
+            "name": "Name",
+            "belt": "Belt",
+            "atBeltCount": "Attendances at belt",
+            "remainingToNextStripe": "Remaining",
+            "projectedDate": "Projected date"
+          }
+        },
+        "beltDistribution": {
+          "heading": "Belt distribution",
+          "chart": {
+            "count": "Students"
+          },
+          "csv": {
+            "belt": "Belt",
+            "count": "Count"
+          }
+        },
+        "promotionsInRange": {
+          "heading": "Promotions in range",
+          "empty": "No promotions were awarded in the selected range.",
+          "csv": {
+            "date": "Date",
+            "name": "Name",
+            "change": "Change"
+          }
+        }
       }
     }
   },

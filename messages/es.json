@@ -168,6 +168,45 @@
           "previousAttendances": "Período anterior",
           "trend": "Tendencia"
         }
+      },
+      "progression": {
+        "planningList": {
+          "heading": "Lista de planificación de promociones",
+          "empty": "Ningún estudiante se acerca a un umbral de grado o examen.",
+          "table": {
+            "name": "Nombre",
+            "belt": "Cinturón",
+            "atBeltCount": "Asistencias en este cinturón",
+            "remainingToNextStripe": "Faltan",
+            "projectedDate": "Fecha proyectada"
+          },
+          "csv": {
+            "name": "Nombre",
+            "belt": "Cinturón",
+            "atBeltCount": "Asistencias en este cinturón",
+            "remainingToNextStripe": "Faltan",
+            "projectedDate": "Fecha proyectada"
+          }
+        },
+        "beltDistribution": {
+          "heading": "Distribución de cinturones",
+          "chart": {
+            "count": "Estudiantes"
+          },
+          "csv": {
+            "belt": "Cinturón",
+            "count": "Cantidad"
+          }
+        },
+        "promotionsInRange": {
+          "heading": "Promociones en el período",
+          "empty": "No se otorgaron promociones en el período seleccionado.",
+          "csv": {
+            "date": "Fecha",
+            "name": "Nombre",
+            "change": "Cambio"
+          }
+        }
       }
     }
   },
