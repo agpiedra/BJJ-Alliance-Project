@@ -584,5 +584,28 @@
     "heading": "Algo salió mal",
     "description": "Ocurrió un error inesperado.",
     "retry": "Reintentar"
+  },
+  "notifications": {
+    "bell": {
+      "label": "Notificaciones",
+      "empty": "No hay notificaciones.",
+      "markAllReadError": "No se pudieron marcar las notificaciones como leídas."
+    },
+    "stripeThreshold": {
+      "title": "Nuevo grado: {studentName}",
+      "body": "{studentName} alcanzó el grado {stripes} en cinturón {belt}."
+    },
+    "examThreshold": {
+      "title": "Examen disponible: {studentName}",
+      "body": "{studentName} es elegible para el examen de cinturón {belt}."
+    },
+    "newSignup": {
+      "title": "Nueva inscripción",
+      "body": "{studentName} se registró y espera aprobación."
+    },
+    "weeklyDigest": {
+      "title": "Resumen semanal — {academyName}",
+      "body": "{academyName}: {newSignups} nuevas inscripciones, {overduePayments} pagos atrasados esta semana."
+    }
   }
 }

@@ -584,5 +584,28 @@
     "heading": "Something went wrong",
     "description": "An unexpected error occurred.",
     "retry": "Try again"
+  },
+  "notifications": {
+    "bell": {
+      "label": "Notifications",
+      "empty": "No notifications.",
+      "markAllReadError": "Could not mark notifications as read."
+    },
+    "stripeThreshold": {
+      "title": "New stripe: {studentName}",
+      "body": "{studentName} reached stripe {stripes} at {belt} belt."
+    },
+    "examThreshold": {
+      "title": "Exam ready: {studentName}",
+      "body": "{studentName} is eligible for a {belt} belt exam."
+    },
+    "newSignup": {
+      "title": "New signup",
+      "body": "{studentName} signed up and is awaiting approval."
+    },
+    "weeklyDigest": {
+      "title": "Weekly digest — {academyName}",
+      "body": "{academyName}: {newSignups} new signups, {overduePayments} overdue payments this week."
+    }
   }
 }
