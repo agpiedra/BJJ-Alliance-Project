@@ -88,6 +88,20 @@ export default async function DashboardPage() {
         </a>
       </p>
 
+      {/* Director analytics (Phase 7): ADMIN/DIRECTOR only, same
+          `canViewOverduePayments`-style conditional this page already
+          established — the real enforcement is the analytics page's own
+          `requireStaffSession(["ADMIN", "DIRECTOR"])` plus every query
+          function's self-enforced role gate; this only avoids showing a
+          link an INSTRUCTOR session would just be redirected/rejected from. */}
+      {canViewOverduePayments && (
+        <p>
+          <a href={`/${locale}/dashboard/analytics`} className="underline">
+            {t("analyticsLink")}
+          </a>
+        </p>
+      )}
+
       {/* Promotion queue: students at a stripe threshold or exam threshold
           (spec §4.3). Every staff role sees the full list — INSTRUCTOR
           included, since spec §3 only excludes them from actually

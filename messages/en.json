@@ -71,6 +71,7 @@
     "adminSection": "Administration",
     "adminKioskTokensLink": "Kiosk tokens",
     "adminScheduleLink": "Class schedule",
+    "analyticsLink": "View analytics",
     "promotionQueue": {
       "heading": "Promotion queue",
       "empty": "No students are currently eligible for a stripe or belt promotion.",
@@ -116,6 +117,159 @@
         "name": "Name",
         "academy": "Academy",
         "lastPaidMonth": "Last paid month"
+      }
+    },
+    "analytics": {
+      "heading": "Analytics",
+      "backToDashboardLink": "Back to dashboard",
+      "exportCsv": "Export CSV",
+      "filters": {
+        "from": "From",
+        "to": "To",
+        "academy": "Academy",
+        "bothAcademies": "Both",
+        "submit": "Filter"
+      },
+      "tiles": {
+        "heading": "Overview",
+        "enrolled": "Enrolled",
+        "active": "Active",
+        "inactive": "Inactive",
+        "newThisMonth": "New this period",
+        "lost": "Lost",
+        "totalAttendances": "Total attendances",
+        "totalAttendancesCaption": "Total attendances counts by the student's home academy, not by check-in location.",
+        "avgAttendancesPerActive": "Avg attendances per active",
+        "paymentHealthPercent": "Payment health (current month)"
+      },
+      "classPopularity": {
+        "heading": "Class popularity",
+        "empty": "No class sessions in scope for the selected range.",
+        "chart": {
+          "attendances": "Attendances"
+        },
+        "table": {
+          "rank": "#",
+          "class": "Class",
+          "attendances": "Attendances",
+          "previousAttendances": "Previous period",
+          "trend": "Trend"
+        },
+        "trend": {
+          "up": "Trending up",
+          "down": "Trending down",
+          "flat": "Flat"
+        },
+        "heatmap": {
+          "heading": "Day × time heatmap"
+        },
+        "csv": {
+          "class": "Class",
+          "attendances": "Attendances",
+          "previousAttendances": "Previous period",
+          "trend": "Trend"
+        }
+      },
+      "progression": {
+        "planningList": {
+          "heading": "Promotion planning list",
+          "empty": "No students are approaching a stripe or exam threshold.",
+          "table": {
+            "name": "Name",
+            "belt": "Belt",
+            "atBeltCount": "Attendances at belt",
+            "remainingToNextStripe": "Remaining",
+            "projectedDate": "Projected date"
+          },
+          "csv": {
+            "name": "Name",
+            "belt": "Belt",
+            "atBeltCount": "Attendances at belt",
+            "remainingToNextStripe": "Remaining",
+            "projectedDate": "Projected date"
+          }
+        },
+        "beltDistribution": {
+          "heading": "Belt distribution",
+          "chart": {
+            "count": "Students"
+          },
+          "csv": {
+            "belt": "Belt",
+            "count": "Count"
+          }
+        },
+        "promotionsInRange": {
+          "heading": "Promotions in range",
+          "empty": "No promotions were awarded in the selected range.",
+          "csv": {
+            "date": "Date",
+            "name": "Name",
+            "change": "Change"
+          }
+        }
+      },
+      "locations": {
+        "comparison": {
+          "heading": "Location comparison",
+          "empty": "No academies in scope for the selected filter.",
+          "table": {
+            "academy": "Academy",
+            "activeStudents": "Active students",
+            "totalAttendances": "Total attendances",
+            "avgPerClass": "Avg per class",
+            "paymentHealthPercent": "Payment health (current month)"
+          },
+          "csv": {
+            "academy": "Academy",
+            "activeStudents": "Active students",
+            "totalAttendances": "Total attendances",
+            "avgPerClass": "Avg per class",
+            "paymentHealthPercent": "Payment health (current month)"
+          }
+        },
+        "crossTraining": {
+          "heading": "Cross-training",
+          "empty": "No cross-training check-ins in the selected range.",
+          "summary": "{count, plural, one {# check-in} other {# check-ins}} at {visited} (home: {home})",
+          "csv": {
+            "student": "Student",
+            "homeAcademy": "Home academy",
+            "visitedAcademy": "Visited academy",
+            "visitCount": "Visits"
+          }
+        }
+      },
+      "retention": {
+        "list": {
+          "heading": "Retention",
+          "empty": "No students meet the retention-risk criteria for this selection.",
+          "neverAttended": "Never attended",
+          "table": {
+            "name": "Name",
+            "phone": "Phone",
+            "lastSeenAt": "Last seen",
+            "bucket": "Risk level"
+          },
+          "bucket": {
+            "30": "30+ days quiet",
+            "60": "60+ days quiet",
+            "90": "90+ days quiet"
+          },
+          "csv": {
+            "name": "Name",
+            "phone": "Phone",
+            "lastSeenAt": "Last seen",
+            "bucket": "Risk level"
+          }
+        },
+        "trend": {
+          "heading": "Weekly attendance trend",
+          "caption": "Counts by check-in location (venue), which can differ from a student's home academy for cross-training students.",
+          "chart": {
+            "count": "Attendances"
+          }
+        }
       }
     }
   },
