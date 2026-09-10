@@ -16,11 +16,30 @@ export interface ResendClient {
   };
 }
 
-/** A minimal paragraph-per-line wrapper — not a templating engine. */
+/**
+ * Escapes the 5 characters that matter for safe HTML text content. `&` must
+ * be replaced first — replacing it after `<`/`>` have already been turned
+ * into `&lt;`/`&gt;` would double-escape those entities.
+ */
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+/**
+ * A minimal paragraph-per-line wrapper — not a templating engine. `body` is
+ * translated user-facing text that can embed unescaped user input (e.g. a
+ * student's name from public signup via `renderNotificationMessage`), so
+ * each line is HTML-escaped before being wrapped in real `<p>` markup.
+ */
 function bodyToHtml(body: string): string {
   return body
     .split("\n")
-    .map((line) => `<p>${line}</p>`)
+    .map((line) => `<p>${escapeHtml(line)}</p>`)
     .join("");
 }
 
