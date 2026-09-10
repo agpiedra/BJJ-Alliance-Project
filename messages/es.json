@@ -71,6 +71,7 @@
     "adminSection": "Administración",
     "adminKioskTokensLink": "Tokens de kiosco",
     "adminScheduleLink": "Horario de clases",
+    "analyticsLink": "Ver analítica",
     "promotionQueue": {
       "heading": "Cola de promociones",
       "empty": "Ningún estudiante es elegible actualmente para una promoción de grado o examen.",
@@ -116,6 +117,29 @@
         "name": "Nombre",
         "academy": "Academia",
         "lastPaidMonth": "Último mes pagado"
+      }
+    },
+    "analytics": {
+      "heading": "Analítica",
+      "backToDashboardLink": "Volver al panel",
+      "exportCsv": "Exportar CSV",
+      "filters": {
+        "from": "Desde",
+        "to": "Hasta",
+        "academy": "Academia",
+        "bothAcademies": "Ambas",
+        "submit": "Filtrar"
+      },
+      "tiles": {
+        "heading": "Resumen general",
+        "enrolled": "Inscritos",
+        "active": "Activos",
+        "inactive": "Inactivos",
+        "newThisMonth": "Nuevos en el período",
+        "lost": "Perdidos",
+        "totalAttendances": "Asistencias totales",
+        "avgAttendancesPerActive": "Asistencias promedio por activo",
+        "paymentHealthPercent": "Salud de pagos (mes actual)"
       }
     }
   },

@@ -71,6 +71,7 @@
     "adminSection": "Administration",
     "adminKioskTokensLink": "Kiosk tokens",
     "adminScheduleLink": "Class schedule",
+    "analyticsLink": "View analytics",
     "promotionQueue": {
       "heading": "Promotion queue",
       "empty": "No students are currently eligible for a stripe or belt promotion.",
@@ -116,6 +117,29 @@
         "name": "Name",
         "academy": "Academy",
         "lastPaidMonth": "Last paid month"
+      }
+    },
+    "analytics": {
+      "heading": "Analytics",
+      "backToDashboardLink": "Back to dashboard",
+      "exportCsv": "Export CSV",
+      "filters": {
+        "from": "From",
+        "to": "To",
+        "academy": "Academy",
+        "bothAcademies": "Both",
+        "submit": "Filter"
+      },
+      "tiles": {
+        "heading": "Overview",
+        "enrolled": "Enrolled",
+        "active": "Active",
+        "inactive": "Inactive",
+        "newThisMonth": "New this period",
+        "lost": "Lost",
+        "totalAttendances": "Total attendances",
+        "avgAttendancesPerActive": "Avg attendances per active",
+        "paymentHealthPercent": "Payment health (current month)"
       }
     }
   },
