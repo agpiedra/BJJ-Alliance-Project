@@ -35,13 +35,36 @@ export function RecordPaymentForm({
   const tPaymentStatus = useTranslations("students.paymentStatus");
   const [state, formAction, isPending] = useActionState(recordPayment, INITIAL_STATE);
 
+  // `amount` and `notes` are optional, but a plain HTML `<input>`/`<textarea>`
+  // always submits its name with an empty-string value when left blank — it
+  // is never simply ABSENT from the FormData. Task 1's zod schema
+  // (`z.coerce.number().min(0).optional()`) coerces that `""` to `0` rather
+  // than `undefined` (Number("") === 0), which would silently record a real
+  // $0 payment instead of leaving the amount unspecified; `notes: ""` would
+  // likewise store an empty string instead of `null`, breaking the `??
+  // "—"` fallback used everywhere else in this UI. Stripping empty values
+  // here, before the action ever sees them, keeps that schema untouched and
+  // correct for every other caller.
+  function submitWithEmptyOptionalFieldsStripped(formData: FormData) {
+    for (const field of ["amount", "notes"] as const) {
+      const value = formData.get(field);
+      if (typeof value === "string" && value.trim() === "") {
+        formData.delete(field);
+      }
+    }
+    return formAction(formData);
+  }
+
   return (
     <details className="rounded border p-4">
       <summary className="cursor-pointer font-medium">{t("toggle")}</summary>
 
       {state.ok && <p className="mt-4 text-sm text-green-700">{t("success")}</p>}
 
-      <form action={formAction} className="mt-4 flex w-full max-w-sm flex-col gap-3">
+      <form
+        action={submitWithEmptyOptionalFieldsStripped}
+        className="mt-4 flex w-full max-w-sm flex-col gap-3"
+      >
         <input type="hidden" name="studentId" value={studentId} />
 
         <div className="flex gap-3">

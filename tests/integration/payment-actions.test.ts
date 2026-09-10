@@ -312,6 +312,49 @@ describe("recordPayment", () => {
     expect(count).toBe(0);
   });
 
+  it("omitting `amount` and `notes` from the FormData entirely (as the fixed form now does for a blank field) records `null` for both, not `0`/`\"\"`", async () => {
+    // Regression test for Phase 6 Task 2 fix round 1: the bug was that the
+    // form used to submit `amount=""` — a PRESENT, empty-string field — which
+    // the (correct, unmodified) `z.coerce.number().min(0).optional()` schema
+    // coerced to `0` rather than `undefined` (`Number("") === 0`). The fix is
+    // in the form layer (`RecordPaymentForm` now strips blank `amount`/
+    // `notes` from the `FormData` before submitting, so the key is genuinely
+    // ABSENT, not empty). This test proves the schema+action side of that
+    // contract: when the field is truly absent — exactly what the fixed form
+    // now sends — the resulting row has `amount: null` and `notes: null`,
+    // never `0` or `""`.
+    const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+    const plan = await prisma.paymentPlan.findFirstOrThrow({
+      where: { academyId: escazu.id, name: "Mensualidad" },
+    });
+    const admin = await makeStaffUser("ADMIN", "record-blank-optional-admin");
+    const student = await makeStudent(escazu.id);
+
+    currentSession = { user: { id: admin.id, role: "ADMIN" } };
+    const result = await recordPayment(
+      {},
+      formData({
+        studentId: student.id,
+        year: "2026",
+        month: "9",
+        planId: plan.id,
+        status: "PAID",
+        // `amount` and `notes` deliberately omitted — not set to "" — since
+        // that is what the fixed form now sends for a blank optional field.
+      }),
+    );
+    expect(result.ok).toBe(true);
+
+    const period = await paymentPeriodFor(student.id, 2026, 9);
+    expect(period).not.toBeNull();
+    expect(period!.amount).toBeNull();
+    expect(period!.notes).toBeNull();
+
+    const audits = await auditRowsFor(period!.id, "payment.record");
+    expect(audits).toHaveLength(1);
+    expect(audits[0].after).toMatchObject({ status: "PAID", planId: plan.id, amount: null });
+  });
+
   it("an invalid month (0) is rejected by zod validation before any DB write", async () => {
     const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
     const plan = await prisma.paymentPlan.findFirstOrThrow({
