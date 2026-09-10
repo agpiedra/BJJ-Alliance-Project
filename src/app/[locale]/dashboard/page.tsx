@@ -8,8 +8,24 @@ import {
   listPromotionQueue,
   type PromotionCandidate,
 } from "@/lib/students/promotion-queue";
+import { listOverdueStudents, type OverdueStudent } from "@/lib/payments/list-overdue";
 import { ConfirmPromotionButton } from "./confirm-promotion-button";
 import { PromotionStatusLabel } from "./promotion-status-label";
+
+/**
+ * `lastPaidMonth` comes back from `listOverdueStudents` as a plain,
+ * locale-independent `"YYYY-MM"` string (see that module's doc comment) —
+ * this page owns turning it into a localized month name, the same
+ * responsibility split `students/[id]/page.tsx`'s own `formatPeriodMonth`
+ * establishes for payment-period display.
+ */
+function formatLastPaidMonth(value: string, locale: string): string {
+  const [year, month] = value.split("-").map(Number);
+  return new Intl.DateTimeFormat(locale === "es" ? "es-CR" : "en-US", {
+    year: "numeric",
+    month: "long",
+  }).format(new Date(Date.UTC(year, month - 1, 1)));
+}
 
 // Same reasoning as the roster page: the pending-approvals count is staff
 // data that can change without a redeploy, so this page must never be
@@ -38,12 +54,21 @@ export default async function DashboardPage() {
     },
   });
 
-  // Both queries scope by academyScopeWhere internally (see
+  // Payments-overdue panel (spec §4.3) has no INSTRUCTOR-visible variant at
+  // all — unlike the promotion queue below, which INSTRUCTOR can view
+  // read-only. Checked here, before the query even runs, so an INSTRUCTOR
+  // session never executes a query whose result would just be thrown away;
+  // `listOverdueStudents` also self-enforces this same gate against
+  // `staffSession.role`, so this is belt-and-suspenders, not the only check.
+  const canViewOverduePayments = staffSession.role === "ADMIN" || staffSession.role === "DIRECTOR";
+
+  // Both promotion queries scope by academyScopeWhere internally (see
   // promotion-queue.ts) the same way pendingCount does above — a
   // DIRECTOR/INSTRUCTOR only ever sees their own academy/academies here too.
-  const [promotionQueue, approachingStudents] = await Promise.all([
+  const [promotionQueue, approachingStudents, overdueStudents] = await Promise.all([
     listPromotionQueue(staffSession),
     listApproachingStudents(staffSession),
+    canViewOverduePayments ? listOverdueStudents(staffSession) : Promise.resolve<OverdueStudent[]>([]),
   ]);
 
   // Confirming a promotion is ADMIN/DIRECTOR only (spec §3 excludes
@@ -158,6 +183,47 @@ export default async function DashboardPage() {
           </div>
         )}
       </section>
+
+      {/* Payments overdue (spec §4.3): ADMIN/DIRECTOR only, informational —
+          no confirm/action button, since recording a payment happens on the
+          student detail page (Task 2). Never rendered for an INSTRUCTOR
+          session; canViewOverduePayments gates both the query above and this
+          markup, so `overdueStudents` is always `[]` for that role anyway. */}
+      {canViewOverduePayments && (
+        <section className="flex flex-col gap-2">
+          <h2 className="text-lg font-medium">{t("overduePayments.heading")}</h2>
+          {overdueStudents.length === 0 ? (
+            <p className="text-muted-foreground">{t("overduePayments.empty")}</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm">
+                <thead>
+                  <tr className="border-b">
+                    <th className="py-2 pr-4">{t("overduePayments.columns.name")}</th>
+                    <th className="py-2 pr-4">{t("overduePayments.columns.academy")}</th>
+                    <th className="py-2 pr-4">{t("overduePayments.columns.lastPaidMonth")}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {overdueStudents.map((student: OverdueStudent) => (
+                    <tr key={student.studentId} className="border-b">
+                      <td className="py-2 pr-4">
+                        {student.firstName} {student.lastName}
+                      </td>
+                      <td className="py-2 pr-4">{student.homeAcademyName}</td>
+                      <td className="py-2 pr-4">
+                        {student.lastPaidMonth
+                          ? formatLastPaidMonth(student.lastPaidMonth, locale)
+                          : t("overduePayments.neverPaid")}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      )}
 
       {/* /admin/kiosk-tokens and /admin/schedule were both fully built but
           reachable only by typing the URL. Shown to ADMIN sessions only,

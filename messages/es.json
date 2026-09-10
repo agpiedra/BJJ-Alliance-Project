@@ -107,6 +107,16 @@
         "belt": "Cinturón",
         "remainingToNextStripe": "Clases restantes"
       }
+    },
+    "overduePayments": {
+      "heading": "Pagos atrasados",
+      "empty": "Ningún estudiante tiene un pago atrasado.",
+      "neverPaid": "Nunca ha pagado",
+      "columns": {
+        "name": "Nombre",
+        "academy": "Academia",
+        "lastPaidMonth": "Último mes pagado"
+      }
     }
   },
   "signup": {

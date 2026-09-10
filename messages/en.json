@@ -107,6 +107,16 @@
         "belt": "Belt",
         "remainingToNextStripe": "Classes remaining"
       }
+    },
+    "overduePayments": {
+      "heading": "Payments overdue",
+      "empty": "No students have an overdue payment.",
+      "neverPaid": "Never paid",
+      "columns": {
+        "name": "Name",
+        "academy": "Academy",
+        "lastPaidMonth": "Last paid month"
+      }
     }
   },
   "signup": {

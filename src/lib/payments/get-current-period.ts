@@ -38,9 +38,22 @@ export function currentCrDateParts(): { year: number; month: number; day: number
  * this trusts `studentId` alone with no session/scope check of its own, so
  * it's safe only because every caller (roster/detail/portal pages) has
  * already resolved and scope-checked the student before calling this.
+ *
+ * `today` is optional/defaulted exactly like `perform-check-in.ts`'s
+ * `now?: Date` — every current production caller (roster/detail/portal
+ * pages) omits it and gets a fresh `currentCrDateParts()` read, unchanged
+ * from before this parameter existed. It exists so `list-overdue.ts` (Phase
+ * 6 Task 3) can inject a fixed "today" in tests without fighting the real
+ * wall clock, while still resolving the SAME year/month this module always
+ * has — the alternative (a second, test-only period-lookup implementation)
+ * is exactly the kind of drift this codebase has been burned by before (see
+ * that module's own doc comment).
  */
-export async function getCurrentPaymentPeriod(studentId: string): Promise<CurrentPaymentPeriod> {
-  const { year, month } = currentCrDateParts();
+export async function getCurrentPaymentPeriod(
+  studentId: string,
+  today: { year: number; month: number } = currentCrDateParts(),
+): Promise<CurrentPaymentPeriod> {
+  const { year, month } = today;
 
   const period = await prisma.paymentPeriod.findUnique({
     where: { studentId_year_month: { studentId, year, month } },
