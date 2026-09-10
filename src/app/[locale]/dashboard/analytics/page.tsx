@@ -4,7 +4,9 @@ import { prisma } from "@/lib/prisma";
 import { Button } from "@/components/ui/button";
 import { resolveAnalyticsFilters, type AnalyticsSearchParams } from "@/lib/analytics/filters";
 import { getHeadlineTiles } from "@/lib/analytics/headline-tiles";
+import { getClassPopularity } from "@/lib/analytics/class-popularity";
 import { ExportCsvButton } from "./export-csv-button";
+import { ClassPopularityPanel } from "./class-popularity-panel";
 
 // Same reasoning as the roster/dashboard pages: every panel here reflects
 // staff/student data that can change without a redeploy, so this page must
@@ -27,7 +29,11 @@ export default async function AnalyticsPage({
   // DIRECTOR gate against `session` independently of this page — this call
   // can never surface a result an INSTRUCTOR shouldn't see, even if this
   // page's own gate above were ever bypassed or miscopied.
-  const tiles = await getHeadlineTiles(session, filters);
+  const locale = await getLocale();
+  const [tiles, classPopularity] = await Promise.all([
+    getHeadlineTiles(session, filters),
+    getClassPopularity(session, filters, locale),
+  ]);
 
   // Only ADMIN gets the academy picker (spec's "Locations (admin only)"
   // line) — a DIRECTOR's session is already fully scoped to their own
@@ -39,7 +45,6 @@ export default async function AnalyticsPage({
       : [];
 
   const t = await getTranslations("dashboard.analytics");
-  const locale = await getLocale();
 
   const csvRows = [
     { metric: t("tiles.enrolled"), value: tiles.enrolled },
@@ -118,6 +123,8 @@ export default async function AnalyticsPage({
           <Tile label={t("tiles.paymentHealthPercent")} value={`${tiles.paymentHealthPercent}%`} />
         </div>
       </section>
+
+      <ClassPopularityPanel rows={classPopularity} />
     </main>
   );
 }

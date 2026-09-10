@@ -140,6 +140,34 @@
         "totalAttendances": "Asistencias totales",
         "avgAttendancesPerActive": "Asistencias promedio por activo",
         "paymentHealthPercent": "Salud de pagos (mes actual)"
+      },
+      "classPopularity": {
+        "heading": "Popularidad de clases",
+        "empty": "No hay sesiones de clase en el alcance para el período seleccionado.",
+        "chart": {
+          "attendances": "Asistencias"
+        },
+        "table": {
+          "rank": "#",
+          "class": "Clase",
+          "attendances": "Asistencias",
+          "previousAttendances": "Período anterior",
+          "trend": "Tendencia"
+        },
+        "trend": {
+          "up": "En aumento",
+          "down": "En descenso",
+          "flat": "Estable"
+        },
+        "heatmap": {
+          "heading": "Mapa de calor por día × horario"
+        },
+        "csv": {
+          "class": "Clase",
+          "attendances": "Asistencias",
+          "previousAttendances": "Período anterior",
+          "trend": "Tendencia"
+        }
       }
     }
   },

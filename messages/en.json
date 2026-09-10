@@ -140,6 +140,34 @@
         "totalAttendances": "Total attendances",
         "avgAttendancesPerActive": "Avg attendances per active",
         "paymentHealthPercent": "Payment health (current month)"
+      },
+      "classPopularity": {
+        "heading": "Class popularity",
+        "empty": "No class sessions in scope for the selected range.",
+        "chart": {
+          "attendances": "Attendances"
+        },
+        "table": {
+          "rank": "#",
+          "class": "Class",
+          "attendances": "Attendances",
+          "previousAttendances": "Previous period",
+          "trend": "Trend"
+        },
+        "trend": {
+          "up": "Trending up",
+          "down": "Trending down",
+          "flat": "Flat"
+        },
+        "heatmap": {
+          "heading": "Day × time heatmap"
+        },
+        "csv": {
+          "class": "Class",
+          "attendances": "Attendances",
+          "previousAttendances": "Previous period",
+          "trend": "Trend"
+        }
       }
     }
   },
