@@ -1,4 +1,5 @@
 import { DateTime } from "luxon";
+import { createTranslator } from "next-intl";
 import { prisma } from "@/lib/prisma";
 import { academyScopeWhere, type StaffSession } from "@/lib/auth/session";
 import type { Prisma, DayOfWeek } from "@/generated/prisma/client";
@@ -43,20 +44,25 @@ export function computeTrend(current: number, previous: number): "up" | "down" |
 
 // Read straight from the same messages files `src/i18n/request.ts` loads for
 // next-intl — the ONE source of truth for day names (never a second,
-// invented set of day-name strings). Read directly (not through
-// `getTranslations`/`getLocale`) because those require an active Next.js
-// request context (middleware-populated `requestLocale`), which this
-// function does not have when called from a plain integration test hitting
-// the DB directly — matching this codebase's existing split (see
-// `format-month.ts`'s `formatMonthYear`, which also takes `locale` as a
-// plain string parameter rather than reading request context itself).
-const DAY_NAMES: Record<string, Record<DayOfWeek, string>> = {
-  es: esMessages.dayOfWeek,
-  en: enMessages.dayOfWeek,
+// invented set of day-name strings). Resolved through next-intl's own
+// `createTranslator` (not `getTranslations`/`getLocale`, which require an
+// active Next.js request context this function doesn't have when called
+// from a plain integration test hitting the DB directly) so the real
+// key-resolution engine runs instead of a hand-rolled reimplementation of
+// it — matching this codebase's existing split (see `format-month.ts`'s
+// `formatMonthYear`, which also takes `locale` as a plain string parameter
+// rather than reading request context itself).
+const DAY_MESSAGES: Record<string, typeof esMessages> = {
+  es: esMessages,
+  en: enMessages,
 };
 
 function translateDayOfWeek(day: DayOfWeek, locale: string): string {
-  return (DAY_NAMES[locale] ?? DAY_NAMES[routing.defaultLocale])[day];
+  // ponytail: only "es"/"en" are ever passed (routing.locales), so this
+  // fallback is defensive-only, never actually exercised.
+  const messages = DAY_MESSAGES[locale] ?? DAY_MESSAGES[routing.defaultLocale];
+  const t = createTranslator({ locale, messages, namespace: "dayOfWeek" });
+  return t(day);
 }
 
 /**

@@ -159,8 +159,8 @@ export function ClassPopularityPanel({ rows }: { rows: ClassPopularityRow[] }) {
         <p className="text-muted-foreground">{t("empty")}</p>
       ) : (
         <>
-          <div className="h-80 w-full">
-            <ResponsiveContainer width="100%" height="100%">
+          <div className="h-80 w-full overflow-x-auto">
+            <ResponsiveContainer width="100%" height="100%" minWidth={rows.length * 48}>
               <BarChart data={rows} margin={{ top: 8, right: 8, bottom: 64, left: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="label" interval={0} height={70} tick={<AngledTick />} />
