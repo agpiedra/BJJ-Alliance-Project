@@ -195,6 +195,25 @@ describe("performCheckIn", () => {
     expect(result).toEqual({ ok: false, error: "invalid_code" });
   });
 
+  it("rejects an empty-string code as invalid_code rather than throwing (presence, not truthiness)", async () => {
+    // Regression test: a `code ? <resolve by code> : <resolve by studentId>`
+    // truthiness check would misroute this falsy-but-present `code: ""` into
+    // the studentId branch, where `input.studentId` is `undefined` —
+    // `prisma.student.findUnique({ where: { id: undefined } })` throws a
+    // PrismaClientValidationError instead of returning invalid_code. The
+    // fix must use a presence check (`input.code !== undefined`) instead.
+    const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+
+    const result = await performCheckIn({
+      academyId: escazu.id,
+      code: "",
+      source: "KIOSK",
+      now: WITHIN_MONDAY_GI_WINDOW,
+    });
+
+    expect(result).toEqual({ ok: false, error: "invalid_code" });
+  });
+
   it("rejects a PENDING student's code as invalid_code (not a more specific error)", async () => {
     const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
     const { code } = await makeStudent({ homeAcademyId: escazu.id, status: "PENDING" });
@@ -347,6 +366,133 @@ describe("performCheckIn", () => {
 
       const record = await prisma.attendanceRecord.findFirstOrThrow({ where: { studentId: student.id } });
       expect(record.date.toISOString().slice(0, 10)).toBe("2026-06-18");
+    });
+  });
+
+  describe("studentId path (portal self check-in)", () => {
+    it("checks in a valid ACTIVE student within an active class's window, at their home academy", async () => {
+      const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+      const { student } = await makeStudent({ homeAcademyId: escazu.id });
+
+      const result = await performCheckIn({
+        academyId: escazu.id,
+        studentId: student.id,
+        source: "PORTAL",
+        now: WITHIN_MONDAY_GI_WINDOW,
+      });
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.student).toEqual({
+          firstName: "PerformCheckInTest",
+          lastName: "Student",
+          currentBelt: "WHITE",
+          currentStripes: 0,
+        });
+        expect(result.summary.currentBelt).toBe("WHITE");
+        expect(result.summary.atBeltCount).toBe(1);
+        expect(result.isVisitor).toBe(false);
+        expect(result.homeAcademyName).toBe(escazu.name);
+      }
+    });
+
+    it("rejects a second check-in for the same student/class/day as already_checked_in", async () => {
+      const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+      const { student } = await makeStudent({ homeAcademyId: escazu.id });
+
+      const first = await performCheckIn({
+        academyId: escazu.id,
+        studentId: student.id,
+        source: "PORTAL",
+        now: WITHIN_MONDAY_GI_WINDOW,
+      });
+      expect(first.ok).toBe(true);
+
+      const second = await performCheckIn({
+        academyId: escazu.id,
+        studentId: student.id,
+        source: "PORTAL",
+        now: WITHIN_MONDAY_GI_WINDOW,
+      });
+      expect(second).toEqual({ ok: false, error: "already_checked_in" });
+    });
+
+    it("rejects a PENDING student's studentId as invalid_code (not a more specific error)", async () => {
+      const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+      const { student } = await makeStudent({ homeAcademyId: escazu.id, status: "PENDING" });
+
+      const result = await performCheckIn({
+        academyId: escazu.id,
+        studentId: student.id,
+        source: "PORTAL",
+        now: WITHIN_MONDAY_GI_WINDOW,
+      });
+
+      expect(result).toEqual({ ok: false, error: "invalid_code" });
+    });
+
+    it("rejects an ARCHIVED student's studentId as invalid_code (not a more specific error)", async () => {
+      const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+      const { student } = await makeStudent({ homeAcademyId: escazu.id, status: "ARCHIVED" });
+
+      const result = await performCheckIn({
+        academyId: escazu.id,
+        studentId: student.id,
+        source: "PORTAL",
+        now: WITHIN_MONDAY_GI_WINDOW,
+      });
+
+      expect(result).toEqual({ ok: false, error: "invalid_code" });
+    });
+
+    it("rejects a check-in attempt when `now` falls outside every session's window as no_active_class", async () => {
+      const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+      const { student } = await makeStudent({ homeAcademyId: escazu.id });
+
+      const result = await performCheckIn({
+        academyId: escazu.id,
+        studentId: student.id,
+        source: "PORTAL",
+        now: OUTSIDE_ANY_WINDOW,
+      });
+
+      expect(result).toEqual({ ok: false, error: "no_active_class" });
+    });
+
+    it("treats a student checking in away from their home academy as a visitor, recorded under the visited academy", async () => {
+      const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+      const escalante = await prisma.academy.findUniqueOrThrow({ where: { slug: "escalante" } });
+      const { student } = await makeStudent({ homeAcademyId: escalante.id });
+
+      const result = await performCheckIn({
+        academyId: escazu.id,
+        studentId: student.id,
+        source: "PORTAL",
+        now: WITHIN_MONDAY_GI_WINDOW,
+      });
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.isVisitor).toBe(true);
+        expect(result.homeAcademyName).toBe(escalante.name);
+      }
+
+      const record = await prisma.attendanceRecord.findFirstOrThrow({ where: { studentId: student.id } });
+      expect(record.academyId).toBe(escazu.id);
+      expect(record.academyId).not.toBe(escalante.id);
+    });
+
+    it("rejects a nonexistent studentId as invalid_code, without throwing", async () => {
+      const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+
+      const result = await performCheckIn({
+        academyId: escazu.id,
+        studentId: "00000000-0000-0000-0000-000000000000",
+        source: "PORTAL",
+        now: WITHIN_MONDAY_GI_WINDOW,
+      });
+
+      expect(result).toEqual({ ok: false, error: "invalid_code" });
     });
   });
 

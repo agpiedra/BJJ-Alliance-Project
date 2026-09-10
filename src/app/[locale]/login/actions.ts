@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { AuthError } from "next-auth";
 import { z } from "zod";
 import { signIn } from "@/auth";
+import { prisma } from "@/lib/prisma";
 import type { ActionState } from "@/lib/action-state";
 import { sanitizeCallbackUrl } from "@/lib/callback-url";
 
@@ -42,5 +43,19 @@ export async function login(
     throw error;
   }
 
-  redirect(safeCallbackUrl || `/${locale}/dashboard`);
+  if (safeCallbackUrl) {
+    redirect(safeCallbackUrl);
+  }
+
+  // No explicit callbackUrl: pick a role-appropriate default landing page.
+  // `signIn(..., { redirect: false })` doesn't hand the role back directly,
+  // and we deliberately don't trust anything client-submitted for this —
+  // query by the email that JUST successfully authenticated above (not a
+  // client-submitted role) to decide where it lands.
+  const user = await prisma.user.findUnique({
+    where: { email: parsed.data.email },
+    select: { role: true },
+  });
+
+  redirect(user?.role === "STUDENT" ? `/${locale}/portal` : `/${locale}/dashboard`);
 }

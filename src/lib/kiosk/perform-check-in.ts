@@ -21,18 +21,29 @@ export type CheckInResult =
     }
   | { ok: false; error: "invalid_code" | "no_active_class" | "already_checked_in" };
 
-export async function performCheckIn(input: {
-  academyId: string;
-  code: string;
-  source: AttendanceSource;
-  now?: Date;
-}): Promise<CheckInResult> {
+export type PerformCheckInInput =
+  | { academyId: string; code: string; studentId?: never; source: AttendanceSource; now?: Date }
+  | { academyId: string; studentId: string; code?: never; source: AttendanceSource; now?: Date };
+
+export async function performCheckIn(input: PerformCheckInInput): Promise<CheckInResult> {
   const now = input.now ?? new Date();
-  const codeHash = digestLookupSecret(input.code, requireEnv("CODE_PEPPER"));
-  const student = await prisma.student.findUnique({
-    where: { codeHash },
-    include: { homeAcademy: { select: { name: true } } },
-  });
+  // Presence check, not truthiness: a client-submitted `code: ""` is a valid
+  // (if useless) member of the `code` variant of the discriminated union —
+  // `input.code ? ... : ...` would misroute it into the `studentId` branch,
+  // where `input.studentId` is `undefined`, and
+  // `prisma.student.findUnique({ where: { id: undefined } })` throws instead
+  // of returning the documented `invalid_code`. Checking for `undefined`
+  // preserves the original behavior: an empty code hashes to a codeHash that
+  // matches no student, so it falls through to the `!student` branch below.
+  const student = input.code !== undefined
+    ? await prisma.student.findUnique({
+        where: { codeHash: digestLookupSecret(input.code, requireEnv("CODE_PEPPER")) },
+        include: { homeAcademy: { select: { name: true } } },
+      })
+    : await prisma.student.findUnique({
+        where: { id: input.studentId },
+        include: { homeAcademy: { select: { name: true } } },
+      });
 
   if (!student || student.status !== StudentStatus.ACTIVE) {
     return { ok: false, error: "invalid_code" };
