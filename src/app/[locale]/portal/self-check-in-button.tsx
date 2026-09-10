@@ -1,6 +1,7 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -8,14 +9,18 @@ import { selfCheckIn, type SelfCheckInState } from "./self-check-in-action";
 
 const INITIAL_STATE: SelfCheckInState = {};
 
-// The three real error codes performCheckIn's studentId path can return
-// (see its doc comment on the shared core): `no_active_class` and
-// `already_checked_in` are the two a student can genuinely hit here.
-// `invalid_code` is realistically unreachable via this path (it would mean
-// requireStudentSession resolved a session whose linked Student row is
-// gone or non-ACTIVE — see self-check-in-action.ts) but still gets a
+// The real error codes this button can see. `no_active_class` and
+// `already_checked_in` come from performCheckIn's studentId path (see its
+// doc comment on the shared core). `notActive` is checked upfront in
+// self-check-in-action.ts, before performCheckIn is ever called, for a
+// PENDING/ARCHIVED/INACTIVE student — deliberately distinct from
+// performCheckIn's own generic `invalid_code`, since the portal (unlike an
+// anonymous kiosk) already shows this student their real account status.
+// `invalid_code` itself is realistically unreachable via this path now (it
+// would mean requireStudentSession resolved a session whose linked Student
+// row is somehow gone — see self-check-in-action.ts) but still gets a
 // message rather than falling through silently.
-const KNOWN_ERRORS = ["no_active_class", "already_checked_in", "invalid_code"] as const;
+const KNOWN_ERRORS = ["no_active_class", "already_checked_in", "invalid_code", "notActive"] as const;
 
 function errorMessageKey(error: string): string {
   return (KNOWN_ERRORS as readonly string[]).includes(error) ? `error.${error}` : "error.generic";
@@ -28,7 +33,24 @@ function errorMessageKey(error: string): string {
 // which the page already renders once above this card.
 export function SelfCheckInButton() {
   const t = useTranslations("portal.selfCheckIn");
+  const router = useRouter();
   const [state, formAction, isPending] = useActionState(selfCheckIn, INITIAL_STATE);
+
+  // The action's own revalidatePath(`/${locale}/portal`) invalidates the
+  // page's cached render, but this component is already mounted on the
+  // CURRENT render of that page — its sibling progress card (fed by
+  // getAtBeltSummary at page-load time) won't pick up fresh data without an
+  // explicit re-render of the Server Component tree. router.refresh() does
+  // exactly that, without a full page reload or disturbing this button's own
+  // just-set success state.
+  useEffect(() => {
+    if (state.ok) {
+      router.refresh();
+    }
+    // Only re-run when a NEW state comes back from the action (a fresh
+    // submission), never on `router` identity changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state]);
 
   return (
     <Card>

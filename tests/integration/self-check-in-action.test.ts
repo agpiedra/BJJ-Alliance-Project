@@ -45,7 +45,7 @@ async function cleanup() {
   }
 }
 
-async function makeActiveStudentUser() {
+async function makeActiveStudentUser(status: "ACTIVE" | "PENDING" | "ARCHIVED" | "INACTIVE" = "ACTIVE") {
   const suffix = `${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
   const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
   const user = await prisma.user.create({
@@ -68,7 +68,7 @@ async function makeActiveStudentUser() {
       phone: "88889999",
       email: `self-check-in-student-${suffix}@example.com`,
       codeHash,
-      status: "ACTIVE",
+      status,
     },
   });
 
@@ -129,6 +129,32 @@ describe("selfCheckIn", () => {
     const state = await selfCheckIn({}, new FormData());
 
     expect(state).toEqual({ error: "no_active_class" });
+    expect(await prisma.attendanceRecord.count({ where: { studentId } })).toBe(0);
+  });
+
+  it("rejects a PENDING student's self check-in with the distinct notActive error, via the upfront status check", async () => {
+    const { user, studentId } = await makeActiveStudentUser("PENDING");
+    currentSession = { user: { id: user.id, role: "STUDENT" } };
+    setSystemTime(WITHIN_MONDAY_GI_WINDOW);
+
+    const state = await selfCheckIn({}, new FormData());
+
+    // Exactly `notActive`, not performCheckIn's generic `invalid_code` — the
+    // status check in self-check-in-action.ts must short-circuit BEFORE
+    // performCheckIn (and therefore before any AttendanceRecord) is ever
+    // attempted.
+    expect(state).toEqual({ error: "notActive" });
+    expect(await prisma.attendanceRecord.count({ where: { studentId } })).toBe(0);
+  });
+
+  it("rejects an ARCHIVED student's self check-in with the distinct notActive error, via the upfront status check", async () => {
+    const { user, studentId } = await makeActiveStudentUser("ARCHIVED");
+    currentSession = { user: { id: user.id, role: "STUDENT" } };
+    setSystemTime(WITHIN_MONDAY_GI_WINDOW);
+
+    const state = await selfCheckIn({}, new FormData());
+
+    expect(state).toEqual({ error: "notActive" });
     expect(await prisma.attendanceRecord.count({ where: { studentId } })).toBe(0);
   });
 });

@@ -195,6 +195,25 @@ describe("performCheckIn", () => {
     expect(result).toEqual({ ok: false, error: "invalid_code" });
   });
 
+  it("rejects an empty-string code as invalid_code rather than throwing (presence, not truthiness)", async () => {
+    // Regression test: a `code ? <resolve by code> : <resolve by studentId>`
+    // truthiness check would misroute this falsy-but-present `code: ""` into
+    // the studentId branch, where `input.studentId` is `undefined` —
+    // `prisma.student.findUnique({ where: { id: undefined } })` throws a
+    // PrismaClientValidationError instead of returning invalid_code. The
+    // fix must use a presence check (`input.code !== undefined`) instead.
+    const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+
+    const result = await performCheckIn({
+      academyId: escazu.id,
+      code: "",
+      source: "KIOSK",
+      now: WITHIN_MONDAY_GI_WINDOW,
+    });
+
+    expect(result).toEqual({ ok: false, error: "invalid_code" });
+  });
+
   it("rejects a PENDING student's code as invalid_code (not a more specific error)", async () => {
     const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
     const { code } = await makeStudent({ homeAcademyId: escazu.id, status: "PENDING" });

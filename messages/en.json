@@ -299,6 +299,7 @@
         "invalid_code": "Something went wrong. Please tell the front desk.",
         "no_active_class": "No class is active right now.",
         "already_checked_in": "You've already checked in for this class today.",
+        "notActive": "Self check-in isn't available for your account right now.",
         "generic": "Something went wrong. Please try again."
       }
     }

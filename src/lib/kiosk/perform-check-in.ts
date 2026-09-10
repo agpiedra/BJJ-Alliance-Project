@@ -27,7 +27,15 @@ export type PerformCheckInInput =
 
 export async function performCheckIn(input: PerformCheckInInput): Promise<CheckInResult> {
   const now = input.now ?? new Date();
-  const student = input.code
+  // Presence check, not truthiness: a client-submitted `code: ""` is a valid
+  // (if useless) member of the `code` variant of the discriminated union —
+  // `input.code ? ... : ...` would misroute it into the `studentId` branch,
+  // where `input.studentId` is `undefined`, and
+  // `prisma.student.findUnique({ where: { id: undefined } })` throws instead
+  // of returning the documented `invalid_code`. Checking for `undefined`
+  // preserves the original behavior: an empty code hashes to a codeHash that
+  // matches no student, so it falls through to the `!student` branch below.
+  const student = input.code !== undefined
     ? await prisma.student.findUnique({
         where: { codeHash: digestLookupSecret(input.code, requireEnv("CODE_PEPPER")) },
         include: { homeAcademy: { select: { name: true } } },

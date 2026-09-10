@@ -299,6 +299,7 @@
         "invalid_code": "Algo salió mal. Por favor avisa en recepción.",
         "no_active_class": "No hay ninguna clase activa en este momento.",
         "already_checked_in": "Ya registraste tu asistencia para esta clase hoy.",
+        "notActive": "El registro de asistencia no está disponible para tu cuenta en este momento.",
         "generic": "Algo salió mal. Por favor intenta de nuevo."
       }
     }
