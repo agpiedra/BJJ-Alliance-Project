@@ -100,9 +100,8 @@ export async function performCheckIn(input: PerformCheckInInput): Promise<CheckI
   }
 
   const summaryAfter = await getAtBeltSummary(student.id);
-  const earnedStripe = summaryBefore.remainingToNextStripe === 1 && summaryAfter.remainingToNextStripe !== 1;
 
-  if (earnedStripe) {
+  if (summaryBefore.remainingToNextStripe === 1 && summaryAfter.remainingToNextStripe !== 1) {
     const type = summaryAfter.examEligible ? "EXAM_THRESHOLD" : "STRIPE_THRESHOLD";
     notifyEligibilityReached(student.id, type).catch((error) => {
       console.error("notifyEligibilityReached failed (non-fatal)", error);
@@ -122,7 +121,7 @@ export async function performCheckIn(input: PerformCheckInInput): Promise<CheckI
     // for both the ordinary stripe-earning case and the exam-eligibility case,
     // since getAtBeltSummary already folds exam-threshold progress into
     // remainingToNextStripe once a student is at max stripes.
-    earnedStripe,
+    earnedStripe: summaryBefore.remainingToNextStripe === 1 && summaryAfter.remainingToNextStripe !== 1,
     isVisitor: student.homeAcademyId !== input.academyId,
     homeAcademyName: student.homeAcademy.name,
   };
