@@ -9,6 +9,7 @@ import {
   type PromotionCandidate,
 } from "@/lib/students/promotion-queue";
 import { listOverdueStudents, type OverdueStudent } from "@/lib/payments/list-overdue";
+import { formatMonthYear } from "@/lib/format-month";
 import { ConfirmPromotionButton } from "./confirm-promotion-button";
 import { PromotionStatusLabel } from "./promotion-status-label";
 
@@ -17,14 +18,13 @@ import { PromotionStatusLabel } from "./promotion-status-label";
  * locale-independent `"YYYY-MM"` string (see that module's doc comment) —
  * this page owns turning it into a localized month name, the same
  * responsibility split `students/[id]/page.tsx`'s own `formatPeriodMonth`
- * establishes for payment-period display.
+ * establishes for payment-period display. Both delegate the actual
+ * formatting to the shared `formatMonthYear` (`@/lib/format-month`), which is
+ * what pins the `timeZone: "UTC"` fix for this synthetic year/month marker.
  */
 function formatLastPaidMonth(value: string, locale: string): string {
   const [year, month] = value.split("-").map(Number);
-  return new Intl.DateTimeFormat(locale === "es" ? "es-CR" : "en-US", {
-    year: "numeric",
-    month: "long",
-  }).format(new Date(Date.UTC(year, month - 1, 1)));
+  return formatMonthYear(year, month, locale);
 }
 
 // Same reasoning as the roster page: the pending-approvals count is staff

@@ -111,4 +111,25 @@ describe("RecordPaymentForm", () => {
     const submittedFormData = recordPaymentMock.mock.calls[0][1] as FormData;
     expect(submittedFormData.has("notes")).toBe(false);
   });
+
+  it("does NOT strip a literal \"0\" typed into Amount — only genuinely blank input counts as unspecified", async () => {
+    // Regression pin for Phase 6 Task 2's fix round (M-6 from the final
+    // whole-branch review): the stripping logic keys off `value.trim() ===
+    // ""`, so a director deliberately typing "0" (a real, intentional
+    // zero-dollar amount — distinct from leaving the field blank) must
+    // survive into the submitted FormData unchanged, not be treated as
+    // "unspecified" and stripped. This was manually verified at the time of
+    // the original fix but never pinned by a committed test until now.
+    recordPaymentMock.mockResolvedValue({ ok: true });
+    renderForm();
+    fillRequiredFields();
+    fireEvent.change(screen.getByLabelText("Amount (optional)"), { target: { value: "0" } });
+
+    fireEvent.click(screen.getByRole("button", { name: "Save payment" }));
+
+    await waitFor(() => expect(recordPaymentMock).toHaveBeenCalledTimes(1));
+    const submittedFormData = recordPaymentMock.mock.calls[0][1] as FormData;
+    expect(submittedFormData.has("amount")).toBe(true);
+    expect(submittedFormData.get("amount")).toBe("0");
+  });
 });

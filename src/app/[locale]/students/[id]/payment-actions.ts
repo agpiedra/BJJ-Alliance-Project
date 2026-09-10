@@ -1,6 +1,8 @@
 "use server";
 
 import { z } from "zod";
+import { revalidatePath } from "next/cache";
+import { getLocale } from "next-intl/server";
 import { prisma } from "@/lib/prisma";
 import { isAcademyInScope, requireStaffSession } from "@/lib/auth/session";
 import { PaymentStatus, Prisma } from "@/generated/prisma/client";
@@ -90,11 +92,26 @@ export async function recordPayment(_prevState: ActionState, formData: FormData)
         notes: data.notes,
         recordedById: session.userId,
       },
+      // `data.amount`/`data.notes` being `undefined` here means the director
+      // left the field blank on the form: the form (post Task 2's fix round)
+      // either submits a real value or strips the key entirely, so an
+      // absent key is never ambiguous. For `create` above, plain `undefined`
+      // is already correct — Prisma writes `null` for a field omitted from a
+      // `create` payload. But `update` treats `undefined` as "leave this
+      // column at whatever it already holds," NOT "clear it" — so passing
+      // `data.amount`/`data.notes` straight through here (as this action
+      // used to) let a blank field on a CORRECTION silently retain the
+      // PREVIOUS payment's stale amount/notes instead of clearing them (Phase
+      // 6 final review finding I-2 — e.g. a $45,000/"cash in full" PAID
+      // record corrected to EXEMPT with blank fields kept storing the old
+      // $45,000/"cash in full"). `?? null` makes a blank field on an UPDATE
+      // explicitly clear the column, matching what a director leaving it
+      // blank actually intends.
       update: {
         planId: data.planId,
         status: data.status,
-        amount: data.amount,
-        notes: data.notes,
+        amount: data.amount ?? null,
+        notes: data.notes ?? null,
         recordedById: session.userId,
         recordedAt: new Date(),
       },
@@ -122,6 +139,24 @@ export async function recordPayment(_prevState: ActionState, formData: FormData)
   });
 
   void result;
+
+  // Without this, the payment-history table rendered on the SAME page
+  // (students/[id]/page.tsx, a Server Component read at page-load time)
+  // would keep showing the pre-recording data until a manual reload, even
+  // though this form's own success message already says "Payment recorded."
+  // Same best-effort try/catch shape as `self-check-in-action.ts` (Phase 5),
+  // required for the identical reason: `revalidatePath` needs a real
+  // Next.js request-scoped store that isn't present when this action is
+  // called directly outside that machinery, as
+  // `tests/integration/payment-actions.test.ts` does. The write above
+  // already committed; losing the cache-invalidation signal in that one
+  // calling context must not fail the whole action.
+  try {
+    const locale = await getLocale();
+    revalidatePath(`/${locale}/students/${data.studentId}`);
+  } catch (error) {
+    console.error("[record-payment] failed to revalidate student detail page", { error });
+  }
 
   return { ok: true };
 }

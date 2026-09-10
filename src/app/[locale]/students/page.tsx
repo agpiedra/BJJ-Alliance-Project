@@ -66,7 +66,7 @@ export default async function StudentsPage({
           orderBy: { occurredAt: "desc" },
           select: { occurredAt: true },
         }),
-        getCurrentPaymentPeriod(student.id),
+        getCurrentPaymentPeriod(student.id, today),
       ]);
 
       return {

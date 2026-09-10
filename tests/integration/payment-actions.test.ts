@@ -355,6 +355,76 @@ describe("recordPayment", () => {
     expect(audits[0].after).toMatchObject({ status: "PAID", planId: plan.id, amount: null });
   });
 
+  it("correcting an EXISTING payment while leaving amount/notes blank CLEARS the previous values rather than retaining them", async () => {
+    // Regression test for Phase 6 final whole-branch review finding I-2: a
+    // real cross-task interaction bug. Task 2's fix round made the form
+    // strip blank amount/notes from the FormData entirely (absent, not
+    // ""), which is correct for CREATE (a schema default of `undefined`
+    // there properly writes `null`). But the `update` branch of this
+    // upsert used to pass `data.amount`/`data.notes` straight through, and
+    // Prisma's `update` treats an `undefined` field as "leave the column
+    // unchanged" — so correcting an existing $45,000/"cash in full" PAID
+    // record to EXEMPT with blank fields used to silently keep storing
+    // {amount: 45000, notes: "cash in full"}, the opposite of a director's
+    // evident intent when leaving those fields blank on a correction.
+    const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+    const plan = await prisma.paymentPlan.findFirstOrThrow({
+      where: { academyId: escazu.id, name: "Mensualidad" },
+    });
+    const admin = await makeStaffUser("ADMIN", "record-clear-on-correct-admin");
+    const student = await makeStudent(escazu.id);
+
+    currentSession = { user: { id: admin.id, role: "ADMIN" } };
+
+    const first = await recordPayment(
+      {},
+      formData({
+        studentId: student.id,
+        year: "2026",
+        month: "10",
+        planId: plan.id,
+        status: "PAID",
+        amount: "45000",
+        notes: "cash in full",
+      }),
+    );
+    expect(first.ok).toBe(true);
+
+    const afterFirst = await paymentPeriodFor(student.id, 2026, 10);
+    expect(afterFirst!.amount?.toNumber()).toBe(45000);
+    expect(afterFirst!.notes).toBe("cash in full");
+
+    // Correction: same student/month, a different status, amount/notes
+    // omitted entirely — exactly what the fixed form now sends for a blank
+    // optional field on a correction, not "" for either.
+    const second = await recordPayment(
+      {},
+      formData({
+        studentId: student.id,
+        year: "2026",
+        month: "10",
+        planId: plan.id,
+        status: "EXEMPT",
+      }),
+    );
+    expect(second.ok).toBe(true);
+
+    const count = await prisma.paymentPeriod.count({
+      where: { studentId: student.id, year: 2026, month: 10 },
+    });
+    expect(count).toBe(1);
+
+    const afterSecond = await paymentPeriodFor(student.id, 2026, 10);
+    expect(afterSecond!.status).toBe("EXEMPT");
+    expect(afterSecond!.amount).toBeNull();
+    expect(afterSecond!.notes).toBeNull();
+
+    const audits = await auditRowsFor(afterSecond!.id, "payment.record");
+    expect(audits).toHaveLength(2);
+    expect(audits[1].before).toMatchObject({ status: "PAID", planId: plan.id, amount: 45000 });
+    expect(audits[1].after).toMatchObject({ status: "EXEMPT", planId: plan.id, amount: null });
+  });
+
   it("an invalid month (0) is rejected by zod validation before any DB write", async () => {
     const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
     const plan = await prisma.paymentPlan.findFirstOrThrow({

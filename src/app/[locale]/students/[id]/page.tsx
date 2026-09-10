@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getAtBeltSummary } from "@/lib/students/attendance-summary";
 import { formatTimestampInAcademyZone } from "@/lib/format-date";
+import { formatMonthYear } from "@/lib/format-month";
 import { currentCrDateParts } from "@/lib/payments/get-current-period";
 import { getStudentForStaff } from "./get-student";
 import { getPromotionHistory } from "./get-promotion-history";
@@ -81,10 +82,7 @@ export default async function StudentDetailPage({
   const { year: currentYear, month: currentMonth } = currentCrDateParts();
 
   function formatPeriodMonth(year: number, month: number): string {
-    return new Intl.DateTimeFormat(locale === "es" ? "es-CR" : "en-US", {
-      year: "numeric",
-      month: "long",
-    }).format(new Date(Date.UTC(year, month - 1, 1)));
+    return formatMonthYear(year, month, locale);
   }
 
   return (
