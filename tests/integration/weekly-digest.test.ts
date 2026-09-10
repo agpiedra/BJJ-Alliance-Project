@@ -8,6 +8,36 @@ import { digestLookupSecret, hashSecret } from "../../src/lib/crypto";
 import { toAttendanceDate, ZONE } from "../../src/lib/scheduling/zone";
 import type { ResendClient } from "../../src/lib/notifications/email-channel";
 
+// Mutable state a hoisted `vi.mock` factory (below) reads at call time, so a
+// single test can direct exactly one academy id to fail and one to succeed
+// without touching production code — the module itself is still real for
+// every other academy id (forwarded to `actual`), which is what keeps
+// describe("sendWeeklyDigestForAcademy")'s direct-call tests and the existing
+// happy-path route test below unaffected (both ids stay `null` for them).
+const digestFailureState = vi.hoisted(() => ({
+  failAcademyId: null as string | null,
+  okAcademyId: null as string | null,
+}));
+
+vi.mock("../../src/lib/notifications/weekly-digest", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../src/lib/notifications/weekly-digest")>();
+  return {
+    ...actual,
+    sendWeeklyDigestForAcademy: vi.fn(async (academyId: string, resendClient?: unknown) => {
+      if (academyId === digestFailureState.failAcademyId) {
+        throw new Error("SIMULATED_FAILURE_FOR_TEST");
+      }
+      if (academyId === digestFailureState.okAcademyId) {
+        // Succeeds without touching the real DB/email path — resolving
+        // staff recipients for real would email every real ADMIN user in
+        // the shared dev DB, which this test has no business doing.
+        return;
+      }
+      return actual.sendWeeklyDigestForAcademy(academyId, resendClient as never);
+    }),
+  };
+});
+
 const { sendWeeklyDigestForAcademy } = await import("../../src/lib/notifications/weekly-digest");
 const { GET } = await import("../../src/app/api/cron/weekly-digest/route");
 
@@ -259,11 +289,14 @@ describe("GET /api/cron/weekly-digest", () => {
     expect(response.status).toBe(401);
   });
 
-  it("returns 200 with a per-academy summary when the secret matches, one academy's failure doesn't block others", async () => {
+  it("processes real academies and returns a well-shaped response", async () => {
     // A real Academy with no kioskTokenHash conflicts and nothing else
     // seeded — sendWeeklyDigestForAcademy still succeeds for it (zero counts,
     // zero recipients means zero emails sent, but no throw), proving this
     // route iterates every real Academy row rather than a hardcoded list.
+    // NOTE: this only exercises the happy path against whatever academies
+    // happen to exist — it does not prove failure isolation. See the next
+    // test for that.
     const request = new Request("http://localhost/api/cron/weekly-digest", {
       headers: { authorization: "Bearer test-cron-secret" },
     });
@@ -273,5 +306,46 @@ describe("GET /api/cron/weekly-digest", () => {
     expect(body.ok).toBe(true);
     expect(typeof body.processed).toBe("number");
     expect(Array.isArray(body.errors)).toBe(true);
+  });
+
+  it("one academy's failure doesn't block others: a rejecting academy is reported as an error while a succeeding one still gets processed", async () => {
+    const academyFail = await makeAcademy("weekly-digest-cron-fail");
+    const academyOk = await makeAcademy("weekly-digest-cron-ok");
+
+    digestFailureState.failAcademyId = academyFail.id;
+    digestFailureState.okAcademyId = academyOk.id;
+
+    try {
+      const request = new Request("http://localhost/api/cron/weekly-digest", {
+        headers: { authorization: "Bearer test-cron-secret" },
+      });
+      const response = await GET(request);
+
+      // The route itself must not fail (500) or short-circuit just because
+      // one academy's send rejected.
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.ok).toBe(true);
+
+      // The failing academy is reported in `errors` with its real thrown
+      // message, proving the per-iteration try/catch actually caught it
+      // rather than the request blowing up.
+      const failEntry = body.errors.find((e: { academyId: string }) => e.academyId === academyFail.id);
+      expect(failEntry).toBeDefined();
+      expect(failEntry.error).toBe("SIMULATED_FAILURE_FOR_TEST");
+
+      // The other academy is NOT reported as an error, and the mock was
+      // actually invoked for it (not skipped) — proving it was attempted
+      // and succeeded after the failing academy was processed, not that it
+      // merely never ran.
+      expect(body.errors.find((e: { academyId: string }) => e.academyId === academyOk.id)).toBeUndefined();
+      const okWasAttempted = vi
+        .mocked(sendWeeklyDigestForAcademy)
+        .mock.calls.some(([academyId]) => academyId === academyOk.id);
+      expect(okWasAttempted).toBe(true);
+    } finally {
+      digestFailureState.failAcademyId = null;
+      digestFailureState.okAcademyId = null;
+    }
   });
 });
