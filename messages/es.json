@@ -238,6 +238,36 @@
             "visitCount": "Visitas"
           }
         }
+      },
+      "retention": {
+        "list": {
+          "heading": "Retención",
+          "empty": "Ningún estudiante cumple los criterios de riesgo de retención para esta selección.",
+          "neverAttended": "Nunca asistió",
+          "table": {
+            "name": "Nombre",
+            "phone": "Teléfono",
+            "lastSeenAt": "Última asistencia",
+            "bucket": "Nivel de riesgo"
+          },
+          "bucket": {
+            "30": "30+ días sin venir",
+            "60": "60+ días sin venir",
+            "90": "90+ días sin venir"
+          },
+          "csv": {
+            "name": "Nombre",
+            "phone": "Teléfono",
+            "lastSeenAt": "Última asistencia",
+            "bucket": "Nivel de riesgo"
+          }
+        },
+        "trend": {
+          "heading": "Tendencia semanal de asistencia",
+          "chart": {
+            "count": "Asistencias"
+          }
+        }
       }
     }
   },

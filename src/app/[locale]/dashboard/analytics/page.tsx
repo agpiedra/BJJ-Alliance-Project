@@ -7,10 +7,12 @@ import { getHeadlineTiles } from "@/lib/analytics/headline-tiles";
 import { getClassPopularity } from "@/lib/analytics/class-popularity";
 import { getBeltDistribution, getProgressionPlanningList, getPromotionsInRange } from "@/lib/analytics/progression";
 import { getLocationComparison, getCrossTraining } from "@/lib/analytics/locations";
+import { getRetentionList, getWeeklyAttendanceTrend } from "@/lib/analytics/retention";
 import { ExportCsvButton } from "./export-csv-button";
 import { ClassPopularityPanel } from "./class-popularity-panel";
 import { ProgressionPanel } from "./progression-panel";
 import { LocationsPanel } from "./locations-panel";
+import { RetentionPanel } from "./retention-panel";
 
 // Same reasoning as the roster/dashboard pages: every panel here reflects
 // staff/student data that can change without a redeploy, so this page must
@@ -34,13 +36,16 @@ export default async function AnalyticsPage({
   // can never surface a result an INSTRUCTOR shouldn't see, even if this
   // page's own gate above were ever bypassed or miscopied.
   const locale = await getLocale();
-  const [tiles, classPopularity, planningList, beltDistribution, promotionsInRange] = await Promise.all([
-    getHeadlineTiles(session, filters),
-    getClassPopularity(session, filters, locale),
-    getProgressionPlanningList(session, filters),
-    getBeltDistribution(session, filters),
-    getPromotionsInRange(session, filters),
-  ]);
+  const [tiles, classPopularity, planningList, beltDistribution, promotionsInRange, retentionList, weeklyTrend] =
+    await Promise.all([
+      getHeadlineTiles(session, filters),
+      getClassPopularity(session, filters, locale),
+      getProgressionPlanningList(session, filters),
+      getBeltDistribution(session, filters),
+      getPromotionsInRange(session, filters),
+      getRetentionList(session, filters),
+      getWeeklyAttendanceTrend(session, filters),
+    ]);
 
   // ADMIN-only panel (spec's "Locations (admin only)" heading) — skip
   // fetching this data entirely for a DIRECTOR session rather than
@@ -63,6 +68,14 @@ export default async function AnalyticsPage({
   const promotionsInRangeRows = promotionsInRange.map((row) => ({
     ...row,
     awardedAt: row.awardedAt.toISO()!,
+  }));
+  // `lastSeenAt` is a plain `Date | null` here (not a Luxon `DateTime`), but
+  // it still crosses the Server -> Client boundary as an ISO string — the
+  // same discipline every other timestamp-bearing row in this page follows,
+  // rather than assuming a native `Date` is a special case.
+  const retentionListRows = retentionList.map((entry) => ({
+    ...entry,
+    lastSeenAt: entry.lastSeenAt ? entry.lastSeenAt.toISOString() : null,
   }));
 
   // Only ADMIN gets the academy picker (spec's "Locations (admin only)"
@@ -165,6 +178,8 @@ export default async function AnalyticsPage({
       {session.role === "ADMIN" && (
         <LocationsPanel comparison={locationComparison} crossTraining={crossTraining} />
       )}
+
+      <RetentionPanel entries={retentionListRows} weeklyTrend={weeklyTrend} />
     </main>
   );
 }
