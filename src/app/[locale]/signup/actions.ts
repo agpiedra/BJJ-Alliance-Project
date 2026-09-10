@@ -4,6 +4,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { hashSecret } from "@/lib/crypto";
 import { generateStudentCode } from "@/lib/students/generate-code";
+import { notifyNewSignup } from "@/lib/notifications/notify-new-signup";
 import { Belt, Role, StudentStatus } from "@/generated/prisma/client";
 
 const signupSchema = z
@@ -88,7 +89,7 @@ export async function signup(_prevState: SignupState, formData: FormData): Promi
   const homeAcademy = await prisma.academy.findUniqueOrThrow({ where: { slug: data.homeAcademySlug } });
   const { code, codeHash } = await generateStudentCode();
 
-  await prisma.$transaction(async (tx) => {
+  const studentId = await prisma.$transaction(async (tx) => {
     const user = await tx.user.create({
       data: {
         email: data.email,
@@ -97,7 +98,7 @@ export async function signup(_prevState: SignupState, formData: FormData): Promi
       },
     });
 
-    await tx.student.create({
+    const student = await tx.student.create({
       data: {
         userId: user.id,
         homeAcademyId: homeAcademy.id,
@@ -115,12 +116,13 @@ export async function signup(_prevState: SignupState, formData: FormData): Promi
         status: StudentStatus.PENDING,
       },
     });
+
+    return student.id;
   });
 
-  // Staff-notification stub: query-time "pending approvals" count on the
-  // dashboard (Task 9) is the notification mechanism for Phase 2 — no
-  // dedicated Notification table yet (YAGNI; spec's "bell icon" system is
-  // out of this phase's scope).
+  notifyNewSignup(studentId).catch((error) => {
+    console.error("notifyNewSignup failed (non-fatal)", error);
+  });
 
   return { ok: true, code };
 }
