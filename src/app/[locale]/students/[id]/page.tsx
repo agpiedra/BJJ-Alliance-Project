@@ -1,18 +1,22 @@
 import { notFound } from "next/navigation";
 import { getTranslations } from "next-intl/server";
 import { requireStaffSession } from "@/lib/auth/session";
+import { prisma } from "@/lib/prisma";
 import { BeltGraphic } from "@/components/belt-graphic/belt-graphic";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getAtBeltSummary } from "@/lib/students/attendance-summary";
 import { formatTimestampInAcademyZone } from "@/lib/format-date";
+import { currentCrDateParts } from "@/lib/payments/get-current-period";
 import { getStudentForStaff } from "./get-student";
 import { getPromotionHistory } from "./get-promotion-history";
+import { getPaymentHistory } from "./get-payment-history";
 import { EditStudentForm } from "./edit-student-form";
 import { ArchiveStudentButton } from "./archive-student-button";
 import { ApproveStudentButton } from "./approve-student-button";
 import { RegenerateCodeButton } from "./regenerate-code-button";
 import { AddAdjustmentForm } from "./add-adjustment-form";
+import { RecordPaymentForm } from "./record-payment-form";
 
 // Staff data an admin/director/instructor could change without a redeploy —
 // never frozen at build time, same reasoning as the roster page.
@@ -49,11 +53,13 @@ export default async function StudentDetailPage({
 
   const summary = await getAtBeltSummary(student.id);
   const promotionHistory = await getPromotionHistory(student.id);
+  const paymentHistory = await getPaymentHistory(student.id);
 
   const t = await getTranslations("students");
   const tDetail = await getTranslations("students.detail");
   const tStatus = await getTranslations("students.status");
   const tBelt = await getTranslations("belt");
+  const tPaymentStatus = await getTranslations("students.paymentStatus");
 
   // Edit/archive are gated to ADMIN/DIRECTOR in the UI as defense in depth —
   // the real gate is server-side in updateStudent/archiveStudent
@@ -61,6 +67,25 @@ export default async function StudentDetailPage({
   // check). Code regeneration has no role restriction (spec §4.1), so it's
   // shown to any staff session.
   const canEdit = session.role === "ADMIN" || session.role === "DIRECTOR";
+
+  // `recordPayment` re-checks ADMIN/DIRECTOR + plan-academy scope itself —
+  // this fetch just avoids the extra query/render when the form won't be
+  // shown at all (same `canEdit` gate as edit/archive above).
+  const paymentPlans = canEdit
+    ? await prisma.paymentPlan.findMany({
+        where: { academyId: student.homeAcademyId, active: true },
+        orderBy: { name: "asc" },
+        select: { id: true, name: true },
+      })
+    : [];
+  const { year: currentYear, month: currentMonth } = currentCrDateParts();
+
+  function formatPeriodMonth(year: number, month: number): string {
+    return new Intl.DateTimeFormat(locale === "es" ? "es-CR" : "en-US", {
+      year: "numeric",
+      month: "long",
+    }).format(new Date(Date.UTC(year, month - 1, 1)));
+  }
 
   return (
     <main className="flex flex-col gap-6 p-6">
@@ -163,11 +188,12 @@ export default async function StudentDetailPage({
       </Card>
 
       {/* Real data as of Task 5 — every Promotion row for this student,
-          newest first. The other two placeholder cards below (attendance
-          history, payment history) are still genuinely unbuilt (Phases 4/6
-          own the rest of that work); only this card's `comingLater` reliance
-          is removed, since that phrase specifically means "doesn't exist
-          yet," which is no longer true here. */}
+          newest first. The payment-history card below is now real data too
+          (Phase 6 Task 2); only the attendance-history card immediately
+          after it is still a genuine `comingLater` placeholder — this
+          staff-facing attendance ledger view was never in either task's
+          scope (the student's own portal already has one via
+          `getAttendanceHistory`). */}
       <Card>
         <CardHeader>
           <CardTitle>{tDetail("promotionHistory.heading")}</CardTitle>
@@ -224,12 +250,48 @@ export default async function StudentDetailPage({
           <p className="text-muted-foreground">{tDetail("comingLater")}</p>
         </CardContent>
       </Card>
+      {/* Real data as of Task 2 — every PaymentPeriod row for this student,
+          newest first, same "replace comingLater with a real list + empty
+          state" shape as promotionHistory above. */}
       <Card>
         <CardHeader>
           <CardTitle>{tDetail("paymentHistory.heading")}</CardTitle>
         </CardHeader>
         <CardContent>
-          <p className="text-muted-foreground">{tDetail("comingLater")}</p>
+          {paymentHistory.length === 0 ? (
+            <p className="text-muted-foreground">{tDetail("paymentHistory.empty")}</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm">
+                <thead>
+                  <tr className="text-muted-foreground">
+                    <th className="pb-2 pr-4 font-medium">{tDetail("paymentHistory.columnPeriod")}</th>
+                    <th className="pb-2 pr-4 font-medium">{tDetail("paymentHistory.columnPlan")}</th>
+                    <th className="pb-2 pr-4 font-medium">{tDetail("paymentHistory.columnStatus")}</th>
+                    <th className="pb-2 pr-4 font-medium">{tDetail("paymentHistory.columnAmount")}</th>
+                    <th className="pb-2 font-medium">{tDetail("paymentHistory.columnNotes")}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {paymentHistory.map((period) => (
+                    <tr key={period.id} className="border-t">
+                      <td className="py-2 pr-4 align-top whitespace-nowrap">
+                        {formatPeriodMonth(period.year, period.month)}
+                      </td>
+                      <td className="py-2 pr-4 align-top whitespace-nowrap">{period.planName}</td>
+                      <td className="py-2 pr-4 align-top">
+                        <Badge variant="outline">{tPaymentStatus(period.status)}</Badge>
+                      </td>
+                      <td className="py-2 pr-4 align-top whitespace-nowrap">
+                        {period.amount ?? "—"}
+                      </td>
+                      <td className="py-2 align-top whitespace-pre-wrap">{period.notes ?? "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -248,6 +310,16 @@ export default async function StudentDetailPage({
               a button that would always fail. */}
           {student.status === "PENDING" && <ApproveStudentButton studentId={student.id} />}
           <EditStudentForm student={student} />
+          {/* ADMIN/DIRECTOR only, same as edit/archive above — the real
+              enforcement is server-side in recordPayment itself
+              (requireStaffSession(["ADMIN", "DIRECTOR"]) + a fresh
+              isAcademyInScope + plan-academy cross-check). */}
+          <RecordPaymentForm
+            studentId={student.id}
+            plans={paymentPlans}
+            defaultYear={currentYear}
+            defaultMonth={currentMonth}
+          />
           <ArchiveStudentButton
             studentId={student.id}
             disabled={student.status === "ARCHIVED"}
