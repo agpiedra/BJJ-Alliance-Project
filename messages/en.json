@@ -605,7 +605,7 @@
     },
     "weeklyDigest": {
       "title": "Weekly digest — {academyName}",
-      "body": "{academyName}: {newSignups} new signups, {overduePayments} overdue payments this week."
+      "body": "{academyName}: {attendanceCount} check-ins in the last 7 days, {inactiveCount} students inactive 30+ days, {overduePayments} overdue payments."
     }
   }
 }

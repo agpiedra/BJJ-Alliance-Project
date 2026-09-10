@@ -605,7 +605,7 @@
     },
     "weeklyDigest": {
       "title": "Resumen semanal — {academyName}",
-      "body": "{academyName}: {newSignups} nuevas inscripciones, {overduePayments} pagos atrasados esta semana."
+      "body": "{academyName}: {attendanceCount} asistencias en los últimos 7 días, {inactiveCount} estudiantes inactivos por 30+ días, {overduePayments} pagos atrasados."
     }
   }
 }

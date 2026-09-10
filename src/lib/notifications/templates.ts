@@ -79,17 +79,23 @@ export function renderNotificationMessage(
       };
     }
 
-    // data: { academyName: string; newSignups: number; overduePayments:
-    // number } — one academy's weekly summary counts (Vercel Cron trigger,
-    // email-only per the plan's ruling).
+    // data: { academyName: string; attendanceCount: number; inactiveCount:
+    // number; overduePayments: number } — one academy's weekly summary
+    // counts (Vercel Cron trigger, email-only per the plan's ruling):
+    // check-ins in the trailing 7 days, students inactive 30+ days (Phase
+    // 7's retention list), and overdue payments (Phase 6's overdue list).
+    // Task 1's original placeholder shape (`newSignups`) didn't match what
+    // Task 4 actually computes; corrected here since Task 4 is this case's
+    // only real consumer and no other code depended on the old shape.
     case "WEEKLY_DIGEST": {
       const academyName = data.academyName as string;
-      const newSignups = data.newSignups as number;
+      const attendanceCount = data.attendanceCount as number;
+      const inactiveCount = data.inactiveCount as number;
       const overduePayments = data.overduePayments as number;
       return {
         type,
         title: t("weeklyDigest.title", { academyName }),
-        body: t("weeklyDigest.body", { academyName, newSignups, overduePayments }),
+        body: t("weeklyDigest.body", { academyName, attendanceCount, inactiveCount, overduePayments }),
       };
     }
   }

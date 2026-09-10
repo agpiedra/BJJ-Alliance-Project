@@ -80,13 +80,14 @@ describe("renderNotificationMessage", () => {
   it("WEEKLY_DIGEST: es locale mentions the academy name, counts, and 'atrasados'", () => {
     const result = renderNotificationMessage(
       "WEEKLY_DIGEST",
-      { academyName: "Alliance Escazú", newSignups: 4, overduePayments: 2 },
+      { academyName: "Alliance Escazú", attendanceCount: 12, inactiveCount: 3, overduePayments: 2 },
       "es",
     );
     expect(result.type).toBe("WEEKLY_DIGEST");
     expect(result.title).toContain("Alliance Escazú");
     expect(result.body).toContain("Alliance Escazú");
-    expect(result.body).toContain("4");
+    expect(result.body).toContain("12");
+    expect(result.body).toContain("3");
     expect(result.body).toContain("2");
     expect(result.body).toContain("atrasados");
   });
@@ -94,12 +95,13 @@ describe("renderNotificationMessage", () => {
   it("WEEKLY_DIGEST: en locale mentions the academy name, counts, and 'overdue'", () => {
     const result = renderNotificationMessage(
       "WEEKLY_DIGEST",
-      { academyName: "Alliance Escazú", newSignups: 4, overduePayments: 2 },
+      { academyName: "Alliance Escazú", attendanceCount: 12, inactiveCount: 3, overduePayments: 2 },
       "en",
     );
     expect(result.type).toBe("WEEKLY_DIGEST");
     expect(result.title).toContain("Alliance Escazú");
-    expect(result.body).toContain("4");
+    expect(result.body).toContain("12");
+    expect(result.body).toContain("3");
     expect(result.body).toContain("2");
     expect(result.body).toContain("overdue");
   });
