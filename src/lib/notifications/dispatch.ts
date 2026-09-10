@@ -1,4 +1,5 @@
-import type { NotificationChannel, Recipient, RenderedMessage } from "@/lib/notifications/types";
+import { renderNotificationMessage } from "@/lib/notifications/templates";
+import type { NotificationChannel, NotificationType, Recipient, RenderedMessage } from "@/lib/notifications/types";
 
 /**
  * Fans a rendered message out to every recipient x every channel,
@@ -33,4 +34,34 @@ export async function dispatchNotification(
       console.error("notification channel threw", outcome.reason);
     }
   }
+}
+
+/**
+ * Renders and dispatches one notification PER RECIPIENT, in THAT recipient's
+ * own `locale` — never a single shared locale rendered once for the whole
+ * fan-out (the I-2/I-3 bug: an English-preferring ADMIN was getting Spanish
+ * stripe/exam/signup/digest notifications because every trigger rendered
+ * once with `routing.defaultLocale`/whatever locale happened to be handy and
+ * blasted the same rendered message to everyone).
+ *
+ * Shared by all four trigger functions (`notifyEligibilityReached`,
+ * `notifyNewSignup`, `sendWeeklyDigestForAcademy`) instead of each
+ * duplicating this same "for each recipient, render in their locale,
+ * dispatch" loop — and it's the loop that gives every trigger
+ * `dispatchNotification`'s existing failure logging/`Promise.allSettled`
+ * isolation for free, including the digest, which used to bypass
+ * `dispatchNotification` entirely and silently discard failed sends.
+ */
+export async function dispatchToRecipients(
+  recipients: Recipient[],
+  type: NotificationType,
+  data: Record<string, unknown>,
+  channels: NotificationChannel[],
+): Promise<void> {
+  await Promise.all(
+    recipients.map((recipient) => {
+      const message = renderNotificationMessage(type, data, recipient.locale);
+      return dispatchNotification([recipient], message, channels);
+    }),
+  );
 }

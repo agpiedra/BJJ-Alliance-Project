@@ -5,12 +5,17 @@ import { prisma } from "@/lib/prisma";
 import { hashSecret } from "@/lib/crypto";
 import { generateStudentCode } from "@/lib/students/generate-code";
 import { notifyNewSignup } from "@/lib/notifications/notify-new-signup";
+import { fireAndForget } from "@/lib/notifications/fire-and-forget";
 import { Belt, Role, StudentStatus } from "@/generated/prisma/client";
 
 const signupSchema = z
   .object({
-    firstName: z.string().min(1),
-    lastName: z.string().min(1),
+    // .max(100): this value reaches Resend's email `subject` field
+    // unescaped (EmailChannel embeds it in NEW_SIGNUP's title) — bounding it
+    // here keeps an unbounded, newline-permitting public input out of an
+    // email header, matching currentStripes' existing min/max convention below.
+    firstName: z.string().min(1).max(100),
+    lastName: z.string().min(1).max(100),
     phone: z.string().min(1),
     email: z.string().email(),
     homeAcademySlug: z.enum(["escazu", "escalante"]),
@@ -120,9 +125,9 @@ export async function signup(_prevState: SignupState, formData: FormData): Promi
     return student.id;
   });
 
-  notifyNewSignup(studentId).catch((error) => {
-    console.error("notifyNewSignup failed (non-fatal)", error);
-  });
+  // See fire-and-forget.ts for why this is wrapped in after() with a
+  // fallback rather than left as a bare un-awaited promise.
+  fireAndForget("notifyNewSignup", () => notifyNewSignup(studentId));
 
   return { ok: true, code };
 }

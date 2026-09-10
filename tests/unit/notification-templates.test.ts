@@ -9,32 +9,44 @@ import { renderNotificationMessage } from "@/lib/notifications/templates";
 
 describe("renderNotificationMessage", () => {
   it("STRIPE_THRESHOLD: es locale renders a non-empty, Spanish-appropriate title/body and echoes the type", () => {
+    // stripes: 3 stands in for what notify-eligibility.ts now actually
+    // passes — `student.currentStripes + 1` (the stripe just become
+    // ELIGIBLE for, not one already awarded — nothing is auto-awarded at
+    // notification time; see notify-eligibility.ts's own comment).
     const result = renderNotificationMessage(
       "STRIPE_THRESHOLD",
-      { studentName: "Ana Pérez", belt: "BLUE", stripes: 2 },
+      { studentName: "Ana Pérez", belt: "BLUE", stripes: 3 },
       "es",
     );
     expect(result.type).toBe("STRIPE_THRESHOLD");
     expect(result.title.length).toBeGreaterThan(0);
     expect(result.body.length).toBeGreaterThan(0);
     expect(result.body).toContain("Ana Pérez");
+    // "elegible" (eligible), not "alcanzó" (reached/earned) — the corrected
+    // I-4 framing: a promotion is always staff-confirmed later, never
+    // auto-awarded at notification time.
+    expect(result.body).toContain("elegible");
     // "grado" (stripe/grade) is the Spanish word choice for this template —
     // spot-checks that the ES message keys, not the EN ones, were used.
     expect(result.body).toContain("grado");
+    expect(result.body).toContain("3");
     expect(result.body).toContain("Azul"); // translated belt name (es), not the raw "BLUE" enum value
   });
 
   it("STRIPE_THRESHOLD: en locale renders a non-empty, English-appropriate title/body and echoes the type", () => {
     const result = renderNotificationMessage(
       "STRIPE_THRESHOLD",
-      { studentName: "Ana Pérez", belt: "BLUE", stripes: 2 },
+      { studentName: "Ana Pérez", belt: "BLUE", stripes: 3 },
       "en",
     );
     expect(result.type).toBe("STRIPE_THRESHOLD");
     expect(result.title.length).toBeGreaterThan(0);
     expect(result.body.length).toBeGreaterThan(0);
     expect(result.body).toContain("Ana Pérez");
+    // "eligible for", not "reached"/"earned" — same I-4 framing fix as above.
+    expect(result.body).toContain("eligible");
     expect(result.body).toContain("stripe");
+    expect(result.body).toContain("3");
     expect(result.body).toContain("Blue");
   });
 

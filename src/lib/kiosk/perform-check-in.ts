@@ -6,6 +6,7 @@ import { selectActiveSessionOccurrence } from "@/lib/scheduling/check-in-window"
 import { getAtBeltSummary, type AtBeltSummary } from "@/lib/students/attendance-summary";
 import { isUniqueConstraintError } from "@/lib/prisma-errors";
 import { notifyEligibilityReached } from "@/lib/notifications/notify-eligibility";
+import { fireAndForget } from "@/lib/notifications/fire-and-forget";
 import { AttendanceType, StudentStatus, type AttendanceSource } from "@/generated/prisma/client";
 
 export type CheckInResult =
@@ -103,9 +104,9 @@ export async function performCheckIn(input: PerformCheckInInput): Promise<CheckI
 
   if (summaryBefore.remainingToNextStripe === 1 && summaryAfter.remainingToNextStripe !== 1) {
     const type = summaryAfter.examEligible ? "EXAM_THRESHOLD" : "STRIPE_THRESHOLD";
-    notifyEligibilityReached(student.id, type).catch((error) => {
-      console.error("notifyEligibilityReached failed (non-fatal)", error);
-    });
+    // See fire-and-forget.ts for why this is wrapped in after() with a
+    // fallback rather than left as a bare un-awaited promise.
+    fireAndForget("notifyEligibilityReached", () => notifyEligibilityReached(student.id, type));
   }
 
   return {

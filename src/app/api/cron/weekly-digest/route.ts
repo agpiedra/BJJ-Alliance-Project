@@ -37,5 +37,7 @@ export async function GET(request: Request) {
     }
   }
 
-  return NextResponse.json({ ok: true, processed, errors }, { status: 200 });
+  // `ok: false` (not always `true`) when every academy failed, so a total
+  // outage is visible in Vercel's cron dashboard instead of masked as success.
+  return NextResponse.json({ ok: errors.length === 0, processed, errors }, { status: 200 });
 }

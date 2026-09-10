@@ -592,8 +592,8 @@
       "markAllReadError": "Could not mark notifications as read."
     },
     "stripeThreshold": {
-      "title": "New stripe: {studentName}",
-      "body": "{studentName} reached stripe {stripes} at {belt} belt."
+      "title": "Stripe ready: {studentName}",
+      "body": "{studentName} is eligible for stripe {stripes} at {belt} belt."
     },
     "examThreshold": {
       "title": "Exam ready: {studentName}",

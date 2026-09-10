@@ -20,6 +20,16 @@ vi.mock("next-intl/server", () => ({
   getLocale: () => Promise.resolve("en"),
 }));
 
+// I-1 regression coverage: notifyEligibilityReached must still fire when a
+// check-in that crosses the stripe threshold comes in through this REAL
+// portal action entry point (not just via a direct performCheckIn call).
+// Mocked so this file doesn't depend on/pollute real staff Notification rows
+// or make a real Resend call.
+const notifyEligibilityState = vi.hoisted(() => ({ spy: vi.fn(async (..._args: unknown[]) => {}) }));
+vi.mock("@/lib/notifications/notify-eligibility", () => ({
+  notifyEligibilityReached: (...args: unknown[]) => notifyEligibilityState.spy(...args),
+}));
+
 const { selfCheckIn } = await import("../../src/app/[locale]/portal/self-check-in-action");
 
 const adapter = new PrismaPg({ connectionString: requireEnv("DATABASE_URL") });
@@ -91,6 +101,7 @@ describe("selfCheckIn", () => {
   afterEach(() => {
     vi.useRealTimers();
     currentSession = null;
+    notifyEligibilityState.spy.mockClear();
   });
 
   it("checks in the session's own student during a real window, recording source PORTAL", async () => {
@@ -167,5 +178,65 @@ describe("selfCheckIn", () => {
 
     expect(state).toEqual({ error: "notActive" });
     expect(await prisma.attendanceRecord.count({ where: { studentId } })).toBe(0);
+  });
+
+  it("I-1: fires notifyEligibilityReached through the REAL self-check-in action entry point when a check-in crosses the stripe threshold", async () => {
+    const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+    const suffix = `${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
+    const user = await prisma.user.create({
+      data: {
+        email: `self-check-in-elig-${suffix}@example.com`,
+        passwordHash: await hashSecret("irrelevant-password-123"),
+        role: "STUDENT",
+        active: true,
+      },
+    });
+    cleanupUserIds.push(user.id);
+
+    const { codeHash } = await generateStudentCode();
+    const beltAwardedAt = new Date("2025-12-01T00:00:00Z");
+    const student = await prisma.student.create({
+      data: {
+        userId: user.id,
+        homeAcademyId: escazu.id,
+        firstName: "SelfCheckInEligTest",
+        lastName: "Student",
+        phone: "88887000",
+        email: `self-check-in-elig-student-${suffix}@example.com`,
+        codeHash,
+        status: "ACTIVE",
+        currentBelt: "WHITE",
+        currentStripes: 0,
+        beltAwardedAt,
+      },
+    });
+
+    // WHITE belt requires 30 attendances/stripe — 29 synthetic (no
+    // classSessionId, so no collision with the real session's unique
+    // constraint) + this action's real check-in below crosses the threshold.
+    const DAY_MS = 24 * 60 * 60 * 1000;
+    await prisma.attendanceRecord.createMany({
+      data: Array.from({ length: 29 }, (_, i) => {
+        const occurredAt = new Date(beltAwardedAt.getTime() + DAY_MS + i * DAY_MS);
+        return {
+          studentId: student.id,
+          academyId: escazu.id,
+          occurredAt,
+          date: new Date(Date.UTC(occurredAt.getUTCFullYear(), occurredAt.getUTCMonth(), occurredAt.getUTCDate())),
+          type: "CHECKIN" as const,
+          delta: 1,
+          source: "STAFF" as const,
+        };
+      }),
+    });
+
+    currentSession = { user: { id: user.id, role: "STUDENT" } };
+    setSystemTime(WITHIN_MONDAY_GI_WINDOW);
+
+    const state = await selfCheckIn({}, new FormData());
+
+    expect(state.ok).toBe(true);
+    expect(state.earnedStripe).toBe(true);
+    expect(notifyEligibilityState.spy).toHaveBeenCalledWith(student.id, "STRIPE_THRESHOLD");
   });
 });

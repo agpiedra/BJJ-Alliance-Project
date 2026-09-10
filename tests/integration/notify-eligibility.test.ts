@@ -29,14 +29,14 @@ function suffix() {
   return `${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
 }
 
-async function makeStaff(role: "ADMIN" | "DIRECTOR" | "INSTRUCTOR", academyId?: string) {
+async function makeStaff(role: "ADMIN" | "DIRECTOR" | "INSTRUCTOR", academyId?: string, locale: string = "es") {
   const user = await prisma.user.create({
     data: {
       email: `notif-elig-${suffix()}@example.com`,
       passwordHash: "x",
       role,
       active: true,
-      locale: "es",
+      locale,
     },
   });
   cleanupUserIds.push(user.id);
@@ -126,6 +126,49 @@ describe("notifyEligibilityReached", () => {
 
     expect(emailChannel.calls.length).toBeGreaterThan(0);
     expect(emailChannel.calls[0].message.type).toBe("EXAM_THRESHOLD");
+  });
+
+  it("STRIPE_THRESHOLD embeds currentStripes + 1 (the stripe just become eligible for), not the raw stale currentStripes", async () => {
+    // I-4 regression test: performCheckIn never mutates currentStripes (a
+    // promotion is always staff-confirmed later via confirmPromotion), so at
+    // the moment this notification fires, student.currentStripes is still
+    // the OLD count — the stripe the student just became ELIGIBLE for is
+    // currentStripes + 1.
+    const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+    await makeStaff("ADMIN");
+    const student = await makeStudent(escazu.id); // currentStripes: 4
+    const emailChannel = new RecordingChannel();
+
+    await notifyEligibilityReached(student.id, "STRIPE_THRESHOLD", [emailChannel]);
+
+    expect(emailChannel.calls.length).toBeGreaterThan(0);
+    const { body } = emailChannel.calls[0].message;
+    expect(body).toContain("5"); // 4 + 1, the stripe now eligible for
+    expect(body).not.toMatch(/\breached stripe 4\b/);
+  });
+
+  it("sends each recipient content in THEIR OWN locale, not a single shared locale for everyone", async () => {
+    const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+    const enAdmin = await makeStaff("ADMIN", undefined, "en");
+    const esDirector = await makeStaff("DIRECTOR", escazu.id, "es");
+    const student = await makeStudent(escazu.id);
+    const channel = new RecordingChannel();
+
+    await notifyEligibilityReached(student.id, "STRIPE_THRESHOLD", [channel]);
+
+    const toEnAdmin = channel.calls.find((c) => c.to.userId === enAdmin.id);
+    const toEsDirector = channel.calls.find((c) => c.to.userId === esDirector.id);
+    expect(toEnAdmin).toBeDefined();
+    expect(toEsDirector).toBeDefined();
+
+    // Same event, different recipients, different locale content — the core
+    // I-2 bug being fixed: an English-preferring ADMIN used to get the exact
+    // same Spanish body as everyone else.
+    expect(toEnAdmin!.message.body).toContain("eligible");
+    expect(toEnAdmin!.message.body).not.toContain("elegible");
+    expect(toEsDirector!.message.body).toContain("elegible");
+    expect(toEsDirector!.message.body).not.toContain("eligible");
+    expect(toEnAdmin!.message.body).not.toBe(toEsDirector!.message.body);
   });
 
   it("never throws for a studentId that doesn't exist", async () => {

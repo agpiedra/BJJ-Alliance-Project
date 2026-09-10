@@ -29,14 +29,14 @@ function suffix() {
   return `${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
 }
 
-async function makeStaff(role: "ADMIN" | "DIRECTOR" | "INSTRUCTOR", academyId?: string) {
+async function makeStaff(role: "ADMIN" | "DIRECTOR" | "INSTRUCTOR", academyId?: string, locale: string = "es") {
   const user = await prisma.user.create({
     data: {
       email: `notif-signup-${suffix()}@example.com`,
       passwordHash: "x",
       role,
       active: true,
-      locale: "es",
+      locale,
     },
   });
   cleanupUserIds.push(user.id);
@@ -107,6 +107,27 @@ describe("notifyNewSignup", () => {
       expect(recipientIds).not.toContain(escalanteInstructor.id);
       expect(channel.calls[0].message.type).toBe("NEW_SIGNUP");
     }
+  });
+
+  it("sends each recipient content in THEIR OWN locale, not a single shared locale for everyone", async () => {
+    const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+    const enAdmin = await makeStaff("ADMIN", undefined, "en");
+    const esDirector = await makeStaff("DIRECTOR", escazu.id, "es");
+    const student = await makeStudent(escazu.id);
+    const channel = new RecordingChannel();
+
+    await notifyNewSignup(student.id, [channel]);
+
+    const toEnAdmin = channel.calls.find((c) => c.to.userId === enAdmin.id);
+    const toEsDirector = channel.calls.find((c) => c.to.userId === esDirector.id);
+    expect(toEnAdmin).toBeDefined();
+    expect(toEsDirector).toBeDefined();
+
+    // Same event (one signup), different recipients, different locale
+    // content — the I-2 bug: everyone used to get one shared-locale message.
+    expect(toEnAdmin!.message.body).toContain("signed up");
+    expect(toEsDirector!.message.body).toContain("registró");
+    expect(toEnAdmin!.message.body).not.toBe(toEsDirector!.message.body);
   });
 
   it("never throws for a missing/invalid studentId", async () => {

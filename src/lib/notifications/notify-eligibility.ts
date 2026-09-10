@@ -1,8 +1,6 @@
 import { prisma } from "@/lib/prisma";
-import { routing } from "@/i18n/routing";
 import { resolveStaffRecipients } from "@/lib/notifications/recipients";
-import { renderNotificationMessage } from "@/lib/notifications/templates";
-import { dispatchNotification } from "@/lib/notifications/dispatch";
+import { dispatchToRecipients } from "@/lib/notifications/dispatch";
 import type { NotificationChannel } from "@/lib/notifications/types";
 
 /**
@@ -33,18 +31,20 @@ export async function notifyEligibilityReached(
     if (!student) return;
 
     const recipients = await resolveStaffRecipients(student.homeAcademyId);
-    const message = renderNotificationMessage(
-      type,
-      {
-        studentName: `${student.firstName} ${student.lastName}`,
-        belt: student.currentBelt,
-        stripes: student.currentStripes,
-      },
-      routing.defaultLocale,
-    );
+    // `student.currentStripes` is still the OLD count here — performCheckIn
+    // never mutates it; a promotion is always staff-confirmed later via
+    // confirmPromotion (which sets `toStripes: currentStripes + 1`). So the
+    // stripe this student just became ELIGIBLE for is currentStripes + 1,
+    // not currentStripes itself — see templates.ts's STRIPE_THRESHOLD case
+    // and its "eligible for" (not "earned") copy.
+    const data = {
+      studentName: `${student.firstName} ${student.lastName}`,
+      belt: student.currentBelt,
+      stripes: student.currentStripes + 1,
+    };
 
     const resolvedChannels = channels ?? (await import("@/lib/notifications/channels")).ALL_CHANNELS;
-    await dispatchNotification(recipients, message, resolvedChannels);
+    await dispatchToRecipients(recipients, type, data, resolvedChannels);
   } catch (error) {
     console.error("notifyEligibilityReached failed (non-fatal)", error);
   }

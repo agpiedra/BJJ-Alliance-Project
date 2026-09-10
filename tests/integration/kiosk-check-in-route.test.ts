@@ -1,11 +1,22 @@
 import "dotenv/config";
 import { DateTime } from "luxon";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { PrismaClient, type DayOfWeek } from "../../src/generated/prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { requireEnv } from "../../src/lib/env";
 import { digestLookupSecret } from "../../src/lib/crypto";
 import { ZONE } from "../../src/lib/scheduling/zone";
+
+// I-1 regression coverage: notifyEligibilityReached must still fire when a
+// check-in that crosses the stripe threshold comes in through this REAL
+// route entry point (not just via a direct performCheckIn call) — this is
+// the seam Fix 1 (after()-wrapped fire-and-forget) touches. Mocked rather
+// than left real so this file doesn't depend on/pollute real staff
+// Notification rows or a real Resend call.
+const notifyEligibilityState = vi.hoisted(() => ({ spy: vi.fn(async (..._args: unknown[]) => {}) }));
+vi.mock("../../src/lib/notifications/notify-eligibility", () => ({
+  notifyEligibilityReached: (...args: unknown[]) => notifyEligibilityState.spy(...args),
+}));
 
 /**
  * Route-handler-level coverage for `POST /api/kiosk/check-in`.
@@ -121,6 +132,24 @@ async function makeStudent(homeAcademyId: string) {
   return { student, code };
 }
 
+/** Writes `count` real CHECKIN rows (no classSessionId), one per day starting at `startAt`. */
+async function addSyntheticCheckins(studentId: string, academyId: string, count: number, startAt: Date) {
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  const rows = Array.from({ length: count }, (_, i) => {
+    const occurredAt = new Date(startAt.getTime() + i * DAY_MS);
+    return {
+      studentId,
+      academyId,
+      occurredAt,
+      date: new Date(Date.UTC(occurredAt.getUTCFullYear(), occurredAt.getUTCMonth(), occurredAt.getUTCDate())),
+      type: "CHECKIN" as const,
+      delta: 1,
+      source: "STAFF" as const,
+    };
+  });
+  await prisma.attendanceRecord.createMany({ data: rows });
+}
+
 async function post(body: unknown) {
   const request = new Request("http://localhost/api/kiosk/check-in", {
     method: "POST",
@@ -132,6 +161,25 @@ async function post(body: unknown) {
 }
 
 describe("POST /api/kiosk/check-in", () => {
+  afterEach(() => notifyEligibilityState.spy.mockClear());
+
+  it("I-1: fires notifyEligibilityReached through the REAL route entry point when a check-in crosses the stripe threshold", async () => {
+    const { academy, token } = await makeFixture();
+    const { student, code } = await makeStudent(academy.id);
+
+    // WHITE belt requires 30 attendances/stripe (same fixture math as
+    // perform-check-in.test.ts) — 29 synthetic + this route's real check-in
+    // crosses the threshold. Must be on/after makeStudent's beltAwardedAt
+    // (2026-01-01) — getAtBeltSummary only counts attendance from then on.
+    await addSyntheticCheckins(student.id, academy.id, 29, new Date("2026-01-02T12:00:00Z"));
+
+    const { status, json } = await post({ academySlug: academy.slug, token, code });
+
+    expect(status).toBe(200);
+    expect(json.earnedStripe).toBe(true);
+    expect(notifyEligibilityState.spy).toHaveBeenCalledWith(student.id, "STRIPE_THRESHOLD");
+  });
+
   it("checks a student in and returns the documented 200 shape", async () => {
     const { academy, token } = await makeFixture();
     const { student, code } = await makeStudent(academy.id);

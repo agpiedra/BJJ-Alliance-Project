@@ -5,7 +5,7 @@ import { requireEnv } from "@/lib/env";
 import { ZONE, attendanceDateFromZoned } from "@/lib/scheduling/zone";
 import type { StaffSession } from "@/lib/auth/session";
 import { resolveStaffRecipients } from "@/lib/notifications/recipients";
-import { renderNotificationMessage } from "@/lib/notifications/templates";
+import { dispatchToRecipients } from "@/lib/notifications/dispatch";
 import { EmailChannel, type ResendClient } from "@/lib/notifications/email-channel";
 import { listOverdueStudents } from "@/lib/payments/list-overdue";
 import { getRetentionList } from "@/lib/analytics/retention";
@@ -55,26 +55,34 @@ export async function sendWeeklyDigestForAcademy(
     // The full returned list already IS "students inactive 30+ days" (every
     // bucket `getRetentionList` returns is 30+ days quiet) — no further
     // filtering needed, just its length.
-    getRetentionList(session, { from: DateTime.now().minus({ days: 7 }), to: DateTime.now(), academyId: null }),
+    // `from` is a required field of `AnalyticsFilters` but `getRetentionList`
+    // never reads it (its inactivity classification only looks at `to`) — the
+    // value here is inert, so it's just `DateTime.now()` rather than a
+    // `.minus({ days: 7 })` that reads as if it bounded something it doesn't.
+    getRetentionList(session, { from: DateTime.now(), to: DateTime.now(), academyId: null }),
     listOverdueStudents(session),
     resolveStaffRecipients(academyId),
   ]);
 
   const channel = new EmailChannel(resendClient);
 
-  await Promise.all(
-    recipients.map((recipient) => {
-      const message = renderNotificationMessage(
-        "WEEKLY_DIGEST",
-        {
-          academyName: academy.name,
-          attendanceCount,
-          inactiveCount: inactiveStudents.length,
-          overduePayments: overdueStudents.length,
-        },
-        recipient.locale,
-      );
-      return channel.send(recipient, message);
-    }),
+  // Routed through dispatchToRecipients/dispatchNotification (same as the
+  // other 3 triggers) rather than calling channel.send directly in a bare
+  // Promise.all: that used to discard every DeliveryResult, so a failed
+  // digest email (bad API key, bounced address, Resend outage) was silently
+  // swallowed. dispatchNotification's existing failure logging/isolation now
+  // applies here for free, with no separate error-handling logic needed.
+  // `channels: [channel]` (never ALL_CHANNELS) is what keeps this EMAIL-ONLY
+  // per the plan's ruling — it must never write an in-app Notification row.
+  await dispatchToRecipients(
+    recipients,
+    "WEEKLY_DIGEST",
+    {
+      academyName: academy.name,
+      attendanceCount,
+      inactiveCount: inactiveStudents.length,
+      overduePayments: overdueStudents.length,
+    },
+    [channel],
   );
 }

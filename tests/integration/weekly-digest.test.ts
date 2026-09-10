@@ -87,14 +87,14 @@ async function makeAcademy(label: string) {
   return academy;
 }
 
-async function makeStaffUser(role: "ADMIN" | "DIRECTOR", label: string, academyId?: string) {
+async function makeStaffUser(role: "ADMIN" | "DIRECTOR", label: string, academyId?: string, locale: string = "es") {
   const s = suffix();
   const user = await prisma.user.create({
     data: {
       email: `${label}-${s}@example.com`,
       passwordHash: await hashSecret("irrelevant-password-123"),
       role,
-      locale: "es",
+      locale,
     },
   });
   cleanupUserIds.push(user.id);
@@ -167,6 +167,13 @@ class RecordingResendClient implements ResendClient {
       this.calls.push(params);
       return { data: { id: "fake-id" }, error: null };
     },
+  };
+}
+
+/** Every send fails, standing in for a bad API key / bounced address / Resend outage. */
+class FailingResendClient implements ResendClient {
+  emails = {
+    send: async () => ({ data: null, error: { message: "SIMULATED_EMAIL_FAILURE" } }),
   };
 }
 
@@ -268,6 +275,54 @@ describe("sendWeeklyDigestForAcademy", () => {
     const notificationCountAfter = await prisma.notification.count({ where: { type: "WEEKLY_DIGEST" } });
     expect(notificationCountAfter).toBe(notificationCountBefore);
   });
+
+  it("sends each recipient the digest in THEIR OWN locale, not a single shared locale for everyone", async () => {
+    // I-2/I-3 regression test: sendWeeklyDigestForAcademy used to bypass
+    // dispatchToRecipients/dispatchNotification entirely, but it already
+    // rendered per-recipient locale correctly before this fix — this proves
+    // that behavior survived the refactor onto the shared helper.
+    const academy = await makeAcademy("weekly-digest-locale");
+    const enAdmin = await makeStaffUser("ADMIN", "wd-locale-admin", undefined, "en");
+    const esDirector = await makeStaffUser("DIRECTOR", "wd-locale-director", academy.id, "es");
+
+    const client = new RecordingResendClient();
+    await sendWeeklyDigestForAcademy(academy.id, client);
+
+    const toEnAdmin = findCallTo(client, enAdmin.email);
+    const toEsDirector = findCallTo(client, esDirector.email);
+    expect(toEnAdmin).toBeDefined();
+    expect(toEsDirector).toBeDefined();
+    expect(toEnAdmin!.html).toContain("overdue");
+    expect(toEsDirector!.html).toContain("atrasados");
+    expect(toEnAdmin!.html).not.toBe(toEsDirector!.html);
+  });
+
+  it("logs a failed recipient send instead of silently swallowing it (routed through dispatchNotification now, not a bare Promise.all)", async () => {
+    // I-3 regression test: before this fix, sendWeeklyDigestForAcademy called
+    // channel.send directly in a Promise.all and discarded every
+    // DeliveryResult, so a failed digest email never logged anything and the
+    // cron route reported ok: true regardless. Routing through
+    // dispatchToRecipients now gives it dispatchNotification's existing
+    // failure-observability for free.
+    const academy = await makeAcademy("weekly-digest-fail-log");
+    const admin = await makeStaffUser("ADMIN", "wd-faillog-admin", undefined, "en");
+
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await sendWeeklyDigestForAcademy(academy.id, new FailingResendClient());
+
+      const loggedDeliveryFailure = consoleErrorSpy.mock.calls.some(
+        ([message, details]) =>
+          message === "notification delivery failed" &&
+          typeof details === "object" &&
+          details !== null &&
+          (details as { userId?: string }).userId === admin.id,
+      );
+      expect(loggedDeliveryFailure).toBe(true);
+    } finally {
+      consoleErrorSpy.mockRestore();
+    }
+  });
 });
 
 describe("GET /api/cron/weekly-digest", () => {
@@ -322,10 +377,13 @@ describe("GET /api/cron/weekly-digest", () => {
       const response = await GET(request);
 
       // The route itself must not fail (500) or short-circuit just because
-      // one academy's send rejected.
+      // one academy's send rejected — but `ok` now reflects whether EVERY
+      // academy succeeded (`errors.length === 0`), not merely "the request
+      // didn't crash", so a real failure stays visible in Vercel's cron
+      // dashboard instead of being masked as an unconditional success.
       expect(response.status).toBe(200);
       const body = await response.json();
-      expect(body.ok).toBe(true);
+      expect(body.ok).toBe(false);
 
       // The failing academy is reported in `errors` with its real thrown
       // message, proving the per-iteration try/catch actually caught it

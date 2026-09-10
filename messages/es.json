@@ -592,8 +592,8 @@
       "markAllReadError": "No se pudieron marcar las notificaciones como leídas."
     },
     "stripeThreshold": {
-      "title": "Nuevo grado: {studentName}",
-      "body": "{studentName} alcanzó el grado {stripes} en cinturón {belt}."
+      "title": "Grado disponible: {studentName}",
+      "body": "{studentName} es elegible para el grado {stripes} en cinturón {belt}."
     },
     "examThreshold": {
       "title": "Examen disponible: {studentName}",
