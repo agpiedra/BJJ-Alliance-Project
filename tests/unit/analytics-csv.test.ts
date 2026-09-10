@@ -25,4 +25,30 @@ describe("toCsv", () => {
   it("an empty rows array produces an empty, header-less string", () => {
     expect(toCsv([])).toBe("");
   });
+
+  it("prefixes a value starting with = with a single quote to prevent formula injection", () => {
+    expect(toCsv([{ label: "=1+1" }])).toBe("label\r\n'=1+1");
+  });
+
+  it("prefixes a value starting with + with a single quote to prevent formula injection", () => {
+    expect(toCsv([{ label: "+1+1" }])).toBe("label\r\n'+1+1");
+  });
+
+  it("prefixes a value starting with - with a single quote to prevent formula injection", () => {
+    expect(toCsv([{ label: "-1+1" }])).toBe("label\r\n'-1+1");
+  });
+
+  it("prefixes a value starting with @ with a single quote to prevent formula injection", () => {
+    expect(toCsv([{ label: "@example.com" }])).toBe("label\r\n'@example.com");
+  });
+
+  it("does not prefix a normal value with no leading special character", () => {
+    expect(toCsv([{ label: "Ana Perez" }])).toBe("label\r\nAna Perez");
+  });
+
+  it("both prefixes AND quote-wraps a formula-leading value that also contains a comma", () => {
+    expect(toCsv([{ label: "=HYPERLINK(\"http://evil\"), Ana" }])).toBe(
+      'label\r\n"\'=HYPERLINK(""http://evil""), Ana"',
+    );
+  });
 });

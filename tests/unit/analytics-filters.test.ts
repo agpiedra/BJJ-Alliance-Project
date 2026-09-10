@@ -7,6 +7,11 @@ const TODAY = DateTime.fromISO("2026-09-10", { zone: "America/Costa_Rica" });
 
 const admin: StaffSession = { userId: "admin-1", role: "ADMIN", academyIds: "ALL" };
 const director: StaffSession = { userId: "dir-1", role: "DIRECTOR", academyIds: ["escalante-id"] };
+const multiAcademyDirector: StaffSession = {
+  userId: "dir-2",
+  role: "DIRECTOR",
+  academyIds: ["academy-a", "academy-b"],
+};
 
 describe("resolveAnalyticsFilters", () => {
   it("no params: defaults to the last 30 days ending on the caller-supplied today", () => {
@@ -30,14 +35,19 @@ describe("resolveAnalyticsFilters", () => {
     expect(filters.academyId).toBe("escazu-id");
   });
 
-  it("a DIRECTOR session always resolves to their own academy, ignoring any academy param they pass", () => {
+  it("a DIRECTOR session resolves to academyId null, ignoring any academy param they pass (their own session scope applies via academyScopeWhere instead)", () => {
     const filters = resolveAnalyticsFilters(director, { academy: "escalante" }, TODAY);
-    expect(filters.academyId).toBe("escalante-id");
+    expect(filters.academyId).toBeNull();
   });
 
-  it("a DIRECTOR session resolves to their own academy even with no academy param", () => {
+  it("a DIRECTOR session resolves to academyId null even with no academy param", () => {
     const filters = resolveAnalyticsFilters(director, {}, TODAY);
-    expect(filters.academyId).toBe("escalante-id");
+    expect(filters.academyId).toBeNull();
+  });
+
+  it("a DIRECTOR session assigned to multiple academies resolves to academyId null (not just their first assignment)", () => {
+    const filters = resolveAnalyticsFilters(multiAcademyDirector, {}, TODAY);
+    expect(filters.academyId).toBeNull();
   });
 
   it("a malformed from/to falls back to the 30-day default rather than throwing", () => {

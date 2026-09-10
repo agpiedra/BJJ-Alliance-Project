@@ -138,6 +138,7 @@
         "newThisMonth": "New this period",
         "lost": "Lost",
         "totalAttendances": "Total attendances",
+        "totalAttendancesCaption": "Total attendances counts by the student's home academy, not by check-in location.",
         "avgAttendancesPerActive": "Avg attendances per active",
         "paymentHealthPercent": "Payment health (current month)"
       },
@@ -217,14 +218,14 @@
             "activeStudents": "Active students",
             "totalAttendances": "Total attendances",
             "avgPerClass": "Avg per class",
-            "paymentHealthPercent": "Payment health"
+            "paymentHealthPercent": "Payment health (current month)"
           },
           "csv": {
             "academy": "Academy",
             "activeStudents": "Active students",
             "totalAttendances": "Total attendances",
             "avgPerClass": "Avg per class",
-            "paymentHealthPercent": "Payment health"
+            "paymentHealthPercent": "Payment health (current month)"
           }
         },
         "crossTraining": {
@@ -264,6 +265,7 @@
         },
         "trend": {
           "heading": "Weekly attendance trend",
+          "caption": "Counts by check-in location (venue), which can differ from a student's home academy for cross-training students.",
           "chart": {
             "count": "Attendances"
           }

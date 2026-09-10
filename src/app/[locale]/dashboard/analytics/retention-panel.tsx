@@ -86,6 +86,7 @@ export function RetentionPanel({
 
       <div className="flex flex-col gap-3">
         <h2 className="text-lg font-medium">{t("trend.heading")}</h2>
+        <p className="text-xs text-muted-foreground">{t("trend.caption")}</p>
         <div className="h-72 w-full">
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={weeklyTrend} margin={{ top: 8, right: 8, bottom: 8, left: 0 }}>

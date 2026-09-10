@@ -10,6 +10,15 @@
  * double quote, or newline is wrapped in double quotes with any embedded
  * quote doubled, per RFC 4126's usual CSV quoting rule.
  *
+ * A value whose first character is `=`, `+`, `-`, `@`, tab, or CR is
+ * additionally prefixed with a single quote (`'`) before that quoting rule
+ * runs — the standard CSV-formula-injection mitigation, since Excel/
+ * LibreOffice otherwise treats such a value as a formula when the file is
+ * opened. This data ultimately originates from public self-signup
+ * (`signup/actions.ts`'s `z.string().min(1)` names/phones), so a malicious or
+ * accidental leading `=` must never reach an ADMIN/DIRECTOR's spreadsheet as
+ * live formula input.
+ *
  * An empty `rows` array produces an empty string — no header, since there is
  * no row to read column names from.
  */
@@ -22,8 +31,13 @@ export function toCsv(rows: Record<string, string | number>[]): string {
   return lines.map((line) => line.map(escapeCsvValue).join(",")).join("\r\n");
 }
 
+const FORMULA_INJECTION_PREFIX = /^[=+\-@\t\r]/;
+
 function escapeCsvValue(value: string | number): string {
-  const stringValue = String(value);
+  let stringValue = String(value);
+  if (FORMULA_INJECTION_PREFIX.test(stringValue)) {
+    stringValue = `'${stringValue}`;
+  }
   if (/[",\r\n]/.test(stringValue)) {
     return `"${stringValue.replace(/"/g, '""')}"`;
   }

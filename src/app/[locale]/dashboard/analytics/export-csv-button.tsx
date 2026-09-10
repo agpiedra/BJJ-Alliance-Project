@@ -25,7 +25,9 @@ export function ExportCsvButton({
 
   function handleClick() {
     const csv = toCsv(rows);
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    // Leading UTF-8 BOM: Excel on Windows ignores the Blob's declared
+    // charset and otherwise mangles accented characters (e.g. "Escazú").
+    const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;

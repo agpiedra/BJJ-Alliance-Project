@@ -138,6 +138,7 @@
         "newThisMonth": "Nuevos en el período",
         "lost": "Perdidos",
         "totalAttendances": "Asistencias totales",
+        "totalAttendancesCaption": "Asistencias totales cuenta por la academia de origen del estudiante, no por la sede donde se registró la entrada.",
         "avgAttendancesPerActive": "Asistencias promedio por activo",
         "paymentHealthPercent": "Salud de pagos (mes actual)"
       },
@@ -217,14 +218,14 @@
             "activeStudents": "Estudiantes activos",
             "totalAttendances": "Asistencias totales",
             "avgPerClass": "Promedio por clase",
-            "paymentHealthPercent": "Salud de pagos"
+            "paymentHealthPercent": "Salud de pagos (mes actual)"
           },
           "csv": {
             "academy": "Academia",
             "activeStudents": "Estudiantes activos",
             "totalAttendances": "Asistencias totales",
             "avgPerClass": "Promedio por clase",
-            "paymentHealthPercent": "Salud de pagos"
+            "paymentHealthPercent": "Salud de pagos (mes actual)"
           }
         },
         "crossTraining": {
@@ -264,6 +265,7 @@
         },
         "trend": {
           "heading": "Tendencia semanal de asistencia",
+          "caption": "Cuenta por sede de entrada (puede diferir de la academia de origen para estudiantes de entrenamiento cruzado).",
           "chart": {
             "count": "Asistencias"
           }

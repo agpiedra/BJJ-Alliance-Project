@@ -165,6 +165,7 @@ export default async function AnalyticsPage({
           <Tile label={t("tiles.avgAttendancesPerActive")} value={tiles.avgAttendancesPerActive.toFixed(1)} />
           <Tile label={t("tiles.paymentHealthPercent")} value={`${tiles.paymentHealthPercent}%`} />
         </div>
+        <p className="text-xs text-muted-foreground">{t("tiles.totalAttendancesCaption")}</p>
       </section>
 
       <ClassPopularityPanel rows={classPopularity} />

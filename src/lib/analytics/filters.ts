@@ -13,10 +13,15 @@ export interface AnalyticsFilters {
   from: DateTime;
   to: DateTime;
   /**
-   * `null` means "every academy in the session's scope" — an ADMIN session
-   * with no `academy` param or `academy=ambas`. Never `null` for a
-   * DIRECTOR/INSTRUCTOR-shaped session (they always resolve to their own
-   * single assigned academy).
+   * `null` means "don't narrow further than the session's own scope" — an
+   * ADMIN session with no `academy` param or `academy=ambas`, AND every
+   * non-ADMIN (DIRECTOR/INSTRUCTOR) session, regardless of how many
+   * academies they're assigned to. A non-ADMIN session is never widened by
+   * this: every panel's query function independently ANDs in
+   * `academyScopeWhere(session)` regardless of `academyId`, so `null` here
+   * simply defers entirely to that session-level scope rather than
+   * redundantly (and, for a multi-academy DIRECTOR, incorrectly) re-pinning
+   * to a single academy.
    */
   academyId: string | null;
 }
@@ -55,11 +60,16 @@ function parseDateParam(value: string | undefined): DateTime | null {
  *
  * `academy` is only ever honored for ADMIN, whose session scope is
  * unrestricted — a DIRECTOR/INSTRUCTOR-shaped session always resolves to
- * their own single assigned academy regardless of what `academy` they pass,
- * the same "a client-submitted scope override is silently ignored for
- * non-ADMIN" precedent `listStudents` established
- * (`src/app/[locale]/students/actions.ts`'s `filters.academyId` handling).
- * `academy=ambas`, or its absence, resolves ADMIN to `academyId: null` —
+ * `academyId: null` regardless of what `academy` they pass, the same "a
+ * client-submitted scope override is silently ignored for non-ADMIN"
+ * precedent `listStudents` established
+ * (`src/app/[locale]/students/actions.ts`'s `filters.academyId` handling) —
+ * taken one step further here: rather than re-pinning to `academyIds[0]`
+ * (which would silently drop any additional `StaffAssignment` a DIRECTOR
+ * with more than one academy has), `academyId: null` lets their full
+ * session-level scope apply via `academyScopeWhere(session)`, the same
+ * `{ in: [...] }` fragment `listStudents` itself relies on. `academy=ambas`,
+ * or its absence, resolves ADMIN to `academyId: null` the same way —
  * "every academy in scope".
  */
 export function resolveAnalyticsFilters(
@@ -80,11 +90,12 @@ export function resolveAnalyticsFilters(
     academyId = !requested || requested === "ambas" ? null : requested;
   } else {
     // DIRECTOR/INSTRUCTOR: never gets the picker (spec's "Locations
-    // (admin only)" line), so whatever `academy` they pass is ignored in
-    // favor of their own assigned academy — `academyIds` is a single-entry
-    // array for every non-ADMIN staff session this app creates.
-    const scoped = Array.isArray(session.academyIds) ? session.academyIds : [];
-    academyId = scoped[0] ?? null;
+    // (admin only)" line), so whatever `academy` they pass is ignored —
+    // `null` here defers entirely to the session's own scope
+    // (`academyScopeWhere(session)`, applied independently by every panel's
+    // query function), rather than pinning to just their FIRST assignment
+    // and silently dropping any others.
+    academyId = null;
   }
 
   return { from, to, academyId };
