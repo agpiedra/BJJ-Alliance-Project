@@ -107,6 +107,16 @@
         "belt": "Belt",
         "remainingToNextStripe": "Classes remaining"
       }
+    },
+    "overduePayments": {
+      "heading": "Payments overdue",
+      "empty": "No students have an overdue payment.",
+      "neverPaid": "Never paid",
+      "columns": {
+        "name": "Name",
+        "academy": "Academy",
+        "lastPaidMonth": "Last paid month"
+      }
     }
   },
   "signup": {
@@ -162,6 +172,14 @@
       "INACTIVE": "Inactive",
       "ARCHIVED": "Archived"
     },
+    "paymentStatus": {
+      "PAID": "Paid",
+      "PENDING": "Pending",
+      "PROMO": "Promotional",
+      "EXEMPT": "Exempt",
+      "notRecorded": "Not recorded",
+      "overdue": "Overdue"
+    },
     "create": {
       "toggle": "Create student",
       "firstName": "First name",
@@ -199,7 +217,28 @@
         "heading": "Attendance history"
       },
       "paymentHistory": {
-        "heading": "Payment history"
+        "heading": "Payment history",
+        "empty": "No payment records yet.",
+        "columnPeriod": "Period",
+        "columnPlan": "Plan",
+        "columnStatus": "Status",
+        "columnAmount": "Amount",
+        "columnNotes": "Notes"
+      },
+      "recordPayment": {
+        "toggle": "Record a payment",
+        "year": "Year",
+        "month": "Month",
+        "plan": "Plan",
+        "planPlaceholder": "Select a plan",
+        "status": "Status",
+        "amount": "Amount (optional)",
+        "notes": "Notes (optional)",
+        "submit": "Save payment",
+        "success": "Payment recorded.",
+        "invalid": "Please check the form for errors.",
+        "notFound": "Could not record this payment.",
+        "invalidPlan": "That plan does not belong to this student's academy."
       },
       "comingLater": "Coming in a later phase.",
       "edit": {
@@ -282,7 +321,9 @@
     },
     "paymentStatus": {
       "heading": "Payment status",
-      "comingLater": "Coming in a later phase."
+      "notRecorded": "Not recorded yet",
+      "overdue": "Overdue",
+      "overdueNotice": "Your payment for this month is overdue. Please contact your academy."
     },
     "selfCheckIn": {
       "heading": "Check in",

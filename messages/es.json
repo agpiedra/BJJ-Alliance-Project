@@ -107,6 +107,16 @@
         "belt": "Cinturón",
         "remainingToNextStripe": "Clases restantes"
       }
+    },
+    "overduePayments": {
+      "heading": "Pagos atrasados",
+      "empty": "Ningún estudiante tiene un pago atrasado.",
+      "neverPaid": "Nunca ha pagado",
+      "columns": {
+        "name": "Nombre",
+        "academy": "Academia",
+        "lastPaidMonth": "Último mes pagado"
+      }
     }
   },
   "signup": {
@@ -162,6 +172,14 @@
       "INACTIVE": "Inactivo",
       "ARCHIVED": "Archivado"
     },
+    "paymentStatus": {
+      "PAID": "Pagado",
+      "PENDING": "Pendiente",
+      "PROMO": "Promocional",
+      "EXEMPT": "Exento",
+      "notRecorded": "No registrado",
+      "overdue": "Atrasado"
+    },
     "create": {
       "toggle": "Crear estudiante",
       "firstName": "Nombre",
@@ -199,7 +217,28 @@
         "heading": "Historial de asistencia"
       },
       "paymentHistory": {
-        "heading": "Historial de pagos"
+        "heading": "Historial de pagos",
+        "empty": "Todavía no hay pagos registrados.",
+        "columnPeriod": "Período",
+        "columnPlan": "Plan",
+        "columnStatus": "Estado",
+        "columnAmount": "Monto",
+        "columnNotes": "Notas"
+      },
+      "recordPayment": {
+        "toggle": "Registrar un pago",
+        "year": "Año",
+        "month": "Mes",
+        "plan": "Plan",
+        "planPlaceholder": "Selecciona un plan",
+        "status": "Estado",
+        "amount": "Monto (opcional)",
+        "notes": "Notas (opcional)",
+        "submit": "Guardar pago",
+        "success": "Pago registrado.",
+        "invalid": "Por favor revisa el formulario.",
+        "notFound": "No se pudo registrar este pago.",
+        "invalidPlan": "Ese plan no pertenece a la academia de este estudiante."
       },
       "comingLater": "Disponible en una fase posterior.",
       "edit": {
@@ -282,7 +321,9 @@
     },
     "paymentStatus": {
       "heading": "Estado de pago",
-      "comingLater": "Disponible en una fase posterior."
+      "notRecorded": "Todavía no registrado",
+      "overdue": "Atrasado",
+      "overdueNotice": "Tu pago de este mes está atrasado. Por favor contacta a tu academia."
     },
     "selfCheckIn": {
       "heading": "Registrar asistencia",

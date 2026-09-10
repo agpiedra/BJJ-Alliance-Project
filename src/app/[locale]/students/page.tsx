@@ -7,6 +7,10 @@ import { Button } from "@/components/ui/button";
 import { listStudents } from "./actions";
 import { CreateStudentForm } from "./create-student-form";
 import { Belt, StudentStatus } from "@/generated/prisma/client";
+import { getAtBeltSummary } from "@/lib/students/attendance-summary";
+import { formatTimestampInAcademyZone } from "@/lib/format-date";
+import { currentCrDateParts, getCurrentPaymentPeriod } from "@/lib/payments/get-current-period";
+import { isOverdue } from "@/lib/payments/overdue";
 
 // Staff data an admin/director could change without a redeploy (students,
 // academy roster) — never frozen at build time, same reasoning as /signup.
@@ -45,6 +49,37 @@ export default async function StudentsPage({
     academyId: params.academyId,
   });
 
+  // Per-row lookups, batched via Promise.all across the fetched student
+  // list — same accepted per-row-query shape as Phase 4's
+  // classifyActiveStudents at this app's current scale (a single gym's
+  // roster). Two of these three were previously blocked ("not computable
+  // yet"); both getAtBeltSummary (Phase 3) and the attendance ledger
+  // (Phase 3) have existed for months, they just weren't wired up here —
+  // only the third (payment tracking) is genuinely new as of this task.
+  const today = currentCrDateParts();
+  const rosterExtras = await Promise.all(
+    students.map(async (student) => {
+      const [summary, lastAttendance, currentPeriod] = await Promise.all([
+        getAtBeltSummary(student.id),
+        prisma.attendanceRecord.findFirst({
+          where: { studentId: student.id },
+          orderBy: { occurredAt: "desc" },
+          select: { occurredAt: true },
+        }),
+        getCurrentPaymentPeriod(student.id, today),
+      ]);
+
+      return {
+        studentId: student.id,
+        atBeltCount: summary.atBeltCount,
+        lastAttendanceAt: lastAttendance?.occurredAt ?? null,
+        currentPeriod,
+        overdue: isOverdue(currentPeriod, today),
+      };
+    }),
+  );
+  const rosterExtrasByStudentId = new Map(rosterExtras.map((extra) => [extra.studentId, extra]));
+
   // The academies available for the filter switcher and the create-student
   // form's academy select are the same set: every academy for ADMIN
   // (unrestricted scope), or only the academies this DIRECTOR/INSTRUCTOR is
@@ -63,6 +98,7 @@ export default async function StudentsPage({
   const t = await getTranslations("students");
   const tBelt = await getTranslations("belt");
   const tStatus = await getTranslations("students.status");
+  const tPaymentStatus = await getTranslations("students.paymentStatus");
   const locale = await getLocale();
 
   const canCreate = session.role === "ADMIN" || session.role === "DIRECTOR";
@@ -147,30 +183,41 @@ export default async function StudentsPage({
             </tr>
           </thead>
           <tbody>
-            {students.map((student) => (
-              <tr key={student.id} className="border-b">
-                <td className="py-2 pr-4">
-                  {student.firstName} {student.lastName}
-                </td>
-                <td className="py-2 pr-4">
-                  <BeltGraphic belt={student.currentBelt} stripes={student.currentStripes} />
-                </td>
-                <td className="py-2 pr-4">{student.homeAcademy.name}</td>
-                <td className="py-2 pr-4">
-                  <Badge variant="outline">{tStatus(student.status)}</Badge>
-                </td>
-                {/* Not computable yet without the attendance ledger (Phase 3)
-                    / payment tracking (Phase 6) — shown as "—" until then. */}
-                <td className="py-2 pr-4">—</td>
-                <td className="py-2 pr-4">—</td>
-                <td className="py-2 pr-4">—</td>
-                <td className="py-2 pr-4">
-                  <a href={`/${locale}/students/${student.id}`} className="underline">
-                    {t("columns.viewLink")}
-                  </a>
-                </td>
-              </tr>
-            ))}
+            {students.map((student) => {
+              const extra = rosterExtrasByStudentId.get(student.id);
+              const paymentBadge = extra?.overdue
+                ? { label: t("paymentStatus.overdue"), variant: "destructive" as const }
+                : extra?.currentPeriod
+                  ? { label: tPaymentStatus(extra.currentPeriod.status), variant: "outline" as const }
+                  : { label: t("paymentStatus.notRecorded"), variant: "secondary" as const };
+
+              return (
+                <tr key={student.id} className="border-b">
+                  <td className="py-2 pr-4">
+                    {student.firstName} {student.lastName}
+                  </td>
+                  <td className="py-2 pr-4">
+                    <BeltGraphic belt={student.currentBelt} stripes={student.currentStripes} />
+                  </td>
+                  <td className="py-2 pr-4">{student.homeAcademy.name}</td>
+                  <td className="py-2 pr-4">
+                    <Badge variant="outline">{tStatus(student.status)}</Badge>
+                  </td>
+                  <td className="py-2 pr-4">{extra?.atBeltCount ?? "—"}</td>
+                  <td className="py-2 pr-4">
+                    {formatTimestampInAcademyZone(extra?.lastAttendanceAt ?? null, locale) ?? "—"}
+                  </td>
+                  <td className="py-2 pr-4">
+                    <Badge variant={paymentBadge.variant}>{paymentBadge.label}</Badge>
+                  </td>
+                  <td className="py-2 pr-4">
+                    <a href={`/${locale}/students/${student.id}`} className="underline">
+                      {t("columns.viewLink")}
+                    </a>
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
         {students.length === 0 && <p className="py-4 text-muted-foreground">{t("empty")}</p>}

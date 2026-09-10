@@ -8,6 +8,8 @@ import { getAtBeltSummary } from "@/lib/students/attendance-summary";
 import { getAttendanceHistory } from "@/lib/students/attendance-history";
 import { getOwnPromotionHistory } from "./get-promotion-history";
 import { formatTimestampInAcademyZone } from "@/lib/format-date";
+import { getCurrentPaymentPeriod, currentCrDateParts } from "@/lib/payments/get-current-period";
+import { isOverdue } from "@/lib/payments/overdue";
 import { SelfCheckInButton } from "./self-check-in-button";
 
 // A student's own belt/status could change without a redeploy (staff can
@@ -29,7 +31,7 @@ export default async function StudentPortalPage({
   // from a route param an attacker could substitute another student's id
   // into — unlike `students/[id]/page.tsx`, which must scope-check a
   // caller-supplied id before trusting it.
-  const [student, summary, attendanceHistory, promotionHistory] = await Promise.all([
+  const [student, summary, attendanceHistory, promotionHistory, currentPaymentPeriod] = await Promise.all([
     prisma.student.findUniqueOrThrow({
       where: { id: session.studentId },
       select: { firstName: true, currentBelt: true, currentStripes: true, status: true },
@@ -37,12 +39,19 @@ export default async function StudentPortalPage({
     getAtBeltSummary(session.studentId),
     getAttendanceHistory(session.studentId),
     getOwnPromotionHistory(session.studentId),
+    // Scoped to session.studentId exactly like every other portal query
+    // above — no route param, so there's no way to see another student's
+    // payment status (spec §4.2 shows this to the student only, read-only,
+    // no recording UI).
+    getCurrentPaymentPeriod(session.studentId),
   ]);
+  const overdue = isOverdue(currentPaymentPeriod, currentCrDateParts());
 
   const t = await getTranslations("portal");
   const tBelt = await getTranslations("belt");
   const tStatusNotice = await getTranslations("portal.statusNotice");
   const tAttendanceType = await getTranslations("portal.attendanceHistory.type");
+  const tPaymentStatus = await getTranslations("students.paymentStatus");
 
   return (
     <main className="mx-auto flex w-full max-w-md flex-col gap-6 p-4">
@@ -167,8 +176,23 @@ export default async function StudentPortalPage({
         <CardHeader>
           <CardTitle>{t("paymentStatus.heading")}</CardTitle>
         </CardHeader>
-        <CardContent>
-          <p className="text-muted-foreground">{t("paymentStatus.comingLater")}</p>
+        <CardContent className="flex flex-col gap-2">
+          {currentPaymentPeriod ? (
+            <div className="flex items-center justify-between gap-2">
+              <span>{currentPaymentPeriod.planName}</span>
+              <Badge variant={overdue ? "destructive" : "outline"}>
+                {overdue ? t("paymentStatus.overdue") : tPaymentStatus(currentPaymentPeriod.status)}
+              </Badge>
+            </div>
+          ) : (
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-muted-foreground">{t("paymentStatus.notRecorded")}</span>
+              {overdue && <Badge variant="destructive">{t("paymentStatus.overdue")}</Badge>}
+            </div>
+          )}
+          {overdue && (
+            <p className="text-sm text-muted-foreground">{t("paymentStatus.overdueNotice")}</p>
+          )}
         </CardContent>
       </Card>
     </main>
