@@ -153,9 +153,6 @@ export default async function StudentPortalPage({
                       {promotion.toStripes}
                     </Badge>
                   </div>
-                  <span className="text-muted-foreground">
-                    {t("promotionHistory.awardedBy", { name: promotion.awardedByName })}
-                  </span>
                   {promotion.notes && (
                     <span className="text-muted-foreground italic">{promotion.notes}</span>
                   )}

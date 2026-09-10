@@ -157,4 +157,15 @@ describe("selfCheckIn", () => {
     expect(state).toEqual({ error: "notActive" });
     expect(await prisma.attendanceRecord.count({ where: { studentId } })).toBe(0);
   });
+
+  it("rejects an INACTIVE student's self check-in with the distinct notActive error, via the upfront status check", async () => {
+    const { user, studentId } = await makeActiveStudentUser("INACTIVE");
+    currentSession = { user: { id: user.id, role: "STUDENT" } };
+    setSystemTime(WITHIN_MONDAY_GI_WINDOW);
+
+    const state = await selfCheckIn({}, new FormData());
+
+    expect(state).toEqual({ error: "notActive" });
+    expect(await prisma.attendanceRecord.count({ where: { studentId } })).toBe(0);
+  });
 });

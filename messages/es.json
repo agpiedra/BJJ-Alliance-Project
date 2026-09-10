@@ -278,8 +278,7 @@
     },
     "promotionHistory": {
       "heading": "Historial de promociones",
-      "empty": "Todavía no hay promociones.",
-      "awardedBy": "Otorgada por {name}"
+      "empty": "Todavía no hay promociones."
     },
     "paymentStatus": {
       "heading": "Estado de pago",

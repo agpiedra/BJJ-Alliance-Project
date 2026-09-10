@@ -278,8 +278,7 @@
     },
     "promotionHistory": {
       "heading": "Promotion history",
-      "empty": "No promotions yet.",
-      "awardedBy": "Awarded by {name}"
+      "empty": "No promotions yet."
     },
     "paymentStatus": {
       "heading": "Payment status",

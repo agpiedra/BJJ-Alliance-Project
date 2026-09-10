@@ -8,16 +8,20 @@ export type PromotionHistoryEntry = {
   toBelt: Belt;
   toStripes: number;
   awardedAt: Date;
-  awardedByName: string;
   notes: string | null;
 };
 
 /**
  * The student portal's own copy of
  * `src/app/[locale]/students/[id]/get-promotion-history.ts` — same query
- * shape (`prisma.promotion.findMany`, ordered `awardedAt desc`, joined to
- * `awardedBy` for a display name), called with `session.studentId` instead
- * of a route-param-derived id.
+ * shape (`prisma.promotion.findMany`, ordered `awardedAt desc`), called with
+ * `session.studentId` instead of a route-param-derived id. Deliberately does
+ * NOT select/join `awardedBy` the way the staff version does: a staff
+ * colleague's login email is fine to show another staff member, but the
+ * portal is a lower trust tier — every student would otherwise see internal
+ * staff/admin email addresses. Spec §4.2 only asks for "promotion history",
+ * not who awarded it, so the field is simply omitted here rather than
+ * fetched-but-unrendered.
  *
  * Deliberately a SEPARATE file rather than an import from the staff-only
  * `students/[id]/` directory, even though the query is nearly identical:
@@ -52,7 +56,6 @@ export async function getOwnPromotionHistory(studentId: string): Promise<Promoti
       toStripes: true,
       awardedAt: true,
       notes: true,
-      awardedBy: { select: { email: true } },
     },
   });
 
@@ -63,7 +66,6 @@ export async function getOwnPromotionHistory(studentId: string): Promise<Promoti
     toBelt: promotion.toBelt,
     toStripes: promotion.toStripes,
     awardedAt: promotion.awardedAt,
-    awardedByName: promotion.awardedBy.email,
     notes: promotion.notes,
   }));
 }

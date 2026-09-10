@@ -72,10 +72,15 @@ export async function selfCheckIn(
   // page-load time via the Server Component render) would keep showing the
   // pre-check-in numbers while this button's own success state shows the
   // fresh ones — two different attendance counts on the same screen.
-  // revalidatePath is what actually tells the CLIENT's Router Cache for this
-  // path to drop its cached RSC payload — this is what makes the
-  // self-check-in-button.tsx's router.refresh() call (which merely asks for
-  // a refetch) actually return fresh data instead of a cached copy.
+  // revalidatePath is the load-bearing half of fixing that: calling it here
+  // sets Next's internal `pathWasRevalidated` flag, which is what makes THIS
+  // action's own response carry a freshly-rendered Server Component payload
+  // for the current view — not merely a cache invalidation that only pays
+  // off on some future navigation. self-check-in-button.tsx's
+  // router.refresh() call is a defensive fallback for if this ever fails
+  // silently, not the mechanism this comment used to (incorrectly) credit
+  // with "unlocking" fresh data — the fresh data is already carried by this
+  // action's response once revalidatePath has run.
   //
   // Best-effort, not fatal: `revalidatePath` requires a real Next.js
   // request-scoped store (populated by the framework around every genuine

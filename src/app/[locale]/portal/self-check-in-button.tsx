@@ -27,22 +27,29 @@ function errorMessageKey(error: string): string {
 }
 
 // Matches the kiosk's own SuccessView conventions (heading swap on
-// earnedStripe, visitor badge, remainingToNextStripe / examEligible copy)
-// so a student sees the same shape of feedback whether they tapped a kiosk
-// or checked in from their phone — just without the kiosk's belt graphic,
-// which the page already renders once above this card.
+// earnedStripe, remainingToNextStripe / examEligible copy) so a student sees
+// the same shape of feedback whether they tapped a kiosk or checked in from
+// their phone — just without the kiosk's belt graphic, which the page
+// already renders once above this card. Unlike the kiosk, this component has
+// no visitor badge: selfCheckIn always calls performCheckIn with the
+// student's OWN homeAcademyId as the academyId, so performCheckIn's
+// isVisitor (homeAcademyId !== input.academyId) can never be true on this
+// path — there is no cross-academy self-check-in to indicate.
 export function SelfCheckInButton() {
   const t = useTranslations("portal.selfCheckIn");
   const router = useRouter();
   const [state, formAction, isPending] = useActionState(selfCheckIn, INITIAL_STATE);
 
-  // The action's own revalidatePath(`/${locale}/portal`) invalidates the
-  // page's cached render, but this component is already mounted on the
-  // CURRENT render of that page — its sibling progress card (fed by
-  // getAtBeltSummary at page-load time) won't pick up fresh data without an
-  // explicit re-render of the Server Component tree. router.refresh() does
-  // exactly that, without a full page reload or disturbing this button's own
-  // just-set success state.
+  // The action's own revalidatePath(`/${locale}/portal`) is the load-bearing
+  // half of this refresh: calling it during the Server Action is what makes
+  // THAT action's response carry a freshly-rendered payload for this page —
+  // including the sibling progress card (fed by getAtBeltSummary at
+  // page-load time) — for the current view, not just some future
+  // navigation. router.refresh() below is redundant on that happy path (the
+  // fresh data is already arriving via the action's own response); it's kept
+  // only as a defensive fallback in case revalidatePath ever fails silently
+  // (its call in self-check-in-action.ts is wrapped in a try/catch that logs
+  // but doesn't throw), not as the primitive that "unlocks" the other one.
   useEffect(() => {
     if (state.ok) {
       router.refresh();
@@ -61,12 +68,6 @@ export function SelfCheckInButton() {
         {state.ok && state.student && state.summary && (
           <div className="flex flex-col gap-2 text-sm">
             <p className="font-medium text-foreground">{t("successMessage")}</p>
-
-            {state.isVisitor && state.homeAcademyName && (
-              <span className="w-fit rounded-full bg-secondary px-3 py-1 text-secondary-foreground">
-                {t("visitorBadge", { academy: state.homeAcademyName })}
-              </span>
-            )}
 
             <p className="text-muted-foreground">
               {t("atBeltCount", { count: state.summary.atBeltCount })}
