@@ -19,6 +19,13 @@ enum StaffRole {
   INSTRUCTOR
 }
 
+enum NotificationType {
+  STRIPE_THRESHOLD
+  EXAM_THRESHOLD
+  NEW_SIGNUP
+  WEEKLY_DIGEST
+}
+
 enum Belt {
   WHITE
   BLUE
@@ -109,6 +116,7 @@ model User {
   auditLogs              AuditLog[]
   promotionsAwarded      Promotion[]
   paymentPeriodsRecorded PaymentPeriod[]
+  notifications          Notification[]
 
   attendanceRecordsCreated AttendanceRecord[]
   passwordResetTokens      PasswordResetToken[]
@@ -351,4 +359,18 @@ model AuditLog {
 
   @@index([entityType, entityId])
   @@index([actorId])
+}
+
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String
+  type      NotificationType
+  title     String
+  body      String
+  readAt    DateTime?
+  createdAt DateTime         @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId, readAt])
 }
