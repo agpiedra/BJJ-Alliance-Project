@@ -23,7 +23,7 @@ import { CreateStudentForm } from "./create-student-form";
 import { Belt, StudentStatus } from "@/generated/prisma/client";
 import { getAtBeltSummary } from "@/lib/students/attendance-summary";
 import { classifyEligibility, type BeltRequirementLike } from "@/lib/students/eligibility";
-import { promotionDistance } from "@/lib/students/promotion-distance";
+import { promotionDistance, compareByPromotion } from "@/lib/students/promotion-distance";
 import { formatTimestampInAcademyZone } from "@/lib/format-date";
 import { currentCrDateParts, getCurrentPaymentPeriod } from "@/lib/payments/get-current-period";
 import { isOverdue } from "@/lib/payments/overdue";
@@ -117,14 +117,6 @@ function resolveProgressTarget(summary: {
     };
   }
   return null;
-}
-
-// Infinity (from promotionDistance's "no further progress" case) minus
-// Infinity is NaN, which is not a well-defined Array.sort comparator result —
-// clamp it to a large finite value for the actual sort/tie-break, while
-// keeping promotionDistance's own Infinity contract intact for its unit test.
-function sortableDistance(distance: number): number {
-  return Number.isFinite(distance) ? distance : Number.MAX_SAFE_INTEGER;
 }
 
 type StudentsSearchParams = {
@@ -231,15 +223,12 @@ export default async function StudentsPage({
   // on the per-row belt-progress lookups above. Tie-breaker is the roster's
   // previous default order (lastName, then firstName) so equal-distance rows
   // don't reshuffle unpredictably between reloads.
-  const sortedStudents = [...filteredStudents].sort((a, b) => {
-    const diff =
-      sortableDistance(rosterExtrasByStudentId.get(a.id)!.distance) -
-      sortableDistance(rosterExtrasByStudentId.get(b.id)!.distance);
-    if (diff !== 0) return diff;
-    const lastNameDiff = a.lastName.localeCompare(b.lastName);
-    if (lastNameDiff !== 0) return lastNameDiff;
-    return a.firstName.localeCompare(b.firstName);
-  });
+  const sortedStudents = [...filteredStudents].sort((a, b) =>
+    compareByPromotion(
+      { distance: rosterExtrasByStudentId.get(a.id)!.distance, lastName: a.lastName, firstName: a.firstName },
+      { distance: rosterExtrasByStudentId.get(b.id)!.distance, lastName: b.lastName, firstName: b.firstName },
+    ),
+  );
 
   // The academies available for the filter switcher and the create-student
   // form's academy select are the same set: every academy for ADMIN
@@ -317,7 +306,11 @@ export default async function StudentsPage({
             <label htmlFor="students-status" className="sr-only">
               {t("filters.status")}
             </label>
-            <FilterBarSelect id="students-status" name="status" defaultValue={params.status ?? StudentStatus.ACTIVE}>
+            <FilterBarSelect
+              id="students-status"
+              name="status"
+              defaultValue={parseStatus(params.status) ?? STATUS_ALL}
+            >
               <option value={STATUS_ALL}>{t("filters.allStatuses")}</option>
               {STATUS_OPTIONS.map((status) => (
                 <option key={status} value={status}>
