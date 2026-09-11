@@ -64,8 +64,6 @@
     }
   },
   "dashboard": {
-    "heading": "Panel de control",
-    "welcome": "Bienvenido, {email}",
     "pendingApprovals": "{count, plural, =0 {Ningún estudiante esperando aprobación} one {# estudiante esperando aprobación} other {# estudiantes esperando aprobación}}",
     "pendingApprovalsLink": "Ver estudiantes pendientes",
     "adminSection": "Administración",
@@ -121,7 +119,6 @@
     },
     "analytics": {
       "heading": "Analítica",
-      "backToDashboardLink": "Volver al panel",
       "exportCsv": "Exportar CSV",
       "filters": {
         "from": "Desde",
@@ -272,6 +269,13 @@
         }
       }
     }
+  },
+  "staffSidebar": {
+    "dashboard": "Panel de control",
+    "students": "Estudiantes",
+    "analytics": "Analítica",
+    "adminSchedule": "Horario de clases",
+    "adminKioskTokens": "Tokens de kiosco"
   },
   "signup": {
     "heading": "Crear cuenta de estudiante",

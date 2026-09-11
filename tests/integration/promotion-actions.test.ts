@@ -23,7 +23,7 @@ vi.mock("@/auth", () => ({
   auth: () => Promise.resolve(currentSession),
 }));
 
-const { confirmPromotion } = await import("../../src/app/[locale]/dashboard/promotion-actions");
+const { confirmPromotion } = await import("../../src/app/[locale]/(staff)/dashboard/promotion-actions");
 const { getAtBeltSummary } = await import("../../src/lib/students/attendance-summary");
 // The SAME singleton `prisma` instance `confirmPromotion` uses internally
 // (via its own `import { prisma } from "@/lib/prisma"`) — spying on a method

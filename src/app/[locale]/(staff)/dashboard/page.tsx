@@ -1,6 +1,5 @@
 import { getLocale, getTranslations } from "next-intl/server";
 import { academyScopeWhere, requireStaffSession } from "@/lib/auth/session";
-import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { BeltGraphic } from "@/components/belt-graphic/belt-graphic";
 import {
@@ -12,8 +11,6 @@ import { listOverdueStudents, type OverdueStudent } from "@/lib/payments/list-ov
 import { formatMonthYear } from "@/lib/format-month";
 import { ConfirmPromotionButton } from "./confirm-promotion-button";
 import { PromotionStatusLabel } from "./promotion-status-label";
-import { NotificationBell } from "./notification-bell";
-import { getMyNotifications, getUnreadCount } from "./notification-actions";
 
 /**
  * `lastPaidMonth` comes back from `listOverdueStudents` as a plain,
@@ -36,7 +33,6 @@ export const dynamic = "force-dynamic";
 
 export default async function DashboardPage() {
   const staffSession = await requireStaffSession();
-  const session = await auth();
   const t = await getTranslations("dashboard");
   const locale = await getLocale();
 
@@ -67,12 +63,10 @@ export default async function DashboardPage() {
   // Both promotion queries scope by academyScopeWhere internally (see
   // promotion-queue.ts) the same way pendingCount does above — a
   // DIRECTOR/INSTRUCTOR only ever sees their own academy/academies here too.
-  const [promotionQueue, approachingStudents, overdueStudents, notifications, unreadCount] = await Promise.all([
+  const [promotionQueue, approachingStudents, overdueStudents] = await Promise.all([
     listPromotionQueue(staffSession),
     listApproachingStudents(staffSession),
     canViewOverduePayments ? listOverdueStudents(staffSession) : Promise.resolve<OverdueStudent[]>([]),
-    getMyNotifications(),
-    getUnreadCount(),
   ]);
 
   // Confirming a promotion is ADMIN/DIRECTOR only (spec §3 excludes
@@ -83,11 +77,6 @@ export default async function DashboardPage() {
 
   return (
     <main className="flex flex-col gap-4 p-6">
-      <div className="flex items-center justify-between gap-4">
-        <h1 className="text-2xl font-bold">{t("heading")}</h1>
-        <NotificationBell initialNotifications={notifications} initialUnreadCount={unreadCount} />
-      </div>
-      <p>{t("welcome", { email: session?.user?.email ?? "" })}</p>
       <p>
         {t("pendingApprovals", { count: pendingCount })}{" "}
         <a href={`/${locale}/students?status=PENDING`} className="underline">

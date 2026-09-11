@@ -2,7 +2,7 @@
 import { render, screen, cleanup } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
 import { afterEach, describe, expect, it } from "vitest";
-import { PromotionStatusLabel } from "@/app/[locale]/dashboard/promotion-status-label";
+import { PromotionStatusLabel } from "@/app/[locale]/(staff)/dashboard/promotion-status-label";
 import enMessages from "../../messages/en.json";
 import esMessages from "../../messages/es.json";
 

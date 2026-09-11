@@ -25,12 +25,12 @@ import enMessages from "../../messages/en.json";
  * before `recordPayment`'s zod schema (deliberately unmodified and out of
  * scope for this fix) ever sees the request.
  */
-vi.mock("@/app/[locale]/students/[id]/payment-actions", () => ({
+vi.mock("@/app/[locale]/(staff)/students/[id]/payment-actions", () => ({
   recordPayment: vi.fn(),
 }));
 
-const { recordPayment } = await import("@/app/[locale]/students/[id]/payment-actions");
-const { RecordPaymentForm } = await import("@/app/[locale]/students/[id]/record-payment-form");
+const { recordPayment } = await import("@/app/[locale]/(staff)/students/[id]/payment-actions");
+const { RecordPaymentForm } = await import("@/app/[locale]/(staff)/students/[id]/record-payment-form");
 
 const recordPaymentMock = vi.mocked(recordPayment);
 

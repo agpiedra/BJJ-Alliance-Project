@@ -64,8 +64,6 @@
     }
   },
   "dashboard": {
-    "heading": "Dashboard",
-    "welcome": "Welcome, {email}",
     "pendingApprovals": "{count, plural, =0 {No students awaiting approval} one {# student awaiting approval} other {# students awaiting approval}}",
     "pendingApprovalsLink": "View pending students",
     "adminSection": "Administration",
@@ -121,7 +119,6 @@
     },
     "analytics": {
       "heading": "Analytics",
-      "backToDashboardLink": "Back to dashboard",
       "exportCsv": "Export CSV",
       "filters": {
         "from": "From",
@@ -272,6 +269,13 @@
         }
       }
     }
+  },
+  "staffSidebar": {
+    "dashboard": "Dashboard",
+    "students": "Students",
+    "analytics": "Analytics",
+    "adminSchedule": "Class schedule",
+    "adminKioskTokens": "Kiosk tokens"
   },
   "signup": {
     "heading": "Create student account",
