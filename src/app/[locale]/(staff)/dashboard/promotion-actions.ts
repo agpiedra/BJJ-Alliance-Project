@@ -25,7 +25,7 @@ const confirmPromotionSchema = z.object({
  * a concurrent confirm (or another mutation) already changed them since this
  * call's own fresh read. Never surfaces to the caller — caught immediately
  * after the transaction and turned into a graceful `{error: "conflict"}`.
- * Matches `src/app/[locale]/students/[id]/actions.ts`'s `StudentWriteMissError`
+ * Matches `src/app/[locale]/(staff)/students/[id]/actions.ts`'s `StudentWriteMissError`
  * convention (a private sentinel error, never a raw exception reaching the
  * client).
  */

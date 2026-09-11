@@ -40,7 +40,7 @@ export default async function DashboardPage() {
   // Student's tenancy column is `homeAcademyId` — spreading the fragment
   // directly would throw a Prisma validation error for any non-ADMIN
   // session (confirmed while manually verifying this task). Translate it
-  // the same way src/app/[locale]/students/actions.ts's listStudents does,
+  // the same way src/app/[locale]/(staff)/students/actions.ts's listStudents does,
   // so a DIRECTOR/INSTRUCTOR only ever sees the pending count for their own
   // academy/academies — never a global count — and ADMIN (whose scope
   // fragment is `{}`) sees every pending student.
