@@ -174,3 +174,38 @@ export async function getHeadlineTiles(
     paymentHealthPercent,
   };
 }
+
+export type TileDeltaPolarity = "higherIsBetter" | "lowerIsBetter";
+
+export interface TileDelta {
+  direction: "up" | "down";
+  diff: number;
+}
+
+/**
+ * Turns a current/previous pair into `StatTile`'s `delta` shape
+ * (REDESIGN_BRIEF.md Phase 3: "green --ok up, red --bad down"). `direction`
+ * reflects whether the change is an IMPROVEMENT, not just the raw sign of
+ * the diff — for a "lowerIsBetter" metric (inactive, lost) a DECREASE is the
+ * good outcome and must render green/"up", the same way a "higherIsBetter"
+ * metric's increase does. Returns `undefined` for a zero diff, the same "no
+ * comparison line when nothing changed" convention `dashboard/page.tsx`'s
+ * own weekly-attendance delta already follows — a flat metric shows no line
+ * rather than a misleading no-op arrow.
+ *
+ * Note: `paymentHealthPercent` is always computed against the CURRENT
+ * calendar month regardless of the filter range (see `getHeadlineTiles`'s
+ * own doc comment) — calling this with two `getHeadlineTiles` results for
+ * different ranges will therefore always see a zero diff for that one field
+ * specifically, by design, not a bug in this function.
+ */
+export function computeTileDelta(
+  current: number,
+  previous: number,
+  polarity: TileDeltaPolarity = "higherIsBetter",
+): TileDelta | undefined {
+  const diff = current - previous;
+  if (diff === 0) return undefined;
+  const improved = polarity === "higherIsBetter" ? diff > 0 : diff < 0;
+  return { direction: improved ? "up" : "down", diff };
+}

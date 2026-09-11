@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DateTime } from "luxon";
-import { resolveAnalyticsFilters, DEFAULT_RANGE_DAYS } from "@/lib/analytics/filters";
+import { resolveAnalyticsFilters, computeQuickRange, DEFAULT_RANGE_DAYS } from "@/lib/analytics/filters";
 import type { StaffSession } from "@/lib/auth/session";
 
 const TODAY = DateTime.fromISO("2026-09-10", { zone: "America/Costa_Rica" });
@@ -60,5 +60,26 @@ describe("resolveAnalyticsFilters", () => {
     const filters = resolveAnalyticsFilters(admin, { from: "2026-01-01", to: "2026-01-15" }, TODAY);
     expect(filters.from.toISODate()).toBe("2026-01-01");
     expect(filters.to.toISODate()).toBe("2026-01-15");
+  });
+});
+
+describe("computeQuickRange", () => {
+  it("7d: from is 7 days before today, to is today", () => {
+    expect(computeQuickRange("7d", TODAY)).toEqual({ from: "2026-09-03", to: "2026-09-10" });
+  });
+
+  it("30d matches DEFAULT_RANGE_DAYS", () => {
+    expect(computeQuickRange("30d", TODAY)).toEqual({
+      from: TODAY.minus({ days: DEFAULT_RANGE_DAYS }).toISODate(),
+      to: "2026-09-10",
+    });
+  });
+
+  it("90d: from is 90 days before today", () => {
+    expect(computeQuickRange("90d", TODAY)).toEqual({ from: "2026-06-12", to: "2026-09-10" });
+  });
+
+  it("year: from is Jan 1 of today's year, not a rolling 365 days", () => {
+    expect(computeQuickRange("year", TODAY)).toEqual({ from: "2026-01-01", to: "2026-09-10" });
   });
 });

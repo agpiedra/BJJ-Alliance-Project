@@ -8,6 +8,7 @@ import "dotenv/config";
 import { describe, expect, it } from "vitest";
 import { DateTime } from "luxon";
 import {
+  computeTileDelta,
   hasAttendanceInRange,
   isNewInRange,
   previousEquivalentRange,
@@ -72,5 +73,32 @@ describe("wasLost", () => {
 
   it("a student active only in the current period (never attended before) is not lost", () => {
     expect(wasLost([RANGE.from.plus({ days: 1 })], RANGE)).toBe(false);
+  });
+});
+
+describe("computeTileDelta", () => {
+  it("higherIsBetter: an increase is 'up' (green)", () => {
+    expect(computeTileDelta(12, 10, "higherIsBetter")).toEqual({ direction: "up", diff: 2 });
+  });
+
+  it("higherIsBetter: a decrease is 'down' (red)", () => {
+    expect(computeTileDelta(8, 10, "higherIsBetter")).toEqual({ direction: "down", diff: -2 });
+  });
+
+  it("lowerIsBetter: a decrease is 'up' (green) — the improvement, not the raw sign", () => {
+    expect(computeTileDelta(3, 5, "lowerIsBetter")).toEqual({ direction: "up", diff: -2 });
+  });
+
+  it("lowerIsBetter: an increase is 'down' (red)", () => {
+    expect(computeTileDelta(7, 5, "lowerIsBetter")).toEqual({ direction: "down", diff: 2 });
+  });
+
+  it("no change returns undefined regardless of polarity", () => {
+    expect(computeTileDelta(5, 5, "higherIsBetter")).toBeUndefined();
+    expect(computeTileDelta(5, 5, "lowerIsBetter")).toBeUndefined();
+  });
+
+  it("defaults to higherIsBetter when polarity is omitted", () => {
+    expect(computeTileDelta(12, 10)).toEqual({ direction: "up", diff: 2 });
   });
 });

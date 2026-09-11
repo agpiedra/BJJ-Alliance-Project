@@ -2,7 +2,7 @@ import { DateTime } from "luxon";
 import { createTranslator } from "next-intl";
 import { prisma } from "@/lib/prisma";
 import { academyScopeWhere, type StaffSession } from "@/lib/auth/session";
-import type { Prisma, DayOfWeek } from "@/generated/prisma/client";
+import type { Prisma, DayOfWeek, ClassType } from "@/generated/prisma/client";
 import type { AnalyticsFilters } from "@/lib/analytics/filters";
 import { isWithinRange, previousEquivalentRange, type DateRange } from "@/lib/analytics/headline-tiles";
 import { routing } from "@/i18n/routing";
@@ -24,6 +24,9 @@ export interface ClassPopularityRow {
   label: string;
   dayOfWeek: DayOfWeek;
   startTime: string;
+  /** "Modalidad" (§4.3 Detalle-por-clase column) — plain passthrough of the
+   * ClassSession's own `type`, not a new query. */
+  type: ClassType;
   attendances: number;
   previousAttendances: number;
   trend: "up" | "down" | "flat";
@@ -110,7 +113,7 @@ export async function getClassPopularity(
 
   const classSessions = await prisma.classSession.findMany({
     where: { AND: conditions },
-    select: { id: true, dayOfWeek: true, startTime: true, name: true },
+    select: { id: true, dayOfWeek: true, startTime: true, name: true, type: true },
   });
 
   const range: DateRange = { from: filters.from, to: filters.to };
@@ -147,6 +150,7 @@ export async function getClassPopularity(
       label: `${translateDayOfWeek(cs.dayOfWeek, locale)} ${cs.startTime} — ${cs.name}`,
       dayOfWeek: cs.dayOfWeek,
       startTime: cs.startTime,
+      type: cs.type,
       attendances: currentCount,
       previousAttendances: previousCount,
       trend: computeTrend(currentCount, previousCount),
@@ -154,4 +158,89 @@ export async function getClassPopularity(
   });
 
   return rows.sort((a, b) => b.attendances - a.attendances);
+}
+
+/**
+ * Signed percentage change from `previous` to `current`, rounded to the
+ * nearest whole percent — the "real percentage — not an arrow glyph" the
+ * Detalle-por-clase trend pill needs (§4.3's own wording). `null` when
+ * `previous` is 0: a percentage change from zero attendances is undefined,
+ * so the caller renders "Nuevo" instead of a number rather than a
+ * nonsensical/infinite percentage. Deliberately separate from `computeTrend`
+ * above (which only classifies direction) rather than changing that
+ * function's existing return shape.
+ */
+export function computeTrendPercent(current: number, previous: number): number | null {
+  if (previous === 0) return null;
+  return Math.round(((current - previous) / previous) * 100);
+}
+
+const WEEKDAY_NUMBER: Record<DayOfWeek, number> = {
+  MONDAY: 1,
+  TUESDAY: 2,
+  WEDNESDAY: 3,
+  THURSDAY: 4,
+  FRIDAY: 5,
+  SATURDAY: 6,
+  SUNDAY: 7,
+};
+
+/**
+ * How many times `dayOfWeek` falls inside `[from, to]` (both inclusive) —
+ * the "sessions" denominator for the Detalle-por-clase table's "promedio por
+ * sesión" column, since a `ClassSession` is a recurring weekly slot, not a
+ * single occurrence. A plain day-by-day scan (ponytail: O(range length in
+ * days) — fine at this app's scale, a year-long "Año" quick range is ~366
+ * iterations; switch to a closed-form weekday-count formula if a much wider
+ * range is ever needed) rather than a new query — every input is already in
+ * hand (`row.dayOfWeek`, `filters.from`/`filters.to`).
+ */
+export function countWeekdayOccurrences(dayOfWeek: DayOfWeek, from: DateTime, to: DateTime): number {
+  if (to < from) return 0;
+  const targetWeekday = WEEKDAY_NUMBER[dayOfWeek];
+  let count = 0;
+  let cursor = from.startOf("day");
+  const end = to.startOf("day");
+  while (cursor <= end) {
+    if (cursor.weekday === targetWeekday) count++;
+    cursor = cursor.plus({ days: 1 });
+  }
+  return count;
+}
+
+export interface ClassGrowthEntry {
+  classSessionId: string;
+  label: string;
+  /** Signed: `attendances - previousAttendances`. */
+  diff: number;
+}
+
+/**
+ * The `limit` classes with the biggest CHANGE in attendances between the
+ * previous period and this one, signed — §4.3's "Mayor crecimiento" key/
+ * value list. Ranked by absolute movement, not just growth: a class that
+ * collapsed is exactly as much "a biggest mover" as one that took off, and
+ * the signed `diff` is what tells the caller which (rendered +green/-red).
+ * Reuses `getClassPopularity`'s own `attendances`/`previousAttendances`
+ * fields — no new query. Rows with no change at all are excluded (nothing to
+ * report), and a class with no previous-period data (`previousAttendances:
+ * 0`) still participates — its `diff` is simply its full current count.
+ */
+export function computeBiggestMovers(rows: ClassPopularityRow[], limit = 5): ClassGrowthEntry[] {
+  return rows
+    .map((row) => ({
+      classSessionId: row.classSessionId,
+      label: row.label,
+      diff: row.attendances - row.previousAttendances,
+    }))
+    .filter((entry) => entry.diff !== 0)
+    .sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff))
+    .slice(0, limit);
+}
+
+/** §4.3's own wording: "classes under 4 attendances in the period" —
+ * "Clases en riesgo". Current-period count only (not previous), reusing the
+ * same `getClassPopularity` rows — no new query. */
+export function computeAtRiskClasses(rows: ClassPopularityRow[], threshold = 4): ClassPopularityRow[] {
+  return rows.filter((row) => row.attendances < threshold);
 }

@@ -2,6 +2,17 @@
 
 import { useTranslations } from "next-intl";
 import type { LocationComparisonRow, CrossTrainingEntry } from "@/lib/analytics/locations";
+import { Card, CardHeader, CardTitle, CardAction, CardContent } from "@/components/ui/card";
+import { EmptyState } from "@/components/ui/empty-state";
+import {
+  DataTable,
+  DataTableBody,
+  DataTableCell,
+  DataTableHead,
+  DataTableHeaderCell,
+  DataTableHeaderRow,
+  DataTableRow,
+} from "@/components/ui/data-table";
 import { ExportCsvButton } from "./export-csv-button";
 
 /**
@@ -20,7 +31,7 @@ export function LocationsPanel({
   crossTraining: CrossTrainingEntry[];
 }) {
   return (
-    <section className="flex flex-col gap-8">
+    <section className="grid grid-cols-1 gap-4 lg:grid-cols-[7fr_5fr]">
       <LocationComparisonPanel rows={comparison} />
       <CrossTrainingPanel entries={crossTraining} />
     </section>
@@ -39,41 +50,44 @@ function LocationComparisonPanel({ rows }: { rows: LocationComparisonRow[] }) {
   }));
 
   return (
-    <div className="flex flex-col gap-3">
-      <div className="flex items-center justify-between">
-        <h2 className="text-lg font-medium">{t("heading")}</h2>
-        <ExportCsvButton rows={csvRows} filename="analytics-locations-comparison.csv" />
-      </div>
-
-      {rows.length === 0 ? (
-        <p className="text-muted-foreground">{t("empty")}</p>
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm">
-            <thead>
-              <tr className="border-b">
-                <th className="py-2 pr-4">{t("table.academy")}</th>
-                <th className="py-2 pr-4">{t("table.activeStudents")}</th>
-                <th className="py-2 pr-4">{t("table.totalAttendances")}</th>
-                <th className="py-2 pr-4">{t("table.avgPerClass")}</th>
-                <th className="py-2 pr-4">{t("table.paymentHealthPercent")}</th>
-              </tr>
-            </thead>
-            <tbody>
+    <Card>
+      <CardHeader className="border-b">
+        <CardTitle>{t("heading")}</CardTitle>
+        <CardAction>
+          <ExportCsvButton rows={csvRows} filename="analytics-locations-comparison.csv" />
+        </CardAction>
+      </CardHeader>
+      <CardContent>
+        {rows.length === 0 ? (
+          <EmptyState message={t("empty")} />
+        ) : (
+          <DataTable>
+            <DataTableHead>
+              <DataTableHeaderRow>
+                <DataTableHeaderCell>{t("table.academy")}</DataTableHeaderCell>
+                <DataTableHeaderCell className="text-right">{t("table.activeStudents")}</DataTableHeaderCell>
+                <DataTableHeaderCell className="text-right">{t("table.totalAttendances")}</DataTableHeaderCell>
+                <DataTableHeaderCell className="text-right">{t("table.avgPerClass")}</DataTableHeaderCell>
+                <DataTableHeaderCell className="text-right">
+                  {t("table.paymentHealthPercent")}
+                </DataTableHeaderCell>
+              </DataTableHeaderRow>
+            </DataTableHead>
+            <DataTableBody>
               {rows.map((row) => (
-                <tr key={row.academyId} className="border-b">
-                  <td className="py-2 pr-4 font-medium">{row.academyName}</td>
-                  <td className="py-2 pr-4">{row.activeStudents}</td>
-                  <td className="py-2 pr-4">{row.totalAttendances}</td>
-                  <td className="py-2 pr-4">{row.avgPerClass.toFixed(1)}</td>
-                  <td className="py-2 pr-4">{row.paymentHealthPercent}%</td>
-                </tr>
+                <DataTableRow key={row.academyId}>
+                  <DataTableCell className="font-medium">{row.academyName}</DataTableCell>
+                  <DataTableCell className="text-right tabular-nums">{row.activeStudents}</DataTableCell>
+                  <DataTableCell className="text-right tabular-nums">{row.totalAttendances}</DataTableCell>
+                  <DataTableCell className="text-right tabular-nums">{row.avgPerClass.toFixed(1)}</DataTableCell>
+                  <DataTableCell className="text-right tabular-nums">{row.paymentHealthPercent}%</DataTableCell>
+                </DataTableRow>
               ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </div>
+            </DataTableBody>
+          </DataTable>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -88,33 +102,36 @@ function CrossTrainingPanel({ entries }: { entries: CrossTrainingEntry[] }) {
   }));
 
   return (
-    <div className="flex flex-col gap-3">
-      <div className="flex items-center justify-between">
-        <h2 className="text-lg font-medium">{t("heading")}</h2>
-        <ExportCsvButton rows={csvRows} filename="analytics-locations-cross-training.csv" />
-      </div>
-
-      {entries.length === 0 ? (
-        <p className="text-muted-foreground">{t("empty")}</p>
-      ) : (
-        <ul className="flex flex-col gap-2">
-          {entries.map((entry) => (
-            <li
-              key={`${entry.studentId}-${entry.visitedAcademyName}`}
-              className="flex flex-wrap items-baseline gap-x-2 border-b py-2 text-sm"
-            >
-              <span className="font-medium">{entry.studentName}</span>
-              <span className="text-muted-foreground">
-                {t("summary", {
-                  home: entry.homeAcademyName,
-                  visited: entry.visitedAcademyName,
-                  count: entry.visitCount,
-                })}
-              </span>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
+    <Card>
+      <CardHeader className="border-b">
+        <CardTitle>{t("heading")}</CardTitle>
+        <CardAction>
+          <ExportCsvButton rows={csvRows} filename="analytics-locations-cross-training.csv" />
+        </CardAction>
+      </CardHeader>
+      <CardContent>
+        {entries.length === 0 ? (
+          <EmptyState message={t("empty")} />
+        ) : (
+          <ul className="flex flex-col divide-y divide-border">
+            {entries.map((entry) => (
+              <li
+                key={`${entry.studentId}-${entry.visitedAcademyName}`}
+                className="flex flex-wrap items-baseline gap-x-2 py-2 text-sm first:pt-0 last:pb-0"
+              >
+                <span className="font-medium">{entry.studentName}</span>
+                <span className="text-muted-foreground">
+                  {t("summary", {
+                    home: entry.homeAcademyName,
+                    visited: entry.visitedAcademyName,
+                    count: entry.visitCount,
+                  })}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </CardContent>
+    </Card>
   );
 }

@@ -180,16 +180,24 @@
     },
     "analytics": {
       "heading": "Analytics",
+      "eyebrow": "Alliance · Analytics",
+      "sub": "{active} active · {attendances} attendances in the selected period.",
       "exportCsv": "Export CSV",
       "filters": {
         "from": "From",
         "to": "To",
         "academy": "Academy",
         "bothAcademies": "Both",
-        "submit": "Filter"
+        "submit": "Apply",
+        "quickRange": {
+          "label": "Quick range",
+          "7d": "7 days",
+          "30d": "30 days",
+          "90d": "90 days",
+          "year": "Year"
+        }
       },
       "tiles": {
-        "heading": "Overview",
         "enrolled": "Enrolled",
         "active": "Active",
         "inactive": "Inactive",
@@ -198,33 +206,46 @@
         "totalAttendances": "Total attendances",
         "totalAttendancesCaption": "Total attendances counts by the student's home academy, not by check-in location.",
         "avgAttendancesPerActive": "Avg attendances per active",
-        "paymentHealthPercent": "Payment health (current month)"
+        "paymentHealthPercent": "Payment health (current month)",
+        "deltaVsPrevious": "{value} vs. previous period"
       },
       "classPopularity": {
         "heading": "Class popularity",
         "empty": "No class sessions in scope for the selected range.",
+        "trendNew": "New",
+        "showAll": "Show all {count} classes",
+        "showLess": "Show less",
         "chart": {
           "attendances": "Attendances"
         },
         "table": {
+          "heading": "Class detail",
           "rank": "#",
           "class": "Class",
+          "modality": "Modality",
           "attendances": "Attendances",
           "previousAttendances": "Previous period",
+          "sessionsAverage": "Avg per session",
           "trend": "Trend"
         },
         "trend": {
-          "up": "Trending up",
-          "down": "Trending down",
           "flat": "Flat"
         },
-        "heatmap": {
-          "heading": "Day × time heatmap"
+        "growth": {
+          "heading": "Biggest movers",
+          "empty": "No significant change in the selected period."
+        },
+        "risk": {
+          "heading": "Classes at risk",
+          "caption": "Fewer than {count} attendances in the period.",
+          "empty": "No classes are at risk."
         },
         "csv": {
           "class": "Class",
+          "modality": "Modality",
           "attendances": "Attendances",
           "previousAttendances": "Previous period",
+          "sessionsAverage": "Avg per session",
           "trend": "Trend"
         }
       },
@@ -249,6 +270,7 @@
         },
         "beltDistribution": {
           "heading": "Belt distribution",
+          "empty": "No students in scope for the selected period.",
           "chart": {
             "count": "Students"
           },
@@ -324,6 +346,7 @@
         "trend": {
           "heading": "Weekly attendance trend",
           "caption": "Counts by check-in location (venue), which can differ from a student's home academy for cross-training students.",
+          "empty": "No attendances recorded in the last 8 weeks.",
           "chart": {
             "count": "Attendances"
           }

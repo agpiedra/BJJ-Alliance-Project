@@ -100,3 +100,35 @@ export function resolveAnalyticsFilters(
 
   return { from, to, academyId };
 }
+
+/** REDESIGN_BRIEF.md §4.3 filter card: "7 días / 30 días / 90 días / Año". */
+export type QuickRangeKey = "7d" | "30d" | "90d" | "year";
+
+export const QUICK_RANGE_KEYS: QuickRangeKey[] = ["7d", "30d", "90d", "year"];
+
+const QUICK_RANGE_DAYS: Record<Exclude<QuickRangeKey, "year">, number> = {
+  "7d": 7,
+  "30d": DEFAULT_RANGE_DAYS,
+  "90d": 90,
+};
+
+/**
+ * The from/to ISO date strings for one quick-range preset button, anchored
+ * on `today`. "year" is a calendar-year-to-date window (since Jan 1), not a
+ * rolling 365 days — matching how a segmented "Año" control reads. Pure,
+ * same production/test split as `resolveAnalyticsFilters` itself: production
+ * callers omit `today` and get the real CR-zoned instant, tests inject a
+ * fixed one. The page compares its own resolved `filters.from`/`to` against
+ * this to decide which preset (if any) is the active one — no client-side
+ * state needed for that either.
+ */
+export function computeQuickRange(
+  key: QuickRangeKey,
+  today: DateTime = DateTime.now().setZone(ZONE),
+): { from: string; to: string } {
+  const to = today.toISODate()!;
+  if (key === "year") {
+    return { from: today.startOf("year").toISODate()!, to };
+  }
+  return { from: today.minus({ days: QUICK_RANGE_DAYS[key] }).toISODate()!, to };
+}
