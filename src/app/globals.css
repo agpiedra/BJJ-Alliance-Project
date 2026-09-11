@@ -104,7 +104,10 @@
   --chart-5: oklch(0.269 0 0);
   --radius: 0.625rem;
   /* Dedicated gold accent — sanctioned uses only: sidebar active-nav highlight,
-     banner accents, home page stat highlights. Never --primary/--accent.
+     banner accents, home page stat highlights, and (REDESIGN_BRIEF.md Phase 3
+     ruling) primary CTA buttons (Button's "primary" variant) — the mock
+     consistently renders primary actions (Inscribir alumno, Guardar pago,
+     Graduar) in solid gold. Never --primary/--accent themselves.
      gold-foreground-on-gold contrast ~= 11.21:1 (verified, unaffected by the
      warm-neutral pass — gold's own oklch values are untouched). */
   --brand-gold: oklch(0.82 0.17 85);
@@ -229,5 +232,23 @@
     @apply font-heading font-semibold tracking-tight;
     font-size: 1.9375rem; /* ~31px, Phase 1.3 */
     text-wrap: balance;
+  }
+  /* Phase 3: "outline: 2px solid var(--accent); outline-offset: 2px on every
+     interactive element" — brand-gold, same convention as the sidebar/Button
+     gold rulings. Layers alongside (doesn't replace) individual components'
+     own focus-visible ring utilities. */
+  :focus-visible {
+    outline: 2px solid var(--brand-gold);
+    outline-offset: 2px;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
   }
 }
