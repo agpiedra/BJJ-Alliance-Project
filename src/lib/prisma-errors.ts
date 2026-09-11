@@ -3,7 +3,7 @@
  *
  * `isUniqueConstraintError` was previously duplicated verbatim in
  * `src/lib/kiosk/perform-check-in.ts` and
- * `src/app/[locale]/admin/schedule/actions.ts`; both now import it from here.
+ * `src/app/[locale]/(staff)/admin/schedule/actions.ts`; both now import it from here.
  *
  * Deliberately a structural check rather than an `instanceof
  * Prisma.PrismaClientKnownRequestError` test: under the driver-adapter setup

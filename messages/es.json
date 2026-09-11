@@ -3,8 +3,30 @@
     "title": "Alliance Jiu-Jitsu Costa Rica"
   },
   "home": {
-    "heading": "Bienvenido a Alliance Jiu-Jitsu Costa Rica",
-    "subheading": "Escazú y Escalante"
+    "heading": "Alliance Jiu-Jitsu Costa Rica",
+    "subheading": "Jiu-Jitsu brasileño para toda la familia, con sedes en Escazú y Escalante. Entrena bajo instructores certificados en un ambiente serio pero cercano.",
+    "cta": "Crear cuenta de estudiante",
+    "loginLink": "¿Ya tienes cuenta? Inicia sesión",
+    "stats": {
+      "academies": "Sedes activas",
+      "weeklyClasses": "Clases por semana",
+      "timezone": "Zona horaria"
+    },
+    "schedule": {
+      "heading": "Horario semanal — {academy}",
+      "description": "Una muestra de nuestras clases regulares. El horario completo se confirma al inscribirte.",
+      "table": {
+        "day": "Día",
+        "time": "Hora",
+        "name": "Clase",
+        "type": "Tipo"
+      },
+      "empty": "Esta sede no tiene clases publicadas todavía."
+    },
+    "belts": {
+      "heading": "Un camino de progreso claro",
+      "description": "De cinturón blanco a negro, cada grado y franja queda registrado para que siempre sepas dónde estás parado."
+    }
   },
   "notFound": {
     "heading": "Página no encontrada",
@@ -65,7 +87,6 @@
   },
   "dashboard": {
     "heading": "Panel de control",
-    "welcome": "Bienvenido, {email}",
     "pendingApprovals": "{count, plural, =0 {Ningún estudiante esperando aprobación} one {# estudiante esperando aprobación} other {# estudiantes esperando aprobación}}",
     "pendingApprovalsLink": "Ver estudiantes pendientes",
     "adminSection": "Administración",
@@ -121,7 +142,6 @@
     },
     "analytics": {
       "heading": "Analítica",
-      "backToDashboardLink": "Volver al panel",
       "exportCsv": "Exportar CSV",
       "filters": {
         "from": "Desde",
@@ -272,6 +292,13 @@
         }
       }
     }
+  },
+  "staffSidebar": {
+    "dashboard": "Panel de control",
+    "students": "Estudiantes",
+    "analytics": "Analítica",
+    "adminSchedule": "Horario de clases",
+    "adminKioskTokens": "Tokens de kiosco"
   },
   "signup": {
     "heading": "Crear cuenta de estudiante",

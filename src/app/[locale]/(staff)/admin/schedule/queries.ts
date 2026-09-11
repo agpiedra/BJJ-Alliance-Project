@@ -22,15 +22,27 @@ const DAY_ORDER: Record<DayOfWeek, number> = {
  * `students/actions.ts`'s doc comment on `listStudents`:
  *
  * 1. Security: this function takes a bare `academyId` string with no
- *    session parameter at all — no scoping logic is needed since this page
- *    is ADMIN-only and ADMIN's scope is unconditionally "every academy"
- *    (unlike the roster page, there's no DIRECTOR/INSTRUCTOR caller to
- *    scope for). That is only safe because `page.tsx` (a Server Component)
- *    is the sole caller, and it always calls `requireStaffSession(["ADMIN"])`
- *    first. A "use server" directive makes every export of that file
+ *    session parameter at all — no scoping logic is needed, but NOT because
+ *    of who calls it. There are now two callers: the ADMIN-gated
+ *    `admin/schedule/page.tsx` (a Server Component that calls
+ *    `requireStaffSession(["ADMIN"])` first) AND the fully unauthenticated
+ *    `src/app/[locale]/home-data.ts`, which feeds the public home page. This
+ *    is safe today only because `ClassSession` (see `prisma/schema.prisma`)
+ *    carries no sensitive fields — just schedule metadata (day/time,
+ *    duration, class name/type, active flag) — nothing per-person, no PII,
+ *    no financial data, no internal-only column. The safety argument lives
+ *    in the DATA, not the caller: if anyone adds a sensitive field to
+ *    `ClassSession` in the future (an instructor's private note, an internal
+ *    cost figure, etc.), do NOT assume the ADMIN gate protects it — the
+ *    public caller reaches this same function unfiltered. At that point
+ *    split this into two functions: a full version for staff and a
+ *    restricted-`select` version for public use.
+ *    Separately, a "use server" directive makes every export of that file
  *    independently invocable by its action id from any browser, session or
  *    not — folding this into `actions.ts` would turn an unauthenticated
- *    request into a working way to read any academy's full class schedule.
+ *    request into a working way to read any academy's full class schedule
+ *    (not just the one public preview `home-data.ts` already exposes on
+ *    purpose).
  * 2. Build correctness: this module imports Prisma (Node-only). The write
  *    actions in `actions.ts` are imported by several Client Components
  *    (the create form, the per-row edit form, the deactivate button). If

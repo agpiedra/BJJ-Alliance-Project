@@ -4,7 +4,7 @@ import { PrismaClient } from "../../src/generated/prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { requireEnv } from "../../src/lib/env";
 import { digestLookupSecret } from "../../src/lib/crypto";
-import { listStudents } from "../../src/app/[locale]/students/actions";
+import { listStudents } from "../../src/app/[locale]/(staff)/students/actions";
 import type { StaffSession } from "../../src/lib/auth/session";
 
 const adapter = new PrismaPg({ connectionString: requireEnv("DATABASE_URL") });

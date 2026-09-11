@@ -63,7 +63,7 @@ function parseDateParam(value: string | undefined): DateTime | null {
  * `academyId: null` regardless of what `academy` they pass, the same "a
  * client-submitted scope override is silently ignored for non-ADMIN"
  * precedent `listStudents` established
- * (`src/app/[locale]/students/actions.ts`'s `filters.academyId` handling) —
+ * (`src/app/[locale]/(staff)/students/actions.ts`'s `filters.academyId` handling) —
  * taken one step further here: rather than re-pinning to `academyIds[0]`
  * (which would silently drop any additional `StaffAssignment` a DIRECTOR
  * with more than one academy has), `academyId: null` lets their full

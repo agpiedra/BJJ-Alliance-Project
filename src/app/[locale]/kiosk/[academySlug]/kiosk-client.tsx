@@ -249,7 +249,7 @@ export function KioskClient({
   };
 
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center gap-6 p-6">
+    <main className="flex min-h-[calc(100vh-3rem)] flex-col items-center justify-center gap-6 p-6">
       {/* Persistent, staff-facing. Deliberately outside the `phase` state
           machine so it never auto-dismisses: a lost check-in has to be
           reported to a person, and nobody watches a kiosk tablet's console. */}

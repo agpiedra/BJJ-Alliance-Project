@@ -28,12 +28,12 @@ vi.mock("@/auth", () => ({
   auth: () => Promise.resolve(currentSession),
 }));
 
-const { getStudentForStaff } = await import("../../src/app/[locale]/students/[id]/get-student");
+const { getStudentForStaff } = await import("../../src/app/[locale]/(staff)/students/[id]/get-student");
 const { updateStudent, archiveStudent, approveStudent, regenerateStudentCode } = await import(
-  "../../src/app/[locale]/students/[id]/actions"
+  "../../src/app/[locale]/(staff)/students/[id]/actions"
 );
 const { addAttendanceAdjustment } = await import(
-  "../../src/app/[locale]/students/[id]/adjustment-actions"
+  "../../src/app/[locale]/(staff)/students/[id]/adjustment-actions"
 );
 const { getStaffSession } = await import("../../src/lib/auth/session");
 const { getAtBeltSummary } = await import("../../src/lib/students/attendance-summary");

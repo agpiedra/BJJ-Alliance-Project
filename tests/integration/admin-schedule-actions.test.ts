@@ -16,9 +16,9 @@ vi.mock("@/auth", () => ({
 }));
 
 const { createClassSession, updateClassSession, deactivateClassSession } = await import(
-  "../../src/app/[locale]/admin/schedule/actions"
+  "../../src/app/[locale]/(staff)/admin/schedule/actions"
 );
-const { listClassSessions } = await import("../../src/app/[locale]/admin/schedule/queries");
+const { listClassSessions } = await import("../../src/app/[locale]/(staff)/admin/schedule/queries");
 
 const adapter = new PrismaPg({ connectionString: requireEnv("DATABASE_URL") });
 const prisma = new PrismaClient({ adapter });

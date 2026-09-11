@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { BrandBanner } from "@/components/brand/brand-banner";
 import { SignupForm } from "./signup-form";
 
 // The academy list is queried live, not baked into the build: unlike
@@ -13,5 +14,10 @@ export default async function SignupPage() {
     select: { slug: true, name: true },
   });
 
-  return <SignupForm academies={academies} />;
+  return (
+    <>
+      <BrandBanner />
+      <SignupForm academies={academies} />
+    </>
+  );
 }

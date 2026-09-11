@@ -19,7 +19,7 @@ vi.mock("@/auth", () => ({
   auth: () => Promise.resolve(currentSession),
 }));
 
-const { recordPayment } = await import("../../src/app/[locale]/students/[id]/payment-actions");
+const { recordPayment } = await import("../../src/app/[locale]/(staff)/students/[id]/payment-actions");
 
 const adapter = new PrismaPg({ connectionString: requireEnv("DATABASE_URL") });
 const prisma = new PrismaClient({ adapter });

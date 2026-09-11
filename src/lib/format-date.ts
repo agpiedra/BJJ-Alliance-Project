@@ -8,10 +8,10 @@
  *
  * Extracted verbatim (byte-for-byte logic, not rewritten) from a private
  * function of the same name that previously lived only in
- * `src/app/[locale]/students/[id]/page.tsx` — Phase 5 Task 2's student
+ * `src/app/[locale]/(staff)/students/[id]/page.tsx` — Phase 5 Task 2's student
  * portal page needs the exact same behavior for its own attendance/promotion
  * history rendering, so this was pulled into a shared module rather than
- * duplicated a second time. `students/[id]/page.tsx` now imports it from
+ * duplicated a second time. `(staff)/students/[id]/page.tsx` now imports it from
  * here too.
  */
 export function formatTimestampInAcademyZone(date: Date | null, locale: string): string | null {

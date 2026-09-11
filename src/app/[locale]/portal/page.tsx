@@ -1,6 +1,7 @@
 import { getTranslations } from "next-intl/server";
 import { requireStudentSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/prisma";
+import { BrandBanner } from "@/components/brand/brand-banner";
 import { BeltGraphic } from "@/components/belt-graphic/belt-graphic";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -54,7 +55,9 @@ export default async function StudentPortalPage({
   const tPaymentStatus = await getTranslations("students.paymentStatus");
 
   return (
-    <main className="mx-auto flex w-full max-w-md flex-col gap-6 p-4">
+    <>
+      <BrandBanner />
+      <main className="mx-auto flex w-full max-w-md flex-col gap-6 p-4">
       <div>
         <h1 className="text-2xl font-bold">{t("greeting", { name: student.firstName })}</h1>
       </div>
@@ -195,6 +198,7 @@ export default async function StudentPortalPage({
           )}
         </CardContent>
       </Card>
-    </main>
+      </main>
+    </>
   );
 }

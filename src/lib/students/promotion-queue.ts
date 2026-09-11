@@ -33,7 +33,7 @@ async function classifyActiveStudents(session: StaffSession): Promise<
       // academyScopeWhere returns a fragment keyed `academyId`, but
       // Student's tenancy column is `homeAcademyId` — see academyScopeWhere's
       // own doc comment on why this can't be spread directly, and
-      // src/app/[locale]/dashboard/page.tsx for the established translation.
+      // src/app/[locale]/(staff)/dashboard/page.tsx for the established translation.
       ...(scope.academyId ? { homeAcademyId: scope.academyId } : {}),
     },
     select: {
