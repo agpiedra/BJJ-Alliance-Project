@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
+import { BrandBanner } from "@/components/brand/brand-banner";
 import { KioskClient } from "./kiosk-client";
 
 // Public, zero-credential tablet surface — spec explicitly calls for NO auth
@@ -41,11 +42,14 @@ export default async function KioskPage({
   const tokenValue = typeof token === "string" ? token : "";
 
   return (
-    <KioskClient
-      academyId={academy.id}
-      academyName={academy.name}
-      academySlug={academy.slug}
-      token={tokenValue}
-    />
+    <>
+      <BrandBanner compact />
+      <KioskClient
+        academyId={academy.id}
+        academyName={academy.name}
+        academySlug={academy.slug}
+        token={tokenValue}
+      />
+    </>
   );
 }

@@ -20,7 +20,7 @@ export function SignupForm({ academies }: { academies: Academy[] }) {
 
   if (state.ok) {
     return (
-      <main className="flex min-h-screen flex-col items-center justify-center gap-4 p-6 text-center">
+      <main className="flex min-h-[calc(100vh-4rem)] flex-col items-center justify-center gap-4 p-6 text-center">
         <h1 className="text-2xl font-bold">{t("successHeading")}</h1>
         <p>{t("successCodeWarning")}</p>
         <p className="text-4xl font-mono font-bold tracking-widest">{state.code}</p>
@@ -32,7 +32,7 @@ export function SignupForm({ academies }: { academies: Academy[] }) {
   const guardianNameErrors = state.fieldErrors?.guardianName;
 
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center gap-4 p-6">
+    <main className="flex min-h-[calc(100vh-4rem)] flex-col items-center justify-center gap-4 p-6">
       <h1 className="text-2xl font-bold">{t("heading")}</h1>
       <form action={formAction} className="flex w-full max-w-sm flex-col gap-3">
         <label className="flex flex-col gap-1">

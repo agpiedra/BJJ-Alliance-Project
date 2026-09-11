@@ -4,14 +4,18 @@ import { Suspense, useActionState } from "react";
 import { useTranslations } from "next-intl";
 import { useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
+import { BrandBanner } from "@/components/brand/brand-banner";
 import { resetPassword } from "./actions";
 import { INITIAL_ACTION_STATE } from "@/lib/action-state";
 
 export default function ResetPasswordPage() {
   return (
-    <Suspense fallback={null}>
-      <ResetPasswordForm />
-    </Suspense>
+    <>
+      <BrandBanner />
+      <Suspense fallback={null}>
+        <ResetPasswordForm />
+      </Suspense>
+    </>
   );
 }
 
@@ -23,14 +27,14 @@ function ResetPasswordForm() {
 
   if (state.ok) {
     return (
-      <main className="flex min-h-screen flex-col items-center justify-center p-6 text-center">
+      <main className="flex min-h-[calc(100vh-4rem)] flex-col items-center justify-center p-6 text-center">
         <p>{t("success")}</p>
       </main>
     );
   }
 
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center gap-4 p-6">
+    <main className="flex min-h-[calc(100vh-4rem)] flex-col items-center justify-center gap-4 p-6">
       <h1 className="text-2xl font-bold">{t("heading")}</h1>
       <form action={formAction} className="flex w-full max-w-sm flex-col gap-3">
         <input type="hidden" name="token" value={token} />

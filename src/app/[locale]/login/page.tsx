@@ -4,14 +4,18 @@ import { Suspense, useActionState } from "react";
 import { useTranslations } from "next-intl";
 import { useParams, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
+import { BrandBanner } from "@/components/brand/brand-banner";
 import { login } from "./actions";
 import { INITIAL_ACTION_STATE } from "@/lib/action-state";
 
 export default function LoginPage() {
   return (
-    <Suspense fallback={null}>
-      <LoginForm />
-    </Suspense>
+    <>
+      <BrandBanner />
+      <Suspense fallback={null}>
+        <LoginForm />
+      </Suspense>
+    </>
   );
 }
 
@@ -27,7 +31,7 @@ function LoginForm() {
   );
 
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center gap-4 p-6">
+    <main className="flex min-h-[calc(100vh-4rem)] flex-col items-center justify-center gap-4 p-6">
       <h1 className="text-2xl font-bold">{t("heading")}</h1>
       <form action={formAction} className="flex w-full max-w-sm flex-col gap-3">
         <label className="flex flex-col gap-1">
