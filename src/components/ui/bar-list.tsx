@@ -33,7 +33,12 @@ export function BarList({ items, max, className }: BarListProps) {
         return (
           <div key={item.key} className="grid grid-cols-[minmax(0,7rem)_1fr_auto] items-center gap-3">
             <span className="truncate text-sm">{item.label}</span>
-            <span className="h-2 overflow-hidden rounded-full bg-muted">
+            {/* ring-inset border: a light fill color (e.g. bg-belt-white) at
+                100% width would otherwise be nearly invisible against this
+                same near-white track in light mode — caught live in a
+                browser on the Panel's belt-distribution bar, not by
+                code-only review. */}
+            <span className="h-2 overflow-hidden rounded-full bg-muted ring-1 ring-inset ring-border">
               <span
                 className={cn("block h-full rounded-full", item.colorClassName ?? "bg-brand-gold")}
                 style={{ width: `${pct}%` }}
