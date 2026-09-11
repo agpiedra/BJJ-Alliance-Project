@@ -383,25 +383,38 @@
   },
   "students": {
     "heading": "Estudiantes",
+    "eyebrow": "Alliance · Gestión de alumnos",
+    "sub": "{active} activos · {inactive} inactivos.",
     "empty": "Ningún estudiante coincide con estos filtros.",
+    "beltStripes": "{count, plural, =0 {sin franjas} one {# franja} other {# franjas}}",
+    "staleAttendance": "· {days, plural, one {hace # día} other {hace # días}}",
+    "eligibility": {
+      "exam": "Examen",
+      "stripe": "Franja"
+    },
     "filters": {
       "search": "Buscar",
+      "searchPlaceholder": "Buscar por nombre, correo o teléfono…",
       "belt": "Cinturón",
       "status": "Estado",
+      "payment": "Pago",
       "academy": "Academia",
       "allBelts": "Todos los cinturones",
       "allStatuses": "Todos los estados",
+      "allPayments": "Todos los pagos",
       "bothAcademies": "Ambas",
       "submit": "Filtrar"
     },
     "columns": {
-      "name": "Nombre",
+      "name": "Alumno",
       "belt": "Cinturón",
+      "progress": "Progreso",
       "academy": "Academia",
       "status": "Estado",
       "atBeltCount": "Asistencias en este cinturón",
       "lastAttendance": "Última asistencia",
       "payment": "Pago",
+      "flags": "Marcas",
       "actions": "Acciones",
       "viewLink": "Ver"
     },

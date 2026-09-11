@@ -1,16 +1,34 @@
+import { DateTime } from "luxon";
 import { getLocale, getTranslations } from "next-intl/server";
 import { requireStaffSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/prisma";
-import { BeltGraphic } from "@/components/belt-graphic/belt-graphic";
-import { Badge } from "@/components/ui/badge";
+import { Card, CardContent } from "@/components/ui/card";
+import { FilterBar, FilterBarSearch, FilterBarSelect } from "@/components/ui/filter-bar";
+import {
+  DataTable,
+  DataTableBody,
+  DataTableCell,
+  DataTableHead,
+  DataTableHeaderCell,
+  DataTableHeaderRow,
+  DataTableRow,
+} from "@/components/ui/data-table";
+import { Pill } from "@/components/ui/pill";
 import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/components/ui/empty-state";
+import { BeltBar } from "@/components/belt-graphic/belt-bar";
+import { ProgressToNextGrade } from "@/components/belt-graphic/progress-to-next-grade";
 import { listStudents } from "./actions";
 import { CreateStudentForm } from "./create-student-form";
 import { Belt, StudentStatus } from "@/generated/prisma/client";
 import { getAtBeltSummary } from "@/lib/students/attendance-summary";
+import { classifyEligibility, type BeltRequirementLike } from "@/lib/students/eligibility";
+import { promotionDistance } from "@/lib/students/promotion-distance";
 import { formatTimestampInAcademyZone } from "@/lib/format-date";
 import { currentCrDateParts, getCurrentPaymentPeriod } from "@/lib/payments/get-current-period";
 import { isOverdue } from "@/lib/payments/overdue";
+import type { ContactPaymentStatus } from "@/lib/students/contact-list";
+import { ZONE } from "@/lib/scheduling/zone";
 
 // Staff data an admin/director could change without a redeploy (students,
 // academy roster) — never frozen at build time, same reasoning as /signup.
@@ -18,19 +36,102 @@ export const dynamic = "force-dynamic";
 
 const BELT_OPTIONS = Object.values(Belt);
 const STATUS_OPTIONS = Object.values(StudentStatus);
+const PAYMENT_STATUS_OPTIONS: ContactPaymentStatus[] = ["PAID", "PENDING", "OVERDUE", "PROMO", "EXEMPT", "NOT_RECORDED"];
+
+// Sentinel distinct from "no `status` param at all" (which now defaults to
+// ACTIVE below) — REDESIGN_BRIEF.md §4.2: "Default status filter must be
+// Activos... while still letting a user explicitly select Todos to clear it."
+const STATUS_ALL = "ALL";
+
+// §4.2's "Última asistencia... hace 20 días" stale-marker threshold. The
+// brief doesn't pin an exact number ("you decide a sensible staleness
+// threshold if the brief doesn't give one exactly, e.g. 14+ days") — 14 is
+// chosen to sit safely below dashboard's own 7-day "contact" list floor
+// doubled, so a row only gets flagged here once it's meaningfully stale, not
+// merely inside the contact-list's own outreach window.
+const STALE_ATTENDANCE_DAYS = 14;
 
 function parseBelt(value: string | undefined): Belt | undefined {
   return value && (BELT_OPTIONS as string[]).includes(value) ? (value as Belt) : undefined;
 }
 
 function parseStatus(value: string | undefined): StudentStatus | undefined {
-  return value && (STATUS_OPTIONS as string[]).includes(value) ? (value as StudentStatus) : undefined;
+  if (value === undefined) return StudentStatus.ACTIVE;
+  if (value === STATUS_ALL) return undefined;
+  return (STATUS_OPTIONS as string[]).includes(value) ? (value as StudentStatus) : StudentStatus.ACTIVE;
+}
+
+function parsePaymentStatus(value: string | undefined): ContactPaymentStatus | undefined {
+  return value && (PAYMENT_STATUS_OPTIONS as string[]).includes(value) ? (value as ContactPaymentStatus) : undefined;
+}
+
+function paymentPillVariant(status: ContactPaymentStatus): "ok" | "warn" | "bad" | "accent" | "plain" {
+  switch (status) {
+    case "OVERDUE":
+      return "bad";
+    case "PENDING":
+      return "warn";
+    case "PROMO":
+      return "accent";
+    case "PAID":
+    case "EXEMPT":
+      return "ok";
+    default:
+      return "plain";
+  }
+}
+
+function paymentStatusLabel(
+  status: ContactPaymentStatus,
+  t: (key: string) => string,
+  tPaymentStatus: (key: string) => string,
+): string {
+  if (status === "OVERDUE") return t("paymentStatus.overdue");
+  if (status === "NOT_RECORDED") return t("paymentStatus.notRecorded");
+  return tPaymentStatus(status);
+}
+
+/**
+ * Progreso column's current/target pair. Purely a display-side read of
+ * `getAtBeltSummary`'s already-computed fields (Rule 8: never reimplement
+ * belt math) — mirrors the exam-row target formula dashboard/page.tsx's
+ * "Cola de promociones" panel already uses
+ * (`maxStripes * attendancesPerStripe + attendancesForExam`). `null` means
+ * no further computable progress at all (e.g. a maxed-out belt with no exam
+ * threshold configured), which the Progreso cell renders as "—".
+ */
+function resolveProgressTarget(summary: {
+  atBeltCount: number;
+  nextStripeAt: number | null;
+  maxStripes: number;
+  attendancesPerStripe: number;
+  attendancesForExam: number;
+}): { current: number; target: number } | null {
+  if (summary.nextStripeAt !== null) {
+    return { current: summary.atBeltCount, target: summary.nextStripeAt };
+  }
+  if (summary.attendancesForExam > 0) {
+    return {
+      current: summary.atBeltCount,
+      target: summary.maxStripes * summary.attendancesPerStripe + summary.attendancesForExam,
+    };
+  }
+  return null;
+}
+
+// Infinity (from promotionDistance's "no further progress" case) minus
+// Infinity is NaN, which is not a well-defined Array.sort comparator result —
+// clamp it to a large finite value for the actual sort/tie-break, while
+// keeping promotionDistance's own Infinity contract intact for its unit test.
+function sortableDistance(distance: number): number {
+  return Number.isFinite(distance) ? distance : Number.MAX_SAFE_INTEGER;
 }
 
 type StudentsSearchParams = {
   search?: string;
   belt?: string;
   status?: string;
+  payment?: string;
   academyId?: string;
 };
 
@@ -52,11 +153,9 @@ export default async function StudentsPage({
   // Per-row lookups, batched via Promise.all across the fetched student
   // list — same accepted per-row-query shape as Phase 4's
   // classifyActiveStudents at this app's current scale (a single gym's
-  // roster). Two of these three were previously blocked ("not computable
-  // yet"); both getAtBeltSummary (Phase 3) and the attendance ledger
-  // (Phase 3) have existed for months, they just weren't wired up here —
-  // only the third (payment tracking) is genuinely new as of this task.
+  // roster).
   const today = currentCrDateParts();
+  const now = DateTime.now().setZone(ZONE);
   const rosterExtras = await Promise.all(
     students.map(async (student) => {
       const [summary, lastAttendance, currentPeriod] = await Promise.all([
@@ -69,16 +168,78 @@ export default async function StudentsPage({
         getCurrentPaymentPeriod(student.id, today),
       ]);
 
+      const requirement: BeltRequirementLike = {
+        attendancesPerStripe: summary.attendancesPerStripe,
+        maxStripes: summary.maxStripes,
+        attendancesForExam: summary.attendancesForExam,
+      };
+      const eligibility = classifyEligibility(
+        {
+          nextStripeAt: summary.nextStripeAt,
+          remainingToNextStripe: summary.remainingToNextStripe,
+          examEligible: summary.examEligible,
+        },
+        summary.currentStripes,
+        requirement,
+      );
+
+      const overdue = isOverdue(currentPeriod, today);
+      // Same precedence the roster's payment pill already used before this
+      // restyle (overdue takes priority over a recorded PENDING period) —
+      // §4.2's new payment filter has to agree with what the pill shows, or
+      // filtering by "Atrasado" could hide/show different rows than the
+      // pills visually suggest.
+      const paymentStatus: ContactPaymentStatus = overdue
+        ? "OVERDUE"
+        : currentPeriod
+          ? currentPeriod.status
+          : "NOT_RECORDED";
+
+      const lastAttendanceAt = lastAttendance?.occurredAt ?? null;
+      const daysSinceLastAttendance = lastAttendanceAt
+        ? Math.floor(now.diff(DateTime.fromJSDate(lastAttendanceAt, { zone: ZONE }), "days").days)
+        : null;
+
       return {
         studentId: student.id,
-        atBeltCount: summary.atBeltCount,
-        lastAttendanceAt: lastAttendance?.occurredAt ?? null,
+        summary,
+        eligibility,
+        lastAttendanceAt,
+        daysSinceLastAttendance,
         currentPeriod,
-        overdue: isOverdue(currentPeriod, today),
+        paymentStatus,
+        distance: promotionDistance({
+          examEligible: summary.examEligible,
+          remainingToNextStripe: summary.remainingToNextStripe,
+        }),
       };
     }),
   );
   const rosterExtrasByStudentId = new Map(rosterExtras.map((extra) => [extra.studentId, extra]));
+
+  // §4.2's new payment-status filter: `listStudents`/Prisma can't express
+  // this (payment status is computed above, not a column), so — per the
+  // task's own guidance for this app's scale — it's a plain post-filter over
+  // the roster already fetched, not a schema/query change.
+  const paymentFilter = parsePaymentStatus(params.payment);
+  const filteredStudents = paymentFilter
+    ? students.filter((student) => rosterExtrasByStudentId.get(student.id)?.paymentStatus === paymentFilter)
+    : students;
+
+  // §4.2 "Sort by closest to promotion by default": ascending remaining
+  // count (0 = already eligible), computed AFTER the fetch since it depends
+  // on the per-row belt-progress lookups above. Tie-breaker is the roster's
+  // previous default order (lastName, then firstName) so equal-distance rows
+  // don't reshuffle unpredictably between reloads.
+  const sortedStudents = [...filteredStudents].sort((a, b) => {
+    const diff =
+      sortableDistance(rosterExtrasByStudentId.get(a.id)!.distance) -
+      sortableDistance(rosterExtrasByStudentId.get(b.id)!.distance);
+    if (diff !== 0) return diff;
+    const lastNameDiff = a.lastName.localeCompare(b.lastName);
+    if (lastNameDiff !== 0) return lastNameDiff;
+    return a.firstName.localeCompare(b.firstName);
+  });
 
   // The academies available for the filter switcher and the create-student
   // form's academy select are the same set: every academy for ADMIN
@@ -95,6 +256,15 @@ export default async function StudentsPage({
           select: { id: true, name: true },
         });
 
+  // Page-header sub line numbers (Rule 5: "numbers get context") — scoped
+  // the same way listStudents itself scopes a non-ADMIN session, so a
+  // DIRECTOR/INSTRUCTOR only ever sees counts for their own academy/academies.
+  const scopedAcademyWhere = session.role === "ADMIN" ? {} : { homeAcademyId: { in: scopedAcademyIds } };
+  const [activeCount, inactiveCount] = await Promise.all([
+    prisma.student.count({ where: { ...scopedAcademyWhere, status: "ACTIVE" } }),
+    prisma.student.count({ where: { ...scopedAcademyWhere, status: "INACTIVE" } }),
+  ]);
+
   const t = await getTranslations("students");
   const tBelt = await getTranslations("belt");
   const tStatus = await getTranslations("students.status");
@@ -104,124 +274,190 @@ export default async function StudentsPage({
   const canCreate = session.role === "ADMIN" || session.role === "DIRECTOR";
 
   return (
-    <main className="flex flex-col gap-6 p-6">
-      <h1 className="text-2xl font-bold">{t("heading")}</h1>
-
-      <form method="get" className="flex flex-wrap items-end gap-3">
-        <label className="flex flex-col gap-1">
-          <span className="text-sm">{t("filters.search")}</span>
-          <input
-            type="text"
-            name="search"
-            defaultValue={params.search ?? ""}
-            className="rounded border px-3 py-2"
-          />
-        </label>
-        <label className="flex flex-col gap-1">
-          <span className="text-sm">{t("filters.belt")}</span>
-          <select name="belt" defaultValue={params.belt ?? ""} className="rounded border px-3 py-2">
-            <option value="">{t("filters.allBelts")}</option>
-            {BELT_OPTIONS.map((belt) => (
-              <option key={belt} value={belt}>
-                {tBelt(belt)}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="flex flex-col gap-1">
-          <span className="text-sm">{t("filters.status")}</span>
-          <select name="status" defaultValue={params.status ?? ""} className="rounded border px-3 py-2">
-            <option value="">{t("filters.allStatuses")}</option>
-            {STATUS_OPTIONS.map((status) => (
-              <option key={status} value={status}>
-                {tStatus(status)}
-              </option>
-            ))}
-          </select>
-        </label>
-        {session.role === "ADMIN" && (
-          <label className="flex flex-col gap-1">
-            <span className="text-sm">{t("filters.academy")}</span>
-            <select
-              name="academyId"
-              defaultValue={params.academyId ?? ""}
-              className="rounded border px-3 py-2"
-            >
-              <option value="">{t("filters.bothAcademies")}</option>
-              {academies.map((academy) => (
-                <option key={academy.id} value={academy.id}>
-                  {academy.name}
-                </option>
-              ))}
-            </select>
-          </label>
-        )}
-        <Button type="submit" variant="outline">
-          {t("filters.submit")}
-        </Button>
-      </form>
+    <main className="flex flex-col gap-6 p-4 sm:p-6">
+      <header className="flex flex-col gap-1">
+        <p className="font-mono text-[10.5px] tracking-[.11em] text-muted-foreground uppercase">{t("eyebrow")}</p>
+        <h1>{t("heading")}</h1>
+        <p className="text-sm text-muted-foreground">
+          {t("sub", { active: activeCount, inactive: inactiveCount })}
+        </p>
+      </header>
 
       {/* Server-side gate is the real enforcement (createStudent itself
           re-checks the role) — this only avoids showing the control to a
           role that would just be rejected, as defense in depth. */}
       {canCreate && <CreateStudentForm academies={academies} />}
 
-      <div className="overflow-x-auto">
-        <table className="w-full text-left text-sm">
-          <thead>
-            <tr className="border-b">
-              <th className="py-2 pr-4">{t("columns.name")}</th>
-              <th className="py-2 pr-4">{t("columns.belt")}</th>
-              <th className="py-2 pr-4">{t("columns.academy")}</th>
-              <th className="py-2 pr-4">{t("columns.status")}</th>
-              <th className="py-2 pr-4">{t("columns.atBeltCount")}</th>
-              <th className="py-2 pr-4">{t("columns.lastAttendance")}</th>
-              <th className="py-2 pr-4">{t("columns.payment")}</th>
-              <th className="py-2 pr-4">
-                <span className="sr-only">{t("columns.actions")}</span>
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {students.map((student) => {
-              const extra = rosterExtrasByStudentId.get(student.id);
-              const paymentBadge = extra?.overdue
-                ? { label: t("paymentStatus.overdue"), variant: "destructive" as const }
-                : extra?.currentPeriod
-                  ? { label: tPaymentStatus(extra.currentPeriod.status), variant: "outline" as const }
-                  : { label: t("paymentStatus.notRecorded"), variant: "secondary" as const };
+      <Card>
+        <form method="get">
+          <FilterBar>
+            <label htmlFor="students-search" className="sr-only">
+              {t("filters.search")}
+            </label>
+            <FilterBarSearch
+              id="students-search"
+              type="search"
+              name="search"
+              defaultValue={params.search ?? ""}
+              placeholder={t("filters.searchPlaceholder")}
+            />
 
-              return (
-                <tr key={student.id} className="border-b">
-                  <td className="py-2 pr-4">
-                    {student.firstName} {student.lastName}
-                  </td>
-                  <td className="py-2 pr-4">
-                    <BeltGraphic belt={student.currentBelt} stripes={student.currentStripes} />
-                  </td>
-                  <td className="py-2 pr-4">{student.homeAcademy.name}</td>
-                  <td className="py-2 pr-4">
-                    <Badge variant="outline">{tStatus(student.status)}</Badge>
-                  </td>
-                  <td className="py-2 pr-4">{extra?.atBeltCount ?? "—"}</td>
-                  <td className="py-2 pr-4">
-                    {formatTimestampInAcademyZone(extra?.lastAttendanceAt ?? null, locale) ?? "—"}
-                  </td>
-                  <td className="py-2 pr-4">
-                    <Badge variant={paymentBadge.variant}>{paymentBadge.label}</Badge>
-                  </td>
-                  <td className="py-2 pr-4">
-                    <a href={`/${locale}/students/${student.id}`} className="underline">
-                      {t("columns.viewLink")}
-                    </a>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-        {students.length === 0 && <p className="py-4 text-muted-foreground">{t("empty")}</p>}
-      </div>
+            <label htmlFor="students-belt" className="sr-only">
+              {t("filters.belt")}
+            </label>
+            <FilterBarSelect id="students-belt" name="belt" defaultValue={params.belt ?? ""}>
+              <option value="">{t("filters.allBelts")}</option>
+              {BELT_OPTIONS.map((belt) => (
+                <option key={belt} value={belt}>
+                  {tBelt(belt)}
+                </option>
+              ))}
+            </FilterBarSelect>
+
+            <label htmlFor="students-status" className="sr-only">
+              {t("filters.status")}
+            </label>
+            <FilterBarSelect id="students-status" name="status" defaultValue={params.status ?? StudentStatus.ACTIVE}>
+              <option value={STATUS_ALL}>{t("filters.allStatuses")}</option>
+              {STATUS_OPTIONS.map((status) => (
+                <option key={status} value={status}>
+                  {tStatus(status)}
+                </option>
+              ))}
+            </FilterBarSelect>
+
+            <label htmlFor="students-payment" className="sr-only">
+              {t("filters.payment")}
+            </label>
+            <FilterBarSelect id="students-payment" name="payment" defaultValue={params.payment ?? ""}>
+              <option value="">{t("filters.allPayments")}</option>
+              {PAYMENT_STATUS_OPTIONS.map((status) => (
+                <option key={status} value={status}>
+                  {paymentStatusLabel(status, t, tPaymentStatus)}
+                </option>
+              ))}
+            </FilterBarSelect>
+
+            {session.role === "ADMIN" && (
+              <>
+                <label htmlFor="students-academy" className="sr-only">
+                  {t("filters.academy")}
+                </label>
+                <FilterBarSelect id="students-academy" name="academyId" defaultValue={params.academyId ?? ""}>
+                  <option value="">{t("filters.bothAcademies")}</option>
+                  {academies.map((academy) => (
+                    <option key={academy.id} value={academy.id}>
+                      {academy.name}
+                    </option>
+                  ))}
+                </FilterBarSelect>
+              </>
+            )}
+
+            <Button type="submit" variant="outline" size="sm">
+              {t("filters.submit")}
+            </Button>
+          </FilterBar>
+        </form>
+
+        <CardContent className="pt-4">
+          {sortedStudents.length === 0 ? (
+            <EmptyState message={t("empty")} />
+          ) : (
+            <DataTable>
+              <DataTableHead>
+                <DataTableHeaderRow>
+                  <DataTableHeaderCell>{t("columns.name")}</DataTableHeaderCell>
+                  <DataTableHeaderCell>{t("columns.belt")}</DataTableHeaderCell>
+                  <DataTableHeaderCell>{t("columns.progress")}</DataTableHeaderCell>
+                  <DataTableHeaderCell>{t("columns.academy")}</DataTableHeaderCell>
+                  <DataTableHeaderCell>{t("columns.lastAttendance")}</DataTableHeaderCell>
+                  <DataTableHeaderCell>{t("columns.payment")}</DataTableHeaderCell>
+                  <DataTableHeaderCell>
+                    <span className="sr-only">{t("columns.flags")}</span>
+                  </DataTableHeaderCell>
+                </DataTableHeaderRow>
+              </DataTableHead>
+              <DataTableBody>
+                {sortedStudents.map((student) => {
+                  const extra = rosterExtrasByStudentId.get(student.id)!;
+                  const progress = resolveProgressTarget(extra.summary);
+                  const daysSinceLastAttendance = extra.daysSinceLastAttendance;
+                  const stale = daysSinceLastAttendance !== null && daysSinceLastAttendance >= STALE_ATTENDANCE_DAYS;
+
+                  return (
+                    <DataTableRow key={student.id}>
+                      <DataTableCell>
+                        <a
+                          href={`/${locale}/students/${student.id}`}
+                          className="font-medium text-foreground hover:underline"
+                        >
+                          {student.firstName} {student.lastName}
+                        </a>
+                        {/* REDESIGN_BRIEF.md §4.2 deliberately drops the mock's
+                            "· kiosco 4821" from this sub-line: the plaintext
+                            kiosk code only ever exists at creation/regeneration
+                            time (Student.codeHash is a one-way hash — see
+                            create-student-action.ts / regenerate-code-button.tsx)
+                            and is never retrievable afterward, by design. There
+                            is no real value to show here after the fact, so
+                            only the student's real email is shown. */}
+                        <div className="text-[11px] text-muted-foreground">{student.email}</div>
+                      </DataTableCell>
+                      <DataTableCell>
+                        <div className="flex items-center gap-2">
+                          <BeltBar belt={student.currentBelt} stripes={student.currentStripes} />
+                          <span className="whitespace-nowrap">
+                            {tBelt(student.currentBelt)} ·{" "}
+                            <span className="font-medium">
+                              {t("beltStripes", { count: student.currentStripes })}
+                            </span>
+                          </span>
+                        </div>
+                      </DataTableCell>
+                      <DataTableCell>
+                        {progress ? (
+                          <ProgressToNextGrade current={progress.current} target={progress.target} />
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </DataTableCell>
+                      <DataTableCell>{student.homeAcademy.name}</DataTableCell>
+                      <DataTableCell>
+                        {extra.lastAttendanceAt ? (
+                          <span>
+                            {formatTimestampInAcademyZone(extra.lastAttendanceAt, locale)}
+                            {stale && daysSinceLastAttendance !== null && (
+                              <span className="ml-1 text-muted-foreground">
+                                {t("staleAttendance", { days: daysSinceLastAttendance })}
+                              </span>
+                            )}
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </DataTableCell>
+                      <DataTableCell>
+                        <Pill variant={paymentPillVariant(extra.paymentStatus)}>
+                          {paymentStatusLabel(extra.paymentStatus, t, tPaymentStatus)}
+                        </Pill>
+                      </DataTableCell>
+                      <DataTableCell>
+                        {extra.eligibility === "exam-eligible" && (
+                          <Pill variant="accent">{t("eligibility.exam")}</Pill>
+                        )}
+                        {extra.eligibility === "stripe-eligible" && (
+                          <Pill variant="accent">{t("eligibility.stripe")}</Pill>
+                        )}
+                      </DataTableCell>
+                    </DataTableRow>
+                  );
+                })}
+              </DataTableBody>
+            </DataTable>
+          )}
+        </CardContent>
+      </Card>
     </main>
   );
 }
