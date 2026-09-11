@@ -294,11 +294,31 @@
     }
   },
   "staffSidebar": {
-    "dashboard": "Dashboard",
+    "dashboard": "Panel",
     "students": "Students",
     "analytics": "Analytics",
-    "adminSchedule": "Class schedule",
-    "adminKioskTokens": "Kiosk tokens"
+    "adminSchedule": "Schedule",
+    "adminKioskTokens": "Kiosk",
+    "groups": {
+      "operations": "Operations",
+      "analytics": "Analytics",
+      "academy": "Academy"
+    }
+  },
+  "staffShell": {
+    "breadcrumbPrefix": "Alliance Costa Rica",
+    "themeToggle": "Theme",
+    "academySwitcher": {
+      "bothLabel": "View both locations",
+      "bothSelected": "Both locations"
+    },
+    "userMenu": {
+      "role": {
+        "ADMIN": "Admin",
+        "DIRECTOR": "Director",
+        "INSTRUCTOR": "Instructor"
+      }
+    }
   },
   "signup": {
     "heading": "Create student account",

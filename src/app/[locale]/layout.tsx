@@ -68,8 +68,18 @@ export default async function LocaleLayout({
     <html
       lang={locale}
       className={`${archivo.variable} ${ibmPlexSans.variable} ${ibmPlexMono.variable}`}
+      suppressHydrationWarning
     >
       <body>
+        {/* Runs before hydration so the "dark" class is already correct on
+            first paint — suppressHydrationWarning above tells React not to
+            complain that this script's class mutation doesn't match the
+            server-rendered <html> (REDESIGN_BRIEF.md Phase 2 theme toggle). */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){try{var s=localStorage.getItem("theme");var d=s?s==="dark":matchMedia("(prefers-color-scheme: dark)").matches;document.documentElement.classList.toggle("dark",d);}catch(e){}})();`,
+          }}
+        />
         <NextIntlClientProvider locale={locale} messages={messages}>
           {children}
         </NextIntlClientProvider>

@@ -2,6 +2,8 @@ import { BarChart3, CalendarClock, KeyRound, LayoutDashboard, Users } from "luci
 import type { LucideIcon } from "lucide-react";
 import type { StaffSession } from "@/lib/auth/session";
 
+export type StaffNavGroup = "operations" | "analytics" | "academy";
+
 export interface StaffNavItem {
   /** Locale-less path (the sidebar prepends `/${locale}`), e.g. "/dashboard". */
   href: string;
@@ -9,6 +11,9 @@ export interface StaffNavItem {
   labelKey: string;
   icon: LucideIcon;
   visible: (session: StaffSession) => boolean;
+  /** Section this item renders under (REDESIGN_BRIEF.md Phase 2) — label text
+   * comes from "staffSidebar.groups.<group>". */
+  group: StaffNavGroup;
 }
 
 /**
@@ -31,29 +36,37 @@ export const NAV_ITEMS: StaffNavItem[] = [
     labelKey: "dashboard",
     icon: LayoutDashboard,
     visible: () => true,
+    group: "operations",
   },
   {
     href: "/students",
     labelKey: "students",
     icon: Users,
     visible: () => true,
+    group: "operations",
   },
   {
     href: "/dashboard/analytics",
     labelKey: "analytics",
     icon: BarChart3,
     visible: (session) => session.role === "ADMIN" || session.role === "DIRECTOR",
+    group: "analytics",
   },
   {
     href: "/admin/schedule",
     labelKey: "adminSchedule",
     icon: CalendarClock,
     visible: (session) => session.role === "ADMIN",
+    group: "academy",
   },
   {
     href: "/admin/kiosk-tokens",
     labelKey: "adminKioskTokens",
     icon: KeyRound,
     visible: (session) => session.role === "ADMIN",
+    group: "academy",
   },
 ];
+
+/** Render order for section headers (REDESIGN_BRIEF.md Phase 2). */
+export const NAV_GROUP_ORDER: StaffNavGroup[] = ["operations", "analytics", "academy"];
