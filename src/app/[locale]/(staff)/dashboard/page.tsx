@@ -77,6 +77,7 @@ export default async function DashboardPage() {
 
   return (
     <main className="flex flex-col gap-4 p-6">
+      <h1 className="text-2xl font-bold">{t("heading")}</h1>
       <p>
         {t("pendingApprovals", { count: pendingCount })}{" "}
         <a href={`/${locale}/students?status=PENDING`} className="underline">

@@ -13,7 +13,7 @@ export type PromotionHistoryEntry = {
 
 /**
  * The student portal's own copy of
- * `src/app/[locale]/students/[id]/get-promotion-history.ts` — same query
+ * `src/app/[locale]/(staff)/students/[id]/get-promotion-history.ts` — same query
  * shape (`prisma.promotion.findMany`, ordered `awardedAt desc`), called with
  * `session.studentId` instead of a route-param-derived id. Deliberately does
  * NOT select/join `awardedBy` the way the staff version does: a staff
@@ -24,9 +24,9 @@ export type PromotionHistoryEntry = {
  * fetched-but-unrendered.
  *
  * Deliberately a SEPARATE file rather than an import from the staff-only
- * `students/[id]/` directory, even though the query is nearly identical:
+ * `(staff)/students/[id]/` directory, even though the query is nearly identical:
  * that directory's copy trusts its `studentId` argument BECAUSE its sole
- * caller (`students/[id]/page.tsx`) has already run it through
+ * caller (`(staff)/students/[id]/page.tsx`) has already run it through
  * `getStudentForStaff`'s academy-scope check first — the safety of that
  * function is coupled to being called only after that check. This portal
  * page has no such check to depend on (and needs none): `studentId` here

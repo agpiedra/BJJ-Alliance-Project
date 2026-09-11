@@ -52,13 +52,13 @@ export default async function HomePage({
         <section className="grid grid-cols-1 gap-4 sm:grid-cols-3">
           <Card>
             <CardContent className="flex flex-col items-center gap-1 text-center">
-              <span className="text-3xl font-bold">{academyCount}</span>
+              <span className="text-3xl font-bold text-brand-gold">{academyCount}</span>
               <span className="text-sm text-muted-foreground">{t("stats.academies")}</span>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="flex flex-col items-center gap-1 text-center">
-              <span className="text-3xl font-bold">{weeklyClassCount}</span>
+              <span className="text-3xl font-bold text-brand-gold">{weeklyClassCount}</span>
               <span className="text-sm text-muted-foreground">{t("stats.weeklyClasses")}</span>
             </CardContent>
           </Card>

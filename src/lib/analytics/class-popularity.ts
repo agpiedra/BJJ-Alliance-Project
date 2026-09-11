@@ -17,7 +17,7 @@ export interface ClassPopularityRow {
    * `dayOfWeek`/`startTime` fields below are exposed separately for the
    * heatmap's own day/time bucketing, not so a caller can reassemble this.
    * Follows the admin schedule page's day/time/name convention
-   * (`src/app/[locale]/admin/schedule/page.tsx`: `tDay(session.dayOfWeek)`
+   * (`src/app/[locale]/(staff)/admin/schedule/page.tsx`: `tDay(session.dayOfWeek)`
    * + `session.startTime` + `session.name` as separate columns), composed
    * into one string as `"{translatedDay} {startTime} — {name}"`.
    */

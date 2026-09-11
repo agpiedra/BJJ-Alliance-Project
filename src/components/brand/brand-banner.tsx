@@ -15,12 +15,17 @@ export interface BrandBannerProps {
  * than a dedicated banner token, since it is visually and semantically the
  * same near-black brand surface as the sidebar shell — not a separate
  * design language.
+ *
+ * `border-b-2 border-brand-gold` is one of this redesign's three sanctioned
+ * gold accents (plan §Global Constraints) — a hairline edge, not a fill, so
+ * it reads as a brand accent without the contrast/legibility risk of gold
+ * covering a large surface.
  */
 export function BrandBanner({ children, compact = false }: BrandBannerProps) {
   return (
     <div
       className={cn(
-        "flex items-center gap-3 bg-sidebar px-4 text-sidebar-foreground",
+        "flex items-center gap-3 border-b-2 border-brand-gold bg-sidebar px-4 text-sidebar-foreground",
         compact ? "h-12" : "h-16"
       )}
     >

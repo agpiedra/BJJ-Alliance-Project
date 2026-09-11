@@ -6,7 +6,6 @@ import { useTranslations } from "next-intl";
 import {
   Sidebar,
   SidebarContent,
-  SidebarFooter,
   SidebarHeader,
   SidebarMenu,
   SidebarMenuButton,
@@ -32,8 +31,6 @@ export interface StaffSidebarProps {
   locale: string;
   /** Already filtered to this session's visible items — see (staff)/layout.tsx. */
   navItems: StaffSidebarNavEntry[];
-  /** The dashboard's `<NotificationBell>`, server-rendered by the layout and slotted in here. */
-  notificationBell: ReactNode;
 }
 
 /**
@@ -43,7 +40,7 @@ export interface StaffSidebarProps {
  * Colors come entirely from the `--sidebar-*` tokens Task 1 wired into
  * globals.css; no color is hardcoded here.
  */
-export function StaffSidebar({ locale, navItems, notificationBell }: StaffSidebarProps) {
+export function StaffSidebar({ locale, navItems }: StaffSidebarProps) {
   const pathname = usePathname();
   const t = useTranslations("staffSidebar");
 
@@ -73,7 +70,11 @@ export function StaffSidebar({ locale, navItems, notificationBell }: StaffSideba
             const fullHref = `/${locale}${item.href}`;
             return (
               <SidebarMenuItem key={item.href}>
-                <SidebarMenuButton isActive={isActive(fullHref)} render={<a href={fullHref} />}>
+                <SidebarMenuButton
+                  isActive={isActive(fullHref)}
+                  render={<a href={fullHref} />}
+                  className="data-active:bg-brand-gold data-active:text-brand-gold-foreground"
+                >
                   {item.icon}
                   <span>{t(item.labelKey)}</span>
                 </SidebarMenuButton>
@@ -82,9 +83,6 @@ export function StaffSidebar({ locale, navItems, notificationBell }: StaffSideba
           })}
         </SidebarMenu>
       </SidebarContent>
-      <SidebarFooter className="flex-row items-center justify-between">
-        {notificationBell}
-      </SidebarFooter>
     </Sidebar>
   );
 }

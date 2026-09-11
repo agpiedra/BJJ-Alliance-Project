@@ -43,7 +43,9 @@ export default async function KioskPage({
 
   return (
     <>
-      <BrandBanner compact />
+      <BrandBanner compact>
+        <span className="truncate font-medium">{academy.name}</span>
+      </BrandBanner>
       <KioskClient
         academyId={academy.id}
         academyName={academy.name}
