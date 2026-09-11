@@ -3,8 +3,30 @@
     "title": "Alliance Jiu-Jitsu Costa Rica"
   },
   "home": {
-    "heading": "Welcome to Alliance Jiu-Jitsu Costa Rica",
-    "subheading": "Escazú and Escalante"
+    "heading": "Alliance Jiu-Jitsu Costa Rica",
+    "subheading": "Brazilian Jiu-Jitsu for the whole family, with locations in Escazú and Escalante. Train under certified instructors in a serious but welcoming environment.",
+    "cta": "Create a student account",
+    "loginLink": "Already have an account? Sign in",
+    "stats": {
+      "academies": "Active locations",
+      "weeklyClasses": "Weekly classes",
+      "timezone": "Timezone"
+    },
+    "schedule": {
+      "heading": "Weekly schedule — {academy}",
+      "description": "A sample of our regular classes. The full schedule is confirmed when you sign up.",
+      "table": {
+        "day": "Day",
+        "time": "Time",
+        "name": "Class",
+        "type": "Type"
+      },
+      "empty": "This location doesn't have any published classes yet."
+    },
+    "belts": {
+      "heading": "A clear path of progress",
+      "description": "From white belt to black, every stripe and promotion is tracked so you always know where you stand."
+    }
   },
   "notFound": {
     "heading": "Page not found",
