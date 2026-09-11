@@ -140,6 +140,72 @@
         "lastPaidMonth": "Last paid month"
       }
     },
+    "panel": {
+      "academyJoin": "and",
+      "sub": "{academy} · {attendance} check-ins this week, {promotions} students ready to grade.",
+      "stats": {
+        "activeStudents": {
+          "label": "Active students"
+        },
+        "weeklyAttendance": {
+          "label": "Check-ins this week",
+          "deltaUp": "+{diff} vs. last week",
+          "deltaDown": "−{diff} vs. last week"
+        },
+        "readyToGrade": {
+          "label": "Ready to grade"
+        },
+        "overdue": {
+          "label": "Overdue monthly dues"
+        }
+      },
+      "weeklyChart": {
+        "heading": "Weekly attendance",
+        "caption": "Last 8 weeks",
+        "empty": "Not enough recorded attendance yet to show a trend.",
+        "countLabel": "Check-ins"
+      },
+      "beltDistribution": {
+        "heading": "Belt distribution",
+        "caption": "Average attendances per grade: {white} white · {blue} blue · {purple} purple · {brown} brown",
+        "empty": "No active students to show a belt distribution for."
+      },
+      "franjaHeatmap": {
+        "heading": "Average attendance by time band",
+        "caption": "Last 4 weeks",
+        "empty": "No scheduled classes to show a heatmap for.",
+        "bands": {
+          "morning": "Morning",
+          "midday": "Midday",
+          "afternoon": "Afternoon",
+          "evening": "Evening"
+        }
+      },
+      "promotionQueue": {
+        "eligibleCount": "{count, plural, one {# eligible} other {# eligible}}",
+        "stripeRow": "{current} / {target} · stripe {ordinal} ({belt})",
+        "examRow": "{current} / {target} · {belt} belt exam",
+        "upcomingHeading": "Upcoming",
+        "upcomingRow": "{current} / {target} · {remaining} to go"
+      },
+      "contact": {
+        "heading": "Students to contact",
+        "caption": "No attendance in {days}+ days",
+        "empty": "No student has gone more than {days} days without attending.",
+        "neverAttended": "Never attended",
+        "table": {
+          "name": "Student",
+          "academy": "Academy",
+          "phone": "Phone",
+          "lastAttendance": "Last attendance",
+          "daysAbsent": "Days absent",
+          "payment": "Payment",
+          "actions": "Actions"
+        },
+        "whatsappButton": "WhatsApp",
+        "contactMessage": "Hi {name}, we miss you on the mats! Everything okay? Hope to see you in class soon."
+      }
+    },
     "analytics": {
       "heading": "Analytics",
       "exportCsv": "Export CSV",

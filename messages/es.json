@@ -140,6 +140,72 @@
         "lastPaidMonth": "Último mes pagado"
       }
     },
+    "panel": {
+      "academyJoin": "y",
+      "sub": "{academy} · {attendance} asistencias esta semana, {promotions} alumnos listos para grado.",
+      "stats": {
+        "activeStudents": {
+          "label": "Alumnos activos"
+        },
+        "weeklyAttendance": {
+          "label": "Asistencias esta semana",
+          "deltaUp": "+{diff} vs. semana pasada",
+          "deltaDown": "−{diff} vs. semana pasada"
+        },
+        "readyToGrade": {
+          "label": "Listos para grado"
+        },
+        "overdue": {
+          "label": "Mensualidad atrasada"
+        }
+      },
+      "weeklyChart": {
+        "heading": "Asistencia semanal",
+        "caption": "Últimas 8 semanas",
+        "empty": "Aún no hay suficientes asistencias registradas para mostrar la tendencia.",
+        "countLabel": "Asistencias"
+      },
+      "beltDistribution": {
+        "heading": "Distribución de cinturones",
+        "caption": "Promedio de asistencias por grado: {white} blanca · {blue} azul · {purple} morada · {brown} café",
+        "empty": "No hay alumnos activos para mostrar la distribución de cinturones."
+      },
+      "franjaHeatmap": {
+        "heading": "Asistencia promedio por franja",
+        "caption": "Últimas 4 semanas",
+        "empty": "No hay clases programadas para mostrar el mapa de calor.",
+        "bands": {
+          "morning": "Mañana",
+          "midday": "Mediodía",
+          "afternoon": "Tarde",
+          "evening": "Noche"
+        }
+      },
+      "promotionQueue": {
+        "eligibleCount": "{count, plural, one {# elegible} other {# elegibles}}",
+        "stripeRow": "{current} / {target} · {ordinal}.ª franja {belt}",
+        "examRow": "{current} / {target} · examen de {belt}",
+        "upcomingHeading": "Próximos",
+        "upcomingRow": "{current} / {target} · faltan {remaining}"
+      },
+      "contact": {
+        "heading": "Alumnos por contactar",
+        "caption": "Sin asistir hace {days}+ días",
+        "empty": "Ningún alumno lleva más de {days} días sin asistir.",
+        "neverAttended": "Nunca ha asistido",
+        "table": {
+          "name": "Alumno",
+          "academy": "Academia",
+          "phone": "Teléfono",
+          "lastAttendance": "Última asistencia",
+          "daysAbsent": "Días sin asistir",
+          "payment": "Pago",
+          "actions": "Acciones"
+        },
+        "whatsappButton": "WhatsApp",
+        "contactMessage": "Hola {name}, te extrañamos en el tatami. ¿Todo bien? Esperamos verte pronto en clase."
+      }
+    },
     "analytics": {
       "heading": "Analítica",
       "exportCsv": "Exportar CSV",
