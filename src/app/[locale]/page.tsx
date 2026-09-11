@@ -40,7 +40,7 @@ export default async function HomePage({
           <h1 className="text-3xl font-bold sm:text-4xl">{t("heading")}</h1>
           <p className="max-w-xl text-lg text-muted-foreground">{t("subheading")}</p>
           <div className="flex flex-wrap items-center justify-center gap-4 pt-2">
-            <Button size="lg" render={<a href={`/${locale}/signup`} />}>
+            <Button size="lg" nativeButton={false} render={<a href={`/${locale}/signup`} />}>
               {t("cta")}
             </Button>
             <a href={`/${locale}/login`} className="text-sm underline">
