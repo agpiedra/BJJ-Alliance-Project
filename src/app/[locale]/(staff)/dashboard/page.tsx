@@ -4,7 +4,7 @@ import { academyScopeWhere, requireStaffSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/prisma";
 import { ZONE } from "@/lib/scheduling/zone";
 import { BeltBar } from "@/components/belt-graphic/belt-bar";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { StatRow, StatTile } from "@/components/ui/stat-tile";
 import { BarList, type BarListItem } from "@/components/ui/bar-list";
 import { Heatmap, type HeatmapCell } from "@/components/ui/heatmap";
@@ -31,11 +31,17 @@ import { nextBelt } from "@/lib/students/eligibility";
 import { getWeeklyAttendanceTrend } from "@/lib/analytics/retention";
 import { getBeltDistribution } from "@/lib/analytics/progression";
 import type { AnalyticsFilters } from "@/lib/analytics/filters";
-import { getFranjaHeatmap, FRANJA_DAY_ORDER, TIME_BAND_ORDER } from "@/lib/analytics/franja-heatmap";
+import {
+  getFranjaHeatmap,
+  FRANJA_DAY_ORDER,
+  FRANJA_WINDOW_WEEKS,
+  TIME_BAND_ORDER,
+} from "@/lib/analytics/franja-heatmap";
 import { listStudentsToContact, CONTACT_THRESHOLD_DAYS, type ContactPaymentStatus } from "@/lib/students/contact-list";
 import { formatTimestampInAcademyZone } from "@/lib/format-date";
 import { ConfirmPromotionButton } from "./confirm-promotion-button";
 import { WeeklyAttendanceChart } from "./weekly-attendance-chart";
+import { buildWhatsAppLink } from "./whatsapp-link";
 import type { Belt, Prisma } from "@/generated/prisma/client";
 import { cn } from "cn";
 
@@ -43,6 +49,12 @@ import { cn } from "cn";
 // data that can change without a redeploy, so this page must never be
 // statically frozen at build time.
 export const dynamic = "force-dynamic";
+
+/** §4.1 Task 2a's "8-week line+area chart" window — interpolated into the
+ * chart's caption (`panel.weeklyChart.caption`) so the copy can never drift
+ * from the actual query range, the same way `CONTACT_THRESHOLD_DAYS` and
+ * `FRANJA_WINDOW_WEEKS` are interpolated into their own captions. */
+const WEEKLY_CHART_WINDOW_WEEKS = 8;
 
 const BELT_BAR_COLOR_CLASS: Record<Belt, string> = {
   WHITE: "bg-belt-white",
@@ -98,21 +110,6 @@ function paymentStatusLabel(status: ContactPaymentStatus, tPaymentStatus: (key: 
   if (status === "OVERDUE") return tPaymentStatus("overdue");
   if (status === "NOT_RECORDED") return tPaymentStatus("notRecorded");
   return tPaymentStatus(status);
-}
-
-/**
- * `wa.me` deep link with a pre-filled message (REDESIGN_BRIEF.md §4.1 Task
- * 4). Strips everything but digits, then prepends Costa Rica's country code
- * only if it isn't already there — every stored/seeded phone in this app is a
- * plain 8-digit local number with no country code (see
- * `tests/integration/students-roster.test.ts`'s fixtures), so this always
- * ends up prefixing 506 in practice, but the check stays explicit rather than
- * assuming the stored shape never changes.
- */
-function buildWhatsAppLink(phone: string, message: string): string {
-  const digits = phone.replace(/\D/g, "");
-  const withCountryCode = digits.startsWith("506") ? digits : `506${digits}`;
-  return `https://wa.me/${withCountryCode}?text=${encodeURIComponent(message)}`;
 }
 
 export default async function DashboardPage() {
@@ -240,8 +237,13 @@ export default async function DashboardPage() {
   let beltDistribution: Array<{ belt: Belt; count: number }> = [];
   let stripeThresholdByBelt = new Map<Belt, number>();
   if (canViewOverduePayments) {
+    // `getWeeklyAttendanceTrend`'s bucket list runs `from.startOf("week")` to
+    // `to.startOf("week")` inclusive, so `from` must already sit on a week
+    // boundary `WEEKLY_CHART_WINDOW_WEEKS - 1` weeks back — otherwise the
+    // range spans one extra bucket, and that leftmost bucket only counts
+    // partial data (`occurredAt >= from`, not from the start of that week).
     const eightWeekFilters: AnalyticsFilters = {
-      from: now.minus({ weeks: 8 }).startOf("day"),
+      from: now.minus({ weeks: WEEKLY_CHART_WINDOW_WEEKS - 1 }).startOf("week"),
       to: now.endOf("day"),
       academyId: null,
     };
@@ -277,7 +279,11 @@ export default async function DashboardPage() {
   const franjaCells: HeatmapCell[][] = TIME_BAND_ORDER.map((_, bandIndex) =>
     FRANJA_DAY_ORDER.map((_, dayIndex) => ({ value: franjaGrid[dayIndex][bandIndex].average })),
   );
-  const franjaHasData = franjaCells.some((row) => row.some((cell) => cell.value !== null));
+  // Same "don't render a full grid of zeros" guard `WeeklyAttendanceChart`
+  // already applies to its own data (`data.some(p => p.count > 0)`) — a
+  // non-null cell with a 0 average is scheduled classes with zero recorded
+  // attendance, not real signal to show a heatmap over.
+  const franjaHasData = franjaCells.some((row) => row.some((cell) => cell.value !== null && cell.value > 0));
 
   // §4.1 Task 3b: "Cola de promociones" row text ("29 / 30 · 4.ª franja
   // blanca" / "63 / 65 · examen de morada"). `PromotionCandidate` alone
@@ -384,11 +390,13 @@ export default async function DashboardPage() {
       {canViewOverduePayments && (
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-[7fr_5fr]">
           <Card>
-            <div className="flex items-baseline justify-between gap-2 border-b border-border px-4 pb-3">
-              <h2 className="font-heading text-base font-medium">{t("panel.weeklyChart.heading")}</h2>
-              <span className="text-xs text-muted-foreground">{t("panel.weeklyChart.caption")}</span>
-            </div>
-            <CardContent className="pt-4">
+            <CardHeader className="border-b">
+              <CardTitle>{t("panel.weeklyChart.heading")}</CardTitle>
+              <CardAction className="text-xs text-muted-foreground">
+                {t("panel.weeklyChart.caption", { weeks: WEEKLY_CHART_WINDOW_WEEKS })}
+              </CardAction>
+            </CardHeader>
+            <CardContent>
               <WeeklyAttendanceChart
                 data={weeklyTrend}
                 emptyMessage={t("panel.weeklyChart.empty")}
@@ -398,10 +406,10 @@ export default async function DashboardPage() {
           </Card>
 
           <Card>
-            <div className="flex items-baseline justify-between gap-2 border-b border-border px-4 pb-3">
-              <h2 className="font-heading text-base font-medium">{t("panel.beltDistribution.heading")}</h2>
-            </div>
-            <CardContent className="flex flex-col gap-4 pt-4">
+            <CardHeader className="border-b">
+              <CardTitle>{t("panel.beltDistribution.heading")}</CardTitle>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-4">
               {beltDistributionHasData ? (
                 <BarList items={beltBarItems} />
               ) : (
@@ -423,11 +431,13 @@ export default async function DashboardPage() {
       {/* §4.1 Task 3: franja heatmap + promotion queue/"Próximos". */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[7fr_5fr]">
         <Card>
-          <div className="flex items-baseline justify-between gap-2 border-b border-border px-4 pb-3">
-            <h2 className="font-heading text-base font-medium">{t("panel.franjaHeatmap.heading")}</h2>
-            <span className="text-xs text-muted-foreground">{t("panel.franjaHeatmap.caption")}</span>
-          </div>
-          <CardContent className="pt-4">
+          <CardHeader className="border-b">
+            <CardTitle>{t("panel.franjaHeatmap.heading")}</CardTitle>
+            <CardAction className="text-xs text-muted-foreground">
+              {t("panel.franjaHeatmap.caption", { weeks: FRANJA_WINDOW_WEEKS })}
+            </CardAction>
+          </CardHeader>
+          <CardContent>
             {franjaHasData ? (
               <Heatmap rowLabels={franjaRowLabels} colLabels={franjaColLabels} cells={franjaCells} />
             ) : (
@@ -437,13 +447,13 @@ export default async function DashboardPage() {
         </Card>
 
         <Card>
-          <div className="flex items-baseline justify-between gap-2 border-b border-border px-4 pb-3">
-            <h2 className="font-heading text-base font-medium">{t("promotionQueue.heading")}</h2>
-            <span className="text-xs text-muted-foreground">
+          <CardHeader className="border-b">
+            <CardTitle>{t("promotionQueue.heading")}</CardTitle>
+            <CardAction className="text-xs text-muted-foreground">
               {t("panel.promotionQueue.eligibleCount", { count: promotionQueue.length })}
-            </span>
-          </div>
-          <CardContent className="flex flex-col gap-3 pt-4">
+            </CardAction>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-3">
             {promotionQueue.length === 0 ? (
               <EmptyState message={t("promotionQueue.empty")} />
             ) : (
@@ -488,13 +498,13 @@ export default async function DashboardPage() {
 
       {/* §4.1 Task 4: "Alumnos por contactar" — every role, no gate. */}
       <Card>
-        <div className="flex items-baseline justify-between gap-2 border-b border-border px-4 pb-3">
-          <h2 className="font-heading text-base font-medium">{t("panel.contact.heading")}</h2>
-          <span className="text-xs text-muted-foreground">
+        <CardHeader className="border-b">
+          <CardTitle>{t("panel.contact.heading")}</CardTitle>
+          <CardAction className="text-xs text-muted-foreground">
             {t("panel.contact.caption", { days: CONTACT_THRESHOLD_DAYS })}
-          </span>
-        </div>
-        <CardContent className="pt-4">
+          </CardAction>
+        </CardHeader>
+        <CardContent>
           {contactList.length === 0 ? (
             <EmptyState message={t("panel.contact.empty", { days: CONTACT_THRESHOLD_DAYS })} />
           ) : (
@@ -546,14 +556,18 @@ export default async function DashboardPage() {
                         </Pill>
                       </DataTableCell>
                       <DataTableCell>
-                        <a
-                          href={waLink}
-                          target="_blank"
-                          rel="noreferrer"
-                          className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
-                        >
-                          {t("panel.contact.whatsappButton")}
-                        </a>
+                        {waLink ? (
+                          <a
+                            href={waLink}
+                            target="_blank"
+                            rel="noreferrer"
+                            className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
+                          >
+                            {t("panel.contact.whatsappButton")}
+                          </a>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">{t("panel.contact.whatsappUnavailable")}</span>
+                        )}
                       </DataTableCell>
                     </DataTableRow>
                   );
@@ -570,10 +584,10 @@ export default async function DashboardPage() {
           this is navigation convenience, not the access control. */}
       {staffSession.role === "ADMIN" && (
         <Card>
-          <div className="border-b border-border px-4 pb-3">
-            <h2 className="font-heading text-base font-medium">{t("adminSection")}</h2>
-          </div>
-          <CardContent className="flex flex-wrap gap-2 pt-4">
+          <CardHeader className="border-b">
+            <CardTitle>{t("adminSection")}</CardTitle>
+          </CardHeader>
+          <CardContent className="flex flex-wrap gap-2">
             <a
               href={`/${locale}/admin/kiosk-tokens`}
               className={cn(buttonVariants({ variant: "outline", size: "sm" }))}

@@ -82,23 +82,36 @@ export async function listStudentsToContact(
   });
   if (students.length === 0) return [];
 
+  // One query for the whole cohort's last attendance — same
+  // `groupBy`/`_max` pattern `getRetentionList` (src/lib/analytics/retention.ts)
+  // already uses — instead of a per-student `findFirst`. Only THEN do the
+  // heavier `getAtBeltSummary`/`getCurrentPaymentPeriod` queries run, and
+  // only for the students who actually qualify (7+ days absent or never
+  // attended), not all ~150 active students on every dashboard load.
+  const studentIds = students.map((student) => student.id);
+  const lastAttendances = await prisma.attendanceRecord.groupBy({
+    by: ["studentId"],
+    where: { studentId: { in: studentIds }, type: "CHECKIN" },
+    _max: { occurredAt: true },
+  });
+  const lastAttendanceByStudentId = new Map(lastAttendances.map((a) => [a.studentId, a._max.occurredAt ?? null]));
+
+  const qualifying = students
+    .map((student) => {
+      const lastAttendanceAt = lastAttendanceByStudentId.get(student.id) ?? null;
+      const daysAbsent = lastAttendanceAt
+        ? Math.floor(now.diff(DateTime.fromJSDate(lastAttendanceAt, { zone: ZONE }), "days").days)
+        : null;
+      return { student, lastAttendanceAt, daysAbsent };
+    })
+    .filter(({ daysAbsent }) => isAbsentEnoughToContact(daysAbsent, thresholdDays));
+
   const results = await Promise.all(
-    students.map(async (student) => {
-      const [lastAttendance, summary, currentPeriod] = await Promise.all([
-        prisma.attendanceRecord.findFirst({
-          where: { studentId: student.id, type: "CHECKIN" },
-          orderBy: { occurredAt: "desc" },
-          select: { occurredAt: true },
-        }),
+    qualifying.map(async ({ student, lastAttendanceAt, daysAbsent }) => {
+      const [summary, currentPeriod] = await Promise.all([
         getAtBeltSummary(student.id),
         getCurrentPaymentPeriod(student.id, today),
       ]);
-
-      const daysAbsent = lastAttendance
-        ? Math.floor(now.diff(DateTime.fromJSDate(lastAttendance.occurredAt, { zone: ZONE }), "days").days)
-        : null;
-
-      if (!isAbsentEnoughToContact(daysAbsent, thresholdDays)) return null;
 
       const paymentStatus: ContactPaymentStatus = isOverdue(currentPeriod, today)
         ? "OVERDUE"
@@ -115,14 +128,12 @@ export async function listStudentsToContact(
         currentBelt: summary.currentBelt,
         atBeltCount: summary.atBeltCount,
         nextStripeAt: summary.nextStripeAt,
-        lastAttendanceAt: lastAttendance?.occurredAt ?? null,
+        lastAttendanceAt,
         daysAbsent,
         paymentStatus,
       } satisfies ContactListEntry;
     }),
   );
 
-  return results
-    .filter((entry): entry is ContactListEntry => entry !== null)
-    .sort((a, b) => (b.daysAbsent ?? Infinity) - (a.daysAbsent ?? Infinity));
+  return results.sort((a, b) => (b.daysAbsent ?? Infinity) - (a.daysAbsent ?? Infinity));
 }

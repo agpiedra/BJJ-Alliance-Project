@@ -96,19 +96,6 @@
     "promotionQueue": {
       "heading": "Promotion queue",
       "empty": "No students are currently eligible for a stripe or belt promotion.",
-      "columns": {
-        "name": "Name",
-        "academy": "Academy",
-        "belt": "Belt",
-        "status": "Status",
-        "atBeltCount": "At-belt count",
-        "actions": "Actions"
-      },
-      "status": {
-        "stripe-eligible": "Stripe eligible",
-        "exam-eligible": "Exam eligible",
-        "approaching": "Approaching"
-      },
       "confirmButton": "Confirm promotion",
       "confirm": "Confirm this promotion? This will be recorded permanently in the student's promotion history.",
       "success": "Promotion confirmed.",
@@ -120,25 +107,9 @@
         "generic": "Could not confirm this promotion."
       }
     },
-    "approaching": {
-      "heading": "Approaching",
-      "empty": "No students are approaching their next stripe or exam threshold.",
-      "columns": {
-        "name": "Name",
-        "academy": "Academy",
-        "belt": "Belt",
-        "remainingToNextStripe": "Classes remaining"
-      }
-    },
     "overduePayments": {
       "heading": "Payments overdue",
-      "empty": "No students have an overdue payment.",
-      "neverPaid": "Never paid",
-      "columns": {
-        "name": "Name",
-        "academy": "Academy",
-        "lastPaidMonth": "Last paid month"
-      }
+      "empty": "No students have an overdue payment."
     },
     "panel": {
       "academyJoin": "and",
@@ -161,7 +132,7 @@
       },
       "weeklyChart": {
         "heading": "Weekly attendance",
-        "caption": "Last 8 weeks",
+        "caption": "Last {weeks} weeks",
         "empty": "Not enough recorded attendance yet to show a trend.",
         "countLabel": "Check-ins"
       },
@@ -172,7 +143,7 @@
       },
       "franjaHeatmap": {
         "heading": "Average attendance by time band",
-        "caption": "Last 4 weeks",
+        "caption": "Last {weeks} weeks",
         "empty": "No scheduled classes to show a heatmap for.",
         "bands": {
           "morning": "Morning",
@@ -203,6 +174,7 @@
           "actions": "Actions"
         },
         "whatsappButton": "WhatsApp",
+        "whatsappUnavailable": "No WhatsApp",
         "contactMessage": "Hi {name}, we miss you on the mats! Everything okay? Hope to see you in class soon."
       }
     },

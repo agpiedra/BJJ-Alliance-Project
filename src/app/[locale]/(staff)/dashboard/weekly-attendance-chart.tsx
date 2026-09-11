@@ -24,9 +24,9 @@ interface DotRenderProps {
  * pattern for a per-point custom dot (a `dot` render-prop function).
  *
  * Tokens only (Rule 1): every stroke/fill here is a `var(--…)` CSS custom
- * property, never a literal hex — unlike the pre-existing (out-of-scope)
- * `retention-panel.tsx`/`class-popularity-panel.tsx`, which still hardcode
- * `#2563eb`.
+ * property, never a hardcoded color literal — unlike the pre-existing
+ * (out-of-scope) `retention-panel.tsx`/`class-popularity-panel.tsx`, which
+ * still hardcode a literal blue.
  */
 export function WeeklyAttendanceChart({
   data,
