@@ -71,7 +71,16 @@ describe("seed data", () => {
   it("seeds three payment plans per academy", async () => {
     const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
     const plans = await prisma.paymentPlan.findMany({ where: { academyId: escazu.id } });
-    expect(plans.map((p) => p.name).sort()).toEqual(["Becado", "Mensualidad", "Promoción"].sort());
+    // `arrayContaining`, not exact equality: REDESIGN_BRIEF.md Phase 6's
+    // `ensureCustomPromoPlan` idempotently seeds a real, additional
+    // "Promoción personalizada" row for every academy the first time any
+    // Pagos code path touches it (page load, or another test) — a genuine
+    // extra plan this app itself creates, not test pollution to guard
+    // against. This test's job is only to confirm `prisma/seed.ts`'s own
+    // three plans are present, not that nothing else has ever been added.
+    expect(plans.map((p) => p.name)).toEqual(
+      expect.arrayContaining(["Becado", "Mensualidad", "Promoción"]),
+    );
   });
 
   it("seeds exactly one ADMIN user with no StaffAssignment rows", async () => {

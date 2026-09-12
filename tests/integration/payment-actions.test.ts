@@ -1,9 +1,12 @@
 import "dotenv/config";
+import { DateTime } from "luxon";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PrismaClient } from "../../src/generated/prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { requireEnv } from "../../src/lib/env";
 import { digestLookupSecret, hashSecret } from "../../src/lib/crypto";
+import { ZONE } from "../../src/lib/scheduling/zone";
+import { ensureCustomPromoPlan, CUSTOM_PROMO_PLAN_NAME } from "../../src/lib/payments/ensure-custom-promo-plan";
 
 // `recordPayment` reaches `requireStaffSession()` -> `getStaffSession()` ->
 // next-auth's `auth()`, which needs a real HTTP request's cookies to resolve
@@ -19,7 +22,7 @@ vi.mock("@/auth", () => ({
   auth: () => Promise.resolve(currentSession),
 }));
 
-const { recordPayment } = await import("../../src/app/[locale]/(staff)/students/[id]/payment-actions");
+const { recordPayment, markPaymentPaid } = await import("../../src/lib/payments/payment-actions");
 
 const adapter = new PrismaPg({ connectionString: requireEnv("DATABASE_URL") });
 const prisma = new PrismaClient({ adapter });
@@ -443,5 +446,228 @@ describe("recordPayment", () => {
 
     const count = await prisma.paymentPeriod.count({ where: { studentId: student.id } });
     expect(count).toBe(0);
+  });
+
+  it("records a `method` and it round-trips on the `PaymentPeriod` row", async () => {
+    const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+    const plan = await prisma.paymentPlan.findFirstOrThrow({
+      where: { academyId: escazu.id, name: "Mensualidad" },
+    });
+    const admin = await makeStaffUser("ADMIN", "record-method-admin");
+    const student = await makeStudent(escazu.id);
+
+    currentSession = { user: { id: admin.id, role: "ADMIN" } };
+    const result = await recordPayment(
+      {},
+      formData({
+        studentId: student.id,
+        year: "2026",
+        month: "6",
+        planId: plan.id,
+        status: "PAID",
+        amount: "45000",
+        method: "SINPE",
+      }),
+    );
+    expect(result.ok).toBe(true);
+
+    const period = await paymentPeriodFor(student.id, 2026, 6);
+    expect(period?.method).toBe("SINPE");
+  });
+
+  it("a custom-promotion plan without a `promoName` is rejected with promoNameRequired, writing no row", async () => {
+    const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+    const promoPlan = await ensureCustomPromoPlan(escazu.id);
+    const admin = await makeStaffUser("ADMIN", "record-promo-noname-admin");
+    const student = await makeStudent(escazu.id);
+
+    currentSession = { user: { id: admin.id, role: "ADMIN" } };
+    const result = await recordPayment(
+      {},
+      formData({ studentId: student.id, year: "2026", month: "6", planId: promoPlan.id, status: "PROMO" }),
+    );
+    expect(result.error).toBe("promoNameRequired");
+
+    const period = await paymentPeriodFor(student.id, 2026, 6);
+    expect(period).toBeNull();
+  });
+
+  it("a custom promotion WITH a promoName records the promo fields, including a recurring flag", async () => {
+    const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+    const promoPlan = await ensureCustomPromoPlan(escazu.id);
+    expect(promoPlan.name).toBe(CUSTOM_PROMO_PLAN_NAME);
+    const admin = await makeStaffUser("ADMIN", "record-promo-admin");
+    const student = await makeStudent(escazu.id);
+
+    currentSession = { user: { id: admin.id, role: "ADMIN" } };
+    const result = await recordPayment(
+      {},
+      formData({
+        studentId: student.id,
+        year: "2026",
+        month: "6",
+        planId: promoPlan.id,
+        status: "PROMO",
+        amount: "0",
+        promoName: "Beca competidor",
+        promoReason: "Compite por la academia",
+        promoRecurring: "on",
+      }),
+    );
+    expect(result.ok).toBe(true);
+
+    const period = await paymentPeriodFor(student.id, 2026, 6);
+    expect(period).toMatchObject({
+      promoName: "Beca competidor",
+      promoReason: "Compite por la academia",
+      promoRecurring: true,
+    });
+    expect(period!.amount?.toNumber()).toBe(0);
+  });
+
+  it("a period more than one month in the future (relative to real current CR time) is rejected", async () => {
+    const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+    const plan = await prisma.paymentPlan.findFirstOrThrow({
+      where: { academyId: escazu.id, name: "Mensualidad" },
+    });
+    const admin = await makeStaffUser("ADMIN", "record-future-admin");
+    const student = await makeStudent(escazu.id);
+    const tooFar = DateTime.now().setZone(ZONE).plus({ months: 2 });
+
+    currentSession = { user: { id: admin.id, role: "ADMIN" } };
+    const result = await recordPayment(
+      {},
+      formData({
+        studentId: student.id,
+        year: String(tooFar.year),
+        month: String(tooFar.month),
+        planId: plan.id,
+        status: "PAID",
+      }),
+    );
+    expect(result.error).toBe("periodTooFarInFuture");
+
+    const count = await prisma.paymentPeriod.count({ where: { studentId: student.id } });
+    expect(count).toBe(0);
+  });
+
+  it("a period exactly one month in the future (relative to real current CR time) is accepted", async () => {
+    const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+    const plan = await prisma.paymentPlan.findFirstOrThrow({
+      where: { academyId: escazu.id, name: "Mensualidad" },
+    });
+    const admin = await makeStaffUser("ADMIN", "record-nextmonth-admin");
+    const student = await makeStudent(escazu.id);
+    const nextMonth = DateTime.now().setZone(ZONE).plus({ months: 1 });
+
+    currentSession = { user: { id: admin.id, role: "ADMIN" } };
+    const result = await recordPayment(
+      {},
+      formData({
+        studentId: student.id,
+        year: String(nextMonth.year),
+        month: String(nextMonth.month),
+        planId: plan.id,
+        status: "PAID",
+      }),
+    );
+    expect(result.ok).toBe(true);
+  });
+});
+
+describe("ensureCustomPromoPlan", () => {
+  it("is idempotent: calling it twice for the same academy returns the SAME row, not a duplicate", async () => {
+    const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+
+    const first = await ensureCustomPromoPlan(escazu.id);
+    const second = await ensureCustomPromoPlan(escazu.id);
+    expect(second.id).toBe(first.id);
+
+    const count = await prisma.paymentPlan.count({
+      where: { academyId: escazu.id, name: CUSTOM_PROMO_PLAN_NAME },
+    });
+    expect(count).toBe(1);
+  });
+
+  it("seeds a SEPARATE row per academy, both named identically", async () => {
+    const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+    const escalante = await prisma.academy.findUniqueOrThrow({ where: { slug: "escalante" } });
+
+    const escazuPlan = await ensureCustomPromoPlan(escazu.id);
+    const escalantePlan = await ensureCustomPromoPlan(escalante.id);
+    expect(escazuPlan.id).not.toBe(escalantePlan.id);
+    expect(escazuPlan.name).toBe(CUSTOM_PROMO_PLAN_NAME);
+    expect(escalantePlan.name).toBe(CUSTOM_PROMO_PLAN_NAME);
+  });
+});
+
+describe("markPaymentPaid", () => {
+  afterAll(cleanup);
+
+  beforeEach(() => {
+    currentSession = null;
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("flips an existing PENDING row to PAID, preserving its plan/amount", async () => {
+    const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+    const plan = await prisma.paymentPlan.findFirstOrThrow({
+      where: { academyId: escazu.id, name: "Mensualidad" },
+    });
+    const admin = await makeStaffUser("ADMIN", "markpaid-existing-admin");
+    const student = await makeStudent(escazu.id);
+    await prisma.paymentPeriod.create({
+      data: {
+        studentId: student.id,
+        academyId: escazu.id,
+        year: 2026,
+        month: 5,
+        planId: plan.id,
+        status: "PENDING",
+        amount: 45000,
+        recordedById: admin.id,
+      },
+    });
+
+    currentSession = { user: { id: admin.id, role: "ADMIN" } };
+    const result = await markPaymentPaid(student.id, 2026, 5);
+    expect(result.ok).toBe(true);
+
+    const period = await paymentPeriodFor(student.id, 2026, 5);
+    expect(period?.status).toBe("PAID");
+    expect(period?.planId).toBe(plan.id);
+    expect(period?.amount?.toNumber()).toBe(45000);
+  });
+
+  it("creates a fresh PAID row, falling back to the academy's Mensualidad plan, when nothing was ever recorded", async () => {
+    const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+    const mensualidad = await prisma.paymentPlan.findFirstOrThrow({
+      where: { academyId: escazu.id, name: "Mensualidad" },
+    });
+    const admin = await makeStaffUser("ADMIN", "markpaid-fresh-admin");
+    const student = await makeStudent(escazu.id);
+
+    currentSession = { user: { id: admin.id, role: "ADMIN" } };
+    const result = await markPaymentPaid(student.id, 2026, 6);
+    expect(result.ok).toBe(true);
+
+    const period = await paymentPeriodFor(student.id, 2026, 6);
+    expect(period?.status).toBe("PAID");
+    expect(period?.planId).toBe(mensualidad.id);
+  });
+
+  it("an INSTRUCTOR session is rejected (role gate), matching recordPayment's own", async () => {
+    const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+    const instructor = await makeStaffUser("INSTRUCTOR", "markpaid-instructor", escazu.id);
+    const student = await makeStudent(escazu.id);
+
+    currentSession = { user: { id: instructor.id, role: "INSTRUCTOR" } };
+    await expect(markPaymentPaid(student.id, 2026, 7)).rejects.toThrow("FORBIDDEN");
+
+    const period = await paymentPeriodFor(student.id, 2026, 7);
+    expect(period).toBeNull();
   });
 });

@@ -9,6 +9,7 @@ import { getAtBeltSummary } from "@/lib/students/attendance-summary";
 import { formatTimestampInAcademyZone } from "@/lib/format-date";
 import { formatMonthYear } from "@/lib/format-month";
 import { currentCrDateParts } from "@/lib/payments/get-current-period";
+import { ensureCustomPromoPlan } from "@/lib/payments/ensure-custom-promo-plan";
 import { getStudentForStaff } from "./get-student";
 import { getPromotionHistory } from "./get-promotion-history";
 import { getPaymentHistory } from "./get-payment-history";
@@ -17,7 +18,7 @@ import { ArchiveStudentButton } from "./archive-student-button";
 import { ApproveStudentButton } from "./approve-student-button";
 import { RegenerateCodeButton } from "./regenerate-code-button";
 import { AddAdjustmentForm } from "./add-adjustment-form";
-import { RecordPaymentForm } from "./record-payment-form";
+import { RecordPaymentForm } from "@/components/payments/record-payment-form";
 
 // Staff data an admin/director/instructor could change without a redeploy —
 // never frozen at build time, same reasoning as the roster page.
@@ -72,11 +73,19 @@ export default async function StudentDetailPage({
   // `recordPayment` re-checks ADMIN/DIRECTOR + plan-academy scope itself —
   // this fetch just avoids the extra query/render when the form won't be
   // shown at all (same `canEdit` gate as edit/archive above).
+  //
+  // `ensureCustomPromoPlan` (REDESIGN_BRIEF.md Phase 6 ruling #2) guarantees
+  // this academy's "Promoción personalizada" plan row exists before the
+  // shared `RecordPaymentForm` needs to offer it, same as the new
+  // `/payments` route.
+  if (canEdit) {
+    await ensureCustomPromoPlan(student.homeAcademyId);
+  }
   const paymentPlans = canEdit
     ? await prisma.paymentPlan.findMany({
         where: { academyId: student.homeAcademyId, active: true },
         orderBy: { name: "asc" },
-        select: { id: true, name: true },
+        select: { id: true, name: true, academyId: true },
       })
     : [];
   const { year: currentYear, month: currentMonth } = currentCrDateParts();
@@ -311,13 +320,30 @@ export default async function StudentDetailPage({
           {/* ADMIN/DIRECTOR only, same as edit/archive above — the real
               enforcement is server-side in recordPayment itself
               (requireStaffSession(["ADMIN", "DIRECTOR"]) + a fresh
-              isAcademyInScope + plan-academy cross-check). */}
-          <RecordPaymentForm
-            studentId={student.id}
-            plans={paymentPlans}
-            defaultYear={currentYear}
-            defaultMonth={currentMonth}
-          />
+              isAcademyInScope + plan-academy cross-check). Same shared
+              `RecordPaymentForm` the new `/payments` route uses
+              (REDESIGN_BRIEF.md §6.1) — locked to this one student here,
+              wrapped in the same <details> toggle this page has always used. */}
+          <details className="rounded border p-4">
+            <summary className="cursor-pointer font-medium">{tDetail("recordPayment.toggle")}</summary>
+            <div className="mt-4">
+              <RecordPaymentForm
+                students={[
+                  {
+                    id: student.id,
+                    firstName: student.firstName,
+                    lastName: student.lastName,
+                    academyId: student.homeAcademyId,
+                    academyName: student.homeAcademy.name,
+                  },
+                ]}
+                plans={paymentPlans}
+                lockedStudentId={student.id}
+                canManagePromotions={canEdit}
+                defaults={{ month: `${currentYear}-${String(currentMonth).padStart(2, "0")}` }}
+              />
+            </div>
+          </details>
           <ArchiveStudentButton
             studentId={student.id}
             disabled={student.status === "ARCHIVED"}

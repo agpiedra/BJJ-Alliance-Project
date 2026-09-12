@@ -359,6 +359,7 @@
   "staffSidebar": {
     "dashboard": "Panel",
     "students": "Students",
+    "payments": "Payments",
     "analytics": "Analytics",
     "adminSchedule": "Schedule",
     "adminKioskTokens": "Kiosk",
@@ -504,18 +505,37 @@
       },
       "recordPayment": {
         "toggle": "Record a payment",
-        "year": "Year",
-        "month": "Month",
+        "student": "Student",
+        "studentPlaceholder": "Select a student",
+        "period": "Period",
         "plan": "Plan",
         "planPlaceholder": "Select a plan",
+        "method": "Method",
+        "methodPlaceholder": "Unspecified",
         "status": "Status",
-        "amount": "Amount (optional)",
+        "amount": "Amount (₡)",
         "notes": "Notes (optional)",
         "submit": "Save payment",
+        "cancel": "Cancel",
         "success": "Payment recorded.",
         "invalid": "Please check the form for errors.",
         "notFound": "Could not record this payment.",
-        "invalidPlan": "That plan does not belong to this student's academy."
+        "invalidPlan": "That plan does not belong to this student's academy.",
+        "periodTooFarInFuture": "The period cannot be more than one month in the future.",
+        "promoNameRequired": "The promotion name is required.",
+        "footerHint": "Marking \"Paid\" immediately updates the student's status on the roster, portal, and reports.",
+        "promo": {
+          "heading": "Custom promotion",
+          "name": "Promotion name",
+          "namePlaceholder": "E.g.: Competitor scholarship, 2-for-1 siblings",
+          "amount": "Agreed amount (₡)",
+          "amountPlaceholder": "0 for a full waiver",
+          "reason": "Reason",
+          "reasonPlaceholder": "E.g.: competes for the academy at the November Open",
+          "recurring": "Repeat this promotion every month until removed",
+          "note": "Only the director and admin see this block. Who granted it is recorded.",
+          "instructorHint": "Ask the director to record the promotion."
+        }
       },
       "comingLater": "Coming in a later phase.",
       "edit": {
@@ -566,6 +586,68 @@
         "invalid": "Please check the form for errors.",
         "notFound": "Could not add this adjustment.",
         "archived": "This student is archived — attendance can't be adjusted."
+      }
+    }
+  },
+  "payments": {
+    "eyebrow": "Alliance · Academy management",
+    "heading": "Payments",
+    "sub": "{month} · {academy} · manual recording — the app doesn't process charges.",
+    "academyJoin": "and",
+    "stats": {
+      "paid": { "label": "Current", "note": "of {total} active students" },
+      "pending": { "label": "Pending" },
+      "overdue": { "label": "Overdue" },
+      "promo": { "label": "Promotion or scholarship" }
+    },
+    "recordCard": {
+      "heading": "Record a payment",
+      "note": "Logged with your name and the time"
+    },
+    "statusCard": {
+      "heading": "This month's status",
+      "note": "{month} · {academy}"
+    },
+    "method": {
+      "SINPE": "SINPE Mobile",
+      "TRANSFERENCIA": "Bank transfer",
+      "EFECTIVO": "Cash",
+      "TARJETA": "Card"
+    },
+    "table": {
+      "filters": {
+        "search": "Search student",
+        "searchPlaceholder": "Search student…",
+        "status": "Filter by status",
+        "allStatuses": "All statuses",
+        "academy": "Filter by academy",
+        "bothAcademies": "Both academies"
+      },
+      "promoOrExempt": "Promotion or exempt",
+      "empty": "No student matches these filters.",
+      "columns": {
+        "student": "Student",
+        "academy": "Academy",
+        "plan": "Plan",
+        "amount": "Amount",
+        "method": "Method",
+        "recorded": "Recorded",
+        "status": "Status",
+        "actions": "Actions"
+      },
+      "noPlan": "—",
+      "promoPrefix": "Promotion",
+      "viewReceipt": "View receipt",
+      "edit": "Edit",
+      "markPaid": "Mark paid",
+      "toast": {
+        "success": "Payment marked as paid.",
+        "error": "Could not mark this payment. Please try again."
+      },
+      "receipt": {
+        "promoName": "Promotion",
+        "notes": "Notes",
+        "recordedBy": "Recorded by"
       }
     }
   },

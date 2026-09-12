@@ -359,6 +359,7 @@
   "staffSidebar": {
     "dashboard": "Panel",
     "students": "Alumnos",
+    "payments": "Pagos",
     "analytics": "Análisis",
     "adminSchedule": "Horario",
     "adminKioskTokens": "Kiosco",
@@ -504,18 +505,37 @@
       },
       "recordPayment": {
         "toggle": "Registrar un pago",
-        "year": "Año",
-        "month": "Mes",
+        "student": "Alumno",
+        "studentPlaceholder": "Selecciona un alumno",
+        "period": "Período",
         "plan": "Plan",
         "planPlaceholder": "Selecciona un plan",
+        "method": "Método",
+        "methodPlaceholder": "Sin especificar",
         "status": "Estado",
-        "amount": "Monto (opcional)",
+        "amount": "Monto (₡)",
         "notes": "Notas (opcional)",
         "submit": "Guardar pago",
+        "cancel": "Cancelar",
         "success": "Pago registrado.",
         "invalid": "Por favor revisa el formulario.",
         "notFound": "No se pudo registrar este pago.",
-        "invalidPlan": "Ese plan no pertenece a la academia de este estudiante."
+        "invalidPlan": "Ese plan no pertenece a la academia de este estudiante.",
+        "periodTooFarInFuture": "El período no puede ser más de un mes en el futuro.",
+        "promoNameRequired": "El nombre de la promoción es obligatorio.",
+        "footerHint": "Marcar «Pagado» actualiza de inmediato el estado del alumno en el roster, el portal y los reportes.",
+        "promo": {
+          "heading": "Promoción personalizada",
+          "name": "Nombre de la promoción",
+          "namePlaceholder": "Ej.: Beca competidor, 2×1 hermanos",
+          "amount": "Monto acordado (₡)",
+          "amountPlaceholder": "0 para exonerar por completo",
+          "reason": "Motivo",
+          "reasonPlaceholder": "Ej.: compite por la academia en el Open de noviembre",
+          "recurring": "Repetir esta promoción todos los meses hasta que la quite",
+          "note": "Solo el director y el admin ven este bloque. Queda registrado quién la otorgó.",
+          "instructorHint": "Pedile al director que registre la promoción."
+        }
       },
       "comingLater": "Disponible en una fase posterior.",
       "edit": {
@@ -566,6 +586,68 @@
         "invalid": "Por favor revisa el formulario.",
         "notFound": "No se pudo agregar este ajuste.",
         "archived": "Este estudiante está archivado — no se puede ajustar su asistencia."
+      }
+    }
+  },
+  "payments": {
+    "eyebrow": "Alliance · Gestión de academias",
+    "heading": "Pagos",
+    "sub": "{month} · {academy} · registro manual, la app no procesa cobros.",
+    "academyJoin": "y",
+    "stats": {
+      "paid": { "label": "Al día", "note": "de {total} alumnos activos" },
+      "pending": { "label": "Pendiente" },
+      "overdue": { "label": "Atrasado" },
+      "promo": { "label": "Promoción o beca" }
+    },
+    "recordCard": {
+      "heading": "Registrar pago",
+      "note": "Queda en bitácora con tu nombre y la hora"
+    },
+    "statusCard": {
+      "heading": "Estado del mes",
+      "note": "{month} · {academy}"
+    },
+    "method": {
+      "SINPE": "SINPE Móvil",
+      "TRANSFERENCIA": "Transferencia",
+      "EFECTIVO": "Efectivo",
+      "TARJETA": "Tarjeta"
+    },
+    "table": {
+      "filters": {
+        "search": "Buscar alumno",
+        "searchPlaceholder": "Buscar alumno…",
+        "status": "Filtrar por estado",
+        "allStatuses": "Todos los estados",
+        "academy": "Filtrar por sede",
+        "bothAcademies": "Ambas sedes"
+      },
+      "promoOrExempt": "Promoción o exonerado",
+      "empty": "Ningún alumno coincide con estos filtros.",
+      "columns": {
+        "student": "Alumno",
+        "academy": "Academia",
+        "plan": "Plan",
+        "amount": "Monto",
+        "method": "Método",
+        "recorded": "Registrado",
+        "status": "Estado",
+        "actions": "Acciones"
+      },
+      "noPlan": "—",
+      "promoPrefix": "Promoción",
+      "viewReceipt": "Ver recibo",
+      "edit": "Editar",
+      "markPaid": "Marcar pagado",
+      "toast": {
+        "success": "Pago marcado como pagado.",
+        "error": "No se pudo marcar el pago. Intentá de nuevo."
+      },
+      "receipt": {
+        "promoName": "Promoción",
+        "notes": "Notas",
+        "recordedBy": "Registrado por"
       }
     }
   },

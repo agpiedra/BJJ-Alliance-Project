@@ -1,4 +1,4 @@
-import { BarChart3, CalendarClock, KeyRound, LayoutDashboard, Users } from "lucide-react";
+import { BarChart3, CalendarClock, KeyRound, LayoutDashboard, Users, Wallet } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type { StaffSession } from "@/lib/auth/session";
 
@@ -19,8 +19,12 @@ export interface StaffNavItem {
 /**
  * Each `visible` check below is copied verbatim from the target page's own
  * existing role gate — never a new, independently-invented check:
- * - dashboard/students: every staff role already reaches these pages
- *   (`requireStaffSession()` with no role list).
+ * - dashboard/students/payments: every staff role already reaches these
+ *   pages (`requireStaffSession()` with no role list) — Pagos per
+ *   REDESIGN_BRIEF.md Phase 8's "instructor: admin layout minus Pagos WRITE
+ *   access" (a read-only view, not zero access; the page itself hides the
+ *   Registrar-pago card and write buttons from non-ADMIN/DIRECTOR sessions,
+ *   and `recordPayment`/`markPaymentPaid` re-enforce that gate server-side).
  * - analytics: the exact `session.role === "ADMIN" || session.role ===
  *   "DIRECTOR"` condition `dashboard/page.tsx`'s own `canViewOverduePayments`
  *   uses, which matches `dashboard/analytics/page.tsx`'s own
@@ -42,6 +46,13 @@ export const NAV_ITEMS: StaffNavItem[] = [
     href: "/students",
     labelKey: "students",
     icon: Users,
+    visible: () => true,
+    group: "operations",
+  },
+  {
+    href: "/payments",
+    labelKey: "payments",
+    icon: Wallet,
     visible: () => true,
     group: "operations",
   },
