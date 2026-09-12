@@ -1,6 +1,10 @@
 import { prisma } from "@/lib/prisma";
 import { academyScopeWhere, type StaffSession } from "@/lib/auth/session";
-import { currentCrDateParts, getCurrentPaymentPeriod, type CurrentPaymentPeriod } from "@/lib/payments/get-current-period";
+import {
+  currentCrDateParts,
+  getCurrentPaymentPeriodsForStudents,
+  type CurrentPaymentPeriod,
+} from "@/lib/payments/get-current-period";
 import { isOverdue } from "@/lib/payments/overdue";
 
 /**
@@ -42,6 +46,13 @@ function bucketFor(period: CurrentPaymentPeriod, overdue: boolean): PaymentBucke
  * "Registrar pago" card and the write actions in the table from
  * non-ADMIN/DIRECTOR sessions; `recordPayment` re-enforces that gate
  * server-side regardless of what the UI shows.
+ *
+ * Uses `getCurrentPaymentPeriodsForStudents` (a single batched resolution),
+ * not a per-student `Promise.all(getCurrentPaymentPeriod(...))` loop — this
+ * page can list every active student at an academy (or both), and a
+ * per-student loop here would be exactly the N+1 pattern `headline-tiles.ts`
+ * already identified and fixed for a read-only case, now worse since each
+ * miss can also perform a write (recurring-promo carry-forward).
  */
 export async function listCurrentPaymentStatus(
   session: StaffSession,
@@ -63,19 +74,22 @@ export async function listCurrentPaymentStatus(
     orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
   });
 
-  return Promise.all(
-    students.map(async (student) => {
-      const period = await getCurrentPaymentPeriod(student.id, today);
-      const overdue = isOverdue(period, today);
-      return {
-        studentId: student.id,
-        firstName: student.firstName,
-        lastName: student.lastName,
-        homeAcademyId: student.homeAcademyId,
-        homeAcademyName: student.homeAcademy.name,
-        bucket: bucketFor(period, overdue),
-        period,
-      };
-    }),
+  const periodsByStudentId = await getCurrentPaymentPeriodsForStudents(
+    students.map((s) => s.id),
+    today,
   );
+
+  return students.map((student) => {
+    const period = periodsByStudentId.get(student.id) ?? null;
+    const overdue = isOverdue(period, today);
+    return {
+      studentId: student.id,
+      firstName: student.firstName,
+      lastName: student.lastName,
+      homeAcademyId: student.homeAcademyId,
+      homeAcademyName: student.homeAcademy.name,
+      bucket: bucketFor(period, overdue),
+      period,
+    };
+  });
 }

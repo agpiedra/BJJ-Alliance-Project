@@ -670,4 +670,44 @@ describe("markPaymentPaid", () => {
     const period = await paymentPeriodFor(student.id, 2026, 7);
     expect(period).toBeNull();
   });
+
+  // Reviewer finding HIGH-2: a PENDING/OVERDUE custom-promo row's ONLY
+  // working action in the Pagos table is this button (Editar is offered
+  // only for the PROMO_OR_EXEMPT bucket) — without forwarding promoName it
+  // silently failed `recordPayment`'s own "promo name required" guard.
+  it("flips an existing PENDING custom-promo row to PAID, forwarding its promo fields so recordPayment's promo-name guard doesn't reject it", async () => {
+    const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+    const promoPlan = await ensureCustomPromoPlan(escazu.id);
+    const admin = await makeStaffUser("ADMIN", "markpaid-promo-admin");
+    const student = await makeStudent(escazu.id);
+    await prisma.paymentPeriod.create({
+      data: {
+        studentId: student.id,
+        academyId: escazu.id,
+        year: 2026,
+        month: 8,
+        planId: promoPlan.id,
+        status: "PENDING",
+        amount: 22500,
+        promoName: "2x1 hermanos",
+        promoReason: "Dos hermanos entrenan juntos",
+        promoRecurring: true,
+        recordedById: admin.id,
+      },
+    });
+
+    currentSession = { user: { id: admin.id, role: "ADMIN" } };
+    const result = await markPaymentPaid(student.id, 2026, 8);
+    expect(result.ok).toBe(true);
+
+    const period = await paymentPeriodFor(student.id, 2026, 8);
+    expect(period).toMatchObject({
+      status: "PAID",
+      promoName: "2x1 hermanos",
+      promoReason: "Dos hermanos entrenan juntos",
+      // Forwarding must not silently cancel the recurrence as a side
+      // effect of just marking a month paid.
+      promoRecurring: true,
+    });
+  });
 });

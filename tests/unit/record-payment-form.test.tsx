@@ -95,14 +95,61 @@ describe("RecordPaymentForm", () => {
     expect(submitted.get("amount")).toBe("0");
   });
 
+  it("omits only the blank field when notes is filled in but amount is left blank", async () => {
+    recordPaymentMock.mockResolvedValue({ ok: true });
+    renderForm();
+    fireEvent.change(screen.getByLabelText("Plan"), { target: { value: "plan-1" } });
+    fireEvent.change(screen.getByLabelText("Notes (optional)"), { target: { value: "cash" } });
+
+    fireEvent.click(screen.getByRole("button", { name: "Save payment" }));
+
+    await waitFor(() => expect(recordPaymentMock).toHaveBeenCalledTimes(1));
+    const submitted = recordPaymentMock.mock.calls[0][1] as FormData;
+    expect(submitted.has("amount")).toBe(false);
+    expect(submitted.get("notes")).toBe("cash");
+  });
+
+  it("submits a real amount unchanged — no regression to the happy path", async () => {
+    recordPaymentMock.mockResolvedValue({ ok: true });
+    renderForm();
+    fireEvent.change(screen.getByLabelText("Plan"), { target: { value: "plan-1" } });
+    fireEvent.change(screen.getByLabelText("Amount (₡)"), { target: { value: "45000" } });
+    fireEvent.change(screen.getByLabelText("Notes (optional)"), { target: { value: "cash" } });
+
+    fireEvent.click(screen.getByRole("button", { name: "Save payment" }));
+
+    await waitFor(() => expect(recordPaymentMock).toHaveBeenCalledTimes(1));
+    const submitted = recordPaymentMock.mock.calls[0][1] as FormData;
+    expect(submitted.get("amount")).toBe("45000");
+    expect(submitted.get("notes")).toBe("cash");
+  });
+
+  it("strips a whitespace-only amount too, not just a strictly empty string", async () => {
+    recordPaymentMock.mockResolvedValue({ ok: true });
+    renderForm();
+    fireEvent.change(screen.getByLabelText("Plan"), { target: { value: "plan-1" } });
+    fireEvent.change(screen.getByLabelText("Amount (₡)"), { target: { value: "   " } });
+
+    fireEvent.click(screen.getByRole("button", { name: "Save payment" }));
+
+    await waitFor(() => expect(recordPaymentMock).toHaveBeenCalledTimes(1));
+    const submitted = recordPaymentMock.mock.calls[0][1] as FormData;
+    expect(submitted.has("amount")).toBe(false);
+  });
+
   it("renders a hidden studentId input and no Alumno picker when lockedStudentId is set", () => {
     renderForm();
     expect(screen.queryByText("Student")).not.toBeInTheDocument();
   });
 
-  it("renders a real Alumno picker when no student is locked (the /payments page usage)", () => {
+  it("renders a real Alumno picker when no student is locked (the /payments page usage), starting genuinely EMPTY rather than pre-selecting the first student", () => {
     renderForm({ lockedStudentId: undefined });
-    expect(screen.getByLabelText("Student")).toBeInTheDocument();
+    const picker = screen.getByLabelText("Student") as HTMLSelectElement;
+    expect(picker).toBeInTheDocument();
+    // Regression pin: pre-selecting `students[0]` would let a director save
+    // a real payment against the wrong person without ever touching this
+    // field — it must start on the disabled placeholder option.
+    expect(picker.value).toBe("");
   });
 
   it("shows the custom-promotion sub-panel, with a required promo name field, when the promo plan is selected and canManagePromotions is true", () => {

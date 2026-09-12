@@ -256,7 +256,15 @@ export async function markPaymentPaid(studentId: string, year: number, month: nu
 
   const existing = await prisma.paymentPeriod.findUnique({
     where: { studentId_year_month: { studentId, year, month } },
-    select: { planId: true, amount: true, notes: true, method: true },
+    select: {
+      planId: true,
+      amount: true,
+      notes: true,
+      method: true,
+      promoName: true,
+      promoReason: true,
+      promoRecurring: true,
+    },
   });
 
   let planId = existing?.planId ?? null;
@@ -289,6 +297,17 @@ export async function markPaymentPaid(studentId: string, year: number, month: nu
   if (existing?.amount != null) fd.set("amount", existing.amount.toString());
   if (existing?.notes) fd.set("notes", existing.notes);
   if (existing?.method) fd.set("method", existing.method);
+  // A custom-promo row (`plan.name === CUSTOM_PROMO_PLAN_NAME`) fails
+  // `recordPayment`'s own "promo name required" guard unless these three are
+  // forwarded too — a PENDING/OVERDUE promo row's ONLY working action in the
+  // table is this button (Editar is offered only for the PROMO_OR_EXEMPT
+  // bucket), so omitting them made every such row's "Marcar pagado" silently
+  // unusable. `promoRecurring` must be forwarded as well, not just the name:
+  // leaving it out would submit an implicit "false" and silently cancel the
+  // recurrence as a side effect of just marking a month paid.
+  if (existing?.promoName) fd.set("promoName", existing.promoName);
+  if (existing?.promoReason) fd.set("promoReason", existing.promoReason);
+  if (existing?.promoRecurring) fd.set("promoRecurring", "on");
 
   return recordPayment({}, fd);
 }

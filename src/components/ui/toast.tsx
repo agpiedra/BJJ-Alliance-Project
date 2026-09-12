@@ -44,9 +44,13 @@ export function Toaster() {
     };
   }, []);
 
-  if (current.length === 0) return null;
-
   return (
+    // Rendered unconditionally (even empty) rather than `return null` when
+    // there's nothing to show — an `aria-live` region that unmounts and
+    // remounts on every toast can break a screen reader's announcement
+    // timing for the very first toast after a page load, since some
+    // assistive tech only starts watching a live region once it has been
+    // present in the accessibility tree for a moment.
     <div className="fixed right-4 bottom-4 z-50 flex flex-col gap-2" aria-live="polite">
       {current.map((item) => (
         <div

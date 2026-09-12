@@ -88,7 +88,13 @@ export function RecordPaymentForm({
   const tMethod = useTranslations("payments.method");
   const [state, formAction, isPending] = useActionState(recordPayment, INITIAL_STATE);
 
-  const [selectedStudentId, setSelectedStudentId] = useState(lockedStudentId ?? students[0]?.id ?? "");
+  // Deliberately NOT `?? students[0]?.id` on the unscoped `/payments` page:
+  // pre-selecting the alphabetically-first student would make the
+  // placeholder option unreachable and `required` a no-op — a director who
+  // fills in amount/method/status without ever touching Alumno would
+  // silently record a real payment against the wrong person. The field
+  // must start genuinely empty so a real choice is forced.
+  const [selectedStudentId, setSelectedStudentId] = useState(lockedStudentId ?? "");
   const [selectedPlanId, setSelectedPlanId] = useState(defaults.planId ?? "");
 
   useEffect(() => {

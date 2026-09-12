@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useOptimistic, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import {
@@ -62,7 +62,28 @@ export function PaymentsTable({
   const tMethod = useTranslations("payments.method");
   const router = useRouter();
 
-  const [rows, setRows] = useState(initialRows);
+  // Layered DIRECTLY over the `initialRows` prop, not a mirrored `useState`
+  // — a separate `useState(initialRows)` never re-syncs when the prop
+  // changes (e.g. after `router.refresh()` re-fetches the real server data,
+  // or after the Registrar-pago form's own `revalidatePath` lands), so the
+  // table used to keep showing stale/optimistic data indefinitely. With
+  // `useOptimistic`, `rows` reflects `initialRows` on every render and only
+  // shows the optimistic overlay while a transition is actually pending —
+  // once that transition settles, it automatically reverts to whatever
+  // `initialRows` currently is (no manual "previousRows" bookkeeping needed
+  // for the revert-on-failure case either).
+  const [rows, setOptimisticPaid] = useOptimistic(initialRows, (state, studentId: string) =>
+    state.map((r) =>
+      r.studentId === studentId
+        ? { ...r, bucket: "PAID" as const, period: r.period ? { ...r.period, status: "PAID" as const } : r.period }
+        : r,
+    ),
+  );
+  // Only the transition-starting function is needed — per-row pending state
+  // for disabling a SPECIFIC button is tracked separately via
+  // `pendingStudentIds` below (this hook's own `isPending` flag is global to
+  // every row's transition, not per-row).
+  const [, startMarkPaidTransition] = useTransition();
   const [pendingStudentIds, setPendingStudentIds] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState("");
   const [bucketFilter, setBucketFilter] = useState<PaymentBucket | "">("");
@@ -86,35 +107,34 @@ export function PaymentsTable({
     return tPaymentStatus(row.period.status);
   }
 
-  async function handleMarkPaid(row: CurrentPaymentRow) {
+  function handleMarkPaid(row: CurrentPaymentRow) {
     setPendingStudentIds((prev) => new Set(prev).add(row.studentId));
-    const previousRows = rows;
-    // Optimistic update — flips the pill immediately; `router.refresh()`
-    // below re-fetches the real Server Component data (amount/method/
-    // recordedBy) once the write lands, without a full page reload.
-    setRows((prev) =>
-      prev.map((r) =>
-        r.studentId === row.studentId
-          ? { ...r, bucket: "PAID", period: r.period ? { ...r.period, status: "PAID" } : r.period }
-          : r,
-      ),
-    );
+    // The optimistic update AND the write both live inside the same
+    // transition — React reverts `rows` to whatever `initialRows` is as
+    // soon as this async callback settles, so a failure needs no manual
+    // "restore the previous array" bookkeeping: nothing here ever wrote to
+    // `initialRows`, so there is nothing to undo.
+    startMarkPaidTransition(async () => {
+      setOptimisticPaid(row.studentId);
+      const result = await markPaymentPaid(row.studentId, currentYear, currentMonth);
 
-    const result = await markPaymentPaid(row.studentId, currentYear, currentMonth);
+      setPendingStudentIds((prev) => {
+        const next = new Set(prev);
+        next.delete(row.studentId);
+        return next;
+      });
 
-    setPendingStudentIds((prev) => {
-      const next = new Set(prev);
-      next.delete(row.studentId);
-      return next;
+      if (result.ok) {
+        showToast(t("toast.success"), "success");
+        // Re-fetches the real Server Component data (amount/method/
+        // recordedBy) once the write lands, without a full page reload —
+        // `rows` (via `useOptimistic`) picks up the refreshed `initialRows`
+        // prop automatically.
+        router.refresh();
+      } else {
+        showToast(t("toast.error"), "error");
+      }
     });
-
-    if (result.ok) {
-      showToast(t("toast.success"), "success");
-      router.refresh();
-    } else {
-      setRows(previousRows);
-      showToast(t("toast.error"), "error");
-    }
   }
 
   const receiptRow = rows.find((r) => r.studentId === receiptStudentId) ?? null;
