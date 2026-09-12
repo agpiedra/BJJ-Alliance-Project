@@ -664,7 +664,6 @@
     "progress": {
       "heading": "Tu progreso",
       "atBeltCount": "{count, plural, one {# asistencia en este cinturón} other {# asistencias en este cinturón}}",
-      "towardNextStripe": "{current} de {target} asistencias hacia tu siguiente grado",
       "remainingToNextStripe": "{count, plural, =0 {Eres elegible para tu siguiente grado} one {Falta # asistencia para tu siguiente grado} other {Faltan # asistencias para tu siguiente grado}}",
       "examEligible": "¡Eres elegible para tu examen de cinturón!",
       "lifetimeCount": "{count, plural, one {# asistencia total} other {# asistencias totales}}"
@@ -703,6 +702,10 @@
         "notActive": "El registro de asistencia no está disponible para tu cuenta en este momento.",
         "generic": "Algo salió mal. Por favor intenta de nuevo."
       }
+    },
+    "schedule": {
+      "heading": "Horario de esta semana",
+      "description": "{academyName} · {count, plural, one {# clase esta semana} other {# clases esta semana}}"
     }
   },
   "kiosk": {
