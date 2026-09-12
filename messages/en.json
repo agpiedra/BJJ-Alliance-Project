@@ -363,6 +363,7 @@
     "analytics": "Analytics",
     "adminSchedule": "Schedule",
     "adminKioskTokens": "Kiosk",
+    "signOut": "Sign out",
     "groups": {
       "operations": "Operations",
       "analytics": "Analytics",
@@ -381,7 +382,8 @@
         "ADMIN": "Admin",
         "DIRECTOR": "Director",
         "INSTRUCTOR": "Instructor"
-      }
+      },
+      "signOut": "Sign out"
     }
   },
   "signup": {
@@ -653,6 +655,7 @@
   },
   "portal": {
     "greeting": "Hi, {name}!",
+    "signOut": "Sign out",
     "statusNotice": {
       "PENDING": "Your account is pending approval by your academy. Your progress below is up to date, but some features may be limited until you're approved.",
       "INACTIVE": "Your account is currently marked inactive. Contact your academy if you have questions.",

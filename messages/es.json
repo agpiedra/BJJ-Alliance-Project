@@ -363,6 +363,7 @@
     "analytics": "Análisis",
     "adminSchedule": "Horario",
     "adminKioskTokens": "Kiosco",
+    "signOut": "Salir",
     "groups": {
       "operations": "Operación",
       "analytics": "Análisis",
@@ -381,7 +382,8 @@
         "ADMIN": "Admin",
         "DIRECTOR": "Director",
         "INSTRUCTOR": "Instructor"
-      }
+      },
+      "signOut": "Cerrar sesión"
     }
   },
   "signup": {
@@ -653,6 +655,7 @@
   },
   "portal": {
     "greeting": "¡Hola, {name}!",
+    "signOut": "Cerrar sesión",
     "statusNotice": {
       "PENDING": "Tu cuenta está pendiente de aprobación por tu academia. Tu progreso abajo está actualizado, pero algunas funciones pueden estar limitadas hasta que seas aprobado.",
       "INACTIVE": "Tu cuenta está marcada como inactiva. Contacta a tu academia si tienes preguntas.",

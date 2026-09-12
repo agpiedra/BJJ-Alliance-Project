@@ -1,11 +1,13 @@
 "use client";
 
 import type { ReactNode } from "react";
+import { useTransition } from "react";
 import { usePathname } from "next/navigation";
 import { useTranslations } from "next-intl";
 import {
   Sidebar,
   SidebarContent,
+  SidebarFooter,
   SidebarGroup,
   SidebarGroupContent,
   SidebarGroupLabel,
@@ -19,6 +21,7 @@ import { BrandBanner } from "@/components/brand/brand-banner";
 import { NAV_GROUP_ORDER, type StaffNavGroup } from "./nav-items";
 import { AcademySwitcher, type AcademySwitcherProps } from "./academy-switcher";
 import { findActiveNavItem } from "./find-active-nav-item";
+import { signOutStaff } from "@/lib/auth/sign-out-actions";
 
 /**
  * The RSC-serializable slice of `StaffNavItem` this Client Component
@@ -57,6 +60,13 @@ export function StaffSidebar({ locale, navItems, academySwitcher }: StaffSidebar
   const pathname = usePathname();
   const t = useTranslations("staffSidebar");
   const activeItem = findActiveNavItem(pathname, locale, navItems);
+  const [isSigningOut, startSignOut] = useTransition();
+
+  function handleSignOut() {
+    startSignOut(async () => {
+      await signOutStaff(locale);
+    });
+  }
 
   return (
     <Sidebar>
@@ -101,6 +111,21 @@ export function StaffSidebar({ locale, navItems, academySwitcher }: StaffSidebar
           );
         })}
       </SidebarContent>
+      {/*
+        REDESIGN_BRIEF.md Phase 7 rail footer. The mock also shows a
+        "Configuración" item here, but no settings page exists anywhere in
+        this brief's scope (all 9 phases) — adding it would be a dead link,
+        so this footer carries sign-out only.
+      */}
+      <SidebarFooter>
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton onClick={handleSignOut} disabled={isSigningOut}>
+              {t("signOut")}
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        </SidebarMenu>
+      </SidebarFooter>
     </Sidebar>
   );
 }

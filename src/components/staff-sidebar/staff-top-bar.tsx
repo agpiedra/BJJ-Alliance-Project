@@ -1,5 +1,6 @@
 "use client";
 
+import { useTransition } from "react";
 import { usePathname } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { SidebarTrigger } from "@/components/ui/sidebar";
@@ -7,6 +8,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuGroup,
+  DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
@@ -15,6 +17,7 @@ import { ThemeToggle } from "@/components/theme/theme-toggle";
 import { findActiveNavItem } from "./find-active-nav-item";
 import type { StaffSidebarNavEntry } from "./staff-sidebar";
 import type { StaffRoleName } from "@/lib/auth/session";
+import { signOutStaff } from "@/lib/auth/sign-out-actions";
 
 function initialsFromEmail(email: string): string {
   const local = email.split("@")[0] ?? "";
@@ -41,9 +44,8 @@ export interface StaffTopBarProps {
 /**
  * REDESIGN_BRIEF.md Phase 2 top bar: breadcrumb (mono, page name from the
  * same active-nav match the sidebar uses), theme toggle, and an avatar menu
- * showing identity/role/academy. Signing out is intentionally NOT wired
- * here yet — Phase 7 owns adding "Cerrar sesión" to this menu (and to the
- * rail footer) across all four portals; see that phase's dispatch.
+ * showing identity/role/academy. Phase 7 adds "Cerrar sesión" to this menu
+ * (and to the rail footer) across all four portals.
  */
 export function StaffTopBar({
   locale,
@@ -57,6 +59,13 @@ export function StaffTopBar({
   const t = useTranslations("staffShell");
   const tSidebar = useTranslations("staffSidebar");
   const activeItem = findActiveNavItem(pathname, locale, navItems);
+  const [isSigningOut, startSignOut] = useTransition();
+
+  function handleSignOut() {
+    startSignOut(async () => {
+      await signOutStaff(locale);
+    });
+  }
 
   return (
     <header className="flex h-12 items-center justify-between gap-3 border-b px-4">
@@ -84,7 +93,9 @@ export function StaffTopBar({
               </DropdownMenuLabel>
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
-            {/* Phase 7 adds a "Cerrar sesión" DropdownMenuItem here. */}
+            <DropdownMenuItem onClick={handleSignOut} disabled={isSigningOut}>
+              {t("userMenu.signOut")}
+            </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>

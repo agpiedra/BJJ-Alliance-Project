@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { BrandBanner } from "@/components/brand/brand-banner";
 import { BeltGraphic } from "@/components/belt-graphic/belt-graphic";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getAtBeltSummary } from "@/lib/students/attendance-summary";
 import { getAttendanceHistory } from "@/lib/students/attendance-history";
@@ -12,6 +13,7 @@ import { formatTimestampInAcademyZone } from "@/lib/format-date";
 import { getCurrentPaymentPeriod, currentCrDateParts } from "@/lib/payments/get-current-period";
 import { isOverdue } from "@/lib/payments/overdue";
 import { SelfCheckInButton } from "./self-check-in-button";
+import { signOutStudent } from "@/lib/auth/sign-out-actions";
 
 // A student's own belt/status could change without a redeploy (staff can
 // promote them, adjust attendance, or flip their status any time) — never
@@ -54,12 +56,23 @@ export default async function StudentPortalPage({
   const tAttendanceType = await getTranslations("portal.attendanceHistory.type");
   const tPaymentStatus = await getTranslations("students.paymentStatus");
 
+  // Phase 8 (a later phase, not this one) replaces this with a real top-bar
+  // avatar menu — the student portal has no top bar or avatar chrome yet.
+  // This is a minimal, working sign-out control so a student can actually
+  // sign out today; Phase 8 folds it into that menu.
+  const signOutWithLocale = signOutStudent.bind(null, locale);
+
   return (
     <>
       <BrandBanner />
       <main className="mx-auto flex w-full max-w-md flex-col gap-6 p-4">
-      <div>
+      <div className="flex items-start justify-between gap-2">
         <h1 className="text-2xl font-bold">{t("greeting", { name: student.firstName })}</h1>
+        <form action={signOutWithLocale}>
+          <Button type="submit" variant="ghost" size="sm">
+            {t("signOut")}
+          </Button>
+        </form>
       </div>
 
       {/* Login itself is not gated on Student.status (see
