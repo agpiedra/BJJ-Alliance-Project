@@ -21,15 +21,27 @@ import { resolveAttendanceInstant } from "@/lib/kiosk/queued-at";
  *   429  { ok: false; error: "rate_limited" | "locked_out"; retryAfterSeconds: number }
  */
 export async function POST(request: Request) {
-  let body: { academySlug?: unknown; token?: unknown; code?: unknown; queuedAt?: unknown };
+  let body: {
+    academySlug?: unknown;
+    token?: unknown;
+    code?: unknown;
+    queuedAt?: unknown;
+    pickedClassSessionId?: unknown;
+  };
   try {
     body = await request.json();
   } catch {
     return NextResponse.json({ ok: false, error: "invalid_request" }, { status: 400 });
   }
 
-  const { academySlug, token, code, queuedAt } = body;
+  const { academySlug, token, code, queuedAt, pickedClassSessionId } = body;
   if (typeof academySlug !== "string" || typeof token !== "string" || typeof code !== "string") {
+    return NextResponse.json({ ok: false, error: "invalid_request" }, { status: 400 });
+  }
+  // Optional; only its TYPE is checked here. Whether the id is actually one of
+  // this academy's active classes for this weekday is re-validated inside
+  // performCheckIn against a fresh query — never trusted from the client.
+  if (pickedClassSessionId !== undefined && typeof pickedClassSessionId !== "string") {
     return NextResponse.json({ ok: false, error: "invalid_request" }, { status: 400 });
   }
 
@@ -76,6 +88,13 @@ export async function POST(request: Request) {
     code,
     source: "KIOSK",
     now: resolveAttendanceInstant(queuedAt),
+    pickedClassSessionId,
+    // A `queuedAt` in the body means this is an offline replay from
+    // `flushOfflineQueue`, not a live tap — nobody is at the tablet to answer
+    // a picker, so an unmatched replay is saved as UNMATCHED rather than
+    // returned as a picklist the queue would have to discard. See the
+    // `unattended` doc comment in perform-check-in.ts for the full ruling.
+    unattended: queuedAt !== undefined,
   });
 
   // Step 6: record this attempt's real outcome against the row already

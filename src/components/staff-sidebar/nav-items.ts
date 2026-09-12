@@ -29,8 +29,12 @@ export interface StaffNavItem {
  *   "DIRECTOR"` condition `dashboard/page.tsx`'s own `canViewOverduePayments`
  *   uses, which matches `dashboard/analytics/page.tsx`'s own
  *   `requireStaffSession(["ADMIN", "DIRECTOR"])`.
- * - admin/schedule, admin/kiosk-tokens: ADMIN-only, matching each page's own
+ * - admin/schedule: ADMIN-only, matching that page's own
  *   `requireStaffSession(["ADMIN"])`.
+ * - admin/kiosk-tokens: ADMIN or DIRECTOR, matching that page's own
+ *   `requireStaffSession(["ADMIN", "DIRECTOR"])` since REDESIGN_BRIEF.md
+ *   Phase 9 added the "Marcajes de hoy" table a director needs to review. The
+ *   token-regeneration button inside the page stays ADMIN-only on its own.
  * This is navigation convenience only — the real access control stays where
  * it already lives, in each page/action's own `requireStaffSession` call.
  */
@@ -74,7 +78,7 @@ export const NAV_ITEMS: StaffNavItem[] = [
     href: "/admin/kiosk-tokens",
     labelKey: "adminKioskTokens",
     icon: KeyRound,
-    visible: (session) => session.role === "ADMIN",
+    visible: (session) => session.role === "ADMIN" || session.role === "DIRECTOR",
     group: "academy",
   },
 ];

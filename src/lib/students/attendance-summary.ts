@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import { Belt, type Prisma } from "@/generated/prisma/client";
+import { AttendanceMatchSource, Belt, type Prisma } from "@/generated/prisma/client";
 import { computeBeltProgress, MissingBeltRequirementError } from "@/lib/students/eligibility";
 import { isNotFoundError } from "@/lib/prisma-errors";
 
@@ -25,8 +25,23 @@ export interface AtBeltSummary {
  * check-in silently advanced a student's belt progress.
  *
  * `classSessionId: null` rows are manual staff adjustments (Task 8). They have
- * no class to inherit a flag from and always count: they carry a
- * human-reviewed `reason` and exist precisely to correct the ledger.
+ * no class to inherit a flag from and count: they carry a human-reviewed
+ * `reason` and exist precisely to correct the ledger.
+ *
+ * The ONE exception is `matchSource: UNMATCHED` (REDESIGN_BRIEF.md Phase 9):
+ * a tap that matched no class window on a day with no classes at all, saved
+ * rather than dropped so the student doesn't lose it. It is `classSessionId:
+ * null` for a completely different reason than an adjustment — nobody has
+ * reviewed it, and there is no evidence it corresponds to attending anything.
+ * Counting it would let a portal self-check-in on a Sunday (no physical
+ * presence required at all) advance a belt immediately and permanently unless
+ * staff happened to notice the "Sin asignar" pill on the Kiosco page. Excluded
+ * here, therefore, until a human resolves it: once staff (or the student's own
+ * "¿No es esta clase?") reassign it with `Cambiar`, `classSessionId` becomes
+ * non-null and the row falls under the second arm's `countsTowardPromotion`
+ * check like any other check-in — review-then-count needs no further logic.
+ * A manual `ADJUSTMENT` row is unaffected: `matchSource` defaults to `AUTO`
+ * (prisma/schema.prisma), so only genuinely-unmatched taps are filtered.
  *
  * This filters `atBeltCount` ONLY — the one number belt math reads
  * (`nextStripeAt` / `remainingToNextStripe` / `examEligible` all derive from
@@ -42,7 +57,10 @@ export interface AtBeltSummary {
  * attendance fact.
  */
 const PROMOTION_RELEVANT: Prisma.AttendanceRecordWhereInput = {
-  OR: [{ classSessionId: null }, { classSession: { countsTowardPromotion: true } }],
+  OR: [
+    { classSessionId: null, NOT: { matchSource: AttendanceMatchSource.UNMATCHED } },
+    { classSession: { countsTowardPromotion: true } },
+  ],
 };
 
 export async function getAtBeltSummary(studentId: string): Promise<AtBeltSummary> {

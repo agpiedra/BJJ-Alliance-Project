@@ -1,13 +1,36 @@
 import { prisma } from "@/lib/prisma";
 import { digestLookupSecret } from "@/lib/crypto";
 import { requireEnv } from "@/lib/env";
-import { attendanceDateFromZoned } from "@/lib/scheduling/zone";
+import { attendanceDateFromZoned, crDayOfWeek, toAttendanceDate } from "@/lib/scheduling/zone";
 import { selectActiveSessionOccurrence } from "@/lib/scheduling/check-in-window";
 import { getAtBeltSummary, type AtBeltSummary } from "@/lib/students/attendance-summary";
 import { isUniqueConstraintError } from "@/lib/prisma-errors";
 import { notifyEligibilityReached } from "@/lib/notifications/notify-eligibility";
 import { fireAndForget } from "@/lib/notifications/fire-and-forget";
-import { AttendanceType, StudentStatus, type AttendanceSource } from "@/generated/prisma/client";
+import {
+  AttendanceMatchSource,
+  AttendanceType,
+  StudentStatus,
+  type AttendanceSource,
+  type ClassType,
+  type DayOfWeek,
+} from "@/generated/prisma/client";
+
+/** The class an attendance ended up attributed to, for the confirmation screen. */
+export interface MatchedClass {
+  id: string;
+  name: string;
+  dayOfWeek: DayOfWeek;
+  startTime: string;
+}
+
+/** One of "today's" classes, offered to the student when nothing auto-matched. */
+export interface PicklistEntry {
+  id: string;
+  name: string;
+  startTime: string;
+  type: ClassType;
+}
 
 export type CheckInResult =
   | {
@@ -20,12 +43,52 @@ export type CheckInResult =
        * (not just for visitors), so the kiosk UI can render a visitor badge
        * ("Visitante de [homeAcademyName]") without a second round-trip. */
       homeAcademyName: string;
+      /** The row just written — the kiosk's "¿No es esta clase?" link reassigns
+       * exactly this record, so it must come back with the confirmation. */
+      attendanceRecordId: string;
+      /** null for an UNMATCHED save (no class to name on the confirmation). */
+      matchedClass: MatchedClass | null;
     }
-  | { ok: false; error: "invalid_code" | "no_active_class" | "already_checked_in" };
+  | {
+      ok: false;
+      error: "invalid_code" | "no_active_class" | "already_checked_in";
+      /** Present only on `no_active_class`, and only when that day HAS classes
+       * to choose from — the kiosk renders these as buttons. A day with no
+       * classes at all never reaches this shape: it auto-saves as UNMATCHED. */
+      picklist?: PicklistEntry[];
+    };
+
+interface CommonInput {
+  academyId: string;
+  source: AttendanceSource;
+  now?: Date;
+  /**
+   * Set when the student already answered the picklist: which of today's
+   * active classes to attribute the tap to. Never trusted — re-validated
+   * against this academy's own active sessions for that CR weekday.
+   */
+  pickedClassSessionId?: string;
+  /**
+   * "Nobody is standing at the tablet to answer a picker." Set by the API
+   * route for an OFFLINE REPLAY (a tap that was queued on the device and is
+   * being flushed later — see src/lib/kiosk/offline-queue.ts).
+   *
+   * Ruling (the brief's prose doesn't cover this case): `flushOfflineQueue`
+   * is a fire-and-forget background replay with no UI to render a picker
+   * into, and its caller only learns a count of DROPPED entries. Returning a
+   * picklist to it would therefore mean the tap is discarded outright —
+   * which is exactly the "silently drop a tap" outcome Phase 9 exists to
+   * remove. So a replay that matches no window is saved as UNMATCHED
+   * instead, whether or not that day had classes, and surfaces on the
+   * Kiosco page's "Marcajes de hoy" table where staff can `Cambiar` it to
+   * the right class. Attendance preserved, provenance honest.
+   */
+  unattended?: boolean;
+}
 
 export type PerformCheckInInput =
-  | { academyId: string; code: string; studentId?: never; source: AttendanceSource; now?: Date }
-  | { academyId: string; studentId: string; code?: never; source: AttendanceSource; now?: Date };
+  | (CommonInput & { code: string; studentId?: never })
+  | (CommonInput & { studentId: string; code?: never });
 
 export async function performCheckIn(input: PerformCheckInInput): Promise<CheckInResult> {
   const now = input.now ?? new Date();
@@ -62,33 +125,100 @@ export async function performCheckIn(input: PerformCheckInInput): Promise<CheckI
   // same tap to different classes on identical requests.
   const occurrence = selectActiveSessionOccurrence(sessions, now);
 
-  if (!occurrence) {
-    return { ok: false, error: "no_active_class" };
+  // What the row will be attributed to, resolved by one of three paths below.
+  let classSession: MatchedClass | null;
+  let attendanceDate: Date;
+  let matchSource: AttendanceMatchSource;
+
+  if (occurrence) {
+    classSession = toMatchedClass(occurrence.session);
+    // Stamped from the matched occurrence's OWN calendar day, never from
+    // `now`'s. A window that straddles CR midnight would otherwise give two
+    // check-ins to the same class occurrence two different `date` values,
+    // slipping past the (studentId, classSessionId, date) unique constraint and
+    // double-crediting one class — and a check-in just before midnight for a
+    // just-after-midnight class would be filed under the wrong day entirely.
+    // `occurredAt` stays the real wall-clock instant.
+    attendanceDate = attendanceDateFromZoned(occurrence.anchorDate);
+    matchSource = AttendanceMatchSource.AUTO;
+  } else {
+    // No window contains `now`. Everything from here is Phase 9's no-match
+    // path: offer that day's classes, or save the tap unattributed — never
+    // reject it outright, which used to lose the attendance entirely.
+    //
+    // "That day" is `now`'s own CR calendar day. Unlike the AUTO branch there
+    // is no occurrence to anchor to, so there is nothing to straddle midnight:
+    // a tap at 23:50 CR belongs to that day's schedule, full stop.
+    const todaysSessions = await prisma.classSession.findMany({
+      where: { academyId: input.academyId, active: true, dayOfWeek: crDayOfWeek(now) },
+      orderBy: { startTime: "asc" },
+    });
+
+    // Never blind-trusted: a stale or tampered id that isn't one of THIS
+    // academy's active classes for THIS weekday falls through to the picker
+    // (or the UNMATCHED save) instead of being written or throwing.
+    const picked = input.pickedClassSessionId
+      ? todaysSessions.find((session) => session.id === input.pickedClassSessionId)
+      : undefined;
+
+    if (!picked && todaysSessions.length > 0 && !input.unattended) {
+      return {
+        ok: false,
+        error: "no_active_class",
+        picklist: todaysSessions.map((session) => ({
+          id: session.id,
+          name: session.name,
+          startTime: session.startTime,
+          type: session.type,
+        })),
+      };
+    }
+
+    classSession = picked ? toMatchedClass(picked) : null;
+    attendanceDate = toAttendanceDate(now);
+    matchSource = picked ? AttendanceMatchSource.STUDENT_PICKED : AttendanceMatchSource.UNMATCHED;
   }
 
-  const activeSession = occurrence.session;
-  // Stamped from the matched occurrence's OWN calendar day, never from
-  // `now`'s. A window that straddles CR midnight would otherwise give two
-  // check-ins to the same class occurrence two different `date` values,
-  // slipping past the (studentId, classSessionId, date) unique constraint and
-  // double-crediting one class — and a check-in just before midnight for a
-  // just-after-midnight class would be filed under the wrong day entirely.
-  // `occurredAt` stays the real wall-clock instant.
-  const attendanceDate = attendanceDateFromZoned(occurrence.anchorDate);
+  // The `@@unique([studentId, classSessionId, date])` constraint cannot catch a
+  // repeat UNMATCHED tap: Postgres treats NULLs as distinct, so a second
+  // classSessionId-null row for the same day slips straight past it and
+  // double-counts toward belt progress. App-level pre-check, therefore — and
+  // only for this case; every attributed path still relies on the constraint.
+  // ponytail: a concurrent double-tap can still race this; a partial unique
+  // index on (studentId, date) WHERE classSessionId IS NULL would close it, if
+  // duplicate UNMATCHED rows ever actually show up in practice.
+  if (!classSession) {
+    const existing = await prisma.attendanceRecord.findFirst({
+      where: {
+        studentId: student.id,
+        classSessionId: null,
+        date: attendanceDate,
+        type: AttendanceType.CHECKIN,
+      },
+      select: { id: true },
+    });
+    if (existing) {
+      return { ok: false, error: "already_checked_in" };
+    }
+  }
+
   const summaryBefore = await getAtBeltSummary(student.id);
 
+  let created: { id: string };
   try {
-    await prisma.attendanceRecord.create({
+    created = await prisma.attendanceRecord.create({
       data: {
         studentId: student.id,
         academyId: input.academyId,
-        classSessionId: activeSession.id,
+        classSessionId: classSession?.id ?? null,
         occurredAt: now,
         date: attendanceDate,
         type: AttendanceType.CHECKIN,
         delta: 1,
         source: input.source,
+        matchSource,
       },
+      select: { id: true },
     });
   } catch (error) {
     // Postgres unique constraint violation (Prisma P2002) on the
@@ -125,5 +255,16 @@ export async function performCheckIn(input: PerformCheckInInput): Promise<CheckI
     earnedStripe: summaryBefore.remainingToNextStripe === 1 && summaryAfter.remainingToNextStripe !== 1,
     isVisitor: student.homeAcademyId !== input.academyId,
     homeAcademyName: student.homeAcademy.name,
+    attendanceRecordId: created.id,
+    matchedClass: classSession,
+  };
+}
+
+function toMatchedClass(session: { id: string; name: string; dayOfWeek: DayOfWeek; startTime: string }): MatchedClass {
+  return {
+    id: session.id,
+    name: session.name,
+    dayOfWeek: session.dayOfWeek,
+    startTime: session.startTime,
   };
 }

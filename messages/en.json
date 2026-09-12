@@ -729,7 +729,14 @@
     "queuedOffline": "Saved! You're offline — this will sync automatically once the connection is back.",
     "queueFailed": "We couldn't save your check-in on this device. Please tell the front desk.",
     "syncDropped": "{count, plural, one {# check-in could not be synced — please tell the front desk} other {# check-ins could not be synced — please tell the front desk}}",
-    "syncDroppedDismiss": "Dismiss"
+    "syncDroppedDismiss": "Dismiss",
+    "pickClassHeading": "Which class did you attend?",
+    "pickClassDescription": "We couldn't find a class running right now. Pick yours to save your attendance.",
+    "savedIn": "Attendance saved to",
+    "notThisClass": "Not this class?",
+    "correctClassHeading": "Pick the right class",
+    "correctClassDescription": "Your attendance is already saved — we'll just move it to the class you pick.",
+    "correctClassFailed": "We couldn't change the class. Please tell the front desk."
   },
   "adminKioskTokens": {
     "heading": "Kiosk device tokens",
@@ -737,7 +744,32 @@
     "button": "Regenerate token",
     "confirm": "Regenerate this academy's kiosk link? The old link will stop working immediately.",
     "successTokenWarning": "This is the new kiosk check-in link. Copy it onto the tablet now — it will not be shown again:",
-    "notFound": "Could not regenerate this academy's kiosk token."
+    "notFound": "Could not regenerate this academy's kiosk token.",
+    "matchSource": {
+      "AUTO": "Automatic",
+      "STUDENT_PICKED": "Picked by student",
+      "STAFF_CORRECTED": "Corrected",
+      "UNMATCHED": "Unassigned"
+    },
+    "checkIns": {
+      "heading": "Today's check-ins",
+      "empty": "No check-ins yet today.",
+      "time": "Time",
+      "student": "Student",
+      "class": "Assigned class",
+      "source": "Source",
+      "actions": "Actions",
+      "noClass": "No class assigned",
+      "change": "Change",
+      "changeLabel": "Class to move this check-in to",
+      "changeSubmit": "Save change",
+      "changeSuccess": "Check-in moved.",
+      "noReassignOptions": "No active classes on this day.",
+      "notFound": "This check-in could not be found.",
+      "invalidRecord": "Only attendance check-ins can be reassigned.",
+      "invalidClass": "That class doesn't belong to this academy or this day.",
+      "alreadyRecorded": "The student already has attendance in that class."
+    }
   },
   "adminSchedule": {
     "eyebrow": "Alliance · Schedule",

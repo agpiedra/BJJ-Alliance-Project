@@ -23,8 +23,18 @@ describe("NAV_ITEMS visibility", () => {
     ]);
   });
 
-  it("DIRECTOR sees dashboard, students, payments, and analytics — not the ADMIN-only admin links", () => {
-    expect(visibleHrefs("DIRECTOR")).toEqual(["/dashboard", "/students", "/payments", "/dashboard/analytics"]);
+  // REDESIGN_BRIEF.md Phase 9 opened the Kiosco page to DIRECTOR for its new
+  // "Marcajes de hoy" table (the page's own gate is now
+  // requireStaffSession(["ADMIN", "DIRECTOR"])); /admin/schedule stays
+  // ADMIN-only.
+  it("DIRECTOR sees dashboard, students, payments, analytics and Kiosco — not the ADMIN-only schedule link", () => {
+    expect(visibleHrefs("DIRECTOR")).toEqual([
+      "/dashboard",
+      "/students",
+      "/payments",
+      "/dashboard/analytics",
+      "/admin/kiosk-tokens",
+    ]);
   });
 
   // REDESIGN_BRIEF.md Phase 8: instructor gets a READ-ONLY Pagos view (the

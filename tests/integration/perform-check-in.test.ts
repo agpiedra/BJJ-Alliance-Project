@@ -6,6 +6,9 @@ import { requireEnv } from "../../src/lib/env";
 import { digestLookupSecret } from "../../src/lib/crypto";
 
 const { performCheckIn } = await import("../../src/lib/kiosk/perform-check-in");
+const { selectActiveSessionOccurrence } = await import("../../src/lib/scheduling/check-in-window");
+const { reassignAttendance } = await import("../../src/lib/kiosk/reassign-attendance");
+const { getAtBeltSummary } = await import("../../src/lib/students/attendance-summary");
 
 const adapter = new PrismaPg({ connectionString: requireEnv("DATABASE_URL") });
 const prisma = new PrismaClient({ adapter });
@@ -242,9 +245,13 @@ describe("performCheckIn", () => {
     expect(result).toEqual({ ok: false, error: "invalid_code" });
   });
 
-  it("rejects a check-in attempt when `now` falls outside every session's window as no_active_class", async () => {
+  // REDESIGN_BRIEF.md Phase 9: this used to reject. `OUTSIDE_ANY_WINDOW` is a
+  // Sunday and Escazú has NO Sunday sessions at all, so there is nothing to
+  // offer the student to pick — the tap is saved unattributed instead of being
+  // dropped, and staff review it on the Kiosco page's "Marcajes de hoy" table.
+  it("saves a tap on a day with no classes at all as an UNMATCHED record, rather than rejecting it", async () => {
     const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
-    const { code } = await makeStudent({ homeAcademyId: escazu.id });
+    const { student, code } = await makeStudent({ homeAcademyId: escazu.id });
 
     const result = await performCheckIn({
       academyId: escazu.id,
@@ -253,7 +260,15 @@ describe("performCheckIn", () => {
       now: OUTSIDE_ANY_WINDOW,
     });
 
-    expect(result).toEqual({ ok: false, error: "no_active_class" });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.matchedClass).toBeNull();
+    }
+
+    const record = await prisma.attendanceRecord.findFirstOrThrow({ where: { studentId: student.id } });
+    expect(record.classSessionId).toBeNull();
+    expect(record.matchSource).toBe("UNMATCHED");
+    expect(record.date.toISOString().slice(0, 10)).toBe("2026-01-04");
   });
 
   it("treats a student checking in away from their home academy as a visitor, recorded under the visited academy", async () => {
@@ -445,7 +460,7 @@ describe("performCheckIn", () => {
       expect(result).toEqual({ ok: false, error: "invalid_code" });
     });
 
-    it("rejects a check-in attempt when `now` falls outside every session's window as no_active_class", async () => {
+    it("saves a tap on a day with no classes at all as an UNMATCHED record, rather than rejecting it", async () => {
       const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
       const { student } = await makeStudent({ homeAcademyId: escazu.id });
 
@@ -456,7 +471,11 @@ describe("performCheckIn", () => {
         now: OUTSIDE_ANY_WINDOW,
       });
 
-      expect(result).toEqual({ ok: false, error: "no_active_class" });
+      expect(result.ok).toBe(true);
+
+      const record = await prisma.attendanceRecord.findFirstOrThrow({ where: { studentId: student.id } });
+      expect(record.classSessionId).toBeNull();
+      expect(record.matchSource).toBe("UNMATCHED");
     });
 
     it("treats a student checking in away from their home academy as a visitor, recorded under the visited academy", async () => {
@@ -493,6 +512,199 @@ describe("performCheckIn", () => {
       });
 
       expect(result).toEqual({ ok: false, error: "invalid_code" });
+    });
+  });
+
+  // REDESIGN_BRIEF.md Phase 9's own verification table, run against the REAL
+  // seeded Escazú schedule rather than synthetic sessions (tests/unit/
+  // check-in-window.test.ts already covers the selection RULES in isolation;
+  // this is the "does it still do the right thing on our actual timetable"
+  // guard the brief asks for). `selectActiveSessionOccurrence` is untouched by
+  // Phase 9 — these must keep passing exactly as they did before it.
+  describe("nearest-class matching against the seeded Escazú schedule", () => {
+    const CASES: Array<{ label: string; now: string; expected: string | null }> = [
+      { label: "Mon 17:52 -> 18:00 GI Principiantes", now: "2026-01-05T23:52:00Z", expected: "GI — Principiantes" },
+      { label: "Mon 18:40 -> 19:00 GI Avanzados", now: "2026-01-06T00:40:00Z", expected: "GI — Avanzados" },
+      { label: "Mon 18:30 exactly -> 18:00 (tie goes to the earlier start)", now: "2026-01-06T00:30:00Z", expected: "GI — Principiantes" },
+      { label: "Wed 18:10 -> 18:30 Competición", now: "2026-01-08T00:10:00Z", expected: "Competición" },
+      { label: "Fri 18:52 -> 18:30 GI Todos los niveles", now: "2026-01-10T00:52:00Z", expected: "GI — Todos los niveles" },
+      { label: "Sat 09:50 -> 10:00 Kids", now: "2026-01-10T15:50:00Z", expected: "Kids" },
+      { label: "Mon 13:30 -> no match (the student is asked to pick)", now: "2026-01-05T19:30:00Z", expected: null },
+    ];
+
+    it.each(CASES)("$label", async ({ now, expected }) => {
+      const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+      const sessions = await prisma.classSession.findMany({ where: { academyId: escazu.id, active: true } });
+
+      const match = selectActiveSessionOccurrence(sessions, new Date(now));
+      expect(match?.session.name ?? null).toBe(expected);
+    });
+  });
+
+  // REDESIGN_BRIEF.md Phase 9's no-match path. `selectActiveSessionOccurrence`
+  // itself is untouched and still covered by tests/unit/check-in-window.test.ts
+  // — everything here is about what happens when it returns null.
+  describe("no auto match (Phase 9)", () => {
+    // Monday 2026-01-05 13:30 CR. Escazú's Monday classes are 06:00 / 12:00 /
+    // 18:00 / 19:00, so 13:30 sits in no window (12:00's closed at 12:30,
+    // 18:00's opens at 17:30) — the brief's own "Mon 13:30 -> the student is
+    // asked to pick" verification row, against the real seeded schedule.
+    const MONDAY_BETWEEN_ESCAZU_WINDOWS = new Date("2026-01-05T19:30:00Z");
+
+    it("offers that day's active classes, sorted by startTime, when the day HAS classes", async () => {
+      const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+      const { student, code } = await makeStudent({ homeAcademyId: escazu.id });
+
+      const result = await performCheckIn({
+        academyId: escazu.id,
+        code,
+        source: "KIOSK",
+        now: MONDAY_BETWEEN_ESCAZU_WINDOWS,
+      });
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error).toBe("no_active_class");
+        expect(result.picklist?.map((entry) => entry.startTime)).toEqual(["06:00", "12:00", "18:00", "19:00"]);
+      }
+
+      // Nothing was written — the student still has to answer the picker.
+      expect(await prisma.attendanceRecord.count({ where: { studentId: student.id } })).toBe(0);
+    });
+
+    it("records the student's pick as STUDENT_PICKED, and refuses the same pick twice", async () => {
+      const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+      const { student, code } = await makeStudent({ homeAcademyId: escazu.id });
+
+      const offered = await performCheckIn({
+        academyId: escazu.id,
+        code,
+        source: "KIOSK",
+        now: MONDAY_BETWEEN_ESCAZU_WINDOWS,
+      });
+      const picked = offered.ok ? undefined : offered.picklist?.[1];
+      expect(picked).toBeDefined();
+
+      const result = await performCheckIn({
+        academyId: escazu.id,
+        code,
+        source: "KIOSK",
+        now: MONDAY_BETWEEN_ESCAZU_WINDOWS,
+        pickedClassSessionId: picked!.id,
+      });
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.matchedClass?.id).toBe(picked!.id);
+      }
+
+      const record = await prisma.attendanceRecord.findFirstOrThrow({ where: { studentId: student.id } });
+      expect(record.classSessionId).toBe(picked!.id);
+      expect(record.matchSource).toBe("STUDENT_PICKED");
+      expect(record.date.toISOString().slice(0, 10)).toBe("2026-01-05");
+
+      const again = await performCheckIn({
+        academyId: escazu.id,
+        code,
+        source: "KIOSK",
+        now: MONDAY_BETWEEN_ESCAZU_WINDOWS,
+        pickedClassSessionId: picked!.id,
+      });
+      expect(again).toEqual({ ok: false, error: "already_checked_in" });
+      expect(await prisma.attendanceRecord.count({ where: { studentId: student.id } })).toBe(1);
+    });
+
+    it("ignores a pick that isn't one of that academy's classes for that day, falling back to the picker", async () => {
+      const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+      const { academy: other, sessions } = await makeFixtureAcademy([
+        { dayOfWeek: "MONDAY", startTime: "13:00", name: "Somebody Else's Class" },
+      ]);
+      void other;
+      const { student, code } = await makeStudent({ homeAcademyId: escazu.id });
+
+      const result = await performCheckIn({
+        academyId: escazu.id,
+        code,
+        source: "KIOSK",
+        now: MONDAY_BETWEEN_ESCAZU_WINDOWS,
+        pickedClassSessionId: sessions[0].id,
+      });
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toBe("no_active_class");
+      expect(await prisma.attendanceRecord.count({ where: { studentId: student.id } })).toBe(0);
+    });
+
+    it("auto-saves an UNMATCHED record when the day has no active classes at all", async () => {
+      // Tuesday-only fixture, tapped on a Monday.
+      const { academy } = await makeFixtureAcademy([
+        { dayOfWeek: "TUESDAY", startTime: "18:00", name: "Martes" },
+      ]);
+      const { student, code } = await makeStudent({ homeAcademyId: academy.id });
+
+      const result = await performCheckIn({
+        academyId: academy.id,
+        code,
+        source: "KIOSK",
+        now: MONDAY_BETWEEN_ESCAZU_WINDOWS,
+      });
+
+      expect(result.ok).toBe(true);
+      if (result.ok) expect(result.matchedClass).toBeNull();
+
+      const record = await prisma.attendanceRecord.findFirstOrThrow({ where: { studentId: student.id } });
+      expect(record.classSessionId).toBeNull();
+      expect(record.matchSource).toBe("UNMATCHED");
+
+      // A second tap the same day must not double-count: the unique constraint
+      // can't see it (Postgres treats NULLs as distinct), so performCheckIn
+      // checks for it itself.
+      const again = await performCheckIn({
+        academyId: academy.id,
+        code,
+        source: "KIOSK",
+        now: MONDAY_BETWEEN_ESCAZU_WINDOWS,
+      });
+      expect(again).toEqual({ ok: false, error: "already_checked_in" });
+    });
+
+    it("saves an UNATTENDED (offline-replay) tap as UNMATCHED instead of returning a picklist nobody can answer", async () => {
+      const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+      const { student, code } = await makeStudent({ homeAcademyId: escazu.id });
+
+      const result = await performCheckIn({
+        academyId: escazu.id,
+        code,
+        source: "KIOSK",
+        now: MONDAY_BETWEEN_ESCAZU_WINDOWS,
+        unattended: true,
+      });
+
+      expect(result.ok).toBe(true);
+      const record = await prisma.attendanceRecord.findFirstOrThrow({ where: { studentId: student.id } });
+      expect(record.classSessionId).toBeNull();
+      expect(record.matchSource).toBe("UNMATCHED");
+    });
+
+    it("still stamps AUTO, and names the matched class, when a window does match", async () => {
+      const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+      const { student, code } = await makeStudent({ homeAcademyId: escazu.id });
+
+      const result = await performCheckIn({
+        academyId: escazu.id,
+        code,
+        source: "KIOSK",
+        now: WITHIN_MONDAY_GI_WINDOW,
+      });
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.matchedClass).toMatchObject({ dayOfWeek: "MONDAY", startTime: "06:00" });
+        expect(result.attendanceRecordId).toEqual(expect.any(String));
+      }
+
+      const record = await prisma.attendanceRecord.findFirstOrThrow({ where: { studentId: student.id } });
+      expect(record.matchSource).toBe("AUTO");
     });
   });
 
@@ -537,6 +749,54 @@ describe("performCheckIn", () => {
       expect(
         await prisma.attendanceRecord.count({ where: { studentId: student.id, classSessionId: gi.id } }),
       ).toBe(1);
+    });
+
+    it("keeps an UNMATCHED tap out of belt progress until a human resolves it, but in the lifetime total", async () => {
+      // Tuesday-only fixture, tapped on a Monday -> UNMATCHED. An unreviewed
+      // tap with no evidence of attending any specific class must not advance
+      // a belt on its own: a PORTAL self-check-in needs no physical presence
+      // at all, so counting it would be a free stripe. It is still a real tap,
+      // so it stays in the unfiltered lifetime total.
+      const { academy } = await makeFixtureAcademy([
+        { dayOfWeek: "TUESDAY", startTime: "18:00", name: "Martes" },
+      ]);
+      const { student, code } = await makeStudent({ homeAcademyId: academy.id });
+
+      const result = await performCheckIn({
+        academyId: academy.id,
+        code,
+        source: "KIOSK",
+        // Monday 2026-01-05 13:30 CR.
+        now: new Date("2026-01-05T19:30:00Z"),
+      });
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.summary.atBeltCount).toBe(0);
+        expect(result.summary.lifetimeCount).toBe(1);
+        expect(result.earnedStripe).toBe(false);
+      }
+
+      // ...and once the schedule is fixed and the row is reassigned to a real
+      // counting class, it counts — review-then-count needs no extra logic,
+      // the row simply stops being classSessionId-null.
+      const monday = await prisma.classSession.create({
+        data: {
+          academyId: academy.id,
+          dayOfWeek: "MONDAY",
+          startTime: "13:00",
+          durationMinutes: 60,
+          name: "Lunes (agregada después)",
+          type: "GI",
+          countsTowardPromotion: true,
+        },
+      });
+      const record = await prisma.attendanceRecord.findFirstOrThrow({ where: { studentId: student.id } });
+      expect((await reassignAttendance(record.id, monday.id, { actorUserId: null, matchSource: "STUDENT_PICKED" })).ok).toBe(true);
+
+      const summary = await getAtBeltSummary(student.id);
+      expect(summary.atBeltCount).toBe(1);
+      expect(summary.lifetimeCount).toBe(1);
     });
 
     it("still counts a manual staff adjustment, which has no classSession to inherit a flag from", async () => {

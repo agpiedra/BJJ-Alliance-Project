@@ -132,15 +132,22 @@ describe("selfCheckIn", () => {
     expect(await prisma.attendanceRecord.count({ where: { studentId } })).toBe(1);
   });
 
-  it("rejects self check-in outside every session's window as no_active_class", async () => {
+  // REDESIGN_BRIEF.md Phase 9: this used to reject. `OUTSIDE_ANY_WINDOW` is a
+  // Sunday and Escazú has no Sunday classes at all, so there is nothing to
+  // offer the student to pick — the tap is saved unattributed
+  // (`matchSource: UNMATCHED`, no classSession) instead of being dropped, and
+  // staff review it on the Kiosco page's "Marcajes de hoy" table.
+  it("saves a self check-in on a day with no classes at all as an UNMATCHED record", async () => {
     const { user, studentId } = await makeActiveStudentUser();
     currentSession = { user: { id: user.id, role: "STUDENT" } };
     setSystemTime(OUTSIDE_ANY_WINDOW);
 
     const state = await selfCheckIn({}, new FormData());
 
-    expect(state).toEqual({ error: "no_active_class" });
-    expect(await prisma.attendanceRecord.count({ where: { studentId } })).toBe(0);
+    expect(state.ok).toBe(true);
+    const record = await prisma.attendanceRecord.findFirstOrThrow({ where: { studentId } });
+    expect(record.classSessionId).toBeNull();
+    expect(record.matchSource).toBe("UNMATCHED");
   });
 
   it("rejects a PENDING student's self check-in with the distinct notActive error, via the upfront status check", async () => {

@@ -729,7 +729,14 @@
     "queuedOffline": "¡Guardado! Estás sin conexión — esto se sincronizará automáticamente cuando vuelva la conexión.",
     "queueFailed": "No pudimos guardar tu check-in en este dispositivo. Por favor avisa en la recepción.",
     "syncDropped": "{count, plural, one {# check-in no se pudo sincronizar — por favor avisa en la recepción} other {# check-ins no se pudieron sincronizar — por favor avisa en la recepción}}",
-    "syncDroppedDismiss": "Descartar"
+    "syncDroppedDismiss": "Descartar",
+    "pickClassHeading": "¿A cuál clase entraste?",
+    "pickClassDescription": "No encontramos una clase activa a esta hora. Elegí la tuya para guardar tu asistencia.",
+    "savedIn": "Asistencia guardada en",
+    "notThisClass": "¿No es esta clase?",
+    "correctClassHeading": "Elegí la clase correcta",
+    "correctClassDescription": "Tu asistencia ya quedó guardada — solo la movemos a la clase que elijas.",
+    "correctClassFailed": "No pudimos cambiar la clase. Avisá en la recepción."
   },
   "adminKioskTokens": {
     "heading": "Tokens de dispositivo del kiosco",
@@ -737,7 +744,32 @@
     "button": "Regenerar token",
     "confirm": "¿Regenerar el enlace del kiosco de esta academia? El enlace anterior dejará de funcionar de inmediato.",
     "successTokenWarning": "Este es el nuevo enlace de marcado del kiosco. Cópialo en la tablet ahora — no se mostrará de nuevo:",
-    "notFound": "No se pudo regenerar el token del kiosco de esta academia."
+    "notFound": "No se pudo regenerar el token del kiosco de esta academia.",
+    "matchSource": {
+      "AUTO": "Automática",
+      "STUDENT_PICKED": "Elegida por el alumno",
+      "STAFF_CORRECTED": "Corregida",
+      "UNMATCHED": "Sin asignar"
+    },
+    "checkIns": {
+      "heading": "Marcajes de hoy",
+      "empty": "Todavía no hay marcajes hoy.",
+      "time": "Hora",
+      "student": "Alumno",
+      "class": "Clase asignada",
+      "source": "Origen",
+      "actions": "Acciones",
+      "noClass": "Sin clase asignada",
+      "change": "Cambiar",
+      "changeLabel": "Clase a la que se moverá el marcaje",
+      "changeSubmit": "Guardar cambio",
+      "changeSuccess": "Marcaje movido.",
+      "noReassignOptions": "No hay clases activas este día.",
+      "notFound": "No se encontró este marcaje.",
+      "invalidRecord": "Solo se pueden reasignar marcajes de asistencia.",
+      "invalidClass": "Esa clase no corresponde a esta academia o a este día.",
+      "alreadyRecorded": "El alumno ya tiene asistencia en esa clase."
+    }
   },
   "adminSchedule": {
     "eyebrow": "Alliance · Horario",

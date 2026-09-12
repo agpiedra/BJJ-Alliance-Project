@@ -77,6 +77,18 @@ enum DayOfWeek {
   SUNDAY
 }
 
+/// How an AttendanceRecord got the class it is attributed to (REDESIGN_BRIEF.md
+/// Phase 9). AUTO is the default because every row written before this enum
+/// existed came from the all-or-nothing nearest-class matcher
+/// (src/lib/scheduling/check-in-window.ts) — a tap that matched nothing was
+/// rejected outright back then, so no pre-existing row can be anything else.
+enum AttendanceMatchSource {
+  AUTO
+  STUDENT_PICKED
+  STAFF_CORRECTED
+  UNMATCHED
+}
+
 enum ClassType {
   GI
   NO_GI
@@ -126,8 +138,9 @@ model User {
   paymentPeriodsRecorded PaymentPeriod[]
   notifications          Notification[]
 
-  attendanceRecordsCreated AttendanceRecord[]
-  passwordResetTokens      PasswordResetToken[]
+  attendanceRecordsCreated   AttendanceRecord[]   @relation("AttendanceCreatedBy")
+  attendanceRecordsCorrected AttendanceRecord[]   @relation("AttendanceCorrectedBy")
+  passwordResetTokens        PasswordResetToken[]
 }
 
 model PasswordResetToken {
@@ -226,11 +239,22 @@ model AttendanceRecord {
   reason         String?
   createdById    String?
   createdAt      DateTime         @default(now())
+  /// Provenance of `classSessionId`. UNMATCHED means the tap happened on a day
+  /// with no classes at all, so `classSessionId` is null and staff review it
+  /// from the Kiosco page's "Marcajes de hoy" table.
+  matchSource    AttendanceMatchSource @default(AUTO)
+  /// Set only by the STAFF_CORRECTED path. `occurredAt` deliberately stays the
+  /// raw instant of the original tap even after a correction.
+  correctedById  String?
+  correctedAt    DateTime?
 
   student      Student       @relation(fields: [studentId], references: [id])
   academy      Academy       @relation(fields: [academyId], references: [id])
   classSession ClassSession? @relation(fields: [classSessionId], references: [id])
-  createdBy    User?         @relation(fields: [createdById], references: [id])
+  // Two distinct relations to User (who wrote it vs. who corrected it) — Prisma
+  // requires an explicit name on each to tell them apart.
+  createdBy    User?         @relation("AttendanceCreatedBy", fields: [createdById], references: [id])
+  correctedBy  User?         @relation("AttendanceCorrectedBy", fields: [correctedById], references: [id])
 
   @@unique([studentId, classSessionId, date])
   @@index([studentId, occurredAt])
