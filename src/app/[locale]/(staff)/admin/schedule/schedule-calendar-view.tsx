@@ -96,7 +96,9 @@ export function ScheduleCalendarView({
                 </div>
                 <div className="flex items-center justify-between gap-3">
                   <span className="text-muted-foreground">{t("table.duration")}</span>
-                  <span className="tabular-nums">{selected.durationMinutes} min</span>
+                  <span className="tabular-nums">
+                    {selected.durationMinutes} {t("calendar.minutesUnit")}
+                  </span>
                 </div>
                 <div className="flex items-center justify-between gap-3">
                   <span className="text-muted-foreground">{t("table.countsTowardPromotion")}</span>

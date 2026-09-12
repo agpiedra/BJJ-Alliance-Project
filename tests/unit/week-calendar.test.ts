@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { rowFor, layoutOverlappingBlocks } from "@/components/ui/week-calendar";
+import { rowFor, layoutOverlappingBlocks, clampBlockRows, CALENDAR_START_HOUR, CALENDAR_END_HOUR } from "@/components/ui/week-calendar";
+
+const MIN_ROW = 2; // rowFor(CALENDAR_START_HOUR, 0)
+const MAX_ROW = 2 + (CALENDAR_END_HOUR - CALENDAR_START_HOUR) * 2; // rowFor(CALENDAR_END_HOUR, 0)
 
 describe("rowFor", () => {
   it("places 06:00 at row 2 (the first half-hour track)", () => {
@@ -88,5 +91,45 @@ describe("layoutOverlappingBlocks", () => {
     for (const layout of result) {
       expect(layout.columnCount).toBe(2);
     }
+  });
+});
+
+describe("clampBlockRows", () => {
+  it("leaves a block fully inside the visible window untouched", () => {
+    // 18:00-19:00
+    expect(clampBlockRows(rowFor(18, 0), rowFor(19, 0), MIN_ROW, MAX_ROW)).toEqual({
+      startRow: rowFor(18, 0),
+      endRow: rowFor(19, 0),
+    });
+  });
+
+  it("rejects a block entirely before the grid's start hour (e.g. a 05:00 class)", () => {
+    // 05:00-05:30 -> rowFor(5,0) = 0, rowFor(5,30) = 1, both before MIN_ROW (2).
+    expect(clampBlockRows(rowFor(5, 0), rowFor(5, 30), MIN_ROW, MAX_ROW)).toBeNull();
+  });
+
+  it("rejects a block entirely after the grid's end hour", () => {
+    // 21:00-22:00, both rows past MAX_ROW.
+    expect(clampBlockRows(rowFor(21, 0), rowFor(22, 0), MIN_ROW, MAX_ROW)).toBeNull();
+  });
+
+  it("clamps the start of a class that begins before the grid's start hour but runs into it", () => {
+    // 05:30-06:30 -> starts one half-hour before the grid, ends inside it.
+    const result = clampBlockRows(rowFor(5, 30), rowFor(6, 30), MIN_ROW, MAX_ROW);
+    expect(result).toEqual({ startRow: MIN_ROW, endRow: rowFor(6, 30) });
+  });
+
+  it("clamps the end of a class that starts inside the grid but runs past its end hour", () => {
+    // 19:30-20:30 -> ends one half-hour past the grid's last track (20:00).
+    const result = clampBlockRows(rowFor(19, 30), rowFor(20, 30), MIN_ROW, MAX_ROW);
+    expect(result).toEqual({ startRow: rowFor(19, 30), endRow: MAX_ROW });
+  });
+
+  it("does not reject a class that ends exactly at the grid's end hour", () => {
+    // 19:00-20:00 -> endRow === MAX_ROW exactly, which is a valid (not "past the end") block.
+    expect(clampBlockRows(rowFor(19, 0), rowFor(20, 0), MIN_ROW, MAX_ROW)).toEqual({
+      startRow: rowFor(19, 0),
+      endRow: MAX_ROW,
+    });
   });
 });

@@ -145,7 +145,6 @@ export default async function AdminSchedulePage({
                 <a
                   key={link.key}
                   href={buildHref(link.key, anchor)}
-                  role="button"
                   aria-pressed={view === link.key}
                   className={cn(
                     "px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground aria-pressed:bg-brand-gold aria-pressed:font-semibold aria-pressed:text-brand-gold-foreground",
@@ -327,6 +326,14 @@ function WeekView({
   const weekStart = startOfSundayWeek(anchor);
   const weekDates = Array.from({ length: 7 }, (_, i) => weekStart.plus({ days: i }));
 
+  // "Off" (diagonal hatch) is derived from the real data, not hardcoded to
+  // Sunday — the "Nueva clase" form lets an admin schedule a Sunday class (or
+  // deactivate every class on some other day), and the hatch/legend note
+  // must follow that, not silently keep claiming a day is class-free.
+  const hasClassesByDay = new Map(
+    SUNDAY_FIRST_DAYS.map((day) => [day, sessions.some((session) => session.dayOfWeek === day)]),
+  );
+
   const days: WeekCalendarDay[] = weekDates.map((date, index) => {
     const dayOfWeek = SUNDAY_FIRST_DAYS[index];
     return {
@@ -334,11 +341,20 @@ function WeekView({
       label: shortWeekdayLabel(date.toJSDate(), locale),
       dateNumber: date.day,
       isToday: date.hasSame(now, "day"),
-      isOff: dayOfWeek === DayOfWeek.SUNDAY,
+      isOff: !hasClassesByDay.get(dayOfWeek),
     };
   });
 
-  return <ScheduleCalendarView days={days} sessions={sessions} legend={legend} legendNote={sundayNote} />;
+  const sundayHasClasses = hasClassesByDay.get(DayOfWeek.SUNDAY) ?? false;
+
+  return (
+    <ScheduleCalendarView
+      days={days}
+      sessions={sessions}
+      legend={legend}
+      legendNote={sundayHasClasses ? undefined : sundayNote}
+    />
+  );
 }
 
 function DayView({
@@ -355,16 +371,19 @@ function DayView({
   legend: WeekCalendarLegendItem[];
 }) {
   const dayOfWeek = DAY_OF_WEEK_BY_LUXON_WEEKDAY[anchor.weekday];
+  const daySessions = sessions.filter((session) => session.dayOfWeek === dayOfWeek);
   const days: WeekCalendarDay[] = [
     {
       key: dayOfWeek,
       label: shortWeekdayLabel(anchor.toJSDate(), locale),
       dateNumber: anchor.day,
       isToday: anchor.hasSame(now, "day"),
-      isOff: dayOfWeek === DayOfWeek.SUNDAY,
+      // Same data-derived "off" treatment as WeekView, not hardcoded to
+      // SUNDAY — checked against the day's own sessions (already computed
+      // just above), active or inactive either way.
+      isOff: daySessions.length === 0,
     },
   ];
-  const daySessions = sessions.filter((session) => session.dayOfWeek === dayOfWeek);
 
   return <ScheduleCalendarView days={days} sessions={daySessions} legend={legend} />;
 }

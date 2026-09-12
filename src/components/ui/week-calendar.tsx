@@ -141,6 +141,27 @@ export function layoutOverlappingBlocks<T extends { id: string; startRow: number
   return result;
 }
 
+/**
+ * Clamps a block's row range to the grid's visible window [minRow, maxRow),
+ * returning null when the block falls entirely outside it. The row-placement
+ * formula (`rowFor`) has no built-in bound — the "Nueva clase" form accepts
+ * any "HH:mm" start and up to 600 minutes duration, so a class outside
+ * [startHour, endHour) is reachable in practice (a 05:00 class produces row
+ * 0, an invalid CSS grid line; a 04:00 class produces a negative line, which
+ * CSS silently reinterprets as counting from the grid's end) even though the
+ * current seed data never produces one. Exported so this can be unit-tested
+ * without rendering CSS.
+ */
+export function clampBlockRows(
+  startRow: number,
+  endRow: number,
+  minRow: number,
+  maxRow: number,
+): { startRow: number; endRow: number } | null {
+  if (endRow <= minRow || startRow >= maxRow) return null;
+  return { startRow: Math.max(minRow, startRow), endRow: Math.min(maxRow, endRow) };
+}
+
 export interface WeekCalendarProps {
   days: WeekCalendarDay[];
   blocks: WeekCalendarBlock[];
@@ -166,6 +187,8 @@ export function WeekCalendar({
 }: WeekCalendarProps) {
   const hours = Array.from({ length: endHour - startHour }, (_, i) => startHour + i);
   const totalTracks = (endHour - startHour) * 2;
+  const minRow = 2;
+  const maxRow = totalTracks + 2;
 
   const layoutById = new Map<string, OverlapLayout>();
   for (const day of days) {
@@ -179,8 +202,14 @@ export function WeekCalendar({
     <div className={cn("flex flex-col", className)}>
       <div className="overflow-x-auto">
         <div
-          className="relative grid min-w-[860px]"
+          className="relative grid"
           style={{
+            // The brief's 860px min-width is sized for the 7-column week
+            // grid, so IT scrolls horizontally instead of crushing — the
+            // 1-column Día view must NOT inherit that same fixed width, or
+            // it forces sideways scroll on exactly the view meant to be
+            // phone-friendly. Scale with the actual column count instead.
+            minWidth: 70 + days.length * 113,
             gridTemplateColumns: `70px repeat(${days.length}, minmax(104px, 1fr))`,
             gridTemplateRows: `auto repeat(${totalTracks}, 24px)`,
           }}
@@ -250,11 +279,13 @@ export function WeekCalendar({
           {blocks.map((block) => {
             const dayIndex = days.findIndex((day) => day.key === block.dayKey);
             if (dayIndex === -1) return null;
+            const clamped = clampBlockRows(block.startRow, block.endRow, minRow, maxRow);
+            if (!clamped) return null;
             const layout = layoutById.get(block.id) ?? { id: block.id, columnIndex: 0, columnCount: 1 };
             const widthPct = 100 / layout.columnCount;
             const leftPct = layout.columnIndex * widthPct;
             const style: React.CSSProperties = {
-              gridRow: `${block.startRow} / ${block.endRow}`,
+              gridRow: `${clamped.startRow} / ${clamped.endRow}`,
               gridColumn: dayIndex + 2,
               marginLeft: `calc(${leftPct}% + 2px)`,
               width: `calc(${widthPct}% - 4px)`,
