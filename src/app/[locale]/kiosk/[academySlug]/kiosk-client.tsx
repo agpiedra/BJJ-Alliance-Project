@@ -1,11 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
+import { DateTime } from "luxon";
+import { CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { BeltGraphic, type Belt } from "@/components/belt-graphic/belt-graphic";
 import { enqueueOfflineCheckIn, flushOfflineQueue } from "@/lib/kiosk/offline-queue";
+import { ZONE } from "@/lib/scheduling/zone";
 
 const CODE_LENGTH = 4;
 const SUCCESS_DISPLAY_MS = 6000;
@@ -228,24 +231,25 @@ export function KioskClient({
     [academySlug, token, clearTimers, resetToEntry, queueCheckIn],
   );
 
+  // Restyle only: the brief's PIN pad spec ("3x4 numpad" with `Borrar` /
+  // `Entrar` as two of the twelve positions, not `Borrar`/`0`/backspace) asks
+  // for an explicit submit step instead of auto-submitting on the 4th digit.
+  // `pressDigit` now only appends (capped at CODE_LENGTH); `submitCode` is
+  // invoked exclusively from `pressEnter` below. `submitCode`/`queueCheckIn`
+  // themselves are untouched — only when they're called has changed.
   const pressDigit = (digit: string) => {
-    if (phase.kind !== "entry" || phase.submitting) return;
-    const nextCode = phase.code + digit;
-    if (nextCode.length >= CODE_LENGTH) {
-      void submitCode(nextCode.slice(0, CODE_LENGTH));
-      return;
-    }
-    setPhase({ kind: "entry", code: nextCode, submitting: false });
-  };
-
-  const pressBackspace = () => {
-    if (phase.kind !== "entry" || phase.submitting) return;
-    setPhase({ kind: "entry", code: phase.code.slice(0, -1), submitting: false });
+    if (phase.kind !== "entry" || phase.submitting || phase.code.length >= CODE_LENGTH) return;
+    setPhase({ kind: "entry", code: phase.code + digit, submitting: false });
   };
 
   const pressClear = () => {
     if (phase.kind !== "entry" || phase.submitting) return;
     setPhase({ kind: "entry", code: "", submitting: false });
+  };
+
+  const pressEnter = () => {
+    if (phase.kind !== "entry" || phase.submitting || phase.code.length !== CODE_LENGTH) return;
+    void submitCode(phase.code);
   };
 
   return (
@@ -270,15 +274,20 @@ export function KioskClient({
         </div>
       )}
 
-      <h1 className="text-center text-3xl font-bold">{academyName}</h1>
+      {/* Hidden during the success phase so that view can genuinely fill the
+          screen, per the brief's "full-screen success state" — everywhere
+          else the academy name stays visible for context. */}
+      {phase.kind !== "success" && (
+        <h1 className="text-center text-3xl font-bold">{academyName}</h1>
+      )}
 
       {phase.kind === "entry" && (
         <EntryView
           code={phase.code}
           submitting={phase.submitting}
           onDigit={pressDigit}
-          onBackspace={pressBackspace}
           onClear={pressClear}
+          onEnter={pressEnter}
         />
       )}
 
@@ -334,54 +343,76 @@ function errorMessageKey(reason: CheckInFailureReason): string {
   }
 }
 
+// Wall-mounted, read at 1-2 metres (REDESIGN_BRIEF.md Phase 8): ~64px
+// numerals and huge tap targets at rest, scaled down below `sm` only so the
+// grid still obeys the phone-width rule (Rule 6) — this screen is never
+// actually loaded on a phone, but must not overflow one either.
+const DIGIT_BUTTON_CLASS = "h-20 w-20 text-4xl sm:h-28 sm:w-28 sm:text-[64px]";
+const ACTION_BUTTON_CLASS = "h-20 w-20 text-lg sm:h-28 sm:w-28 sm:text-2xl";
+
 function EntryView({
   code,
   submitting,
   onDigit,
-  onBackspace,
   onClear,
+  onEnter,
 }: {
   code: string;
   submitting: boolean;
   onDigit: (digit: string) => void;
-  onBackspace: () => void;
   onClear: () => void;
+  onEnter: () => void;
 }) {
   const t = useTranslations("kiosk");
+  const locale = useLocale();
   const dots = Array.from({ length: CODE_LENGTH }, (_, index) => index < code.length);
+  const codeComplete = code.length === CODE_LENGTH;
+
+  // Display-only clock, in the academy's zone rather than the tablet's own
+  // (possibly misconfigured) OS clock — see src/lib/scheduling/zone.ts. Null
+  // until mount so server and client render the same (empty) markup first;
+  // ticks every 30s after that, which is fresh enough for a wall clock
+  // without repainting every second.
+  const [now, setNow] = useState<DateTime | null>(null);
+  useEffect(() => {
+    setNow(DateTime.now().setZone(ZONE));
+    const id = setInterval(() => setNow(DateTime.now().setZone(ZONE)), 30_000);
+    return () => clearInterval(id);
+  }, []);
 
   return (
-    <div className="flex flex-col items-center gap-6">
-      <p className="text-lg text-muted-foreground">{t("enterCode")}</p>
+    <div className="flex flex-col items-center gap-8">
+      <p className="text-xl text-muted-foreground sm:text-2xl">{t("enterCode")}</p>
 
-      <div className="flex gap-3" aria-hidden="true">
+      <div className="flex gap-4" aria-hidden="true">
         {dots.map((filled, index) => (
           <span
             key={index}
-            className={`size-5 rounded-full border-2 border-foreground ${filled ? "bg-foreground" : "bg-transparent"}`}
+            className={`size-6 rounded-full border-2 border-foreground sm:size-7 ${filled ? "bg-foreground" : "bg-transparent"}`}
           />
         ))}
       </div>
 
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-3 gap-4">
         {["1", "2", "3", "4", "5", "6", "7", "8", "9"].map((digit) => (
           <Button
             key={digit}
             type="button"
-            size="lg"
             variant="outline"
-            className="h-16 w-16 text-2xl"
-            disabled={submitting}
+            className={DIGIT_BUTTON_CLASS}
+            disabled={submitting || codeComplete}
             onClick={() => onDigit(digit)}
           >
             {digit}
           </Button>
         ))}
+        {/* Bottom row is Borrar / 0 / Entrar — the brief's literal 3x4 layout
+            ("Borrar / Entrar in gold"), replacing the old Clear/0/Backspace
+            row and its auto-submit-on-4th-digit trigger. */}
         <Button
           type="button"
-          size="lg"
-          variant="secondary"
-          className="h-16 w-16 text-lg"
+          variant="primary"
+          className={ACTION_BUTTON_CLASS}
           disabled={submitting || code.length === 0}
           onClick={onClear}
         >
@@ -389,28 +420,33 @@ function EntryView({
         </Button>
         <Button
           type="button"
-          size="lg"
           variant="outline"
-          className="h-16 w-16 text-2xl"
-          disabled={submitting}
+          className={DIGIT_BUTTON_CLASS}
+          disabled={submitting || codeComplete}
           onClick={() => onDigit("0")}
         >
           0
         </Button>
         <Button
           type="button"
-          size="lg"
-          variant="secondary"
-          className="h-16 w-16 text-lg"
-          disabled={submitting || code.length === 0}
-          onClick={onBackspace}
-          aria-label={t("backspace")}
+          variant="primary"
+          className={ACTION_BUTTON_CLASS}
+          disabled={submitting || !codeComplete}
+          onClick={onEnter}
         >
-          ⌫
+          {t("enter")}
         </Button>
       </div>
 
       {submitting && <p className="text-muted-foreground">{t("submitting")}</p>}
+
+      {now && (
+        <p className="font-mono text-sm text-muted-foreground sm:text-base">
+          {now.setLocale(locale).toLocaleString(DateTime.DATE_FULL)}
+          {" · "}
+          {now.setLocale(locale).toLocaleString(DateTime.TIME_SIMPLE)}
+        </p>
+      )}
     </div>
   );
 }
@@ -418,40 +454,46 @@ function EntryView({
 function SuccessView({ result }: { result: CheckInSuccess }) {
   const t = useTranslations("kiosk");
   const { student, summary, earnedStripe, isVisitor, homeAcademyName } = result;
+  const name = `${student.firstName} ${student.lastName}`;
+  // Presentation-only derivation from numbers the API already computed
+  // (atBeltCount, remainingToNextStripe) — not a reimplementation of the
+  // belt-progression business logic itself (Rule 8), just the arithmetic
+  // needed to show "24 / 30" instead of two separate sentences.
+  const target =
+    summary.remainingToNextStripe !== null ? summary.atBeltCount + summary.remainingToNextStripe : null;
 
   return (
-    <Card className="w-full max-w-md">
-      <CardHeader>
-        <CardTitle className="text-center text-2xl">
-          {earnedStripe ? t("earnedStripeHeading") : t("successHeading")}
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="flex flex-col items-center gap-4 text-center">
-        <p className="text-xl font-semibold">
-          {student.firstName} {student.lastName}
+    <div className="flex w-full flex-1 flex-col items-center justify-center gap-6 text-center">
+      <CheckCircle2 className="size-20 text-ok sm:size-28" aria-hidden="true" />
+
+      <h2 className="font-heading text-4xl font-semibold text-balance sm:text-6xl">
+        {earnedStripe ? t("earnedStripeHeading", { name }) : t("successHeading", { name })}
+      </h2>
+
+      <BeltGraphic belt={student.currentBelt as Belt} stripes={student.currentStripes} />
+
+      {isVisitor && (
+        <span className="rounded-full bg-secondary px-4 py-1.5 text-lg text-secondary-foreground">
+          {t("visitorBadge", { academy: homeAcademyName })}
+        </span>
+      )}
+
+      <div className="flex flex-col items-center gap-2">
+        <p className="font-mono text-3xl tabular-nums sm:text-5xl">
+          {target !== null ? `${summary.atBeltCount} / ${target}` : summary.atBeltCount}
         </p>
 
-        <BeltGraphic belt={student.currentBelt as Belt} stripes={student.currentStripes} />
-
-        {isVisitor && (
-          <span className="rounded-full bg-secondary px-3 py-1 text-sm text-secondary-foreground">
-            {t("visitorBadge", { academy: homeAcademyName })}
-          </span>
-        )}
-
-        <p className="text-muted-foreground">{t("atBeltCount", { count: summary.atBeltCount })}</p>
-
         {summary.remainingToNextStripe !== null && (
-          <p className="text-muted-foreground">
+          <p className="text-xl text-muted-foreground sm:text-2xl">
             {t("remainingToNextStripe", { count: summary.remainingToNextStripe })}
           </p>
         )}
 
         {summary.remainingToNextStripe === null && summary.examEligible && (
-          <p className="font-medium">{t("examEligible")}</p>
+          <p className="text-xl font-medium sm:text-2xl">{t("examEligible")}</p>
         )}
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   );
 }
 
