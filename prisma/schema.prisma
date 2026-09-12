@@ -59,6 +59,14 @@ enum PaymentStatus {
   EXEMPT
 }
 
+// REDESIGN_BRIEF.md Phase 6.2 asks for a "PaymentMethod" enum — none existed.
+enum PaymentMethod {
+  SINPE
+  TRANSFERENCIA
+  EFECTIVO
+  TARJETA
+}
+
 enum DayOfWeek {
   MONDAY
   TUESDAY
@@ -296,6 +304,12 @@ model PaymentPeriod {
   notes        String?
   recordedById String
   recordedAt   DateTime      @default(now())
+  // REDESIGN_BRIEF.md Phase 6.2 additions — recordedById/recordedAt above
+  // already existed pre-brief, so only these four are new.
+  method         PaymentMethod?
+  promoName      String?
+  promoReason    String?
+  promoRecurring Boolean        @default(false)
 
   student    Student     @relation(fields: [studentId], references: [id])
   academy    Academy     @relation(fields: [academyId], references: [id])
