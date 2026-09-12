@@ -12,7 +12,7 @@ import type { ClassType } from "@/generated/prisma/client";
 // data, the same Server -> Client boundary discipline this file's sibling
 // panels already apply to Luxon `DateTime` fields.
 import type { ClassGrowthEntry, ClassPopularityRow } from "@/lib/analytics/class-popularity";
-import { Card, CardHeader, CardTitle, CardAction, CardContent } from "@/components/ui/card";
+import { Card, CardHeader, CardTitle, CardDescription, CardAction, CardContent } from "@/components/ui/card";
 import { BarList, type BarListItem } from "@/components/ui/bar-list";
 import { Pill } from "@/components/ui/pill";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -126,7 +126,11 @@ function AtRiskList({ rows, threshold }: { rows: ClassPopularityRow[]; threshold
     <Card>
       <CardHeader className="border-b">
         <CardTitle>{t("heading")}</CardTitle>
-        <CardAction className="text-xs text-muted-foreground">{t("caption", { count: threshold })}</CardAction>
+        {/* CardDescription (full-width row under the title), not CardAction
+            (a right-aligned, width-uncapped slot meant for a short button —
+            see ExportCsvButton's own use of it below — that squeezes a real
+            sentence into a narrow ragged column at phone width). */}
+        <CardDescription>{t("caption", { count: threshold })}</CardDescription>
       </CardHeader>
       <CardContent>
         {rows.length === 0 ? (
@@ -169,13 +173,21 @@ export function ClassPopularityPanel({
   const tType = useTranslations("classType");
   const [expanded, setExpanded] = useState(false);
 
-  if (rows.length === 0) {
+  // Rule 4: never render an empty/all-zero chart. Two distinct cases, two
+  // distinct messages: no class sessions in scope at all vs. sessions exist
+  // but the selected date range caught zero attendances (a real, reachable
+  // state — e.g. a brand-new range, or a genuinely quiet week) — the latter
+  // was previously missing here (`rows.length === 0` alone doesn't catch
+  // it), leaving 12 populated-looking "0" bars, an all-zero detail table,
+  // and a "Clases en riesgo" list naming literally every class.
+  const hasAttendanceSignal = rows.some((row) => row.attendances > 0);
+  if (rows.length === 0 || !hasAttendanceSignal) {
     return (
       <section className="flex flex-col gap-3">
         <h2 className="font-heading text-lg font-semibold">{t("heading")}</h2>
         <Card>
           <CardContent>
-            <EmptyState message={t("empty")} />
+            <EmptyState message={t(rows.length === 0 ? "empty" : "noAttendances")} />
           </CardContent>
         </Card>
       </section>

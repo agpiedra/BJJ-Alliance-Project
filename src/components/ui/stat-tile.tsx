@@ -15,7 +15,7 @@ export interface StatTileProps {
 
 export function StatTile({ label, value, note, delta, flag, className }: StatTileProps) {
   return (
-    <div className={cn("relative flex flex-col gap-1 p-4", flag && "pl-5", className)}>
+    <div className={cn("relative flex flex-col gap-1 bg-card p-4", flag && "pl-5", className)}>
       {flag && (
         <span
           aria-hidden
@@ -53,14 +53,25 @@ const COLUMN_CLASS: Record<NonNullable<StatRowProps["columns"]>, string> = {
 
 /**
  * "Tiles sit in one bordered container divided by 1px lines — not separate
- * floating cards" (Phase 3). Stacks to one column with horizontal dividers
- * below `sm`, switches to vertical dividers in a row above it.
+ * floating cards" (Phase 3).
+ *
+ * Draws the dividers with the classic "gap as border" technique — a `gap-px`
+ * grid whose own background (`bg-border`) shows through the seams, with each
+ * `StatTile` painting its own cell opaque (`bg-card`) — rather than Tailwind's
+ * `divide-y`/`divide-x` utilities. `divide-*` adds a border to every child
+ * that has a PRECEDING DOM SIBLING, which is exactly right for a single row
+ * (or a single stacked column below `sm`) but wrong the moment a grid has
+ * more than one row at the same breakpoint (Resumen's 8-tile 4×2 layout):
+ * `divide-y` alone would put a spurious top border on cells 2-4 of row 1 too
+ * (they all have a preceding sibling), not just on row 2's cells. `gap-px`
+ * has no such DOM-order blind spot — it divides every actually-adjacent
+ * cell, in both directions, for any row/column count.
  */
 export function StatRow({ children, columns = 4, className }: StatRowProps) {
   return (
     <div
       className={cn(
-        "grid grid-cols-1 divide-y divide-border overflow-hidden rounded-lg border border-border bg-card sm:divide-x sm:divide-y-0",
+        "grid grid-cols-1 gap-px overflow-hidden rounded-lg border border-border bg-border",
         COLUMN_CLASS[columns],
         className,
       )}

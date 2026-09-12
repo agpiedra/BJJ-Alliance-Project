@@ -1,7 +1,7 @@
 import { DateTime } from "luxon";
 import { prisma } from "@/lib/prisma";
 import { academyScopeWhere, type StaffSession } from "@/lib/auth/session";
-import { currentCrDateParts, getCurrentPaymentPeriod } from "@/lib/payments/get-current-period";
+import { currentCrDateParts } from "@/lib/payments/get-current-period";
 import type { Prisma } from "@/generated/prisma/client";
 import type { AnalyticsFilters } from "@/lib/analytics/filters";
 
@@ -19,6 +19,10 @@ export interface HeadlineTiles {
   totalAttendances: number;
   avgAttendancesPerActive: number;
   paymentHealthPercent: number;
+  /** See `countEnrolledAtRangeStart`'s own doc comment — the "Inscritos"
+   * tile's comparison figure, since `enrolled` itself has no date predicate
+   * to diff across two calls. */
+  enrolledAtRangeStart: number;
 }
 
 /** Is `date` inside `range`, inclusive of both endpoints? */
@@ -60,6 +64,32 @@ export function wasLost(attendanceDates: DateTime[], range: DateRange): boolean 
 }
 
 /**
+ * How many of the (already active-filtered) `students` had already joined
+ * by `rangeStart` — the "Inscritos" tile's own §4.3-Task-2 comparison
+ * figure. `enrolled` itself has no date predicate at all (a snapshot of
+ * however many students are active RIGHT NOW), so diffing it against a
+ * second `getHeadlineTiles` call for a different range would just diff the
+ * same range-independent number against itself —
+ * `paymentHealthPercent` has the identical structural problem (see its own
+ * comment inside `getHeadlineTiles`).
+ *
+ * This is a real, honestly-labeled approximation, not an exact historical
+ * headcount: a student who was active as of `rangeStart` but has since left
+ * the roster (archived/deactivated by now) is invisible here, since the
+ * caller only ever passes in CURRENTLY-active students. `enrolled -
+ * countEnrolledAtRangeStart(...)` will always equal `newThisMonth` by
+ * construction (both count "joined during the range, still active today"
+ * students) — that's expected, not a bug: it's the same fact presented as a
+ * comparison line instead of a standalone count.
+ */
+export function countEnrolledAtRangeStart(
+  students: Array<{ joinedAt: DateTime }>,
+  rangeStart: DateTime,
+): number {
+  return students.filter((student) => student.joinedAt <= rangeStart).length;
+}
+
+/**
  * Director/admin analytics headline tiles (Phase 7 spec §4). ADMIN/DIRECTOR
  * only — self-enforced right here, the same discipline
  * `listOverdueStudents`/`listApproachingStudents` already apply: a caller
@@ -80,8 +110,11 @@ export function wasLost(attendanceDates: DateTime[], range: DateRange): boolean 
  * whatever range the director selected, not a second hardcoded window.
  * `paymentHealthPercent` is the one exception (this phase's ruling): it
  * always reflects the CURRENT calendar month regardless of the selected
- * range, reusing `getCurrentPaymentPeriod`'s existing per-student period
- * resolution rather than a second, drifting implementation.
+ * range, via one batched `PaymentPeriod` query keyed on the same
+ * `studentId_year_month` year/month `getCurrentPaymentPeriod`
+ * (`@/lib/payments/get-current-period`) uses per-student elsewhere — never
+ * a second, drifting status rule, just batched instead of looped per
+ * student (see that query's own comment below for why).
  *
  * Only `type: "CHECKIN"` attendance rows count toward the attendance-based
  * tiles — a manual `ADJUSTMENT` correction (which can carry a negative
@@ -152,16 +185,33 @@ export async function getHeadlineTiles(
   const enrolled = students.length;
   const inactive = enrolled - active;
   const avgAttendancesPerActive = active > 0 ? totalAttendances / active : 0;
+  const enrolledAtRangeStart = countEnrolledAtRangeStart(
+    students.map((student) => ({ joinedAt: DateTime.fromJSDate(student.joinedAt) })),
+    range.from,
+  );
 
   const today = currentCrDateParts();
-  const healthResults = await Promise.all(
-    students.map(async (student) => {
-      const period = await getCurrentPaymentPeriod(student.id, today);
-      return period !== null && (period.status === "PAID" || period.status === "PROMO");
-    }),
+  // A single batched query, not one `getCurrentPaymentPeriod` call per
+  // student (that was a real N+1 — ~200 concurrent single-row queries on a
+  // 200-active-student academy, on every load of this `force-dynamic`
+  // page, doubled once this function started being called twice for the
+  // previous-period comparison). Same lookup key `getCurrentPaymentPeriod`
+  // itself uses (`studentId_year_month`'s year/month half) and the same
+  // "PAID or PROMO counts as healthy" rule — just batched across every
+  // student in scope instead of N round trips.
+  const currentPeriods =
+    studentIds.length === 0
+      ? []
+      : await prisma.paymentPeriod.findMany({
+          where: { studentId: { in: studentIds }, year: today.year, month: today.month },
+          select: { studentId: true, status: true },
+        });
+  const healthyStudentIds = new Set(
+    currentPeriods
+      .filter((period) => period.status === "PAID" || period.status === "PROMO")
+      .map((period) => period.studentId),
   );
-  const healthy = healthResults.filter(Boolean).length;
-  const paymentHealthPercent = enrolled > 0 ? Math.round((healthy / enrolled) * 100) : 0;
+  const paymentHealthPercent = enrolled > 0 ? Math.round((healthyStudentIds.size / enrolled) * 100) : 0;
 
   return {
     enrolled,
@@ -172,6 +222,7 @@ export async function getHeadlineTiles(
     totalAttendances,
     avgAttendancesPerActive,
     paymentHealthPercent,
+    enrolledAtRangeStart,
   };
 }
 

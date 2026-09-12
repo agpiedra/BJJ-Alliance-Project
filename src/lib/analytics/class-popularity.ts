@@ -164,14 +164,18 @@ export async function getClassPopularity(
  * Signed percentage change from `previous` to `current`, rounded to the
  * nearest whole percent — the "real percentage — not an arrow glyph" the
  * Detalle-por-clase trend pill needs (§4.3's own wording). `null` when
- * `previous` is 0: a percentage change from zero attendances is undefined,
- * so the caller renders "Nuevo" instead of a number rather than a
- * nonsensical/infinite percentage. Deliberately separate from `computeTrend`
- * above (which only classifies direction) rather than changing that
- * function's existing return shape.
+ * `previous` is 0 AND `current` is not: a percentage change FROM zero
+ * attendances TO some is undefined, so the caller renders "Nuevo" instead of
+ * a number rather than a nonsensical/infinite percentage. `previous === 0
+ * && current === 0` is the flat/no-change case, not "new" — `getClassPopularity`
+ * deliberately includes zero-attendance and inactive class sessions, so a
+ * real, reachable 0-to-0 row must render as flat (`0`), not mislabeled as
+ * "Nuevo". Deliberately separate from `computeTrend` above (which only
+ * classifies direction) rather than changing that function's existing
+ * return shape.
  */
 export function computeTrendPercent(current: number, previous: number): number | null {
-  if (previous === 0) return null;
+  if (previous === 0) return current === 0 ? 0 : null;
   return Math.round(((current - previous) / previous) * 100);
 }
 

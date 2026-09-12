@@ -54,9 +54,12 @@ describe("computeTrendPercent", () => {
     expect(computeTrendPercent(5, 5)).toBe(0);
   });
 
-  it("returns null (not Infinity/NaN) when previous is 0 — 'no previous data to compare'", () => {
+  it("returns null (not Infinity/NaN) when previous is 0 and current is not — 'no previous data to compare'", () => {
     expect(computeTrendPercent(3, 0)).toBeNull();
-    expect(computeTrendPercent(0, 0)).toBeNull();
+  });
+
+  it("previous 0 and current 0 is flat (0), not 'Nuevo' — a real, reachable zero-attendance class", () => {
+    expect(computeTrendPercent(0, 0)).toBe(0);
   });
 });
 

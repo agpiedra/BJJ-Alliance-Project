@@ -207,11 +207,13 @@
         "totalAttendancesCaption": "Asistencias totales cuenta por la academia de origen del estudiante, no por la sede donde se registró la entrada.",
         "avgAttendancesPerActive": "Asistencias promedio por activo",
         "paymentHealthPercent": "Salud de pagos (mes actual)",
+        "paymentHealthNote": "No aplica: siempre refleja el mes calendario en curso, no el rango seleccionado.",
         "deltaVsPrevious": "{value} vs. período anterior"
       },
       "classPopularity": {
         "heading": "Popularidad de clases",
         "empty": "No hay sesiones de clase en el alcance para el período seleccionado.",
+        "noAttendances": "Ninguna clase registró asistencias en el período seleccionado.",
         "trendNew": "Nuevo",
         "showAll": "Ver las {count} clases",
         "showLess": "Ver menos",

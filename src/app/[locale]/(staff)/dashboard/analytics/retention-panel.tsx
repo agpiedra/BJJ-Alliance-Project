@@ -4,7 +4,7 @@ import { useLocale, useTranslations } from "next-intl";
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { formatTimestampInAcademyZone } from "@/lib/format-date";
 import type { RetentionEntry } from "@/lib/analytics/retention";
-import { Card, CardHeader, CardTitle, CardAction, CardContent } from "@/components/ui/card";
+import { Card, CardHeader, CardTitle, CardDescription, CardAction, CardContent } from "@/components/ui/card";
 import { Pill } from "@/components/ui/pill";
 import { EmptyState } from "@/components/ui/empty-state";
 import {
@@ -115,7 +115,13 @@ export function RetentionPanel({
       <Card>
         <CardHeader className="border-b">
           <CardTitle>{t("trend.heading")}</CardTitle>
-          <CardAction className="text-xs text-muted-foreground">{t("trend.caption")}</CardAction>
+          {/* CardDescription (full-width row under the title), not
+              CardAction — CardAction is a right-aligned, width-uncapped slot
+              meant for a short button (see ExportCsvButton's own use of it
+              above), and this caption is a full sentence that would
+              otherwise squeeze both the title and itself into narrow ragged
+              columns at phone width. */}
+          <CardDescription>{t("trend.caption")}</CardDescription>
         </CardHeader>
         <CardContent>
           {trendHasSignal ? (

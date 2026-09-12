@@ -51,7 +51,9 @@ const AT_RISK_THRESHOLD = 4;
 
 /** §4.3's "8 stat tiles... each with a comparison line vs. the previous
  * period" — one row per tile: which of `HeadlineTiles`' fields, and whether
- * an increase is the good direction (`computeTileDelta`'s `polarity`). */
+ * an increase is the good direction (`computeTileDelta`'s `polarity`).
+ * `paymentHealthPercent` has no entry: it never gets a `delta` at all (see
+ * that tile's own comment below), so there's no polarity to record for it. */
 const TILE_POLARITY = {
   enrolled: "higherIsBetter",
   active: "higherIsBetter",
@@ -60,7 +62,6 @@ const TILE_POLARITY = {
   lost: "lowerIsBetter",
   totalAttendances: "higherIsBetter",
   avgAttendancesPerActive: "higherIsBetter",
-  paymentHealthPercent: "higherIsBetter",
 } as const satisfies Record<string, TileDeltaPolarity>;
 
 export default async function AnalyticsPage({
@@ -316,7 +317,14 @@ export default async function AnalyticsPage({
           <StatTile
             label={t("tiles.enrolled")}
             value={tiles.enrolled}
-            delta={tileDelta(tiles.enrolled, previousTiles.enrolled, TILE_POLARITY.enrolled)}
+            // Not `previousTiles.enrolled` — `enrolled` has no date
+            // predicate at all (a snapshot of currently-active students), so
+            // a second getHeadlineTiles call for a different range would
+            // just diff that same range-independent number against itself.
+            // `enrolledAtRangeStart` (from THIS call only) is the real
+            // comparison figure — see its own doc comment in
+            // headline-tiles.ts.
+            delta={tileDelta(tiles.enrolled, tiles.enrolledAtRangeStart, TILE_POLARITY.enrolled)}
           />
           <StatTile
             label={t("tiles.active")}
@@ -356,16 +364,14 @@ export default async function AnalyticsPage({
           <StatTile
             label={t("tiles.paymentHealthPercent")}
             value={`${tiles.paymentHealthPercent}%`}
-            // `previousTiles.paymentHealthPercent` always equals the current
-            // value (getHeadlineTiles pins this one field to the CURRENT
-            // calendar month regardless of the filter range — see its own
-            // doc comment) — the diff is therefore always 0 and this line
-            // never renders, by design, not a bug in tileDelta.
-            delta={tileDelta(
-              tiles.paymentHealthPercent,
-              previousTiles.paymentHealthPercent,
-              TILE_POLARITY.paymentHealthPercent,
-            )}
+            // No `delta` here — deliberately, not a silent gap.
+            // `paymentHealthPercent` is pinned to the CURRENT calendar month
+            // regardless of the filter range (getHeadlineTiles's own doc
+            // comment), so `previousTiles.paymentHealthPercent` always
+            // equals the current value and a diff would always be 0 — a
+            // `note` explaining the scope (Rule 5: never a bare number)
+            // instead of a comparison line that could never say anything.
+            note={t("tiles.paymentHealthNote")}
           />
         </StatRow>
         <p className="text-xs text-muted-foreground">{t("tiles.totalAttendancesCaption")}</p>
