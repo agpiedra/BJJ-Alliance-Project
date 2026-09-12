@@ -653,11 +653,26 @@
     "notFound": "No se pudo regenerar el token del kiosco de esta academia."
   },
   "adminSchedule": {
+    "eyebrow": "Alliance · Horario",
     "heading": "Horario de clases",
-    "description": "Administra las sesiones de clase de cada academia — día, hora, duración y tipo. Desactivar una sesión no borra su historial de asistencia.",
+    "description": "{academyName} · {count, plural, one {# clase por semana} other {# clases por semana}}. Tocá una clase para ver el detalle o editarla.",
     "academySelector": "Academia",
     "selectorSubmit": "Ver horario",
     "empty": "Esta academia no tiene sesiones de clase todavía.",
+    "calendar": {
+      "viewLabel": "Vista",
+      "week": "Semana",
+      "day": "Día",
+      "list": "Lista",
+      "today": "Hoy",
+      "prevWeek": "Semana anterior",
+      "nextWeek": "Semana siguiente",
+      "prevDay": "Día anterior",
+      "nextDay": "Día siguiente",
+      "newClass": "Nueva clase",
+      "newClassDescription": "Crea una nueva sesión de clase para esta academia.",
+      "sundayNote": "Domingo sin clases"
+    },
     "table": {
       "day": "Día",
       "startTime": "Hora",

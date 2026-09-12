@@ -653,11 +653,26 @@
     "notFound": "Could not regenerate this academy's kiosk token."
   },
   "adminSchedule": {
+    "eyebrow": "Alliance · Schedule",
     "heading": "Class schedule",
-    "description": "Manage each academy's class sessions — day, time, duration, and type. Deactivating a session does not delete its attendance history.",
+    "description": "{academyName} · {count, plural, one {# class per week} other {# classes per week}}. Tap a class to see its details or edit it.",
     "academySelector": "Academy",
     "selectorSubmit": "View schedule",
     "empty": "This academy has no class sessions yet.",
+    "calendar": {
+      "viewLabel": "View",
+      "week": "Week",
+      "day": "Day",
+      "list": "List",
+      "today": "Today",
+      "prevWeek": "Previous week",
+      "nextWeek": "Next week",
+      "prevDay": "Previous day",
+      "nextDay": "Next day",
+      "newClass": "New class",
+      "newClassDescription": "Create a new class session for this academy.",
+      "sundayNote": "No classes on Sunday"
+    },
     "table": {
       "day": "Day",
       "startTime": "Time",
