@@ -275,6 +275,65 @@ describe("getCurrentPaymentPeriod — recurring custom-promotion carry-forward",
     expect(current?.promoRecurring).toBe(true);
   });
 
+  // The same hole, reached through PROMO/EXEMPT instead of PAID — what
+  // distinguishes a waiver from a real charge is the AMOUNT (the custom-
+  // promo panel's own copy: "0 para exonerar por completo"), never the
+  // `status` label. A real, non-zero agreed amount recorded as PROMO is
+  // additionally never-overdue and offers no "Marcar pagado" action at all,
+  // so getting this wrong would make it uncollectable forever.
+  it("a recurring PROMO with a REAL amount > 0 materializes as PENDING next month, not PROMO", async () => {
+    const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+    const promoPlan = await ensureCustomPromoPlan(escazu.id);
+    const director = await makeStaffUser("carry-forward-realpromo-director");
+    const student = await makeStudent(escazu.id);
+
+    await prisma.paymentPeriod.create({
+      data: {
+        studentId: student.id,
+        academyId: escazu.id,
+        year: 2026,
+        month: 8,
+        planId: promoPlan.id,
+        status: "PROMO",
+        amount: 22500,
+        promoName: "Tarifa reducida",
+        promoRecurring: true,
+        recordedById: director.id,
+      },
+    });
+
+    const current = await getCurrentPaymentPeriod(student.id, { year: 2026, month: 9 });
+    expect(current?.status).toBe("PENDING");
+    expect(current?.amount).toBe(22500);
+    expect(current?.promoName).toBe("Tarifa reducida");
+    expect(current?.promoRecurring).toBe(true);
+  });
+
+  it("a recurring EXEMPT with a REAL amount > 0 materializes as PENDING next month, not EXEMPT", async () => {
+    const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+    const promoPlan = await ensureCustomPromoPlan(escazu.id);
+    const director = await makeStaffUser("carry-forward-realexempt-director");
+    const student = await makeStudent(escazu.id);
+
+    await prisma.paymentPeriod.create({
+      data: {
+        studentId: student.id,
+        academyId: escazu.id,
+        year: 2026,
+        month: 8,
+        planId: promoPlan.id,
+        status: "EXEMPT",
+        amount: 22500,
+        promoName: "Tarifa reducida",
+        promoRecurring: true,
+        recordedById: director.id,
+      },
+    });
+
+    const current = await getCurrentPaymentPeriod(student.id, { year: 2026, month: 9 });
+    expect(current?.status).toBe("PENDING");
+  });
+
   it("a recurring PAID promo with amount 0 (a full waiver recorded as paid) still carries forward as PAID", async () => {
     const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
     const promoPlan = await ensureCustomPromoPlan(escazu.id);
@@ -375,12 +434,23 @@ describe("getCurrentPaymentPeriod — recurring custom-promotion carry-forward",
   // uncheck "repetir") must stop the chain, not merely pause it — searching
   // for the LAST recurring row instead of the MOST RECENT row (regardless
   // of its flag) would perversely revive a promo just turned off.
-  it("does not revive a recurring promo after a later row explicitly turned promoRecurring off", async () => {
+  it("does not revive a recurring promo after a later row explicitly turned promoRecurring off, even across a GAP after the cancellation", async () => {
+    // Deliberately NOT "cancel in month N+1, query month N+2" — that shape
+    // happens to return null under the OLD "exact previous month only"
+    // lookup too (nothing exists at exactly N+1... wait, it DOES: the
+    // cancellation row itself sits at N+1, so even the old lookup would find
+    // it directly and correctly stop). Leaving a GAP month (N+2, no row at
+    // all) between the cancellation and the query is what actually exercises
+    // `findCarryForwardCandidate`'s gap-skipping: it must land on the
+    // cancellation row (month 7, the single most recent row that exists),
+    // not overshoot past it to the older recurring row (month 6) the way a
+    // naive "most recent row WITH promoRecurring: true" search would.
     const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
     const promoPlan = await ensureCustomPromoPlan(escazu.id);
     const director = await makeStaffUser("carry-forward-cancel-director");
     const student = await makeStudent(escazu.id);
 
+    // Month 6: recurring promo.
     await prisma.paymentPeriod.create({
       data: {
         studentId: student.id,
@@ -395,9 +465,9 @@ describe("getCurrentPaymentPeriod — recurring custom-promotion carry-forward",
         recordedById: director.id,
       },
     });
-    // July: the director explicitly removes the recurrence on this same
+    // Month 7: the director explicitly removes the recurrence on this same
     // custom-promo plan (e.g. via "Editar"), while leaving the promo itself
-    // in effect for July only.
+    // in effect for that month only.
     await prisma.paymentPeriod.create({
       data: {
         studentId: student.id,
@@ -412,9 +482,15 @@ describe("getCurrentPaymentPeriod — recurring custom-promotion carry-forward",
         recordedById: director.id,
       },
     });
+    // Month 8: nobody ever queried this student's period — a genuine gap.
 
-    const current = await getCurrentPaymentPeriod(student.id, { year: 2026, month: 8 });
+    const current = await getCurrentPaymentPeriod(student.id, { year: 2026, month: 9 });
     expect(current).toBeNull();
+
+    const month8Row = await prisma.paymentPeriod.findUnique({
+      where: { studentId_year_month: { studentId: student.id, year: 2026, month: 8 } },
+    });
+    expect(month8Row).toBeNull();
   });
 });
 

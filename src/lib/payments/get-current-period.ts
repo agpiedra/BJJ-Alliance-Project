@@ -86,20 +86,26 @@ function toCurrentPeriod(period: RawPeriod): CurrentPaymentPeriod {
 
 /**
  * A recurring custom-promotion row carries its TERMS forward (plan, amount,
- * promo fields) unconditionally, but "was this month actually paid" must
- * not — a recurring promo recorded as `PAID` with a real, non-zero agreed
- * amount (e.g. a discounted-but-real ₡22,500/month arrangement) means SOME
- * month someone actually collected that amount; it does not mean every
- * future month is pre-paid too. Only a true waiver — `PROMO`/`EXEMPT`, or a
- * `PAID` row with no real amount (a full waiver recorded as "paid in full at
- * ₡0") — genuinely repeats as settled. Anything else materializes as
- * `PENDING`, so the director is still prompted to actually collect it, and
- * `isOverdue`/the Pagos stat row don't silently treat an uncollected month
- * as current.
+ * promo fields) unconditionally, but "was this month actually settled" must
+ * not — and what distinguishes a true waiver from a real, collectable charge
+ * is the AMOUNT, never the `status` label. The custom-promo panel's own copy
+ * says so directly: "Monto acordado (₡) ... 0 para exonerar por completo" —
+ * `0` is what means "fully waived", regardless of whether the director filed
+ * that waiver as `PAID`, `PROMO`, or `EXEMPT`. A recurring row with a real,
+ * non-zero agreed amount (e.g. a discounted-but-real ₡22,500/month
+ * arrangement, however it was labeled) means SOME month someone actually
+ * collected that amount; it does not mean every future month is pre-settled
+ * too — an earlier fix only closed this for `status: PAID` and left the
+ * identical hole open for `PROMO`/`EXEMPT` (which are additionally
+ * never-overdue and offer no "Marcar pagado" action at all, so a real-amount
+ * promo recorded as `PROMO` would have been uncollectable forever). Any
+ * non-zero amount materializes next month as `PENDING`, so the director is
+ * still prompted to actually collect it, and `isOverdue`/the Pagos stat row
+ * don't silently treat an uncollected month as current.
  */
 function carriedStatusFor(period: { status: PaymentStatus; amount: { toNumber(): number } | null }): PaymentStatus {
-  const isRealPaidAmount = period.status === "PAID" && (period.amount?.toNumber() ?? 0) > 0;
-  return isRealPaidAmount ? "PENDING" : period.status;
+  const isWaiver = (period.amount?.toNumber() ?? 0) === 0;
+  return isWaiver ? period.status : "PENDING";
 }
 
 /** Prisma `where` fragment for "strictly before `{year, month}`" — used to
@@ -153,6 +159,17 @@ function qualifiesForCarryForward(candidate: { promoRecurring: boolean; plan: { 
  * warranted. `create` can — a unique-constraint failure means a concurrent
  * caller (or a real `recordPayment` call) won the race, so this returns
  * that row WITHOUT auditing a creation it didn't perform.
+ *
+ * The `create` + its `auditLog.create` are wrapped in ONE `$transaction`,
+ * matching `recordPayment`'s own upsert+audit atomicity — a failure on the
+ * audit insert alone rolls back the `PaymentPeriod` row too, rather than
+ * leaving a committed-but-unaudited financial row behind (which would
+ * otherwise surface as an unhandled 500 to whatever page, including a
+ * student's own portal, triggered this read). This composes fine with the
+ * catch-P2002 fallback below: a unique-violation inside the transaction
+ * rolls the whole transaction back (nothing partially committed either
+ * way), and the fallback re-fetch runs against `prisma` once the rejected
+ * transaction has already unwound.
  */
 async function materializeCarryForward(
   studentId: string,
@@ -161,47 +178,51 @@ async function materializeCarryForward(
 ): Promise<RawPeriod | null> {
   const status = carriedStatusFor(candidate);
   try {
-    const created = await prisma.paymentPeriod.create({
-      data: {
-        studentId,
-        academyId: candidate.academyId,
-        year: today.year,
-        month: today.month,
-        planId: candidate.planId,
-        status,
-        amount: candidate.amount?.toNumber() ?? null,
-        method: candidate.method,
-        notes: candidate.notes,
-        promoName: candidate.promoName,
-        promoReason: candidate.promoReason,
-        promoRecurring: true,
-        // Attributed to whoever set up the recurring promo, not a system
-        // user — this row was never actually re-entered by a human this
-        // month, so there is no "who recorded this month" to record beyond
-        // "whoever set the recurring promo running in the first place".
-        recordedById: candidate.recordedById,
-      },
-      select: CURRENT_PERIOD_SELECT,
-    });
-
-    await prisma.auditLog.create({
-      data: {
-        actorId: candidate.recordedById,
-        academyId: candidate.academyId,
-        action: "payment.carryForward",
-        entityType: "PaymentPeriod",
-        entityId: created.id,
-        before: Prisma.DbNull,
-        after: {
-          status: created.status,
-          planId: created.planId,
-          amount: created.amount?.toNumber() ?? null,
-          method: created.method,
-          promoName: created.promoName,
-          promoReason: created.promoReason,
-          promoRecurring: created.promoRecurring,
+    const created = await prisma.$transaction(async (tx) => {
+      const created = await tx.paymentPeriod.create({
+        data: {
+          studentId,
+          academyId: candidate.academyId,
+          year: today.year,
+          month: today.month,
+          planId: candidate.planId,
+          status,
+          amount: candidate.amount?.toNumber() ?? null,
+          method: candidate.method,
+          notes: candidate.notes,
+          promoName: candidate.promoName,
+          promoReason: candidate.promoReason,
+          promoRecurring: true,
+          // Attributed to whoever set up the recurring promo, not a system
+          // user — this row was never actually re-entered by a human this
+          // month, so there is no "who recorded this month" to record beyond
+          // "whoever set the recurring promo running in the first place".
+          recordedById: candidate.recordedById,
         },
-      },
+        select: CURRENT_PERIOD_SELECT,
+      });
+
+      await tx.auditLog.create({
+        data: {
+          actorId: candidate.recordedById,
+          academyId: candidate.academyId,
+          action: "payment.carryForward",
+          entityType: "PaymentPeriod",
+          entityId: created.id,
+          before: Prisma.DbNull,
+          after: {
+            status: created.status,
+            planId: created.planId,
+            amount: created.amount?.toNumber() ?? null,
+            method: created.method,
+            promoName: created.promoName,
+            promoReason: created.promoReason,
+            promoRecurring: created.promoRecurring,
+          },
+        },
+      });
+
+      return created;
     });
 
     return created;
@@ -302,15 +323,20 @@ export async function getCurrentPaymentPeriod(
  * up to 3 statements, including a conditional WRITE, per student) pattern
  * `headline-tiles.ts` already identified and fixed for a read-only case; at
  * ~200 active students that is up to ~600 concurrent statements on every
- * Pagos page load. This resolves the same "what period is this, carrying
- * forward recurring promos" logic in at most three round trips total,
- * regardless of student count:
+ * Pagos page load. This cuts that to at most two `findMany` ROUND TRIPS
+ * (regardless of student count) plus one write per student who actually
+ * needs carry-forward — a real reduction in query COUNT, though not a
+ * literal constant-cost query at the SQL level: Prisma's `distinct` here
+ * compiles to a client-side/window-function dedupe rather than Postgres
+ * `DISTINCT ON` (that needs the `nativeDistinct` preview feature, not
+ * enabled in this schema), so the second query still scans every missing
+ * student's full history, not just their latest row.
  *
  * 1. One `findMany` for every student's CURRENT-month row.
  * 2. For students still missing one, one `findMany` with
  *    `distinct: ["studentId"]` (Prisma's supported "latest row per group"
  *    pattern) to get each of THEIR single most-recent prior rows in one
- *    query — never per-student.
+ *    round trip — never per-student.
  * 3. `materializeCarryForward` only for the (typically small) subset that
  *    actually qualifies — bounded by how many recurring promos exist, not
  *    by how many students were asked about.
