@@ -1,5 +1,6 @@
-import { prisma } from "@/lib/prisma";
-import { academyScopeWhere, type StaffSession } from "@/lib/auth/session";
+import { branchScopeWhere } from "@/lib/tenant/context";
+import { getScopedDb } from "@/lib/tenant/scoped-client";
+import type { TenantContext } from "@/lib/tenant/types";
 import {
   currentCrDateParts,
   getCurrentPaymentPeriodsForStudents,
@@ -55,11 +56,11 @@ function bucketFor(period: CurrentPaymentPeriod, overdue: boolean): PaymentBucke
  * miss can also perform a write (recurring-promo carry-forward).
  */
 export async function listCurrentPaymentStatus(
-  session: StaffSession,
+  context: TenantContext,
   today: { year: number; month: number; day: number } = currentCrDateParts(),
 ): Promise<CurrentPaymentRow[]> {
-  const scope = academyScopeWhere(session);
-  const students = await prisma.student.findMany({
+  const scope = branchScopeWhere(context);
+  const students = await getScopedDb(context).student.findMany({
     where: {
       status: "ACTIVE",
       ...(scope.academyId ? { homeAcademyId: scope.academyId } : {}),

@@ -1,19 +1,39 @@
 import "dotenv/config";
+import { getTestPrismaClient } from "../helpers/test-db";
 import { afterAll, describe, expect, it } from "vitest";
 import { DateTime } from "luxon";
-import { PrismaClient } from "../../src/generated/prisma/client";
-import { PrismaPg } from "@prisma/adapter-pg";
 import { requireEnv } from "../../src/lib/env";
 import { digestLookupSecret, hashSecret } from "../../src/lib/crypto";
 import { toAttendanceDate, ZONE } from "../../src/lib/scheduling/zone";
-import type { StaffSession } from "../../src/lib/auth/session";
+import type { TenantContext, MembershipRole } from "../../src/lib/tenant/types";
 import type { AnalyticsFilters } from "../../src/lib/analytics/filters";
+import { adultRankId } from "../helpers/belt-ranks";
 
 const { getRetentionList, getWeeklyAttendanceTrend } = await import("../../src/lib/analytics/retention");
 
-const adapter = new PrismaPg({ connectionString: requireEnv("DATABASE_URL") });
-const prisma = new PrismaClient({ adapter });
+const prisma = getTestPrismaClient();
 const pepper = requireEnv("CODE_PEPPER");
+
+function ctx(role: MembershipRole, academyIds: string[] | "ALL", organizationId: string): TenantContext {
+  return {
+    kind: "tenant",
+    actorUserId: "x",
+    organizationId,
+    organizationRole: role,
+    academyIds,
+    selfStudentId: null,
+  };
+}
+
+// Fixture academies must live inside the real seeded Alliance organization
+// (not a fresh scratch one) so admin-wide, org-unscoped queries elsewhere in
+// the suite (e.g. promotion-queue.test.ts) don't crash resolving a
+// BeltRequirement that only the real org's academies have.
+let allianceOrgIdPromise: Promise<string> | null = null;
+function getAllianceOrganizationId() {
+  allianceOrgIdPromise ??= prisma.organization.findUniqueOrThrow({ where: { slug: "alliance-cr" } }).then((o) => o.id);
+  return allianceOrgIdPromise;
+}
 
 // A fixed range/reference date for every test in this file, entirely
 // independent of the real wall clock — same reasoning as
@@ -45,6 +65,7 @@ async function makeAcademy(label: string) {
       name: `${label} ${suffix}`,
       slug: `${label}-${suffix}`,
       kioskTokenHash: `${label}-hash-${suffix}`,
+      organizationId: await getAllianceOrganizationId(),
     },
   });
   cleanupAcademyIds.push(academy.id);
@@ -53,16 +74,19 @@ async function makeAcademy(label: string) {
 
 async function makeStudent(
   academyId: string,
+  organizationId: string,
   overrides?: { firstName?: string; lastName?: string; phone?: string; status?: "PENDING" | "ACTIVE" | "ARCHIVED" },
 ) {
   const suffix = `${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
   const student = await prisma.student.create({
     data: {
       homeAcademyId: academyId,
+      organizationId,
       firstName: overrides?.firstName ?? "RetentionTest",
       lastName: overrides?.lastName ?? `Student-${suffix}`,
       phone: overrides?.phone ?? "88880000",
       email: `retention-${suffix}@example.com`,
+      currentRankId: adultRankId("WHITE"),
       status: overrides?.status ?? "ACTIVE",
       joinedAt: RANGE_FROM.minus({ years: 1 }).toJSDate(),
       codeHash: digestLookupSecret(`retention-${suffix}`, pepper),
@@ -72,12 +96,13 @@ async function makeStudent(
   return student;
 }
 
-async function makeCheckin(studentId: string, academyId: string, occurredAt: DateTime) {
+async function makeCheckin(studentId: string, academyId: string, organizationId: string, occurredAt: DateTime) {
   const at = occurredAt.toJSDate();
   await prisma.attendanceRecord.create({
     data: {
       studentId,
       academyId,
+      organizationId,
       occurredAt: at,
       date: toAttendanceDate(at),
       type: "CHECKIN",
@@ -93,16 +118,16 @@ describe("getRetentionList", () => {
   it("buckets students into 30/60/90 correctly against filters.to, with phone and lastSeenAt", async () => {
     const academy = await makeAcademy("retention-buckets");
 
-    const at35 = await makeStudent(academy.id, { firstName: "At35", phone: "10000001" });
-    await makeCheckin(at35.id, academy.id, RANGE_TO.minus({ days: 35 }));
+    const at35 = await makeStudent(academy.id, academy.organizationId, { firstName: "At35", phone: "10000001" });
+    await makeCheckin(at35.id, academy.id, academy.organizationId, RANGE_TO.minus({ days: 35 }));
 
-    const at65 = await makeStudent(academy.id, { firstName: "At65", phone: "10000002" });
-    await makeCheckin(at65.id, academy.id, RANGE_TO.minus({ days: 65 }));
+    const at65 = await makeStudent(academy.id, academy.organizationId, { firstName: "At65", phone: "10000002" });
+    await makeCheckin(at65.id, academy.id, academy.organizationId, RANGE_TO.minus({ days: 65 }));
 
-    const at95 = await makeStudent(academy.id, { firstName: "At95", phone: "10000003" });
-    await makeCheckin(at95.id, academy.id, RANGE_TO.minus({ days: 95 }));
+    const at95 = await makeStudent(academy.id, academy.organizationId, { firstName: "At95", phone: "10000003" });
+    await makeCheckin(at95.id, academy.id, academy.organizationId, RANGE_TO.minus({ days: 95 }));
 
-    const admin: StaffSession = { userId: "x", role: "ADMIN", academyIds: "ALL" };
+    const admin = ctx("ADMIN", "ALL", academy.organizationId);
     const filters: AnalyticsFilters = { from: RANGE_FROM, to: RANGE_TO, academyId: null };
 
     const entries = await getRetentionList(admin, filters);
@@ -125,9 +150,9 @@ describe("getRetentionList", () => {
 
   it("a student with zero attendance ever appears with lastSeenAt null, bucket 90", async () => {
     const academy = await makeAcademy("retention-never-attended");
-    const student = await makeStudent(academy.id, { firstName: "NeverAttended" });
+    const student = await makeStudent(academy.id, academy.organizationId, { firstName: "NeverAttended" });
 
-    const admin: StaffSession = { userId: "x", role: "ADMIN", academyIds: "ALL" };
+    const admin = ctx("ADMIN", "ALL", academy.organizationId);
     const filters: AnalyticsFilters = { from: RANGE_FROM, to: RANGE_TO, academyId: null };
 
     const entries = await getRetentionList(admin, filters);
@@ -140,10 +165,10 @@ describe("getRetentionList", () => {
 
   it("a recently-active student (within 30 days of filters.to) never appears", async () => {
     const academy = await makeAcademy("retention-recently-active");
-    const student = await makeStudent(academy.id, { firstName: "RecentlyActive" });
-    await makeCheckin(student.id, academy.id, RANGE_TO.minus({ days: 5 }));
+    const student = await makeStudent(academy.id, academy.organizationId, { firstName: "RecentlyActive" });
+    await makeCheckin(student.id, academy.id, academy.organizationId, RANGE_TO.minus({ days: 5 }));
 
-    const admin: StaffSession = { userId: "x", role: "ADMIN", academyIds: "ALL" };
+    const admin = ctx("ADMIN", "ALL", academy.organizationId);
     const filters: AnalyticsFilters = { from: RANGE_FROM, to: RANGE_TO, academyId: null };
 
     const entries = await getRetentionList(admin, filters);
@@ -152,9 +177,9 @@ describe("getRetentionList", () => {
 
   it("a PENDING student never appears, even with no attendance ever", async () => {
     const academy = await makeAcademy("retention-pending-excluded");
-    const student = await makeStudent(academy.id, { firstName: "PendingOne", status: "PENDING" });
+    const student = await makeStudent(academy.id, academy.organizationId, { firstName: "PendingOne", status: "PENDING" });
 
-    const admin: StaffSession = { userId: "x", role: "ADMIN", academyIds: "ALL" };
+    const admin = ctx("ADMIN", "ALL", academy.organizationId);
     const filters: AnalyticsFilters = { from: RANGE_FROM, to: RANGE_TO, academyId: null };
 
     const entries = await getRetentionList(admin, filters);
@@ -163,10 +188,10 @@ describe("getRetentionList", () => {
 
   it("an ARCHIVED student never appears, even with old attendance", async () => {
     const academy = await makeAcademy("retention-archived-excluded");
-    const student = await makeStudent(academy.id, { firstName: "ArchivedOne", status: "ARCHIVED" });
-    await makeCheckin(student.id, academy.id, RANGE_TO.minus({ days: 95 }));
+    const student = await makeStudent(academy.id, academy.organizationId, { firstName: "ArchivedOne", status: "ARCHIVED" });
+    await makeCheckin(student.id, academy.id, academy.organizationId, RANGE_TO.minus({ days: 95 }));
 
-    const admin: StaffSession = { userId: "x", role: "ADMIN", academyIds: "ALL" };
+    const admin = ctx("ADMIN", "ALL", academy.organizationId);
     const filters: AnalyticsFilters = { from: RANGE_FROM, to: RANGE_TO, academyId: null };
 
     const entries = await getRetentionList(admin, filters);
@@ -176,10 +201,10 @@ describe("getRetentionList", () => {
   it("scopes to filters.academyId — a student at a different academy never appears", async () => {
     const academyOne = await makeAcademy("retention-scope-one");
     const academyTwo = await makeAcademy("retention-scope-two");
-    const studentOne = await makeStudent(academyOne.id, { firstName: "ScopeOne" });
-    const studentTwo = await makeStudent(academyTwo.id, { firstName: "ScopeTwo" });
+    const studentOne = await makeStudent(academyOne.id, academyOne.organizationId, { firstName: "ScopeOne" });
+    const studentTwo = await makeStudent(academyTwo.id, academyTwo.organizationId, { firstName: "ScopeTwo" });
 
-    const admin: StaffSession = { userId: "x", role: "ADMIN", academyIds: "ALL" };
+    const admin = ctx("ADMIN", "ALL", academyOne.organizationId);
     const filters: AnalyticsFilters = { from: RANGE_FROM, to: RANGE_TO, academyId: academyOne.id };
 
     const entries = await getRetentionList(admin, filters);
@@ -190,10 +215,10 @@ describe("getRetentionList", () => {
   it("a DIRECTOR only ever sees their own academy, even if handed a filter naming another one", async () => {
     const academyOne = await makeAcademy("retention-director-scope-one");
     const academyTwo = await makeAcademy("retention-director-scope-two");
-    const studentOne = await makeStudent(academyOne.id, { firstName: "DirScopeOne" });
-    const studentTwo = await makeStudent(academyTwo.id, { firstName: "DirScopeTwo" });
+    const studentOne = await makeStudent(academyOne.id, academyOne.organizationId, { firstName: "DirScopeOne" });
+    const studentTwo = await makeStudent(academyTwo.id, academyTwo.organizationId, { firstName: "DirScopeTwo" });
 
-    const director: StaffSession = { userId: "x", role: "DIRECTOR", academyIds: [academyOne.id] };
+    const director = ctx("DIRECTOR", [academyOne.id], academyOne.organizationId);
 
     const ownScope = await getRetentionList(director, {
       from: RANGE_FROM,
@@ -219,14 +244,14 @@ describe("getRetentionList", () => {
 
   it("sorts worst-first: bucket 90 before 60 before 30", async () => {
     const academy = await makeAcademy("retention-sort-order");
-    const at30 = await makeStudent(academy.id, { firstName: "Sort30" });
-    await makeCheckin(at30.id, academy.id, RANGE_TO.minus({ days: 35 }));
-    const at60 = await makeStudent(academy.id, { firstName: "Sort60" });
-    await makeCheckin(at60.id, academy.id, RANGE_TO.minus({ days: 65 }));
-    const at90 = await makeStudent(academy.id, { firstName: "Sort90" });
-    await makeCheckin(at90.id, academy.id, RANGE_TO.minus({ days: 95 }));
+    const at30 = await makeStudent(academy.id, academy.organizationId, { firstName: "Sort30" });
+    await makeCheckin(at30.id, academy.id, academy.organizationId, RANGE_TO.minus({ days: 35 }));
+    const at60 = await makeStudent(academy.id, academy.organizationId, { firstName: "Sort60" });
+    await makeCheckin(at60.id, academy.id, academy.organizationId, RANGE_TO.minus({ days: 65 }));
+    const at90 = await makeStudent(academy.id, academy.organizationId, { firstName: "Sort90" });
+    await makeCheckin(at90.id, academy.id, academy.organizationId, RANGE_TO.minus({ days: 95 }));
 
-    const admin: StaffSession = { userId: "x", role: "ADMIN", academyIds: "ALL" };
+    const admin = ctx("ADMIN", "ALL", academy.organizationId);
     const filters: AnalyticsFilters = { from: RANGE_FROM, to: RANGE_TO, academyId: academy.id };
 
     const entries = await getRetentionList(admin, filters);
@@ -234,7 +259,7 @@ describe("getRetentionList", () => {
   });
 
   it("an INSTRUCTOR session is rejected entirely (self-enforced role gate)", async () => {
-    const instructor: StaffSession = { userId: "x", role: "INSTRUCTOR", academyIds: [] };
+    const instructor = ctx("INSTRUCTOR", [], await getAllianceOrganizationId());
     const filters: AnalyticsFilters = { from: RANGE_FROM, to: RANGE_TO, academyId: null };
 
     await expect(getRetentionList(instructor, filters)).rejects.toThrow("FORBIDDEN");
@@ -246,7 +271,7 @@ describe("getWeeklyAttendanceTrend", () => {
 
   it("buckets attendances into CR-timezone (Monday-start) weeks over the filtered range, including zero-count weeks", async () => {
     const academy = await makeAcademy("retention-weekly-trend");
-    const student = await makeStudent(academy.id);
+    const student = await makeStudent(academy.id, academy.organizationId);
 
     // A 22:30 CR check-in — well past 18:00, so a naive UTC-day slice would
     // push this into the next UTC calendar day; a naive UTC *week* bucketing
@@ -254,14 +279,14 @@ describe("getWeeklyAttendanceTrend", () => {
     // instant is a Tuesday in CR, deliberately not a weekend, to make a
     // naive week-shift detectable.
     const tuesdayLateNight = DateTime.fromISO("2026-08-04T22:30:00", { zone: ZONE }); // Tuesday
-    await makeCheckin(student.id, academy.id, tuesdayLateNight);
-    await makeCheckin(student.id, academy.id, tuesdayLateNight.plus({ days: 1 })); // Wednesday, same week
-    await makeCheckin(student.id, academy.id, tuesdayLateNight.plus({ weeks: 1 })); // next week
+    await makeCheckin(student.id, academy.id, academy.organizationId, tuesdayLateNight);
+    await makeCheckin(student.id, academy.id, academy.organizationId, tuesdayLateNight.plus({ days: 1 })); // Wednesday, same week
+    await makeCheckin(student.id, academy.id, academy.organizationId, tuesdayLateNight.plus({ weeks: 1 })); // next week
 
     const from = DateTime.fromISO("2026-08-03", { zone: ZONE }).startOf("day"); // Monday
     const to = DateTime.fromISO("2026-08-17", { zone: ZONE }).endOf("day"); // three weeks span
 
-    const admin: StaffSession = { userId: "x", role: "ADMIN", academyIds: "ALL" };
+    const admin = ctx("ADMIN", "ALL", academy.organizationId);
     // Scoped to this test's own private academy — otherwise, under vitest's
     // cross-file parallelism, other integration files' own fixtures (many
     // sharing this exact Aug-2026 date window) would inflate these exact
@@ -284,13 +309,13 @@ describe("getWeeklyAttendanceTrend", () => {
   it("scopes to filters.academyId — attendances at a different academy are excluded", async () => {
     const academyOne = await makeAcademy("retention-trend-scope-one");
     const academyTwo = await makeAcademy("retention-trend-scope-two");
-    const studentOne = await makeStudent(academyOne.id);
-    const studentTwo = await makeStudent(academyTwo.id);
+    const studentOne = await makeStudent(academyOne.id, academyOne.organizationId);
+    const studentTwo = await makeStudent(academyTwo.id, academyTwo.organizationId);
 
-    await makeCheckin(studentOne.id, academyOne.id, RANGE_FROM.plus({ days: 2 }));
-    await makeCheckin(studentTwo.id, academyTwo.id, RANGE_FROM.plus({ days: 2 }));
+    await makeCheckin(studentOne.id, academyOne.id, academyOne.organizationId, RANGE_FROM.plus({ days: 2 }));
+    await makeCheckin(studentTwo.id, academyTwo.id, academyTwo.organizationId, RANGE_FROM.plus({ days: 2 }));
 
-    const admin: StaffSession = { userId: "x", role: "ADMIN", academyIds: "ALL" };
+    const admin = ctx("ADMIN", "ALL", academyOne.organizationId);
     const filters: AnalyticsFilters = { from: RANGE_FROM, to: RANGE_TO, academyId: academyOne.id };
 
     const trend = await getWeeklyAttendanceTrend(admin, filters);
@@ -299,7 +324,7 @@ describe("getWeeklyAttendanceTrend", () => {
   });
 
   it("an INSTRUCTOR session is rejected entirely (self-enforced role gate)", async () => {
-    const instructor: StaffSession = { userId: "x", role: "INSTRUCTOR", academyIds: [] };
+    const instructor = ctx("INSTRUCTOR", [], await getAllianceOrganizationId());
     const filters: AnalyticsFilters = { from: RANGE_FROM, to: RANGE_TO, academyId: null };
 
     await expect(getWeeklyAttendanceTrend(instructor, filters)).rejects.toThrow("FORBIDDEN");

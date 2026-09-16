@@ -1,15 +1,14 @@
 import "dotenv/config";
+import { getTestPrismaClient } from "../helpers/test-db";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { PrismaClient } from "../../src/generated/prisma/client";
-import { PrismaPg } from "@prisma/adapter-pg";
-import { requireEnv } from "../../src/lib/env";
 import { hashSecret } from "../../src/lib/crypto";
 
 // Same `auth()` mock as student-detail-actions.test.ts / create-student-action.test.ts
-// — see the long note in the former. `requireStaffSession` -> `getStaffSession`
+// — see the long note in the former. `requireTenantContext` -> `getTenantContext`
 // -> next-auth's `auth()` needs a real HTTP request's cookies to resolve a JWT
-// session, unavailable in a plain integration test.
-let currentSession: { user: { id: string; role: string } } | null = null;
+// session, unavailable in a plain integration test — and now also needs a real
+// `OrganizationMembership` row plus `activeOrganizationId` to resolve at all.
+let currentSession: { user: { id: string; role: string } | null; activeOrganizationId?: string } | null = null;
 
 vi.mock("@/auth", () => ({
   auth: () => Promise.resolve(currentSession),
@@ -20,8 +19,13 @@ const { createClassSession, updateClassSession, deactivateClassSession } = await
 );
 const { listClassSessions } = await import("../../src/app/[locale]/(staff)/admin/schedule/queries");
 
-const adapter = new PrismaPg({ connectionString: requireEnv("DATABASE_URL") });
-const prisma = new PrismaClient({ adapter });
+const prisma = getTestPrismaClient();
+
+let allianceOrgIdPromise: Promise<string> | null = null;
+function getAllianceOrganizationId() {
+  allianceOrgIdPromise ??= prisma.organization.findUniqueOrThrow({ where: { slug: "alliance-cr" } }).then((o) => o.id);
+  return allianceOrgIdPromise;
+}
 
 function formData(fields: Record<string, string>): FormData {
   const fd = new FormData();
@@ -43,6 +47,7 @@ function formData(fields: Record<string, string>): FormData {
  * per-test-tagged isolation `kiosk-rate-limit.test.ts` already uses.
  */
 let testAcademyId: string;
+let testOrganizationId: string;
 
 const cleanupUserIds: string[] = [];
 const cleanupClassSessionIds: string[] = [];
@@ -62,7 +67,9 @@ async function cleanup() {
     await prisma.classSession.deleteMany({ where: { id: { in: cleanupClassSessionIds } } });
   }
   if (cleanupUserIds.length > 0) {
+    await prisma.organizationMembership.deleteMany({ where: { userId: { in: cleanupUserIds } } });
     await prisma.staffAssignment.deleteMany({ where: { userId: { in: cleanupUserIds } } });
+    await prisma.notification.deleteMany({ where: { userId: { in: cleanupUserIds } } });
     await prisma.user.deleteMany({ where: { id: { in: cleanupUserIds } } });
   }
   cleanupClassSessionIds.length = 0;
@@ -79,9 +86,12 @@ async function makeStaffUser(role: "ADMIN" | "DIRECTOR" | "INSTRUCTOR", label: s
     },
   });
   cleanupUserIds.push(user.id);
+  await prisma.organizationMembership.create({
+    data: { userId: user.id, organizationId: testOrganizationId, role },
+  });
   if (academyId && role !== "ADMIN") {
     await prisma.staffAssignment.create({
-      data: { userId: user.id, academyId, role: role === "DIRECTOR" ? "DIRECTOR" : "INSTRUCTOR" },
+      data: { userId: user.id, academyId, organizationId: testOrganizationId, role: role === "DIRECTOR" ? "DIRECTOR" : "INSTRUCTOR" },
     });
   }
   return user;
@@ -115,9 +125,11 @@ describe("admin class-schedule CRUD actions", () => {
         name: `Schedule Test Academy ${suffix}`,
         slug: `schedule-test-${suffix}`,
         kioskTokenHash: `schedule-test-kiosk-hash-${suffix}`,
+        organizationId: await getAllianceOrganizationId(),
       },
     });
     testAcademyId = academy.id;
+    testOrganizationId = academy.organizationId;
   });
 
   // Runs even when a test throws, so an aborted run can't orphan fixture rows
@@ -137,10 +149,10 @@ describe("admin class-schedule CRUD actions", () => {
 
   it("ADMIN creates a session, updates it, then deactivates it — the row survives deactivation and listClassSessions still returns it", async () => {
     const admin = await makeStaffUser("ADMIN", "schedule-crud-admin");
-    currentSession = { user: { id: admin.id, role: "ADMIN" } };
+    currentSession = { user: { id: admin.id, role: "ADMIN" }, activeOrganizationId: testOrganizationId };
 
     const fields = sessionFields();
-    const created = await createClassSession({}, formData({ academyId: testAcademyId, ...fields }));
+    const created = await createClassSession(testOrganizationId, {}, formData({ academyId: testAcademyId, ...fields }));
     expect(created.ok).toBe(true);
 
     const session = await prisma.classSession.findFirstOrThrow({
@@ -162,6 +174,7 @@ describe("admin class-schedule CRUD actions", () => {
 
     // --- update ---
     const updated = await updateClassSession(
+      testOrganizationId,
       {},
       formData({
         classSessionId: session.id,
@@ -189,7 +202,7 @@ describe("admin class-schedule CRUD actions", () => {
     expect(updateAudits[0].after).toMatchObject({ dayOfWeek: "TUESDAY", startTime: "08:00" });
 
     // --- deactivate: sets active: false, never deletes ---
-    const deactivated = await deactivateClassSession({}, formData({ classSessionId: session.id }));
+    const deactivated = await deactivateClassSession(testOrganizationId, {}, formData({ classSessionId: session.id }));
     expect(deactivated.ok).toBe(true);
 
     const afterDeactivate = await prisma.classSession.findUnique({ where: { id: session.id } });
@@ -211,10 +224,10 @@ describe("admin class-schedule CRUD actions", () => {
 
   it("rejects a duplicate (academyId, dayOfWeek, startTime, name) slot with a friendly error, both on create and on update-into-collision", async () => {
     const admin = await makeStaffUser("ADMIN", "schedule-dup-admin");
-    currentSession = { user: { id: admin.id, role: "ADMIN" } };
+    currentSession = { user: { id: admin.id, role: "ADMIN" }, activeOrganizationId: testOrganizationId };
 
     const fieldsA = sessionFields({ startTime: "09:00" });
-    const createdA = await createClassSession({}, formData({ academyId: testAcademyId, ...fieldsA }));
+    const createdA = await createClassSession(testOrganizationId, {}, formData({ academyId: testAcademyId, ...fieldsA }));
     expect(createdA.ok).toBe(true);
     const sessionA = await prisma.classSession.findFirstOrThrow({
       where: { academyId: testAcademyId, name: fieldsA.name },
@@ -226,7 +239,7 @@ describe("admin class-schedule CRUD actions", () => {
     const countBefore = await prisma.classSession.count({
       where: { academyId: testAcademyId, dayOfWeek: "MONDAY", startTime: "09:00", name: fieldsA.name },
     });
-    const duplicateCreate = await createClassSession({}, formData({ academyId: testAcademyId, ...fieldsA }));
+    const duplicateCreate = await createClassSession(testOrganizationId, {}, formData({ academyId: testAcademyId, ...fieldsA }));
     expect(duplicateCreate.error).toBe("duplicateSlot");
     const countAfter = await prisma.classSession.count({
       where: { academyId: testAcademyId, dayOfWeek: "MONDAY", startTime: "09:00", name: fieldsA.name },
@@ -236,7 +249,7 @@ describe("admin class-schedule CRUD actions", () => {
     // A second, distinct session — then updating it to collide with
     // sessionA's slot is rejected the same way, and sessionB is untouched.
     const fieldsB = sessionFields({ startTime: "10:00" });
-    const createdB = await createClassSession({}, formData({ academyId: testAcademyId, ...fieldsB }));
+    const createdB = await createClassSession(testOrganizationId, {}, formData({ academyId: testAcademyId, ...fieldsB }));
     expect(createdB.ok).toBe(true);
     const sessionB = await prisma.classSession.findFirstOrThrow({
       where: { academyId: testAcademyId, name: fieldsB.name },
@@ -244,6 +257,7 @@ describe("admin class-schedule CRUD actions", () => {
     cleanupClassSessionIds.push(sessionB.id);
 
     const collidingUpdate = await updateClassSession(
+      testOrganizationId,
       {},
       formData({
         classSessionId: sessionB.id,
@@ -265,12 +279,12 @@ describe("admin class-schedule CRUD actions", () => {
   describe("role-based rejection — DIRECTOR and INSTRUCTOR are refused all three writes", () => {
     it("rejects createClassSession, updateClassSession and deactivateClassSession with FORBIDDEN, mutating nothing", async () => {
       const admin = await makeStaffUser("ADMIN", "schedule-role-admin");
-      currentSession = { user: { id: admin.id, role: "ADMIN" } };
+      currentSession = { user: { id: admin.id, role: "ADMIN" }, activeOrganizationId: testOrganizationId };
 
       // A genuine session to attempt updateClassSession/deactivateClassSession
       // against, created by an ADMIN so we know its baseline state.
       const fields = sessionFields();
-      const created = await createClassSession({}, formData({ academyId: testAcademyId, ...fields }));
+      const created = await createClassSession(testOrganizationId, {}, formData({ academyId: testAcademyId, ...fields }));
       expect(created.ok).toBe(true);
       const session = await prisma.classSession.findFirstOrThrow({
         where: { academyId: testAcademyId, name: fields.name },
@@ -281,14 +295,18 @@ describe("admin class-schedule CRUD actions", () => {
       const instructor = await makeStaffUser("INSTRUCTOR", "schedule-role-instructor", testAcademyId);
 
       for (const nonAdmin of [director, instructor]) {
-        currentSession = { user: { id: nonAdmin.id, role: nonAdmin.id === director.id ? "DIRECTOR" : "INSTRUCTOR" } };
+        currentSession = {
+          user: { id: nonAdmin.id, role: nonAdmin.id === director.id ? "DIRECTOR" : "INSTRUCTOR" },
+          activeOrganizationId: testOrganizationId,
+        };
 
         await expect(
-          createClassSession({}, formData({ academyId: testAcademyId, ...sessionFields() })),
+          createClassSession(testOrganizationId, {}, formData({ academyId: testAcademyId, ...sessionFields() })),
         ).rejects.toThrow("FORBIDDEN");
 
         await expect(
           updateClassSession(
+            testOrganizationId,
             {},
             formData({
               classSessionId: session.id,
@@ -303,7 +321,7 @@ describe("admin class-schedule CRUD actions", () => {
         ).rejects.toThrow("FORBIDDEN");
 
         await expect(
-          deactivateClassSession({}, formData({ classSessionId: session.id })),
+          deactivateClassSession(testOrganizationId, {}, formData({ classSessionId: session.id })),
         ).rejects.toThrow("FORBIDDEN");
       }
 
@@ -314,5 +332,75 @@ describe("admin class-schedule CRUD actions", () => {
       expect(untouched.active).toBe(true);
       expect(await prisma.auditLog.count({ where: { entityId: session.id } })).toBe(1); // only the create audit
     });
+  });
+
+  it("1f-4: an ADMIN's real membership doesn't help against an organizationId their tab doesn't belong to — createClassSession, updateClassSession and deactivateClassSession all refuse, audit, and mutate nothing; the same admin acting on their own org still succeeds", async () => {
+    const admin = await makeStaffUser("ADMIN", "schedule-crossorg-admin");
+    currentSession = { user: { id: admin.id, role: "ADMIN" }, activeOrganizationId: testOrganizationId };
+
+    const fields = sessionFields();
+    const created = await createClassSession(testOrganizationId, {}, formData({ academyId: testAcademyId, ...fields }));
+    expect(created.ok).toBe(true);
+    const session = await prisma.classSession.findFirstOrThrow({
+      where: { academyId: testAcademyId, name: fields.name },
+    });
+    cleanupClassSessionIds.push(session.id);
+
+    const otherOrg = await prisma.organization.create({
+      data: { slug: `schedule-crossorg-${Date.now()}`, name: "Cross-Org Test Org", status: "ACTIVE" },
+    });
+
+    try {
+      const rejectedCreate = await createClassSession(
+        otherOrg.id,
+        {},
+        formData({ academyId: testAcademyId, ...sessionFields() }),
+      );
+      expect(rejectedCreate.error).toBe("notFound");
+
+      const rejectedUpdate = await updateClassSession(
+        otherOrg.id,
+        {},
+        formData({
+          classSessionId: session.id,
+          dayOfWeek: "FRIDAY",
+          startTime: "18:00",
+          durationMinutes: "30",
+          name: "Should Not Land",
+          type: "KIDS",
+          countsTowardPromotion: "false",
+        }),
+      );
+      expect(rejectedUpdate.error).toBe("notFound");
+
+      const rejectedDeactivate = await deactivateClassSession(
+        otherOrg.id,
+        {},
+        formData({ classSessionId: session.id }),
+      );
+      expect(rejectedDeactivate.error).toBe("notFound");
+
+      const untouched = await prisma.classSession.findUniqueOrThrow({ where: { id: session.id } });
+      expect(untouched.dayOfWeek).toBe(fields.dayOfWeek);
+      expect(untouched.startTime).toBe(fields.startTime);
+      expect(untouched.name).toBe(fields.name);
+      expect(untouched.active).toBe(true);
+
+      const refusalAudits = await prisma.auditLog.findMany({
+        where: { actorId: admin.id, action: "organization.accessRefused", entityId: otherOrg.id },
+      });
+      expect(refusalAudits.length).toBe(3);
+
+      // The same admin, same session, acting on their OWN org still succeeds.
+      const legitimateDeactivate = await deactivateClassSession(
+        testOrganizationId,
+        {},
+        formData({ classSessionId: session.id }),
+      );
+      expect(legitimateDeactivate.ok).toBe(true);
+    } finally {
+      await prisma.auditLog.deleteMany({ where: { organizationId: otherOrg.id } });
+      await prisma.organization.delete({ where: { id: otherOrg.id } });
+    }
   });
 });

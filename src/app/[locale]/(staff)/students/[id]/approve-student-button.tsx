@@ -10,12 +10,18 @@ const INITIAL_STATE: ActionState = {};
 
 // Rendered only for an ADMIN/DIRECTOR session looking at a PENDING student
 // (page.tsx gate) — the real enforcement is server-side in `approveStudent`
-// itself (requireStaffSession(["ADMIN", "DIRECTOR"]) + isAcademyInScope
+// itself (requireTenantContext(["ADMIN", "DIRECTOR"]) + isAcademyInTenantScope
 // re-checked against a fresh read + a PENDING precondition asserted in the
 // UPDATE's own WHERE clause), never this UI check alone.
-export function ApproveStudentButton({ studentId }: { studentId: string }) {
+export function ApproveStudentButton({
+  organizationId,
+  studentId,
+}: {
+  organizationId: string;
+  studentId: string;
+}) {
   const t = useTranslations("students.detail.approve");
-  const [state, formAction, isPending] = useActionState(approveStudent, INITIAL_STATE);
+  const [state, formAction, isPending] = useActionState(approveStudent.bind(null, organizationId), INITIAL_STATE);
 
   return (
     <form action={formAction} className="flex flex-col items-start gap-2">

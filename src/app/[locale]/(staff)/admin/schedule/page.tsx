@@ -1,7 +1,7 @@
 import { DateTime } from "luxon";
 import { getLocale, getTranslations } from "next-intl/server";
-import { requireStaffSession } from "@/lib/auth/session";
-import { prisma } from "@/lib/prisma";
+import { requireTenantContext } from "@/lib/tenant/context";
+import { getScopedDb } from "@/lib/tenant/scoped-client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { FilterBarSelect } from "@/components/ui/filter-bar";
@@ -66,14 +66,18 @@ export default async function AdminSchedulePage({
   searchParams: Promise<ScheduleSearchParams>;
 }) {
   // ADMIN-only — schedule structure is academy policy (spec §5), not
-  // something a DIRECTOR/INSTRUCTOR session can reach. The unscoped academy
-  // list below (both Escazú and Escalante, regardless of assignment) is only
-  // safe to read because this call already rejected any non-ADMIN session.
-  await requireStaffSession(["ADMIN"]);
+  // something a DIRECTOR/INSTRUCTOR session can reach. The academy list below
+  // (both Escazú and Escalante, regardless of assignment) is safe to read
+  // unfiltered by academy only because this call already rejected any
+  // non-ADMIN session — it is still scoped by organizationId, since ADMIN's
+  // "every academy" means every academy in their own organization, never
+  // another tenant's.
+  const context = await requireTenantContext(["ADMIN"]);
   const params = await searchParams;
   const locale = await getLocale();
 
-  const academies = await prisma.academy.findMany({
+  const academies = await getScopedDb(context).academy.findMany({
+    where: {},
     orderBy: { name: "asc" },
     select: { id: true, name: true },
   });
@@ -171,7 +175,7 @@ export default async function AdminSchedulePage({
                         (createClassSession itself re-checks the role) — this
                         only avoids showing the control on a page no other
                         role can reach anyway. */}
-                    <CreateClassSessionForm academyId={selectedAcademyId} />
+                    <CreateClassSessionForm organizationId={context.organizationId} academyId={selectedAcademyId} />
                   </div>
                 </SheetContent>
               </Sheet>
@@ -240,6 +244,7 @@ export default async function AdminSchedulePage({
 
           {view === "week" ? (
             <WeekView
+              organizationId={context.organizationId}
               sessions={sessions}
               anchor={anchor}
               now={now}
@@ -248,7 +253,14 @@ export default async function AdminSchedulePage({
               sundayNote={tCal("sundayNote")}
             />
           ) : (
-            <DayView sessions={sessions} anchor={anchor} now={now} locale={locale} legend={legend} />
+            <DayView
+              organizationId={context.organizationId}
+              sessions={sessions}
+              anchor={anchor}
+              now={now}
+              locale={locale}
+              legend={legend}
+            />
           )}
         </Card>
       )}
@@ -290,8 +302,13 @@ export default async function AdminSchedulePage({
                       </DataTableCell>
                       <DataTableCell>
                         <div className="flex flex-col items-start gap-2">
-                          <EditClassSessionForm session={session} />
-                          {session.active && <DeactivateClassSessionButton classSessionId={session.id} />}
+                          <EditClassSessionForm organizationId={context.organizationId} session={session} />
+                          {session.active && (
+                            <DeactivateClassSessionButton
+                              organizationId={context.organizationId}
+                              classSessionId={session.id}
+                            />
+                          )}
                         </div>
                       </DataTableCell>
                     </DataTableRow>
@@ -309,6 +326,7 @@ export default async function AdminSchedulePage({
 type SessionRow = Awaited<ReturnType<typeof listClassSessions>>[number];
 
 function WeekView({
+  organizationId,
   sessions,
   anchor,
   now,
@@ -316,6 +334,7 @@ function WeekView({
   legend,
   sundayNote,
 }: {
+  organizationId: string;
   sessions: SessionRow[];
   anchor: DateTime;
   now: DateTime;
@@ -349,6 +368,7 @@ function WeekView({
 
   return (
     <ScheduleCalendarView
+      organizationId={organizationId}
       days={days}
       sessions={sessions}
       legend={legend}
@@ -358,12 +378,14 @@ function WeekView({
 }
 
 function DayView({
+  organizationId,
   sessions,
   anchor,
   now,
   locale,
   legend,
 }: {
+  organizationId: string;
   sessions: SessionRow[];
   anchor: DateTime;
   now: DateTime;
@@ -385,5 +407,12 @@ function DayView({
     },
   ];
 
-  return <ScheduleCalendarView days={days} sessions={daySessions} legend={legend} />;
+  return (
+    <ScheduleCalendarView
+      organizationId={organizationId}
+      days={days}
+      sessions={daySessions}
+      legend={legend}
+    />
+  );
 }

@@ -1,7 +1,8 @@
 import { DateTime } from "luxon";
 import { cn } from "cn";
 import { getTranslations } from "next-intl/server";
-import { requireStudentSession } from "@/lib/auth/session";
+import { redirect } from "next/navigation";
+import { requireTenantContext } from "@/lib/tenant/context";
 import { prisma } from "@/lib/prisma";
 import { BeltBar } from "@/components/belt-graphic/belt-bar";
 import { ProgressToNextGrade } from "@/components/belt-graphic/progress-to-next-grade";
@@ -17,6 +18,7 @@ import {
   type WeekCalendarLegendItem,
 } from "@/components/ui/week-calendar";
 import { getAtBeltSummary, type AtBeltSummary } from "@/lib/students/attendance-summary";
+import { resolvePromotionConfigMap } from "@/lib/promotion/config";
 import { getAttendanceHistory } from "@/lib/students/attendance-history";
 import { getOwnPromotionHistory } from "./get-promotion-history";
 import { formatTimestampInAcademyZone } from "@/lib/format-date";
@@ -64,10 +66,10 @@ function shortWeekdayLabel(date: Date, locale: string): string {
  * progress (e.g. a maxed-out belt with no exam threshold configured).
  */
 function resolveProgressTarget(summary: AtBeltSummary): { current: number; target: number } | null {
-  if (summary.nextStripeAt !== null) {
-    return { current: summary.atBeltCount, target: summary.nextStripeAt };
+  if (summary.nextTarget === "STRIPE") {
+    return { current: summary.atBeltCount, target: (summary.currentStripes + 1) * summary.attendancesPerStripe };
   }
-  if (summary.attendancesForExam > 0) {
+  if (summary.nextTarget === "BELT" && summary.attendancesForExam > 0) {
     return {
       current: summary.atBeltCount,
       target: summary.maxStripes * summary.attendancesPerStripe + summary.attendancesForExam,
@@ -111,17 +113,29 @@ export default async function StudentPortalPage({
 }: {
   params: Promise<{ locale: string }>;
 }) {
-  const session = await requireStudentSession();
+  const context = await requireTenantContext(["STUDENT"]);
   const { locale } = await params;
 
-  // Safe with no additional scope check: `session.studentId` came from the
-  // session guard itself (re-verified against the DB on every call), never
-  // from a route param an attacker could substitute another student's id
-  // into — unlike `students/[id]/page.tsx`, which must scope-check a
-  // caller-supplied id before trusting it.
+  // selfStudentId is non-null whenever organizationRole is STUDENT and a
+  // linked Student row genuinely exists for this user in this organization
+  // (see resolveSelfStudentId's own doc comment) — this "shouldn't happen"
+  // given signup's atomic User+Student transaction, same as
+  // requireStudentSession's old equivalent check, but fails closed rather
+  // than crash on a null assertion if it ever does.
+  if (!context.selfStudentId) {
+    redirect(`/${locale}/login`);
+  }
+  const studentId = context.selfStudentId;
+
+  // Safe with no additional scope check: `studentId` came from the tenant
+  // context itself (re-verified against the DB on every call), never from a
+  // route param an attacker could substitute another student's id into —
+  // unlike `students/[id]/page.tsx`, which must scope-check a caller-supplied
+  // id before trusting it.
+  const configByTrack = await resolvePromotionConfigMap(context.organizationId);
   const [student, summary, attendanceHistory, promotionHistory, currentPaymentPeriod] = await Promise.all([
     prisma.student.findUniqueOrThrow({
-      where: { id: session.studentId },
+      where: { id: studentId },
       select: {
         firstName: true,
         lastName: true,
@@ -129,14 +143,13 @@ export default async function StudentPortalPage({
         homeAcademy: { select: { id: true, name: true } },
       },
     }),
-    getAtBeltSummary(session.studentId),
-    getAttendanceHistory(session.studentId),
-    getOwnPromotionHistory(session.studentId),
-    // Scoped to session.studentId exactly like every other portal query
-    // above — no route param, so there's no way to see another student's
-    // payment status (spec §4.2 shows this to the student only, read-only,
-    // no recording UI).
-    getCurrentPaymentPeriod(session.studentId),
+    getAtBeltSummary(studentId, configByTrack),
+    getAttendanceHistory(studentId),
+    getOwnPromotionHistory(studentId),
+    // Scoped to studentId exactly like every other portal query above — no
+    // route param, so there's no way to see another student's payment status
+    // (spec §4.2 shows this to the student only, read-only, no recording UI).
+    getCurrentPaymentPeriod(studentId),
   ]);
   const overdue = isOverdue(currentPaymentPeriod, currentCrDateParts());
   const paymentStatus: ContactPaymentStatus = overdue
@@ -192,7 +205,6 @@ export default async function StudentPortalPage({
   const activeSessionCount = sessions.filter((s) => s.active).length;
 
   const t = await getTranslations("portal");
-  const tBelt = await getTranslations("belt");
   const tStudents = await getTranslations("students");
   const tStatusNotice = await getTranslations("portal.statusNotice");
   const tAttendanceType = await getTranslations("portal.attendanceHistory.type");
@@ -231,9 +243,10 @@ export default async function StudentPortalPage({
           </CardHeader>
           <CardContent className="flex flex-col gap-4 pt-4">
             <div className="flex flex-col items-center gap-2 py-2">
-              <BeltBar belt={summary.currentBelt} stripes={summary.currentStripes} maxStripes={summary.maxStripes} />
+              <BeltBar belt={summary.currentBeltVisual} stripes={summary.currentStripes} />
               <span className="text-sm font-medium">
-                {tBelt(summary.currentBelt)} · {tStudents("beltStripes", { count: summary.currentStripes })}
+                {locale === "es" ? summary.currentBeltLabelEs : summary.currentBeltLabelEn} ·{" "}
+                {tStudents("beltStripes", { count: summary.currentStripes })}
               </span>
               {progressTarget && (
                 <ProgressToNextGrade
@@ -247,13 +260,13 @@ export default async function StudentPortalPage({
             <div className="flex flex-col gap-1 text-sm">
               <p>{t("progress.atBeltCount", { count: summary.atBeltCount })}</p>
 
-              {summary.remainingToNextStripe !== null && (
+              {summary.remainingAttendance !== null && (
                 <p className="text-muted-foreground">
-                  {t("progress.remainingToNextStripe", { count: summary.remainingToNextStripe })}
+                  {t("progress.remainingToNextStripe", { count: summary.remainingAttendance })}
                 </p>
               )}
 
-              {summary.remainingToNextStripe === null && summary.examEligible && (
+              {summary.remainingAttendance === null && summary.nextTarget === "BELT" && summary.isEligible && (
                 <p className="font-medium">{t("progress.examEligible")}</p>
               )}
 
@@ -264,7 +277,7 @@ export default async function StudentPortalPage({
           </CardContent>
         </Card>
 
-        <SelfCheckInButton />
+        <SelfCheckInButton organizationId={context.organizationId} />
 
         <Card>
           <CardHeader className="border-b">
@@ -314,8 +327,8 @@ export default async function StudentPortalPage({
                         {formatTimestampInAcademyZone(promotion.awardedAt, locale)}
                       </span>
                       <Badge variant="outline">
-                        {tBelt(promotion.fromBelt)} {promotion.fromStripes} → {tBelt(promotion.toBelt)}{" "}
-                        {promotion.toStripes}
+                        {locale === "es" ? promotion.fromBeltLabelEs : promotion.fromBeltLabelEn} {promotion.fromStripes}{" "}
+                        → {locale === "es" ? promotion.toBeltLabelEs : promotion.toBeltLabelEn} {promotion.toStripes}
                       </Badge>
                     </div>
                     {promotion.notes && (

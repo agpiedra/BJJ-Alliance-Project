@@ -1,22 +1,27 @@
 import "dotenv/config";
+import { getTestPrismaClient } from "../helpers/test-db";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
-import { PrismaClient } from "../../src/generated/prisma/client";
-import { PrismaPg } from "@prisma/adapter-pg";
-import { requireEnv } from "../../src/lib/env";
 
 const { reserveKioskAttempt, finalizeKioskAttempt } = await import("../../src/lib/kiosk/rate-limit");
 
-const adapter = new PrismaPg({ connectionString: requireEnv("DATABASE_URL") });
-const prisma = new PrismaClient({ adapter });
+const prisma = getTestPrismaClient();
 
 let escazuId: string;
+let escazuOrganizationId: string;
 let otherAcademyId: string;
+let otherAcademyOrganizationId: string;
 
 beforeAll(async () => {
   const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
   escazuId = escazu.id;
-  const other = await prisma.academy.findFirstOrThrow({ where: { slug: { not: "escazu" } } });
+  escazuOrganizationId = escazu.organizationId;
+  // Exact slug, not `slug: { not: "escazu" }` — the exclusion form could
+  // resolve to another test's scratch academy if one happened to exist at
+  // this instant, and would break with an FK violation the moment that
+  // scratch academy's own cleanup deleted it mid-run.
+  const other = await prisma.academy.findUniqueOrThrow({ where: { slug: "escalante" } });
   otherAcademyId = other.id;
+  otherAcademyOrganizationId = other.organizationId;
 });
 
 /**
@@ -46,7 +51,7 @@ describe("kiosk rate limiting (reserve/finalize, keyed on the kiosk token digest
   it("allows a fresh token with no prior attempts, and reserves a provisional failure row", async () => {
     const hash = uniqueTokenHash("fresh");
 
-    const reservation = await reserveKioskAttempt(escazuId, hash, AUDIT_IP);
+    const reservation = await reserveKioskAttempt(escazuId, escazuOrganizationId, hash, AUDIT_IP);
 
     expect(reservation.allowed).toBe(true);
     if (!reservation.allowed) return;
@@ -62,7 +67,7 @@ describe("kiosk rate limiting (reserve/finalize, keyed on the kiosk token digest
   it("finalize('success') upgrades that exact row; finalize('invalid_code') leaves it a counting failure", async () => {
     const hash = uniqueTokenHash("finalize");
 
-    const success = await reserveKioskAttempt(escazuId, hash, AUDIT_IP);
+    const success = await reserveKioskAttempt(escazuId, escazuOrganizationId, hash, AUDIT_IP);
     expect(success.allowed).toBe(true);
     if (!success.allowed) return;
     await finalizeKioskAttempt(success.attemptId, "success");
@@ -70,7 +75,7 @@ describe("kiosk rate limiting (reserve/finalize, keyed on the kiosk token digest
     expect(successRow.success).toBe(true);
     expect(successRow.countsAsFailure).toBe(false);
 
-    const failure = await reserveKioskAttempt(escazuId, hash, AUDIT_IP);
+    const failure = await reserveKioskAttempt(escazuId, escazuOrganizationId, hash, AUDIT_IP);
     expect(failure.allowed).toBe(true);
     if (!failure.allowed) return;
     await finalizeKioskAttempt(failure.attemptId, "invalid_code");
@@ -85,7 +90,7 @@ describe("kiosk rate limiting (reserve/finalize, keyed on the kiosk token digest
       const hash = uniqueTokenHash(`valid-code-failure-${outcome}`);
 
       for (let i = 0; i < 5; i++) {
-        const reservation = await reserveKioskAttempt(escazuId, hash, AUDIT_IP);
+        const reservation = await reserveKioskAttempt(escazuId, escazuOrganizationId, hash, AUDIT_IP);
         expect(reservation.allowed).toBe(true);
         if (!reservation.allowed) return;
         await finalizeKioskAttempt(reservation.attemptId, outcome);
@@ -98,7 +103,7 @@ describe("kiosk rate limiting (reserve/finalize, keyed on the kiosk token digest
 
       // Five late arrivals, or one student double-tapping five times, must not
       // take the whole academy's kiosk offline.
-      const sixth = await reserveKioskAttempt(escazuId, hash, AUDIT_IP);
+      const sixth = await reserveKioskAttempt(escazuId, escazuOrganizationId, hash, AUDIT_IP);
       expect(sixth.allowed).toBe(true);
       expect(await countAttempts(hash)).toBe(6);
     },
@@ -115,6 +120,7 @@ describe("kiosk rate limiting (reserve/finalize, keyed on the kiosk token digest
     await prisma.kioskAttempt.createMany({
       data: Array.from({ length: 8 }, (_, i) => ({
         academyId: escazuId,
+        organizationId: escazuOrganizationId,
         kioskTokenHash: hash,
         ipAddress: AUDIT_IP,
         success: false,
@@ -123,7 +129,7 @@ describe("kiosk rate limiting (reserve/finalize, keyed on the kiosk token digest
       })),
     });
 
-    const legitimate = await reserveKioskAttempt(escazuId, hash, AUDIT_IP);
+    const legitimate = await reserveKioskAttempt(escazuId, escazuOrganizationId, hash, AUDIT_IP);
     expect(legitimate.allowed).toBe(true);
   });
 
@@ -132,14 +138,14 @@ describe("kiosk rate limiting (reserve/finalize, keyed on the kiosk token digest
     const BURST = 15; // comfortably past both the old 10/60s ceiling and the 5-failure lockout
 
     for (let i = 0; i < BURST; i++) {
-      const reservation = await reserveKioskAttempt(escazuId, hash, AUDIT_IP);
+      const reservation = await reserveKioskAttempt(escazuId, escazuOrganizationId, hash, AUDIT_IP);
       expect(reservation.allowed).toBe(true);
       if (!reservation.allowed) return;
       await finalizeKioskAttempt(reservation.attemptId, "success");
     }
 
     // And the very next student still gets through.
-    const next = await reserveKioskAttempt(escazuId, hash, AUDIT_IP);
+    const next = await reserveKioskAttempt(escazuId, escazuOrganizationId, hash, AUDIT_IP);
     expect(next.allowed).toBe(true);
 
     expect(await countAttempts(hash)).toBe(BURST + 1);
@@ -160,19 +166,19 @@ describe("kiosk rate limiting (reserve/finalize, keyed on the kiosk token digest
       "invalid_code",
     ] as const;
     for (const outcome of pattern) {
-      const reservation = await reserveKioskAttempt(escazuId, hash, AUDIT_IP);
+      const reservation = await reserveKioskAttempt(escazuId, escazuOrganizationId, hash, AUDIT_IP);
       expect(reservation.allowed).toBe(true);
       if (!reservation.allowed) return;
       await finalizeKioskAttempt(reservation.attemptId, outcome);
     }
 
     // The 5th failure is itself allowed (it's the one that trips the lockout).
-    const fifth = await reserveKioskAttempt(escazuId, hash, AUDIT_IP);
+    const fifth = await reserveKioskAttempt(escazuId, escazuOrganizationId, hash, AUDIT_IP);
     expect(fifth.allowed).toBe(true);
     if (!fifth.allowed) return;
     await finalizeKioskAttempt(fifth.attemptId, "invalid_code");
 
-    const blocked = await reserveKioskAttempt(escazuId, hash, AUDIT_IP);
+    const blocked = await reserveKioskAttempt(escazuId, escazuOrganizationId, hash, AUDIT_IP);
     expect(blocked.allowed).toBe(false);
     if (blocked.allowed) return;
     expect(blocked.reason).toBe("locked_out");
@@ -185,6 +191,7 @@ describe("kiosk rate limiting (reserve/finalize, keyed on the kiosk token digest
     await prisma.kioskAttempt.createMany({
       data: Array.from({ length: 5 }, (_, i) => ({
         academyId: escazuId,
+        organizationId: escazuOrganizationId,
         kioskTokenHash: hash,
         ipAddress: AUDIT_IP,
         success: false,
@@ -192,7 +199,7 @@ describe("kiosk rate limiting (reserve/finalize, keyed on the kiosk token digest
       })),
     });
 
-    const blocked = await reserveKioskAttempt(escazuId, hash, AUDIT_IP);
+    const blocked = await reserveKioskAttempt(escazuId, escazuOrganizationId, hash, AUDIT_IP);
     expect(blocked.allowed).toBe(false);
 
     // 5 seeded + the rejected one, which must NOT be silently dropped.
@@ -214,6 +221,7 @@ describe("kiosk rate limiting (reserve/finalize, keyed on the kiosk token digest
     await prisma.kioskAttempt.createMany({
       data: Array.from({ length: 8 }, (_, i) => ({
         academyId: escazuId,
+        organizationId: escazuOrganizationId,
         kioskTokenHash: hash,
         ipAddress: AUDIT_IP,
         success: false,
@@ -221,7 +229,7 @@ describe("kiosk rate limiting (reserve/finalize, keyed on the kiosk token digest
       })),
     });
 
-    const reservation = await reserveKioskAttempt(escazuId, hash, AUDIT_IP);
+    const reservation = await reserveKioskAttempt(escazuId, escazuOrganizationId, hash, AUDIT_IP);
     expect(reservation.allowed).toBe(true);
   });
 
@@ -230,7 +238,7 @@ describe("kiosk rate limiting (reserve/finalize, keyed on the kiosk token digest
     const CONCURRENT_CALLS = 20;
 
     const results = await Promise.all(
-      Array.from({ length: CONCURRENT_CALLS }, () => reserveKioskAttempt(escazuId, hash, AUDIT_IP)),
+      Array.from({ length: CONCURRENT_CALLS }, () => reserveKioskAttempt(escazuId, escazuOrganizationId, hash, AUDIT_IP)),
     );
 
     const allowed = results.filter((r) => r.allowed);
@@ -248,34 +256,34 @@ describe("kiosk rate limiting (reserve/finalize, keyed on the kiosk token digest
   it("scopes per (academy, kiosk token): a different token, or the same token at another academy, is unaffected", async () => {
     const lockedHash = uniqueTokenHash("scope-locked");
     for (let i = 0; i < 5; i++) {
-      const reservation = await reserveKioskAttempt(escazuId, lockedHash, AUDIT_IP);
+      const reservation = await reserveKioskAttempt(escazuId, escazuOrganizationId, lockedHash, AUDIT_IP);
       expect(reservation.allowed).toBe(true);
       if (!reservation.allowed) return;
       await finalizeKioskAttempt(reservation.attemptId, "invalid_code");
     }
-    const lockedOut = await reserveKioskAttempt(escazuId, lockedHash, AUDIT_IP);
+    const lockedOut = await reserveKioskAttempt(escazuId, escazuOrganizationId, lockedHash, AUDIT_IP);
     expect(lockedOut.allowed).toBe(false);
 
     // A different kiosk token at the same academy is unaffected.
     const otherHash = uniqueTokenHash("scope-other-token");
-    expect((await reserveKioskAttempt(escazuId, otherHash, AUDIT_IP)).allowed).toBe(true);
+    expect((await reserveKioskAttempt(escazuId, escazuOrganizationId, otherHash, AUDIT_IP)).allowed).toBe(true);
 
     // The same token hash at a different academy is unaffected.
-    expect((await reserveKioskAttempt(otherAcademyId, lockedHash, AUDIT_IP)).allowed).toBe(true);
+    expect((await reserveKioskAttempt(otherAcademyId, otherAcademyOrganizationId, lockedHash, AUDIT_IP)).allowed).toBe(true);
   });
 
   it("is NOT keyed on the caller-supplied IP — rotating it per request no longer evades the counter", async () => {
     const hash = uniqueTokenHash("ip-rotation");
 
     for (let i = 0; i < 5; i++) {
-      const reservation = await reserveKioskAttempt(escazuId, hash, `198.51.100.${i}`);
+      const reservation = await reserveKioskAttempt(escazuId, escazuOrganizationId, hash, `198.51.100.${i}`);
       expect(reservation.allowed).toBe(true);
       if (!reservation.allowed) return;
       await finalizeKioskAttempt(reservation.attemptId, "invalid_code");
     }
 
     // A brand-new IP, same token: still locked out.
-    const blocked = await reserveKioskAttempt(escazuId, hash, "198.51.100.250");
+    const blocked = await reserveKioskAttempt(escazuId, escazuOrganizationId, hash, "198.51.100.250");
     expect(blocked.allowed).toBe(false);
     if (blocked.allowed) return;
     expect(blocked.reason).toBe("locked_out");

@@ -249,6 +249,15 @@ async function replayEntry(entry: StoredCheckIn): Promise<ReplayResult> {
     return { outcome: "definitive", dropped: true };
   }
 
+  if (response.status === 403) {
+    // org_unavailable: the organization was suspended/pending/cancelled
+    // between queuing and replay. Not a verdict on the code at all, and
+    // reactivation restores access via the SAME kiosk token (no rotation) —
+    // so retry later rather than drop; the attempt is still recoverable
+    // once the organization is reactivated.
+    return { outcome: "retry", dropped: false };
+  }
+
   if (response.status === 429) {
     // rate_limited / locked_out are explicitly transient per the API's own
     // contract (they carry retryAfterSeconds) — NOT a verdict on this

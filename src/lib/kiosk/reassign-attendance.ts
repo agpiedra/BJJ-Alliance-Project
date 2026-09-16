@@ -1,4 +1,6 @@
 import { prisma } from "@/lib/prisma";
+import { getScopedDb } from "@/lib/tenant/scoped-client";
+import type { AccessContext } from "@/lib/tenant/types";
 import { attendanceDateDayOfWeek } from "@/lib/scheduling/zone";
 import { isUniqueConstraintError } from "@/lib/prisma-errors";
 import { AttendanceMatchSource, AttendanceType } from "@/generated/prisma/client";
@@ -21,11 +23,24 @@ interface ReassignOptions {
   actorUserId: string | null;
   matchSource: typeof AttendanceMatchSource.STUDENT_PICKED | typeof AttendanceMatchSource.STAFF_CORRECTED;
   /**
-   * When set, the record must belong to this academy or the call reports
-   * `notFound`. The kiosk passes the academy its device token was verified
-   * against, so one academy's tablet can never rewrite another's attendance.
+   * The record must belong to this academy or the call reports `notFound`.
+   * Required, not optional — MULTI_ACADEMY_AND_KIDS_BELTS.md 1f-1: an
+   * optional cross-tenant guard is a landmine, not an invariant, since a
+   * caller that simply forgets to pass it silently disables the entire
+   * check. The kiosk passes the academy its device token was verified
+   * against; the staff action passes the record's own (already scope-
+   * checked) academy — so one academy's tablet, or one organization's
+   * staff, can never rewrite another's attendance.
    */
-  expectedAcademyId?: string;
+  expectedAcademyId: string;
+  /**
+   * 1f-3: the authority this reassignment runs under, for `getScopedDb`'s
+   * organization enforcement — additional, structural defense-in-depth on
+   * top of `expectedAcademyId`'s academy-level check above. The kiosk route
+   * passes its verified `KioskContext`; the staff action passes its own
+   * already-resolved `TenantContext`.
+   */
+  context: AccessContext;
 }
 
 /**
@@ -47,12 +62,14 @@ export async function reassignAttendance(
   newClassSessionId: string,
   opts: ReassignOptions,
 ): Promise<ReassignAttendanceResult> {
-  const record = await prisma.attendanceRecord.findUnique({
+  const db = getScopedDb(opts.context);
+
+  const record = await db.attendanceRecord.findUnique({
     where: { id: attendanceRecordId },
     select: { id: true, academyId: true, date: true, classSessionId: true, matchSource: true, type: true },
   });
 
-  if (!record || (opts.expectedAcademyId && record.academyId !== opts.expectedAcademyId)) {
+  if (!record || record.academyId !== opts.expectedAcademyId) {
     return { ok: false, error: "notFound" };
   }
 
@@ -67,7 +84,7 @@ export async function reassignAttendance(
     return { ok: false, error: "invalidRecord" };
   }
 
-  const target = await prisma.classSession.findUnique({
+  const target = await db.classSession.findUnique({
     where: { id: newClassSessionId },
     select: { id: true, academyId: true, dayOfWeek: true, startTime: true, name: true, active: true },
   });

@@ -11,5 +11,22 @@ services:
     volumes:
       - alliance_pgdata:/var/lib/postgresql/data
 
+  # Dedicated to integration tests (tests/integration-setup.ts,
+  # scripts/lib/test-database-guard.ts) — a distinct service, not just a
+  # distinct database name on the dev server, so tests never share a
+  # server-side database with the dev app.
+  postgres_test:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: alliance
+      POSTGRES_PASSWORD: alliance_test_password
+      POSTGRES_DB: alliance_bjj_test
+    ports:
+      - "5433:5432"
+    volumes:
+      - alliance_pgdata_test:/var/lib/postgresql/data
+
 volumes:
   alliance_pgdata:
+  alliance_pgdata_test:

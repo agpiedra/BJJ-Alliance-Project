@@ -20,11 +20,20 @@ const FIELD_CLASS =
 // No collapsible wrapper of its own (unlike the old flat-list page) — this
 // now always lives inside the "Nueva clase" Sheet in the schedule header,
 // which is already the open/close affordance.
-export function CreateClassSessionForm({ academyId }: { academyId: string }) {
+export function CreateClassSessionForm({
+  organizationId,
+  academyId,
+}: {
+  organizationId: string;
+  academyId: string;
+}) {
   const t = useTranslations("adminSchedule.create");
   const tDay = useTranslations("dayOfWeek");
   const tType = useTranslations("classType");
-  const [state, formAction, isPending] = useActionState(createClassSession, INITIAL_STATE);
+  const [state, formAction, isPending] = useActionState(
+    createClassSession.bind(null, organizationId),
+    INITIAL_STATE,
+  );
   const idPrefix = useId();
 
   return (

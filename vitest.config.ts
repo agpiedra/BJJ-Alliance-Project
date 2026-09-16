@@ -5,6 +5,15 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   plugins: [react()],
   test: {
+    // A bare `npx vitest run --config vitest.config.ts` (no path argument)
+    // must never silently widen scope to tests/integration/** — that
+    // combined a suite of 270 unit tests with the integration suite under
+    // one misleading "green" report this session (root-caused: the missing
+    // path argument let vitest's default include glob scan the whole repo).
+    // Same reasoning as check:guard-usage: a check here, not reliance on
+    // always remembering to pass the right path.
+    include: ["tests/unit/**/*.test.{ts,tsx}"],
+    exclude: ["**/node_modules/**", "tests/integration/**"],
     setupFiles: ["./tests/setup.ts"],
     environment: "node",
     server: {

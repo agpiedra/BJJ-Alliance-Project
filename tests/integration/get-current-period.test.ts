@@ -1,17 +1,16 @@
 import "dotenv/config";
+import { getTestPrismaClient } from "../helpers/test-db";
 import { afterAll, describe, expect, it } from "vitest";
-import { PrismaClient } from "../../src/generated/prisma/client";
-import { PrismaPg } from "@prisma/adapter-pg";
 import { requireEnv } from "../../src/lib/env";
 import { digestLookupSecret, hashSecret } from "../../src/lib/crypto";
 import { ensureCustomPromoPlan } from "../../src/lib/payments/ensure-custom-promo-plan";
+import { adultRankId } from "../helpers/belt-ranks";
 
 const { getCurrentPaymentPeriod, getCurrentPaymentPeriodsForStudents } = await import(
   "../../src/lib/payments/get-current-period"
 );
 
-const adapter = new PrismaPg({ connectionString: requireEnv("DATABASE_URL") });
-const prisma = new PrismaClient({ adapter });
+const prisma = getTestPrismaClient();
 const pepper = requireEnv("CODE_PEPPER");
 
 const cleanupStudentIds: string[] = [];
@@ -30,6 +29,7 @@ async function cleanup() {
     await prisma.student.deleteMany({ where: { id: { in: cleanupStudentIds } } });
   }
   if (cleanupUserIds.length > 0) {
+    await prisma.notification.deleteMany({ where: { userId: { in: cleanupUserIds } } });
     await prisma.user.deleteMany({ where: { id: { in: cleanupUserIds } } });
   }
 }
@@ -43,15 +43,17 @@ async function makeStaffUser(label: string) {
   return user;
 }
 
-async function makeStudent(academyId: string) {
+async function makeStudent(academyId: string, organizationId: string) {
   const suffix = `${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
   const student = await prisma.student.create({
     data: {
       homeAcademyId: academyId,
+      organizationId,
       firstName: "CarryForwardTest",
       lastName: `Student-${suffix}`,
       phone: "88880000",
       email: `carry-forward-${suffix}@example.com`,
+      currentRankId: adultRankId("WHITE"),
       status: "ACTIVE",
       codeHash: digestLookupSecret(`carry-forward-${suffix}`, pepper),
     },
@@ -67,13 +69,14 @@ describe("getCurrentPaymentPeriod — recurring custom-promotion carry-forward",
     const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
     const promoPlan = await ensureCustomPromoPlan(escazu.id);
     const director = await makeStaffUser("carry-forward-director");
-    const student = await makeStudent(escazu.id);
+    const student = await makeStudent(escazu.id, escazu.organizationId);
 
     // August: a recurring, fully-waived custom promotion.
     await prisma.paymentPeriod.create({
       data: {
         studentId: student.id,
         academyId: escazu.id,
+        organizationId: escazu.organizationId,
         year: 2026,
         month: 8,
         planId: promoPlan.id,
@@ -123,12 +126,13 @@ describe("getCurrentPaymentPeriod — recurring custom-promotion carry-forward",
     const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
     const promoPlan = await ensureCustomPromoPlan(escazu.id);
     const director = await makeStaffUser("carry-forward-nonrecurring-director");
-    const student = await makeStudent(escazu.id);
+    const student = await makeStudent(escazu.id, escazu.organizationId);
 
     await prisma.paymentPeriod.create({
       data: {
         studentId: student.id,
         academyId: escazu.id,
+        organizationId: escazu.organizationId,
         year: 2026,
         month: 8,
         planId: promoPlan.id,
@@ -150,7 +154,7 @@ describe("getCurrentPaymentPeriod — recurring custom-promotion carry-forward",
       where: { academyId: escazu.id, name: "Mensualidad" },
     });
     const director = await makeStaffUser("carry-forward-ordinary-director");
-    const student = await makeStudent(escazu.id);
+    const student = await makeStudent(escazu.id, escazu.organizationId);
 
     // promoRecurring on a non-custom-promo plan should never happen via the
     // real form, but the query must not carry it forward even if it did.
@@ -158,6 +162,7 @@ describe("getCurrentPaymentPeriod — recurring custom-promotion carry-forward",
       data: {
         studentId: student.id,
         academyId: escazu.id,
+        organizationId: escazu.organizationId,
         year: 2026,
         month: 8,
         planId: mensualidad.id,
@@ -179,12 +184,13 @@ describe("getCurrentPaymentPeriod — recurring custom-promotion carry-forward",
       where: { academyId: escazu.id, name: "Mensualidad" },
     });
     const director = await makeStaffUser("carry-forward-override-director");
-    const student = await makeStudent(escazu.id);
+    const student = await makeStudent(escazu.id, escazu.organizationId);
 
     await prisma.paymentPeriod.create({
       data: {
         studentId: student.id,
         academyId: escazu.id,
+        organizationId: escazu.organizationId,
         year: 2026,
         month: 8,
         planId: promoPlan.id,
@@ -201,6 +207,7 @@ describe("getCurrentPaymentPeriod — recurring custom-promotion carry-forward",
       data: {
         studentId: student.id,
         academyId: escazu.id,
+        organizationId: escazu.organizationId,
         year: 2026,
         month: 9,
         planId: mensualidad.id,
@@ -219,12 +226,13 @@ describe("getCurrentPaymentPeriod — recurring custom-promotion carry-forward",
     const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
     const promoPlan = await ensureCustomPromoPlan(escazu.id);
     const director = await makeStaffUser("carry-forward-rollover-director");
-    const student = await makeStudent(escazu.id);
+    const student = await makeStudent(escazu.id, escazu.organizationId);
 
     await prisma.paymentPeriod.create({
       data: {
         studentId: student.id,
         academyId: escazu.id,
+        organizationId: escazu.organizationId,
         year: 2025,
         month: 12,
         planId: promoPlan.id,
@@ -249,13 +257,14 @@ describe("getCurrentPaymentPeriod — recurring custom-promotion carry-forward",
     const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
     const promoPlan = await ensureCustomPromoPlan(escazu.id);
     const director = await makeStaffUser("carry-forward-realpaid-director");
-    const student = await makeStudent(escazu.id);
+    const student = await makeStudent(escazu.id, escazu.organizationId);
 
     // August: a discounted-but-real recurring arrangement, actually paid.
     await prisma.paymentPeriod.create({
       data: {
         studentId: student.id,
         academyId: escazu.id,
+        organizationId: escazu.organizationId,
         year: 2026,
         month: 8,
         planId: promoPlan.id,
@@ -285,12 +294,13 @@ describe("getCurrentPaymentPeriod — recurring custom-promotion carry-forward",
     const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
     const promoPlan = await ensureCustomPromoPlan(escazu.id);
     const director = await makeStaffUser("carry-forward-realpromo-director");
-    const student = await makeStudent(escazu.id);
+    const student = await makeStudent(escazu.id, escazu.organizationId);
 
     await prisma.paymentPeriod.create({
       data: {
         studentId: student.id,
         academyId: escazu.id,
+        organizationId: escazu.organizationId,
         year: 2026,
         month: 8,
         planId: promoPlan.id,
@@ -313,12 +323,13 @@ describe("getCurrentPaymentPeriod — recurring custom-promotion carry-forward",
     const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
     const promoPlan = await ensureCustomPromoPlan(escazu.id);
     const director = await makeStaffUser("carry-forward-realexempt-director");
-    const student = await makeStudent(escazu.id);
+    const student = await makeStudent(escazu.id, escazu.organizationId);
 
     await prisma.paymentPeriod.create({
       data: {
         studentId: student.id,
         academyId: escazu.id,
+        organizationId: escazu.organizationId,
         year: 2026,
         month: 8,
         planId: promoPlan.id,
@@ -338,12 +349,13 @@ describe("getCurrentPaymentPeriod — recurring custom-promotion carry-forward",
     const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
     const promoPlan = await ensureCustomPromoPlan(escazu.id);
     const director = await makeStaffUser("carry-forward-paidzero-director");
-    const student = await makeStudent(escazu.id);
+    const student = await makeStudent(escazu.id, escazu.organizationId);
 
     await prisma.paymentPeriod.create({
       data: {
         studentId: student.id,
         academyId: escazu.id,
+        organizationId: escazu.organizationId,
         year: 2026,
         month: 8,
         planId: promoPlan.id,
@@ -363,12 +375,13 @@ describe("getCurrentPaymentPeriod — recurring custom-promotion carry-forward",
     const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
     const promoPlan = await ensureCustomPromoPlan(escazu.id);
     const director = await makeStaffUser("carry-forward-audit-director");
-    const student = await makeStudent(escazu.id);
+    const student = await makeStudent(escazu.id, escazu.organizationId);
 
     await prisma.paymentPeriod.create({
       data: {
         studentId: student.id,
         academyId: escazu.id,
+        organizationId: escazu.organizationId,
         year: 2026,
         month: 8,
         planId: promoPlan.id,
@@ -398,7 +411,7 @@ describe("getCurrentPaymentPeriod — recurring custom-promotion carry-forward",
     const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
     const promoPlan = await ensureCustomPromoPlan(escazu.id);
     const director = await makeStaffUser("carry-forward-gap-director");
-    const student = await makeStudent(escazu.id);
+    const student = await makeStudent(escazu.id, escazu.organizationId);
 
     // June: recurring promo. July and August: nobody ever queried this
     // student's period, so neither month has a row. September: first query.
@@ -406,6 +419,7 @@ describe("getCurrentPaymentPeriod — recurring custom-promotion carry-forward",
       data: {
         studentId: student.id,
         academyId: escazu.id,
+        organizationId: escazu.organizationId,
         year: 2026,
         month: 6,
         planId: promoPlan.id,
@@ -448,13 +462,14 @@ describe("getCurrentPaymentPeriod — recurring custom-promotion carry-forward",
     const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
     const promoPlan = await ensureCustomPromoPlan(escazu.id);
     const director = await makeStaffUser("carry-forward-cancel-director");
-    const student = await makeStudent(escazu.id);
+    const student = await makeStudent(escazu.id, escazu.organizationId);
 
     // Month 6: recurring promo.
     await prisma.paymentPeriod.create({
       data: {
         studentId: student.id,
         academyId: escazu.id,
+        organizationId: escazu.organizationId,
         year: 2026,
         month: 6,
         planId: promoPlan.id,
@@ -472,6 +487,7 @@ describe("getCurrentPaymentPeriod — recurring custom-promotion carry-forward",
       data: {
         studentId: student.id,
         academyId: escazu.id,
+        organizationId: escazu.organizationId,
         year: 2026,
         month: 7,
         planId: promoPlan.id,
@@ -505,11 +521,12 @@ describe("getCurrentPaymentPeriodsForStudents — batched resolution", () => {
     });
     const director = await makeStaffUser("batched-director");
 
-    const recordedStudent = await makeStudent(escazu.id);
+    const recordedStudent = await makeStudent(escazu.id, escazu.organizationId);
     await prisma.paymentPeriod.create({
       data: {
         studentId: recordedStudent.id,
         academyId: escazu.id,
+        organizationId: escazu.organizationId,
         year: 2026,
         month: 9,
         planId: mensualidad.id,
@@ -519,11 +536,12 @@ describe("getCurrentPaymentPeriodsForStudents — batched resolution", () => {
       },
     });
 
-    const carryForwardStudent = await makeStudent(escazu.id);
+    const carryForwardStudent = await makeStudent(escazu.id, escazu.organizationId);
     await prisma.paymentPeriod.create({
       data: {
         studentId: carryForwardStudent.id,
         academyId: escazu.id,
+        organizationId: escazu.organizationId,
         year: 2026,
         month: 8,
         planId: promoPlan.id,
@@ -535,7 +553,7 @@ describe("getCurrentPaymentPeriodsForStudents — batched resolution", () => {
       },
     });
 
-    const noHistoryStudent = await makeStudent(escazu.id);
+    const noHistoryStudent = await makeStudent(escazu.id, escazu.organizationId);
 
     const results = await getCurrentPaymentPeriodsForStudents(
       [recordedStudent.id, carryForwardStudent.id, noHistoryStudent.id],

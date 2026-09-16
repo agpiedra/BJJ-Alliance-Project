@@ -1,17 +1,28 @@
 import "dotenv/config";
+import { getTestPrismaClient } from "../helpers/test-db";
 import { afterAll, describe, expect, it } from "vitest";
-import { PrismaClient } from "../../src/generated/prisma/client";
-import { PrismaPg } from "@prisma/adapter-pg";
 import { requireEnv } from "../../src/lib/env";
 import { digestLookupSecret } from "../../src/lib/crypto";
+import { adultRankId } from "../helpers/belt-ranks";
+import { ALLIANCE_ATTENDANCE_CONFIG } from "../helpers/promotion-config";
 
 const { performCheckIn } = await import("../../src/lib/kiosk/perform-check-in");
 const { selectActiveSessionOccurrence } = await import("../../src/lib/scheduling/check-in-window");
 const { reassignAttendance } = await import("../../src/lib/kiosk/reassign-attendance");
 const { getAtBeltSummary } = await import("../../src/lib/students/attendance-summary");
 
-const adapter = new PrismaPg({ connectionString: requireEnv("DATABASE_URL") });
-const prisma = new PrismaClient({ adapter });
+/** A KioskContext matching a fixture/seeded academy — 1f-3: performCheckIn/reassignAttendance now require one. */
+function ctx(academy: { id: string; organizationId: string }): import("../../src/lib/tenant/types").KioskContext {
+  return { kind: "kiosk", organizationId: academy.organizationId, academyId: academy.id };
+}
+
+const prisma = getTestPrismaClient();
+
+let allianceOrgIdPromise: Promise<string> | null = null;
+function getAllianceOrganizationId() {
+  allianceOrgIdPromise ??= prisma.organization.findUniqueOrThrow({ where: { slug: "alliance-cr" } }).then((o) => o.id);
+  return allianceOrgIdPromise;
+}
 const pepper = requireEnv("CODE_PEPPER");
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -65,6 +76,7 @@ async function makeFixtureAcademy(
       name: `Check-In Fixture ${suffix}`,
       slug: `check-in-fixture-${suffix}`,
       kioskTokenHash: `check-in-fixture-hash-${suffix}`,
+      organizationId: await getAllianceOrganizationId(),
     },
   });
   cleanupAcademyIds.push(academy.id);
@@ -75,6 +87,7 @@ async function makeFixtureAcademy(
       await prisma.classSession.create({
         data: {
           academyId: academy.id,
+          organizationId: academy.organizationId,
           dayOfWeek: session.dayOfWeek,
           startTime: session.startTime,
           durationMinutes: 60,
@@ -97,14 +110,19 @@ async function makeStudent(overrides: {
 }) {
   const suffix = `${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
   const code = `chk-${suffix}`;
+  const academy = await prisma.academy.findUniqueOrThrow({
+    where: { id: overrides.homeAcademyId },
+    select: { organizationId: true },
+  });
   const student = await prisma.student.create({
     data: {
       homeAcademyId: overrides.homeAcademyId,
+      organizationId: academy.organizationId,
       firstName: "PerformCheckInTest",
       lastName: "Student",
       phone: "88881111",
       email: `perform-check-in-${suffix}@example.com`,
-      currentBelt: "WHITE",
+      currentRankId: adultRankId("WHITE"),
       currentStripes: overrides.currentStripes ?? 0,
       beltAwardedAt: overrides.beltAwardedAt ?? new Date("2026-01-01T00:00:00Z"),
       status: overrides.status ?? "ACTIVE",
@@ -116,12 +134,19 @@ async function makeStudent(overrides: {
 }
 
 /** Writes `count` real CHECKIN rows (no classSessionId), one per day starting at `startAt`. */
-async function addSyntheticCheckins(studentId: string, academyId: string, count: number, startAt: Date) {
+async function addSyntheticCheckins(
+  studentId: string,
+  academyId: string,
+  organizationId: string,
+  count: number,
+  startAt: Date,
+) {
   const rows = Array.from({ length: count }, (_, i) => {
     const occurredAt = new Date(startAt.getTime() + i * DAY_MS);
     return {
       studentId,
       academyId,
+      organizationId,
       occurredAt,
       // Naive UTC-date slice is fine here — this helper never runs near
       // midnight CR and correctness of `date` for these synthetic rows isn't
@@ -144,6 +169,7 @@ describe("performCheckIn", () => {
 
     const result = await performCheckIn({
       academyId: escazu.id,
+      context: ctx(escazu),
       code,
       source: "KIOSK",
       now: WITHIN_MONDAY_GI_WINDOW,
@@ -155,6 +181,16 @@ describe("performCheckIn", () => {
         firstName: "PerformCheckInTest",
         lastName: "Student",
         currentBelt: "WHITE",
+        currentBeltVisual: {
+          primaryColor: "#F0EBE0",
+          centerStripeColor: null,
+          barColor: "#111116",
+          stripeColors: ["#FFFFFF", "#FFFFFF", "#FFFFFF", "#FFFFFF"],
+          maxStripes: 4,
+          visibleStripeSlots: 4,
+        },
+        currentBeltLabelEs: "Blanco",
+        currentBeltLabelEn: "White",
         currentStripes: 0,
       });
       expect(result.summary.currentBelt).toBe("WHITE");
@@ -170,6 +206,7 @@ describe("performCheckIn", () => {
 
     const first = await performCheckIn({
       academyId: escazu.id,
+      context: ctx(escazu),
       code,
       source: "KIOSK",
       now: WITHIN_MONDAY_GI_WINDOW,
@@ -178,6 +215,7 @@ describe("performCheckIn", () => {
 
     const second = await performCheckIn({
       academyId: escazu.id,
+      context: ctx(escazu),
       code,
       source: "KIOSK",
       now: WITHIN_MONDAY_GI_WINDOW,
@@ -190,6 +228,7 @@ describe("performCheckIn", () => {
 
     const result = await performCheckIn({
       academyId: escazu.id,
+      context: ctx(escazu),
       code: "no-such-code-ever",
       source: "KIOSK",
       now: WITHIN_MONDAY_GI_WINDOW,
@@ -209,6 +248,7 @@ describe("performCheckIn", () => {
 
     const result = await performCheckIn({
       academyId: escazu.id,
+      context: ctx(escazu),
       code: "",
       source: "KIOSK",
       now: WITHIN_MONDAY_GI_WINDOW,
@@ -223,6 +263,7 @@ describe("performCheckIn", () => {
 
     const result = await performCheckIn({
       academyId: escazu.id,
+      context: ctx(escazu),
       code,
       source: "KIOSK",
       now: WITHIN_MONDAY_GI_WINDOW,
@@ -237,6 +278,7 @@ describe("performCheckIn", () => {
 
     const result = await performCheckIn({
       academyId: escazu.id,
+      context: ctx(escazu),
       code,
       source: "KIOSK",
       now: WITHIN_MONDAY_GI_WINDOW,
@@ -255,6 +297,7 @@ describe("performCheckIn", () => {
 
     const result = await performCheckIn({
       academyId: escazu.id,
+      context: ctx(escazu),
       code,
       source: "KIOSK",
       now: OUTSIDE_ANY_WINDOW,
@@ -278,6 +321,7 @@ describe("performCheckIn", () => {
 
     const result = await performCheckIn({
       academyId: escazu.id,
+      context: ctx(escazu),
       code,
       source: "KIOSK",
       now: WITHIN_MONDAY_GI_WINDOW,
@@ -307,10 +351,11 @@ describe("performCheckIn", () => {
     // no classSessionId, so these can't collide with the real session's
     // unique (studentId, classSessionId, date) constraint below regardless
     // of date overlap.
-    await addSyntheticCheckins(student.id, escazu.id, 29, new Date(beltAwardedAt.getTime() + DAY_MS));
+    await addSyntheticCheckins(student.id, escazu.id, escazu.organizationId, 29, new Date(beltAwardedAt.getTime() + DAY_MS));
 
     const result = await performCheckIn({
       academyId: escazu.id,
+      context: ctx(escazu),
       code,
       source: "KIOSK",
       now: WITHIN_MONDAY_GI_WINDOW,
@@ -338,6 +383,7 @@ describe("performCheckIn", () => {
 
       const first = await performCheckIn({
         academyId: academy.id,
+        context: ctx(academy),
         code,
         source: "KIOSK",
         now: beforeMidnight,
@@ -354,6 +400,7 @@ describe("performCheckIn", () => {
       // unique constraint — two ledger rows for one class.
       const second = await performCheckIn({
         academyId: academy.id,
+        context: ctx(academy),
         code,
         source: "KIOSK",
         now: afterMidnight,
@@ -373,6 +420,7 @@ describe("performCheckIn", () => {
       // Thursday's.
       const result = await performCheckIn({
         academyId: academy.id,
+        context: ctx(academy),
         code,
         source: "KIOSK",
         now: new Date("2026-06-18T05:40:00Z"),
@@ -391,6 +439,7 @@ describe("performCheckIn", () => {
 
       const result = await performCheckIn({
         academyId: escazu.id,
+        context: ctx(escazu),
         studentId: student.id,
         source: "PORTAL",
         now: WITHIN_MONDAY_GI_WINDOW,
@@ -402,6 +451,16 @@ describe("performCheckIn", () => {
           firstName: "PerformCheckInTest",
           lastName: "Student",
           currentBelt: "WHITE",
+          currentBeltVisual: {
+            primaryColor: "#F0EBE0",
+            centerStripeColor: null,
+            barColor: "#111116",
+            stripeColors: ["#FFFFFF", "#FFFFFF", "#FFFFFF", "#FFFFFF"],
+            maxStripes: 4,
+            visibleStripeSlots: 4,
+          },
+          currentBeltLabelEs: "Blanco",
+          currentBeltLabelEn: "White",
           currentStripes: 0,
         });
         expect(result.summary.currentBelt).toBe("WHITE");
@@ -417,6 +476,7 @@ describe("performCheckIn", () => {
 
       const first = await performCheckIn({
         academyId: escazu.id,
+        context: ctx(escazu),
         studentId: student.id,
         source: "PORTAL",
         now: WITHIN_MONDAY_GI_WINDOW,
@@ -425,6 +485,7 @@ describe("performCheckIn", () => {
 
       const second = await performCheckIn({
         academyId: escazu.id,
+        context: ctx(escazu),
         studentId: student.id,
         source: "PORTAL",
         now: WITHIN_MONDAY_GI_WINDOW,
@@ -438,6 +499,7 @@ describe("performCheckIn", () => {
 
       const result = await performCheckIn({
         academyId: escazu.id,
+        context: ctx(escazu),
         studentId: student.id,
         source: "PORTAL",
         now: WITHIN_MONDAY_GI_WINDOW,
@@ -452,6 +514,7 @@ describe("performCheckIn", () => {
 
       const result = await performCheckIn({
         academyId: escazu.id,
+        context: ctx(escazu),
         studentId: student.id,
         source: "PORTAL",
         now: WITHIN_MONDAY_GI_WINDOW,
@@ -466,6 +529,7 @@ describe("performCheckIn", () => {
 
       const result = await performCheckIn({
         academyId: escazu.id,
+        context: ctx(escazu),
         studentId: student.id,
         source: "PORTAL",
         now: OUTSIDE_ANY_WINDOW,
@@ -485,6 +549,7 @@ describe("performCheckIn", () => {
 
       const result = await performCheckIn({
         academyId: escazu.id,
+        context: ctx(escazu),
         studentId: student.id,
         source: "PORTAL",
         now: WITHIN_MONDAY_GI_WINDOW,
@@ -506,6 +571,7 @@ describe("performCheckIn", () => {
 
       const result = await performCheckIn({
         academyId: escazu.id,
+        context: ctx(escazu),
         studentId: "00000000-0000-0000-0000-000000000000",
         source: "PORTAL",
         now: WITHIN_MONDAY_GI_WINDOW,
@@ -557,6 +623,7 @@ describe("performCheckIn", () => {
 
       const result = await performCheckIn({
         academyId: escazu.id,
+        context: ctx(escazu),
         code,
         source: "KIOSK",
         now: MONDAY_BETWEEN_ESCAZU_WINDOWS,
@@ -578,6 +645,7 @@ describe("performCheckIn", () => {
 
       const offered = await performCheckIn({
         academyId: escazu.id,
+        context: ctx(escazu),
         code,
         source: "KIOSK",
         now: MONDAY_BETWEEN_ESCAZU_WINDOWS,
@@ -587,6 +655,7 @@ describe("performCheckIn", () => {
 
       const result = await performCheckIn({
         academyId: escazu.id,
+        context: ctx(escazu),
         code,
         source: "KIOSK",
         now: MONDAY_BETWEEN_ESCAZU_WINDOWS,
@@ -605,6 +674,7 @@ describe("performCheckIn", () => {
 
       const again = await performCheckIn({
         academyId: escazu.id,
+        context: ctx(escazu),
         code,
         source: "KIOSK",
         now: MONDAY_BETWEEN_ESCAZU_WINDOWS,
@@ -624,6 +694,7 @@ describe("performCheckIn", () => {
 
       const result = await performCheckIn({
         academyId: escazu.id,
+        context: ctx(escazu),
         code,
         source: "KIOSK",
         now: MONDAY_BETWEEN_ESCAZU_WINDOWS,
@@ -644,6 +715,7 @@ describe("performCheckIn", () => {
 
       const result = await performCheckIn({
         academyId: academy.id,
+        context: ctx(academy),
         code,
         source: "KIOSK",
         now: MONDAY_BETWEEN_ESCAZU_WINDOWS,
@@ -661,6 +733,7 @@ describe("performCheckIn", () => {
       // checks for it itself.
       const again = await performCheckIn({
         academyId: academy.id,
+        context: ctx(academy),
         code,
         source: "KIOSK",
         now: MONDAY_BETWEEN_ESCAZU_WINDOWS,
@@ -674,6 +747,7 @@ describe("performCheckIn", () => {
 
       const result = await performCheckIn({
         academyId: escazu.id,
+        context: ctx(escazu),
         code,
         source: "KIOSK",
         now: MONDAY_BETWEEN_ESCAZU_WINDOWS,
@@ -692,6 +766,7 @@ describe("performCheckIn", () => {
 
       const result = await performCheckIn({
         academyId: escazu.id,
+        context: ctx(escazu),
         code,
         source: "KIOSK",
         now: WITHIN_MONDAY_GI_WINDOW,
@@ -720,6 +795,7 @@ describe("performCheckIn", () => {
       // Monday 2026-01-05 06:00 CR — the Striking window.
       const strikingResult = await performCheckIn({
         academyId: academy.id,
+        context: ctx(academy),
         code,
         source: "KIOSK",
         now: WITHIN_MONDAY_GI_WINDOW,
@@ -738,6 +814,7 @@ describe("performCheckIn", () => {
       // Monday 2026-01-05 12:00 CR = 18:00Z.
       const giResult = await performCheckIn({
         academyId: academy.id,
+        context: ctx(academy),
         code,
         source: "KIOSK",
         now: new Date("2026-01-05T18:00:00Z"),
@@ -764,6 +841,7 @@ describe("performCheckIn", () => {
 
       const result = await performCheckIn({
         academyId: academy.id,
+        context: ctx(academy),
         code,
         source: "KIOSK",
         // Monday 2026-01-05 13:30 CR.
@@ -783,6 +861,7 @@ describe("performCheckIn", () => {
       const monday = await prisma.classSession.create({
         data: {
           academyId: academy.id,
+          organizationId: academy.organizationId,
           dayOfWeek: "MONDAY",
           startTime: "13:00",
           durationMinutes: 60,
@@ -792,9 +871,18 @@ describe("performCheckIn", () => {
         },
       });
       const record = await prisma.attendanceRecord.findFirstOrThrow({ where: { studentId: student.id } });
-      expect((await reassignAttendance(record.id, monday.id, { actorUserId: null, matchSource: "STUDENT_PICKED" })).ok).toBe(true);
+      expect(
+        (
+          await reassignAttendance(record.id, monday.id, {
+            actorUserId: null,
+            matchSource: "STUDENT_PICKED",
+            expectedAcademyId: academy.id,
+            context: ctx(academy),
+          })
+        ).ok,
+      ).toBe(true);
 
-      const summary = await getAtBeltSummary(student.id);
+      const summary = await getAtBeltSummary(student.id, ALLIANCE_ATTENDANCE_CONFIG);
       expect(summary.atBeltCount).toBe(1);
       expect(summary.lifetimeCount).toBe(1);
     });
@@ -810,6 +898,7 @@ describe("performCheckIn", () => {
         data: {
           studentId: student.id,
           academyId: academy.id,
+          organizationId: academy.organizationId,
           occurredAt: adjustedAt,
           date: new Date(Date.UTC(2026, 0, 2)),
           type: "ADJUSTMENT",
@@ -821,6 +910,7 @@ describe("performCheckIn", () => {
 
       const result = await performCheckIn({
         academyId: academy.id,
+        context: ctx(academy),
         code,
         source: "KIOSK",
         now: WITHIN_MONDAY_GI_WINDOW,

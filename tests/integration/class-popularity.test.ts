@@ -1,20 +1,36 @@
 import "dotenv/config";
+import { getTestPrismaClient } from "../helpers/test-db";
 import { afterAll, describe, expect, it } from "vitest";
 import { DateTime } from "luxon";
-import { PrismaClient } from "../../src/generated/prisma/client";
-import { PrismaPg } from "@prisma/adapter-pg";
 import { requireEnv } from "../../src/lib/env";
 import { digestLookupSecret } from "../../src/lib/crypto";
 import { toAttendanceDate, ZONE } from "../../src/lib/scheduling/zone";
-import type { StaffSession } from "../../src/lib/auth/session";
+import type { TenantContext, MembershipRole } from "../../src/lib/tenant/types";
 import type { AnalyticsFilters } from "../../src/lib/analytics/filters";
+import { adultRankId } from "../helpers/belt-ranks";
 
 const { getClassPopularity } = await import("../../src/lib/analytics/class-popularity");
 const { previousEquivalentRange } = await import("../../src/lib/analytics/headline-tiles");
 
-const adapter = new PrismaPg({ connectionString: requireEnv("DATABASE_URL") });
-const prisma = new PrismaClient({ adapter });
+const prisma = getTestPrismaClient();
+
+let allianceOrgIdPromise: Promise<string> | null = null;
+function getAllianceOrganizationId() {
+  allianceOrgIdPromise ??= prisma.organization.findUniqueOrThrow({ where: { slug: "alliance-cr" } }).then((o) => o.id);
+  return allianceOrgIdPromise;
+}
 const pepper = requireEnv("CODE_PEPPER");
+
+function ctx(role: MembershipRole, academyIds: string[] | "ALL", organizationId: string): TenantContext {
+  return {
+    kind: "tenant",
+    actorUserId: "x",
+    organizationId,
+    organizationRole: role,
+    academyIds,
+    selfStudentId: null,
+  };
+}
 
 // A fixed range for every test in this file, entirely independent of the
 // real wall clock — same reasoning as headline-tiles.test.ts.
@@ -48,6 +64,7 @@ async function makeAcademy(label: string) {
       name: `${label} ${suffix}`,
       slug: `${label}-${suffix}`,
       kioskTokenHash: `${label}-hash-${suffix}`,
+      organizationId: await getAllianceOrganizationId(),
     },
   });
   cleanupAcademyIds.push(academy.id);
@@ -56,11 +73,13 @@ async function makeAcademy(label: string) {
 
 async function makeClassSession(
   academyId: string,
+  organizationId: string,
   fields: { dayOfWeek: "MONDAY" | "TUESDAY" | "WEDNESDAY"; startTime: string; name: string },
 ) {
   const session = await prisma.classSession.create({
     data: {
       academyId,
+      organizationId,
       dayOfWeek: fields.dayOfWeek,
       startTime: fields.startTime,
       durationMinutes: 60,
@@ -72,15 +91,17 @@ async function makeClassSession(
   return session;
 }
 
-async function makeStudent(academyId: string) {
+async function makeStudent(academyId: string, organizationId: string) {
   const suffix = `${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
   const student = await prisma.student.create({
     data: {
       homeAcademyId: academyId,
+      organizationId,
       firstName: "ClassPopularityTest",
       lastName: `Student-${suffix}`,
       phone: "88880000",
       email: `class-popularity-${suffix}@example.com`,
+      currentRankId: adultRankId("WHITE"),
       status: "ACTIVE",
       joinedAt: new Date("2020-01-01"),
       codeHash: digestLookupSecret(`class-popularity-${suffix}`, pepper),
@@ -93,6 +114,7 @@ async function makeStudent(academyId: string) {
 async function makeCheckin(
   studentId: string,
   academyId: string,
+  organizationId: string,
   classSessionId: string,
   occurredAt: DateTime,
 ) {
@@ -101,6 +123,7 @@ async function makeCheckin(
     data: {
       studentId,
       academyId,
+      organizationId,
       classSessionId,
       occurredAt: at,
       date: toAttendanceDate(at),
@@ -116,42 +139,42 @@ describe("getClassPopularity", () => {
 
   it("ranks descending by current-range attendances, surfaces the zero/lowest slot, and matches computeTrend", async () => {
     const academy = await makeAcademy("popularity-scenario");
-    const student = await makeStudent(academy.id);
+    const student = await makeStudent(academy.id, academy.organizationId);
 
     // Created deliberately OUT of final-rank order (zero first, popular
     // last) — Prisma's default findMany order is creation order, so this
     // arrangement would fail if getClassPopularity ever dropped its own
     // explicit descending sort and relied on DB insertion order instead.
     // Zero: never attended in either period — must still appear, flat.
-    const zero = await makeClassSession(academy.id, {
+    const zero = await makeClassSession(academy.id, academy.organizationId, {
       dayOfWeek: "WEDNESDAY",
       startTime: "07:00",
       name: "Open Mat",
     });
     // Declining: 1 attendance now, 3 previously — down.
-    const declining = await makeClassSession(academy.id, {
+    const declining = await makeClassSession(academy.id, academy.organizationId, {
       dayOfWeek: "TUESDAY",
       startTime: "19:00",
       name: "Advanced",
     });
     // Popular: 3 attendances now, 1 previously — up.
-    const popular = await makeClassSession(academy.id, {
+    const popular = await makeClassSession(academy.id, academy.organizationId, {
       dayOfWeek: "MONDAY",
       startTime: "18:00",
       name: "Fundamentals",
     });
 
-    await makeCheckin(student.id, academy.id, popular.id, RANGE_FROM.plus({ days: 1 }));
-    await makeCheckin(student.id, academy.id, popular.id, RANGE_FROM.plus({ days: 2 }));
-    await makeCheckin(student.id, academy.id, popular.id, RANGE_FROM.plus({ days: 3 }));
-    await makeCheckin(student.id, academy.id, popular.id, PREVIOUS.from.plus({ days: 1 }));
+    await makeCheckin(student.id, academy.id, academy.organizationId, popular.id, RANGE_FROM.plus({ days: 1 }));
+    await makeCheckin(student.id, academy.id, academy.organizationId, popular.id, RANGE_FROM.plus({ days: 2 }));
+    await makeCheckin(student.id, academy.id, academy.organizationId, popular.id, RANGE_FROM.plus({ days: 3 }));
+    await makeCheckin(student.id, academy.id, academy.organizationId, popular.id, PREVIOUS.from.plus({ days: 1 }));
 
-    await makeCheckin(student.id, academy.id, declining.id, RANGE_FROM.plus({ days: 1 }));
-    await makeCheckin(student.id, academy.id, declining.id, PREVIOUS.from.plus({ days: 1 }));
-    await makeCheckin(student.id, academy.id, declining.id, PREVIOUS.from.plus({ days: 2 }));
-    await makeCheckin(student.id, academy.id, declining.id, PREVIOUS.from.plus({ days: 3 }));
+    await makeCheckin(student.id, academy.id, academy.organizationId, declining.id, RANGE_FROM.plus({ days: 1 }));
+    await makeCheckin(student.id, academy.id, academy.organizationId, declining.id, PREVIOUS.from.plus({ days: 1 }));
+    await makeCheckin(student.id, academy.id, academy.organizationId, declining.id, PREVIOUS.from.plus({ days: 2 }));
+    await makeCheckin(student.id, academy.id, academy.organizationId, declining.id, PREVIOUS.from.plus({ days: 3 }));
 
-    const director: StaffSession = { userId: "x", role: "DIRECTOR", academyIds: [academy.id] };
+    const director = ctx("DIRECTOR", [academy.id], academy.organizationId);
     const filters: AnalyticsFilters = { from: RANGE_FROM, to: RANGE_TO, academyId: academy.id };
 
     const rows = await getClassPopularity(director, filters);
@@ -186,13 +209,13 @@ describe("getClassPopularity", () => {
 
   it("composes label using the translated day name for the requested locale", async () => {
     const academy = await makeAcademy("popularity-locale");
-    const session = await makeClassSession(academy.id, {
+    const session = await makeClassSession(academy.id, academy.organizationId, {
       dayOfWeek: "MONDAY",
       startTime: "18:00",
       name: "Fundamentals",
     });
 
-    const director: StaffSession = { userId: "x", role: "DIRECTOR", academyIds: [academy.id] };
+    const director = ctx("DIRECTOR", [academy.id], academy.organizationId);
     const filters: AnalyticsFilters = { from: RANGE_FROM, to: RANGE_TO, academyId: academy.id };
 
     const esRows = await getClassPopularity(director, filters, "es");
@@ -205,10 +228,10 @@ describe("getClassPopularity", () => {
   it("a DIRECTOR never sees the other academy's classes", async () => {
     const academyOne = await makeAcademy("popularity-scope-one");
     const academyTwo = await makeAcademy("popularity-scope-two");
-    await makeClassSession(academyOne.id, { dayOfWeek: "MONDAY", startTime: "18:00", name: "One" });
-    await makeClassSession(academyTwo.id, { dayOfWeek: "MONDAY", startTime: "18:00", name: "Two" });
+    await makeClassSession(academyOne.id, academyOne.organizationId, { dayOfWeek: "MONDAY", startTime: "18:00", name: "One" });
+    await makeClassSession(academyTwo.id, academyTwo.organizationId, { dayOfWeek: "MONDAY", startTime: "18:00", name: "Two" });
 
-    const director: StaffSession = { userId: "x", role: "DIRECTOR", academyIds: [academyOne.id] };
+    const director = ctx("DIRECTOR", [academyOne.id], academyOne.organizationId);
 
     const ownScope = await getClassPopularity(director, {
       from: RANGE_FROM,
@@ -230,7 +253,7 @@ describe("getClassPopularity", () => {
   });
 
   it("an INSTRUCTOR session is rejected entirely (self-enforced role gate)", async () => {
-    const instructor: StaffSession = { userId: "x", role: "INSTRUCTOR", academyIds: [] };
+    const instructor = ctx("INSTRUCTOR", [], await getAllianceOrganizationId());
     const filters: AnalyticsFilters = { from: RANGE_FROM, to: RANGE_TO, academyId: null };
 
     await expect(getClassPopularity(instructor, filters)).rejects.toThrow("FORBIDDEN");

@@ -1,18 +1,28 @@
 import "dotenv/config";
+import { getTestPrismaClient } from "../helpers/test-db";
 import { afterAll, describe, expect, it } from "vitest";
-import { PrismaClient } from "../../src/generated/prisma/client";
 import type { PaymentStatus } from "../../src/generated/prisma/client";
-import { PrismaPg } from "@prisma/adapter-pg";
 import { requireEnv } from "../../src/lib/env";
 import { digestLookupSecret, hashSecret } from "../../src/lib/crypto";
-import type { StaffSession } from "../../src/lib/auth/session";
+import type { TenantContext, MembershipRole } from "../../src/lib/tenant/types";
 import type { OverdueStudent } from "../../src/lib/payments/list-overdue";
+import { adultRankId } from "../helpers/belt-ranks";
 
 const { listOverdueStudents } = await import("../../src/lib/payments/list-overdue");
 
-const adapter = new PrismaPg({ connectionString: requireEnv("DATABASE_URL") });
-const prisma = new PrismaClient({ adapter });
+const prisma = getTestPrismaClient();
 const pepper = requireEnv("CODE_PEPPER");
+
+function ctx(role: MembershipRole, academyIds: string[] | "ALL", organizationId: string): TenantContext {
+  return {
+    kind: "tenant",
+    actorUserId: "x",
+    organizationId,
+    organizationRole: role,
+    academyIds,
+    selfStudentId: null,
+  };
+}
 
 // Fixed "today" for every test in this file — the whole point of
 // `listOverdueStudents`'s injectable `today` parameter (mirroring
@@ -33,6 +43,7 @@ async function cleanup() {
   }
   if (cleanupUserIds.length > 0) {
     await prisma.staffAssignment.deleteMany({ where: { userId: { in: cleanupUserIds } } });
+    await prisma.notification.deleteMany({ where: { userId: { in: cleanupUserIds } } });
     await prisma.user.deleteMany({ where: { id: { in: cleanupUserIds } } });
   }
 }
@@ -48,8 +59,14 @@ async function makeStaffUser(role: "ADMIN" | "DIRECTOR" | "INSTRUCTOR", label: s
   });
   cleanupUserIds.push(user.id);
   if (academyId && role !== "ADMIN") {
+    const academy = await prisma.academy.findUniqueOrThrow({ where: { id: academyId }, select: { organizationId: true } });
     await prisma.staffAssignment.create({
-      data: { userId: user.id, academyId, role: role === "DIRECTOR" ? "DIRECTOR" : "INSTRUCTOR" },
+      data: {
+        userId: user.id,
+        academyId,
+        organizationId: academy.organizationId,
+        role: role === "DIRECTOR" ? "DIRECTOR" : "INSTRUCTOR",
+      },
     });
   }
   return user;
@@ -57,16 +74,19 @@ async function makeStaffUser(role: "ADMIN" | "DIRECTOR" | "INSTRUCTOR", label: s
 
 async function makeStudent(
   academyId: string,
+  organizationId: string,
   status: "ACTIVE" | "PENDING" | "ARCHIVED" = "ACTIVE",
 ) {
   const suffix = `${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
   const student = await prisma.student.create({
     data: {
       homeAcademyId: academyId,
+      organizationId,
       firstName: "OverdueListTest",
       lastName: `Student-${suffix}`,
       phone: "88880000",
       email: `overdue-list-${suffix}@example.com`,
+      currentRankId: adultRankId("WHITE"),
       status,
       codeHash: digestLookupSecret(`overdue-list-${suffix}`, pepper),
     },
@@ -78,6 +98,7 @@ async function makeStudent(
 async function makePaymentPeriod(
   studentId: string,
   academyId: string,
+  organizationId: string,
   planId: string,
   recordedById: string,
   year: number,
@@ -85,7 +106,7 @@ async function makePaymentPeriod(
   status: PaymentStatus,
 ) {
   return prisma.paymentPeriod.create({
-    data: { studentId, academyId, planId, recordedById, year, month, status },
+    data: { studentId, academyId, organizationId, planId, recordedById, year, month, status },
   });
 }
 
@@ -98,8 +119,8 @@ describe("listOverdueStudents", () => {
 
   it("an ACTIVE student with no PaymentPeriod row for the current month, past the cutoff day, appears", async () => {
     const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
-    const admin: StaffSession = { userId: "x", role: "ADMIN", academyIds: "ALL" };
-    const student = await makeStudent(escazu.id);
+    const admin = ctx("ADMIN", "ALL", escazu.organizationId);
+    const student = await makeStudent(escazu.id, escazu.organizationId);
 
     const overdue = await listOverdueStudents(admin, PAST_CUTOFF);
     const found = findOverdue(overdue, student.id);
@@ -113,12 +134,13 @@ describe("listOverdueStudents", () => {
     const plan = await prisma.paymentPlan.findFirstOrThrow({
       where: { academyId: escazu.id, name: "Mensualidad" },
     });
-    const admin: StaffSession = { userId: "x", role: "ADMIN", academyIds: "ALL" };
+    const admin = ctx("ADMIN", "ALL", escazu.organizationId);
     const recorder = await makeStaffUser("ADMIN", "overdue-recorder-pending");
-    const student = await makeStudent(escazu.id);
+    const student = await makeStudent(escazu.id, escazu.organizationId);
     await makePaymentPeriod(
       student.id,
       escazu.id,
+      escazu.organizationId,
       plan.id,
       recorder.id,
       PAST_CUTOFF.year,
@@ -137,13 +159,14 @@ describe("listOverdueStudents", () => {
       const plan = await prisma.paymentPlan.findFirstOrThrow({
         where: { academyId: escazu.id, name: "Mensualidad" },
       });
-      const admin: StaffSession = { userId: "x", role: "ADMIN", academyIds: "ALL" };
+      const admin = ctx("ADMIN", "ALL", escazu.organizationId);
       const recorder = await makeStaffUser("ADMIN", `overdue-recorder-${status.toLowerCase()}`);
-      const student = await makeStudent(escazu.id);
+      const student = await makeStudent(escazu.id, escazu.organizationId);
       await makePaymentPeriod(
-        student.id,
-        escazu.id,
-        plan.id,
+      student.id,
+      escazu.id,
+      escazu.organizationId,
+      plan.id,
         recorder.id,
         PAST_CUTOFF.year,
         PAST_CUTOFF.month,
@@ -160,13 +183,14 @@ describe("listOverdueStudents", () => {
     const plan = await prisma.paymentPlan.findFirstOrThrow({
       where: { academyId: escazu.id, name: "Mensualidad" },
     });
-    const admin: StaffSession = { userId: "x", role: "ADMIN", academyIds: "ALL" };
+    const admin = ctx("ADMIN", "ALL", escazu.organizationId);
     const recorder = await makeStaffUser("ADMIN", "overdue-recorder-beforecutoff");
-    const missingRowStudent = await makeStudent(escazu.id);
-    const pendingStudent = await makeStudent(escazu.id);
+    const missingRowStudent = await makeStudent(escazu.id, escazu.organizationId);
+    const pendingStudent = await makeStudent(escazu.id, escazu.organizationId);
     await makePaymentPeriod(
       pendingStudent.id,
       escazu.id,
+      escazu.organizationId,
       plan.id,
       recorder.id,
       BEFORE_CUTOFF.year,
@@ -183,8 +207,8 @@ describe("listOverdueStudents", () => {
     "a %s-status student (not PaymentStatus) never appears regardless of payment state",
     async (studentStatus) => {
       const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
-      const admin: StaffSession = { userId: "x", role: "ADMIN", academyIds: "ALL" };
-      const student = await makeStudent(escazu.id, studentStatus);
+      const admin = ctx("ADMIN", "ALL", escazu.organizationId);
+      const student = await makeStudent(escazu.id, escazu.organizationId, studentStatus);
 
       const overdue = await listOverdueStudents(admin, PAST_CUTOFF);
       expect(findOverdue(overdue, student.id)).toBeUndefined();
@@ -194,15 +218,15 @@ describe("listOverdueStudents", () => {
   it("a DIRECTOR never sees the other academy's overdue students; ADMIN sees both", async () => {
     const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
     const escalante = await prisma.academy.findUniqueOrThrow({ where: { slug: "escalante" } });
-    const escazuStudent = await makeStudent(escazu.id);
-    const escalanteStudent = await makeStudent(escalante.id);
+    const escazuStudent = await makeStudent(escazu.id, escazu.organizationId);
+    const escalanteStudent = await makeStudent(escalante.id, escalante.organizationId);
 
-    const escazuDirector: StaffSession = { userId: "x", role: "DIRECTOR", academyIds: [escazu.id] };
+    const escazuDirector = ctx("DIRECTOR", [escazu.id], escazu.organizationId);
     const scoped = await listOverdueStudents(escazuDirector, PAST_CUTOFF);
     expect(findOverdue(scoped, escazuStudent.id)).toBeDefined();
     expect(findOverdue(scoped, escalanteStudent.id)).toBeUndefined();
 
-    const admin: StaffSession = { userId: "x", role: "ADMIN", academyIds: "ALL" };
+    const admin = ctx("ADMIN", "ALL", escazu.organizationId);
     const full = await listOverdueStudents(admin, PAST_CUTOFF);
     expect(findOverdue(full, escazuStudent.id)).toBeDefined();
     expect(findOverdue(full, escalanteStudent.id)).toBeDefined();
@@ -210,7 +234,7 @@ describe("listOverdueStudents", () => {
 
   it("an INSTRUCTOR session is rejected entirely (role gate), unlike the promotion queue which INSTRUCTOR can view read-only", async () => {
     const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
-    const instructor: StaffSession = { userId: "x", role: "INSTRUCTOR", academyIds: [escazu.id] };
+    const instructor = ctx("INSTRUCTOR", [escazu.id], escazu.organizationId);
 
     await expect(listOverdueStudents(instructor, PAST_CUTOFF)).rejects.toThrow("FORBIDDEN");
   });
@@ -220,15 +244,23 @@ describe("listOverdueStudents", () => {
     const plan = await prisma.paymentPlan.findFirstOrThrow({
       where: { academyId: escazu.id, name: "Mensualidad" },
     });
-    const admin: StaffSession = { userId: "x", role: "ADMIN", academyIds: "ALL" };
+    const admin = ctx("ADMIN", "ALL", escazu.organizationId);
     const recorder = await makeStaffUser("ADMIN", "overdue-recorder-lastpaid");
-    const student = await makeStudent(escazu.id);
+    const student = await makeStudent(escazu.id, escazu.organizationId);
 
     // Paid the two months before PAST_CUTOFF's month, but nothing recorded
     // for PAST_CUTOFF's own month — so the student is overdue for the
     // current month while still having PAID history to report.
-    await makePaymentPeriod(student.id, escazu.id, plan.id, recorder.id, 2026, 7, "PAID");
-    await makePaymentPeriod(student.id, escazu.id, plan.id, recorder.id, 2026, 8, "PAID");
+    await makePaymentPeriod(
+      student.id,
+      escazu.id,
+      escazu.organizationId,
+      plan.id, recorder.id, 2026, 7, "PAID");
+    await makePaymentPeriod(
+      student.id,
+      escazu.id,
+      escazu.organizationId,
+      plan.id, recorder.id, 2026, 8, "PAID");
 
     const overdue = await listOverdueStudents(admin, PAST_CUTOFF);
     const found = findOverdue(overdue, student.id);

@@ -4,7 +4,6 @@ import { useActionState } from "react";
 import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { updateStudent } from "./actions";
-import type { Belt } from "@/generated/prisma/browser";
 import type { ActionState } from "@/lib/action-state";
 
 const INITIAL_STATE: ActionState = {};
@@ -15,7 +14,9 @@ type EditableStudent = {
   lastName: string;
   phone: string;
   email: string;
-  currentBelt: Belt;
+  /** Pre-resolved by the page (which already has the viewer's locale) from
+   * `BeltRank.labelEs`/`labelEn` — never a `belt.<code>` message key. */
+  currentBeltLabel: string;
   currentStripes: number;
   dateOfBirth: Date | null;
   guardianName: string | null;
@@ -31,15 +32,20 @@ function toDateInputValue(date: Date | null): string {
 
 // Rendered only for ADMIN/DIRECTOR sessions (page.tsx gate) — the real
 // enforcement is server-side in `updateStudent` itself
-// (requireStaffSession + isAcademyInScope re-checked against a fresh read),
+// (requireTenantContext + isAcademyInTenantScope re-checked against a fresh read),
 // never this UI check alone.
-export function EditStudentForm({ student }: { student: EditableStudent }) {
+export function EditStudentForm({
+  organizationId,
+  student,
+}: {
+  organizationId: string;
+  student: EditableStudent;
+}) {
   const t = useTranslations("students.detail.edit");
   // Field labels are identical concepts to Task 7's create form — reuse
   // that namespace instead of duplicating every label under detail.edit.
   const tField = useTranslations("students.create");
-  const tBelt = useTranslations("belt");
-  const [state, formAction, isPending] = useActionState(updateStudent, INITIAL_STATE);
+  const [state, formAction, isPending] = useActionState(updateStudent.bind(null, organizationId), INITIAL_STATE);
 
   const guardianNameErrors = state.fieldErrors?.guardianName;
 
@@ -100,7 +106,7 @@ export function EditStudentForm({ student }: { student: EditableStudent }) {
             disagreeing with promotion history. */}
         <div className="flex flex-col gap-1">
           <span className="text-sm text-muted-foreground">{tField("currentBelt")}</span>
-          <p>{tBelt(student.currentBelt)}</p>
+          <p>{student.currentBeltLabel}</p>
         </div>
         <div className="flex flex-col gap-1">
           <span className="text-sm text-muted-foreground">{tField("currentStripes")}</span>

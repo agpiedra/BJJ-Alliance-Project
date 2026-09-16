@@ -1,31 +1,48 @@
 import "dotenv/config";
+import { getTestPrismaClient } from "../helpers/test-db";
 import { describe, expect, it } from "vitest";
-import { PrismaClient } from "../../src/generated/prisma/client";
-import { PrismaPg } from "@prisma/adapter-pg";
-import { requireEnv } from "../../src/lib/env";
 
-const adapter = new PrismaPg({ connectionString: requireEnv("DATABASE_URL") });
-const prisma = new PrismaClient({ adapter });
+const prisma = getTestPrismaClient();
 
 describe("seed data", () => {
-  it("creates exactly two academies: Escazú and Escalante", async () => {
-    const academies = await prisma.academy.findMany({ orderBy: { slug: "asc" } });
+  it("creates Escazú and Escalante with fixed, expected slugs", async () => {
+    // Scoped to the seed's own two slugs, not a blanket findMany(): other
+    // integration test files legitimately create their own throwaway
+    // academies during the same `pnpm test:integration` run (the shared test
+    // database is wiped and reseeded once per run, not between files — see
+    // tests/integration-global-setup.ts), so asserting the WHOLE table
+    // contains nothing else would be flaky depending on run order.
+    const academies = await prisma.academy.findMany({
+      where: { slug: { in: ["escalante", "escazu"] } },
+      orderBy: { slug: "asc" },
+    });
     expect(academies.map((a) => a.slug)).toEqual(["escalante", "escazu"]);
   });
 
-  it("seeds correct global BeltRequirement values for all five belts", async () => {
-    const requirements = await prisma.beltRequirement.findMany({ where: { academyId: null } });
-    expect(requirements).toHaveLength(5);
+  it("seeds correct ADULT BeltRank values for all five belts", async () => {
+    // Scoped to the seed's own organization — MULTI_ACADEMY_AND_KIDS_BELTS.md
+    // Phase 2 tests legitimately create their own organization-scoped
+    // BeltRank rows (e.g. kiosk-check-in-route.test.ts's scratch-org
+    // fixtures), same reasoning as the academies test above.
+    const alliance = await prisma.organization.findUniqueOrThrow({ where: { slug: "alliance-cr" } });
+    const ranks = await prisma.beltRank.findMany({
+      where: { organizationId: alliance.id, track: "ADULT" },
+    });
+    expect(ranks).toHaveLength(5);
 
-    const byBelt = Object.fromEntries(requirements.map((r) => [r.belt, r]));
-    expect(byBelt.WHITE).toMatchObject({ attendancesPerStripe: 30, maxStripes: 4, attendancesForExam: 30 });
-    expect(byBelt.BLUE).toMatchObject({ attendancesPerStripe: 65, maxStripes: 4, attendancesForExam: 65 });
-    expect(byBelt.PURPLE).toMatchObject({ attendancesPerStripe: 75, maxStripes: 4, attendancesForExam: 75 });
-    expect(byBelt.BROWN).toMatchObject({ attendancesPerStripe: 85, maxStripes: 4, attendancesForExam: 85 });
-    expect(byBelt.BLACK).toMatchObject({ attendancesPerStripe: 0, maxStripes: 0, attendancesForExam: 0 });
+    const byBelt = Object.fromEntries(ranks.map((r) => [r.code, r]));
+    expect(byBelt.WHITE).toMatchObject({ order: 1, attendancesPerStripe: 30, maxStripes: 4, attendancesForExam: 30, isTerminal: false });
+    expect(byBelt.BLUE).toMatchObject({ order: 2, attendancesPerStripe: 65, maxStripes: 4, attendancesForExam: 65, isTerminal: false });
+    expect(byBelt.PURPLE).toMatchObject({ order: 3, attendancesPerStripe: 75, maxStripes: 4, attendancesForExam: 75, isTerminal: false });
+    expect(byBelt.BROWN).toMatchObject({ order: 4, attendancesPerStripe: 85, maxStripes: 4, attendancesForExam: 85, isTerminal: false });
+    expect(byBelt.BLACK).toMatchObject({ order: 5, maxStripes: 0, isTerminal: true });
   });
 
-  it("seeds Escazú's full 18-session class schedule and leaves Escalante empty", async () => {
+  it("seeds Escazú's full 18-session class schedule and Escalante's smaller 6-session one", async () => {
+    // Both branches have real classes (docs/MULTI_ACADEMY_AND_KIDS_BELTS.md
+    // Phase 0's "students who train at both branches" edge case needs
+    // classes at both locations to attend) — Escalante is deliberately
+    // smaller, not empty.
     const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
     const escalante = await prisma.academy.findUniqueOrThrow({ where: { slug: "escalante" } });
 
@@ -33,7 +50,7 @@ describe("seed data", () => {
     const escalanteSessions = await prisma.classSession.findMany({ where: { academyId: escalante.id } });
 
     expect(escazuSessions).toHaveLength(18);
-    expect(escalanteSessions).toHaveLength(0);
+    expect(escalanteSessions).toHaveLength(6);
   });
 
   it("seeds specific Escazú class sessions with correct day, time, name, and type", async () => {

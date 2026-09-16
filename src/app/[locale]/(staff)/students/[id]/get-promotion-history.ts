@@ -1,14 +1,19 @@
 import { prisma } from "@/lib/prisma";
-import type { Belt } from "@/generated/prisma/client";
+import type { PromotionSource } from "@/generated/prisma/client";
 
 export type PromotionHistoryEntry = {
   id: string;
-  fromBelt: Belt;
+  fromBelt: string;
+  fromBeltLabelEs: string;
+  fromBeltLabelEn: string;
   fromStripes: number;
-  toBelt: Belt;
+  toBelt: string;
+  toBeltLabelEs: string;
+  toBeltLabelEn: string;
   toStripes: number;
   awardedAt: Date;
   awardedByName: string;
+  source: PromotionSource;
   notes: string | null;
 };
 
@@ -44,24 +49,34 @@ export async function getPromotionHistory(studentId: string): Promise<PromotionH
     orderBy: { awardedAt: "desc" },
     select: {
       id: true,
-      fromBelt: true,
+      fromRank: { select: { code: true, labelEs: true, labelEn: true } },
       fromStripes: true,
-      toBelt: true,
+      toRank: { select: { code: true, labelEs: true, labelEn: true } },
       toStripes: true,
       awardedAt: true,
       notes: true,
+      source: true,
       awardedBy: { select: { email: true } },
     },
   });
 
   return promotions.map((promotion) => ({
     id: promotion.id,
-    fromBelt: promotion.fromBelt,
+    fromBelt: promotion.fromRank.code,
+    fromBeltLabelEs: promotion.fromRank.labelEs,
+    fromBeltLabelEn: promotion.fromRank.labelEn,
     fromStripes: promotion.fromStripes,
-    toBelt: promotion.toBelt,
+    toBelt: promotion.toRank.code,
+    toBeltLabelEs: promotion.toRank.labelEs,
+    toBeltLabelEn: promotion.toRank.labelEn,
     toStripes: promotion.toStripes,
     awardedAt: promotion.awardedAt,
-    awardedByName: promotion.awardedBy.email,
+    // Phase 2d: `awardedById` is null for an AUTO award (no human actor to
+    // invent one for) — the card renders the AUTO/MANUAL/CORRECTION badge
+    // from `source` itself, so this fallback is purely "no name to show,"
+    // not the primary signal for automatic awards.
+    awardedByName: promotion.awardedBy?.email ?? "—",
+    source: promotion.source,
     notes: promotion.notes,
   }));
 }

@@ -5,6 +5,7 @@ import { requireEnv } from "@/lib/env";
 import { reassignAttendance } from "@/lib/kiosk/reassign-attendance";
 import { attendanceDateDayOfWeek } from "@/lib/scheduling/zone";
 import { AttendanceMatchSource } from "@/generated/prisma/client";
+import type { KioskContext } from "@/lib/tenant/types";
 
 // Touches Prisma — Node runtime only, same as the check-in route.
 
@@ -84,6 +85,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true, picklist: sessions }, { status: 200 });
   }
 
+  const kioskContext: KioskContext = { kind: "kiosk", organizationId: academy.organizationId, academyId: academy.id };
   const result = await reassignAttendance(record.id, classSessionId, {
     // The student's own linked account when they have one; otherwise no
     // AuditLog actor exists to write (see reassign-attendance.ts).
@@ -92,6 +94,7 @@ export async function POST(request: Request) {
     // picked it" — STAFF_CORRECTED is reserved for the Kiosco page's action.
     matchSource: AttendanceMatchSource.STUDENT_PICKED,
     expectedAcademyId: academy.id,
+    context: kioskContext,
   });
 
   return NextResponse.json(result, { status: result.ok ? 200 : 400 });

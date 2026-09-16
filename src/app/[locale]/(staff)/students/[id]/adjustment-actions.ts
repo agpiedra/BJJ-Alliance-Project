@@ -2,7 +2,8 @@
 
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { isAcademyInScope, requireStaffSession } from "@/lib/auth/session";
+import { isAcademyInTenantScope, resolveActionContext } from "@/lib/tenant/context";
+import { getScopedDb } from "@/lib/tenant/scoped-client";
 import { AttendanceSource, AttendanceType, Prisma, StudentStatus } from "@/generated/prisma/client";
 import { toAttendanceDate } from "@/lib/scheduling/zone";
 import type { ActionState } from "@/lib/action-state";
@@ -54,10 +55,13 @@ const adjustmentSchema = z.object({
  * other write in this app.
  */
 export async function addAttendanceAdjustment(
+  organizationId: string,
   _prevState: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
-  const session = await requireStaffSession(["ADMIN", "DIRECTOR", "INSTRUCTOR"]);
+  const auth = await resolveActionContext(organizationId, ["ADMIN", "DIRECTOR", "INSTRUCTOR"]);
+  if (!auth.ok) return { error: "notFound" };
+  const context = auth.context;
 
   const parsed = adjustmentSchema.safeParse(Object.fromEntries(formData.entries()));
 
@@ -67,12 +71,12 @@ export async function addAttendanceAdjustment(
 
   const data = parsed.data;
 
-  const student = await prisma.student.findUnique({
+  const student = await getScopedDb(context).student.findUnique({
     where: { id: data.studentId },
-    select: { id: true, homeAcademyId: true, status: true },
+    select: { id: true, homeAcademyId: true, organizationId: true, status: true },
   });
 
-  if (!student || !isAcademyInScope(session, student.homeAcademyId)) {
+  if (!student || !isAcademyInTenantScope(context, student.homeAcademyId)) {
     return { error: "notFound" };
   }
 
@@ -94,11 +98,12 @@ export async function addAttendanceAdjustment(
         // An adjustment isn't tied to a specific check-in location the way a
         // kiosk record is — it always belongs to the student's home academy.
         academyId: student.homeAcademyId,
+        organizationId: student.organizationId,
         type: AttendanceType.ADJUSTMENT,
         delta: data.delta,
         reason: data.reason,
         source: AttendanceSource.STAFF,
-        createdById: session.userId,
+        createdById: context.actorUserId,
         occurredAt: now,
         date: toAttendanceDate(now),
       },
@@ -106,7 +111,7 @@ export async function addAttendanceAdjustment(
 
     await tx.auditLog.create({
       data: {
-        actorId: session.userId,
+        actorId: context.actorUserId,
         academyId: student.homeAcademyId,
         action: "attendance.adjustment",
         entityType: "AttendanceRecord",

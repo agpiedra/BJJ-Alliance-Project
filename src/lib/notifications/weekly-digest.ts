@@ -3,7 +3,7 @@ import { Resend } from "resend";
 import { prisma } from "@/lib/prisma";
 import { requireEnv } from "@/lib/env";
 import { ZONE, attendanceDateFromZoned } from "@/lib/scheduling/zone";
-import type { StaffSession } from "@/lib/auth/session";
+import { resolveSystemJobContext } from "@/lib/tenant/context";
 import { resolveStaffRecipients } from "@/lib/notifications/recipients";
 import { dispatchToRecipients } from "@/lib/notifications/dispatch";
 import { EmailChannel, type ResendClient } from "@/lib/notifications/email-channel";
@@ -26,17 +26,27 @@ import { getRetentionList } from "@/lib/analytics/retention";
  *
  * Neither `listOverdueStudents` nor `getRetentionList` have a caller session
  * available here (this runs from a cron-triggered background job, not a
- * cookie-bound staff request) — both are called with a SYNTHETIC
- * `StaffSession` (`role: "DIRECTOR"`, `academyIds: [academyId]`), which
- * passes both functions' own role gates and scopes both to exactly this one
- * academy via `academyScopeWhere`.
+ * cookie-bound staff request) — both are called with a real `SystemJobContext`
+ * (MULTI_ACADEMY_AND_KIDS_BELTS.md Appendix C: a job is never represented as
+ * a synthetic membership/session), which auto-passes both functions' own
+ * role gates. `SystemJobContext` itself is org-wide, not academy-scoped, so
+ * this narrows to exactly this one academy via each function's own
+ * `academyId` parameter — the same `filters.academyId` narrowing pattern
+ * the analytics module already established, applied here to the digest's
+ * per-academy dispatch.
  */
 export async function sendWeeklyDigestForAcademy(
   academyId: string,
   resendClient: ResendClient = new Resend(requireEnv("RESEND_API_KEY")),
 ): Promise<void> {
   const academy = await prisma.academy.findUniqueOrThrow({ where: { id: academyId } });
-  const session: StaffSession = { userId: "system:weekly-digest", role: "DIRECTOR", academyIds: [academyId] };
+  const jobContext = await resolveSystemJobContext(academy.organizationId, "weekly-digest");
+  // The organization was suspended/cancelled between the cron route's own
+  // dispatch loop and this call — skip, per spec: "Skip non-active
+  // organizations." The route's own loop is expected to filter by active
+  // organizations too; this is the same fail-closed check repeated at the
+  // point where it actually matters, not trusted away.
+  if (!jobContext) return;
 
   // Trailing 7 real days, inclusive of today: [today - 6 days, today] against
   // `AttendanceRecord.date` (the pre-computed CR-calendar-day column, not a
@@ -59,8 +69,8 @@ export async function sendWeeklyDigestForAcademy(
     // never reads it (its inactivity classification only looks at `to`) — the
     // value here is inert, so it's just `DateTime.now()` rather than a
     // `.minus({ days: 7 })` that reads as if it bounded something it doesn't.
-    getRetentionList(session, { from: DateTime.now(), to: DateTime.now(), academyId: null }),
-    listOverdueStudents(session),
+    getRetentionList(jobContext, { from: DateTime.now(), to: DateTime.now(), academyId }),
+    listOverdueStudents(jobContext, undefined, academyId),
     resolveStaffRecipients(academyId),
   ]);
 

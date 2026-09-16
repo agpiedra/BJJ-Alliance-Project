@@ -1,16 +1,34 @@
 import { describe, expect, it } from "vitest";
 import { DateTime } from "luxon";
 import { resolveAnalyticsFilters, computeQuickRange, DEFAULT_RANGE_DAYS } from "@/lib/analytics/filters";
-import type { StaffSession } from "@/lib/auth/session";
+import type { TenantContext } from "@/lib/tenant/types";
 
 const TODAY = DateTime.fromISO("2026-09-10", { zone: "America/Costa_Rica" });
 
-const admin: StaffSession = { userId: "admin-1", role: "ADMIN", academyIds: "ALL" };
-const director: StaffSession = { userId: "dir-1", role: "DIRECTOR", academyIds: ["escalante-id"] };
-const multiAcademyDirector: StaffSession = {
-  userId: "dir-2",
-  role: "DIRECTOR",
+const ORG_ID = "org-1";
+const admin: TenantContext = {
+  kind: "tenant",
+  actorUserId: "admin-1",
+  organizationId: ORG_ID,
+  organizationRole: "ADMIN",
+  academyIds: "ALL",
+  selfStudentId: null,
+};
+const director: TenantContext = {
+  kind: "tenant",
+  actorUserId: "dir-1",
+  organizationId: ORG_ID,
+  organizationRole: "DIRECTOR",
+  academyIds: ["escalante-id"],
+  selfStudentId: null,
+};
+const multiAcademyDirector: TenantContext = {
+  kind: "tenant",
+  actorUserId: "dir-2",
+  organizationId: ORG_ID,
+  organizationRole: "DIRECTOR",
   academyIds: ["academy-a", "academy-b"],
+  selfStudentId: null,
 };
 
 describe("resolveAnalyticsFilters", () => {

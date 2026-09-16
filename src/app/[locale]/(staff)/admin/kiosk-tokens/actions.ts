@@ -4,7 +4,8 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { digestLookupSecret, generateRandomToken } from "@/lib/crypto";
 import { requireEnv } from "@/lib/env";
-import { requireStaffSession } from "@/lib/auth/session";
+import { resolveActionContext } from "@/lib/tenant/context";
+import { getScopedDb } from "@/lib/tenant/scoped-client";
 import { Prisma } from "@/generated/prisma/client";
 import type { ActionState } from "@/lib/action-state";
 
@@ -37,10 +38,13 @@ export type RegenerateKioskTokenState = ActionState & { token?: string };
  * a second place the device credential could leak from.
  */
 export async function regenerateKioskToken(
+  organizationId: string,
   _prevState: RegenerateKioskTokenState,
   formData: FormData,
 ): Promise<RegenerateKioskTokenState> {
-  const session = await requireStaffSession(["ADMIN"]);
+  const auth = await resolveActionContext(organizationId, ["ADMIN"]);
+  if (!auth.ok) return { error: "notFound" };
+  const context = auth.context;
 
   const parsed = academyIdSchema.safeParse(Object.fromEntries(formData.entries()));
   if (!parsed.success) {
@@ -49,7 +53,7 @@ export async function regenerateKioskToken(
 
   let academy: { id: string };
   try {
-    academy = await prisma.academy.findUniqueOrThrow({
+    academy = await getScopedDb(context).academy.findUniqueOrThrow({
       where: { id: parsed.data.academyId },
       select: { id: true },
     });
@@ -71,7 +75,7 @@ export async function regenerateKioskToken(
 
     await tx.auditLog.create({
       data: {
-        actorId: session.userId,
+        actorId: context.actorUserId,
         academyId: academy.id,
         action: "academy.regenerateKioskToken",
         entityType: "Academy",

@@ -5,6 +5,7 @@ import { requireEnv } from "@/lib/env";
 import { finalizeKioskAttempt, reserveKioskAttempt } from "@/lib/kiosk/rate-limit";
 import { performCheckIn } from "@/lib/kiosk/perform-check-in";
 import { resolveAttendanceInstant } from "@/lib/kiosk/queued-at";
+import type { KioskContext } from "@/lib/tenant/types";
 
 // This route touches Prisma (via performCheckIn / rate-limit.ts), which
 // requires the Node runtime — do not add `export const runtime = "edge"` here.
@@ -16,6 +17,9 @@ import { resolveAttendanceInstant } from "@/lib/kiosk/queued-at";
  *   400  { ok: false; error: "invalid_code" | "no_active_class" | "already_checked_in" }
  *   401  { ok: false; error: "invalid_token" }               (bad kiosk token — same generic
  *                                                              shape as academy-not-found, see below)
+ *   403  { ok: false; error: "org_unavailable" }              (organization is PENDING, SUSPENDED,
+ *                                                              or CANCELLED — same generic shape for
+ *                                                              all three; never discloses which)
  *   404  { ok: false; error: "invalid_token" }               (unknown academySlug — deliberately
  *                                                              indistinguishable from a bad token)
  *   429  { ok: false; error: "rate_limited" | "locked_out"; retryAfterSeconds: number }
@@ -58,6 +62,19 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false, error: "invalid_token" }, { status: 401 });
   }
 
+  // Step 2.5: reject before any student-code resolution when the academy's
+  // organization isn't ACTIVE (PENDING/SUSPENDED/CANCELLED) — spec's
+  // "Suspended organization policy": the same generic error for all three,
+  // disclosing nothing about billing state or code validity, enforced here
+  // on the server rather than relying on a client-side check.
+  const organization = await prisma.organization.findUnique({
+    where: { id: academy.organizationId },
+    select: { status: true },
+  });
+  if (!organization || organization.status !== "ACTIVE") {
+    return NextResponse.json({ ok: false, error: "org_unavailable" }, { status: 403 });
+  }
+
   // Step 3: best-effort audit metadata only. `x-forwarded-for` is
   // client-supplied and is NOT part of the rate-limit key — see
   // `reserveKioskAttempt`, which keys on the verified token digest above.
@@ -74,7 +91,7 @@ export async function POST(request: Request) {
   // Step 4: the atomic gate, BEFORE the submitted code is evaluated. A
   // rejected caller never reaches performCheckIn, so a flood of concurrent
   // guesses can't race past the limiter to find a working code.
-  const reservation = await reserveKioskAttempt(academy.id, presentedHash, ipAddress);
+  const reservation = await reserveKioskAttempt(academy.id, academy.organizationId, presentedHash, ipAddress);
   if (!reservation.allowed) {
     return NextResponse.json(
       { ok: false, error: reservation.reason, retryAfterSeconds: reservation.retryAfterSeconds },
@@ -83,8 +100,14 @@ export async function POST(request: Request) {
   }
 
   // Step 5: run the actual check-in, against the real attendance instant.
+  // KioskContext is derived entirely from the verified device token above —
+  // never from a session/cookie (MULTI_ACADEMY_AND_KIDS_BELTS.md Appendix C
+  // proposal point 3: "the kiosk path resolves its organization only from
+  // the verified branch token").
+  const kioskContext: KioskContext = { kind: "kiosk", organizationId: academy.organizationId, academyId: academy.id };
   const result = await performCheckIn({
     academyId: academy.id,
+    context: kioskContext,
     code,
     source: "KIOSK",
     now: resolveAttendanceInstant(queuedAt),

@@ -1,7 +1,9 @@
 import { DateTime } from "luxon";
 import { createTranslator } from "next-intl";
 import { prisma } from "@/lib/prisma";
-import { academyScopeWhere, type StaffSession } from "@/lib/auth/session";
+import { branchScopeWhere } from "@/lib/tenant/context";
+import { getScopedDb } from "@/lib/tenant/scoped-client";
+import type { TenantContext } from "@/lib/tenant/types";
 import type { Prisma, DayOfWeek, ClassType } from "@/generated/prisma/client";
 import type { AnalyticsFilters } from "@/lib/analytics/filters";
 import { isWithinRange, previousEquivalentRange, type DateRange } from "@/lib/analytics/headline-tiles";
@@ -82,10 +84,11 @@ function translateDayOfWeek(day: DayOfWeek, locale: string): string {
  * analytics for the range it covers.
  *
  * Scoped the same way `getClassPopularity`'s sibling functions are:
- * `academyScopeWhere(session)` AND `filters.academyId` combined via an AND
+ * `branchScopeWhere(context)` AND `filters.academyId` combined via an AND
  * array, never spread into one object literal (`ClassSession.academyId` is
  * already the right column — no `homeAcademyId`-style translation needed
- * here, unlike Student).
+ * here, unlike Student). Organization scope comes from `getScopedDb`,
+ * unconditionally.
  *
  * `attendances`/`previousAttendances` compare the selected range against
  * `previousEquivalentRange` (reused verbatim from `headline-tiles.ts`,
@@ -98,20 +101,20 @@ function translateDayOfWeek(day: DayOfWeek, locale: string): string {
  * page) pass the request's actual locale.
  */
 export async function getClassPopularity(
-  session: StaffSession,
+  context: TenantContext,
   filters: AnalyticsFilters,
   locale: string = routing.defaultLocale,
 ): Promise<ClassPopularityRow[]> {
-  if (session.role !== "ADMIN" && session.role !== "DIRECTOR") {
+  if (context.organizationRole !== "ADMIN" && context.organizationRole !== "DIRECTOR") {
     throw new Error("FORBIDDEN");
   }
 
-  const conditions: Prisma.ClassSessionWhereInput[] = [academyScopeWhere(session)];
+  const conditions: Prisma.ClassSessionWhereInput[] = [branchScopeWhere(context)];
   if (filters.academyId) {
     conditions.push({ academyId: filters.academyId });
   }
 
-  const classSessions = await prisma.classSession.findMany({
+  const classSessions = await getScopedDb(context).classSession.findMany({
     where: { AND: conditions },
     select: { id: true, dayOfWeek: true, startTime: true, name: true, type: true },
   });

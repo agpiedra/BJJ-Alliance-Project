@@ -38,6 +38,7 @@ function renderForm(overrides: Partial<React.ComponentProps<typeof RecordPayment
   render(
     <NextIntlClientProvider locale="en" messages={enMessages}>
       <RecordPaymentForm
+        organizationId="org-1"
         students={STUDENTS}
         plans={PLANS}
         lockedStudentId="student-1"
@@ -63,7 +64,7 @@ describe("RecordPaymentForm", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save payment" }));
 
     await waitFor(() => expect(recordPaymentMock).toHaveBeenCalledTimes(1));
-    const submitted = recordPaymentMock.mock.calls[0][1] as FormData;
+    const submitted = recordPaymentMock.mock.calls[0][2] as FormData;
     expect(submitted.get("year")).toBe("2026");
     expect(submitted.get("month")).toBe("3");
     expect(submitted.has("period")).toBe(false);
@@ -77,7 +78,7 @@ describe("RecordPaymentForm", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save payment" }));
 
     await waitFor(() => expect(recordPaymentMock).toHaveBeenCalledTimes(1));
-    const submitted = recordPaymentMock.mock.calls[0][1] as FormData;
+    const submitted = recordPaymentMock.mock.calls[0][2] as FormData;
     expect(submitted.has("amount")).toBe(false);
     expect(submitted.has("notes")).toBe(false);
   });
@@ -91,7 +92,7 @@ describe("RecordPaymentForm", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save payment" }));
 
     await waitFor(() => expect(recordPaymentMock).toHaveBeenCalledTimes(1));
-    const submitted = recordPaymentMock.mock.calls[0][1] as FormData;
+    const submitted = recordPaymentMock.mock.calls[0][2] as FormData;
     expect(submitted.get("amount")).toBe("0");
   });
 
@@ -104,7 +105,7 @@ describe("RecordPaymentForm", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save payment" }));
 
     await waitFor(() => expect(recordPaymentMock).toHaveBeenCalledTimes(1));
-    const submitted = recordPaymentMock.mock.calls[0][1] as FormData;
+    const submitted = recordPaymentMock.mock.calls[0][2] as FormData;
     expect(submitted.has("amount")).toBe(false);
     expect(submitted.get("notes")).toBe("cash");
   });
@@ -119,7 +120,7 @@ describe("RecordPaymentForm", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save payment" }));
 
     await waitFor(() => expect(recordPaymentMock).toHaveBeenCalledTimes(1));
-    const submitted = recordPaymentMock.mock.calls[0][1] as FormData;
+    const submitted = recordPaymentMock.mock.calls[0][2] as FormData;
     expect(submitted.get("amount")).toBe("45000");
     expect(submitted.get("notes")).toBe("cash");
   });
@@ -133,7 +134,7 @@ describe("RecordPaymentForm", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save payment" }));
 
     await waitFor(() => expect(recordPaymentMock).toHaveBeenCalledTimes(1));
-    const submitted = recordPaymentMock.mock.calls[0][1] as FormData;
+    const submitted = recordPaymentMock.mock.calls[0][2] as FormData;
     expect(submitted.has("amount")).toBe(false);
   });
 
@@ -180,7 +181,7 @@ describe("RecordPaymentForm", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save payment" }));
 
     await waitFor(() => expect(recordPaymentMock).toHaveBeenCalledTimes(1));
-    const submitted = recordPaymentMock.mock.calls[0][1] as FormData;
+    const submitted = recordPaymentMock.mock.calls[0][2] as FormData;
     expect(submitted.get("promoRecurring")).toBe("on");
     expect(submitted.get("promoName")).toBe("Beca competidor");
   });

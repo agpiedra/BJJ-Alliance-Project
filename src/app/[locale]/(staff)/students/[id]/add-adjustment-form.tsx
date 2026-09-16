@@ -11,11 +11,20 @@ const INITIAL_STATE: ActionState = {};
 // Visible to ANY staff role (spec §3 grants attendance marking/correction to
 // INSTRUCTOR too, unlike edit/archive) — no page.tsx role gate, matching
 // `RegenerateCodeButton`. The server-side `addAttendanceAdjustment`
-// (requireStaffSession(["ADMIN", "DIRECTOR", "INSTRUCTOR"]) + a fresh
-// isAcademyInScope check) is the real enforcement.
-export function AddAdjustmentForm({ studentId }: { studentId: string }) {
+// (requireTenantContext(["ADMIN", "DIRECTOR", "INSTRUCTOR"]) + a fresh
+// isAcademyInTenantScope check) is the real enforcement.
+export function AddAdjustmentForm({
+  organizationId,
+  studentId,
+}: {
+  organizationId: string;
+  studentId: string;
+}) {
   const t = useTranslations("students.detail.adjustment");
-  const [state, formAction, isPending] = useActionState(addAttendanceAdjustment, INITIAL_STATE);
+  const [state, formAction, isPending] = useActionState(
+    addAttendanceAdjustment.bind(null, organizationId),
+    INITIAL_STATE,
+  );
   const reasonErrors = state.fieldErrors?.reason;
   const deltaErrors = state.fieldErrors?.delta;
 

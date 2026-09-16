@@ -21,14 +21,19 @@ const FIELD_CLASS =
  * is server-side in `reassignAttendanceRecord`, never this UI.
  */
 export function ChangeAttendanceClassForm({
+  organizationId,
   attendanceRecordId,
   options,
 }: {
+  organizationId: string;
   attendanceRecordId: string;
   options: Array<{ id: string; name: string; startTime: string }>;
 }) {
   const t = useTranslations("adminKioskTokens.checkIns");
-  const [state, formAction, isPending] = useActionState(reassignAttendanceRecord, INITIAL_STATE);
+  const [state, formAction, isPending] = useActionState(
+    reassignAttendanceRecord.bind(null, organizationId),
+    INITIAL_STATE,
+  );
   const selectId = useId();
 
   // Nothing to move it to (a day whose classes were all deactivated since):

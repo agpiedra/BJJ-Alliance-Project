@@ -2,7 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EmailChannel, type ResendClient } from "@/lib/notifications/email-channel";
 import type { Recipient, RenderedMessage } from "@/lib/notifications/types";
 
-const recipient: Recipient = { userId: "user-1", email: "student@example.com", locale: "en" };
+const recipient: Recipient = {
+  userId: "user-1",
+  email: "student@example.com",
+  locale: "en",
+  organizationId: "org-1",
+};
 const message: RenderedMessage = {
   type: "NEW_SIGNUP",
   title: "New signup",

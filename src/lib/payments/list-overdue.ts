@@ -1,5 +1,7 @@
 import { prisma } from "@/lib/prisma";
-import { academyScopeWhere, type StaffSession } from "@/lib/auth/session";
+import { branchScopeWhere } from "@/lib/tenant/context";
+import { getScopedDb } from "@/lib/tenant/scoped-client";
+import type { AccessContext } from "@/lib/tenant/types";
 import { currentCrDateParts, getCurrentPaymentPeriod } from "@/lib/payments/get-current-period";
 import { isOverdue } from "@/lib/payments/overdue";
 
@@ -33,7 +35,7 @@ export interface OverdueStudent {
  * equivalent check is inlined instead of trusted away.
  */
 export async function listOverdueStudents(
-  session: StaffSession,
+  context: AccessContext,
   // Optional/defaulted exactly like `perform-check-in.ts`'s `now?: Date` —
   // production callers never pass this, so they always get a fresh
   // `currentCrDateParts()` read; tests inject a fixed value so the cutoff-day
@@ -43,21 +45,36 @@ export async function listOverdueStudents(
   // module's own doc comment on why a second, independent "what month is it"
   // resolution must never be written here.
   today: { year: number; month: number; day: number } = currentCrDateParts(),
+  // Narrows to one specific academy on top of `context`'s own scope — needed
+  // by the weekly-digest cron, whose `SystemJobContext` is org-wide (no
+  // per-academy scope of its own) but which sends one email per academy.
+  // Mirrors the `filters.academyId` narrowing pattern the analytics module
+  // already established, rather than inventing a per-academy job context.
+  academyId?: string,
 ): Promise<OverdueStudent[]> {
-  if (session.role !== "ADMIN" && session.role !== "DIRECTOR") {
+  // A kiosk has no business calling this — it is always FORBIDDEN, never
+  // treated like the inherently-trusted system-job caller.
+  if (context.kind === "kiosk") {
+    throw new Error("FORBIDDEN");
+  }
+  if (context.kind !== "system-job" && context.organizationRole !== "ADMIN" && context.organizationRole !== "DIRECTOR") {
     throw new Error("FORBIDDEN");
   }
 
-  const scope = academyScopeWhere(session);
-  const students = await prisma.student.findMany({
+  const scope = branchScopeWhere(context);
+  // Two independent `homeAcademyId` conditions (context's own scope, and the
+  // optional narrowing param) — an AND array, never spread into one object
+  // literal, since a second `homeAcademyId` key would silently win over the
+  // first's `{ in: [...] }` fragment (the same hazard `branchScopeWhere`'s
+  // own doc comment warns about). Organization scope comes from
+  // `getScopedDb`, unconditionally.
+  const students = await getScopedDb(context).student.findMany({
     where: {
-      status: "ACTIVE",
-      // academyScopeWhere returns a fragment keyed `academyId`, but
-      // Student's tenancy column is `homeAcademyId` — same translation
-      // promotion-queue.ts's classifyActiveStudents and dashboard/page.tsx's
-      // pendingCount query already establish; see academyScopeWhere's own
-      // doc comment on why the fragment can't be spread directly.
-      ...(scope.academyId ? { homeAcademyId: scope.academyId } : {}),
+      AND: [
+        { status: "ACTIVE" },
+        scope.academyId ? { homeAcademyId: scope.academyId } : {},
+        academyId ? { homeAcademyId: academyId } : {},
+      ],
     },
     select: {
       id: true,

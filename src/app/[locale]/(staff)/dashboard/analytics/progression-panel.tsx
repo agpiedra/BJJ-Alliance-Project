@@ -17,7 +17,6 @@ import {
   DataTableRow,
 } from "@/components/ui/data-table";
 import { ExportCsvButton } from "./export-csv-button";
-import type { Belt } from "@/generated/prisma/client";
 
 // `projectedDate`/`awardedAt` are Luxon `DateTime` instances in the lib
 // layer — not plain-serializable across the Server -> Client Component
@@ -34,6 +33,8 @@ export type PromotionInRangePanelRow = Omit<PromotionInRangeRow, "awardedAt"> & 
 // "belt distribution" as one of BarList's two exemplar uses) — duplicated
 // here rather than imported, since dashboard/page.tsx doesn't export it and
 // is explicitly out of scope for this phase to edit.
+type Belt = "WHITE" | "BLUE" | "PURPLE" | "BROWN" | "BLACK";
+
 const BELT_BAR_COLOR_CLASS: Record<Belt, string> = {
   WHITE: "bg-belt-white",
   BLUE: "bg-belt-blue",
@@ -70,9 +71,17 @@ export function ProgressionPanel({
   );
 }
 
+/** Phase 3a rev 19: labels are per-organization data on the rank row
+ * (labelEs/labelEn) — every belt-code display in this panel picks between
+ * the two pre-fetched fields by the viewer's own locale, never a
+ * `belt.<code>` message key (which has nothing to look up for a KIDS code
+ * anyway). */
+function pickBeltLabel(labelEs: string, labelEn: string, locale: string): string {
+  return locale === "es" ? labelEs : labelEn;
+}
+
 function PlanningListPanel({ rows }: { rows: ProgressionPlanningPanelRow[] }) {
   const t = useTranslations("dashboard.analytics.progression.planningList");
-  const tBelt = useTranslations("belt");
   const locale = useLocale();
 
   const formatProjectedDate = (iso: string | null) =>
@@ -80,7 +89,7 @@ function PlanningListPanel({ rows }: { rows: ProgressionPlanningPanelRow[] }) {
 
   const csvRows = rows.map((row) => ({
     [t("csv.name")]: `${row.firstName} ${row.lastName}`,
-    [t("csv.belt")]: `${tBelt(row.currentBelt)} ${row.currentStripes}`,
+    [t("csv.belt")]: `${pickBeltLabel(row.currentBeltLabelEs, row.currentBeltLabelEn, locale)} ${row.currentStripes}`,
     [t("csv.atBeltCount")]: row.atBeltCount,
     [t("csv.remainingToNextStripe")]: row.remainingToNextStripe ?? "—",
     [t("csv.projectedDate")]: formatProjectedDate(row.projectedDate),
@@ -117,7 +126,11 @@ function PlanningListPanel({ rows }: { rows: ProgressionPlanningPanelRow[] }) {
                     {row.firstName} {row.lastName}
                   </DataTableCell>
                   <DataTableCell>
-                    <BeltGraphic belt={row.currentBelt} stripes={row.currentStripes} />
+                    <BeltGraphic
+                      belt={row.currentBeltVisual}
+                      label={pickBeltLabel(row.currentBeltLabelEs, row.currentBeltLabelEn, locale)}
+                      stripes={row.currentStripes}
+                    />
                   </DataTableCell>
                   <DataTableCell className="text-right tabular-nums">{row.atBeltCount}</DataTableCell>
                   <DataTableCell className="text-right tabular-nums text-muted-foreground">
@@ -181,13 +194,12 @@ function BeltDistributionPanel({ rows }: { rows: BeltDistributionRow[] }) {
 
 function PromotionsInRangePanel({ rows }: { rows: PromotionInRangePanelRow[] }) {
   const t = useTranslations("dashboard.analytics.progression.promotionsInRange");
-  const tBelt = useTranslations("belt");
   const locale = useLocale();
 
   const csvRows = rows.map((row) => ({
     [t("csv.date")]: formatTimestampInAcademyZone(new Date(row.awardedAt), locale) ?? "",
     [t("csv.name")]: `${row.firstName} ${row.lastName}`,
-    [t("csv.change")]: `${tBelt(row.fromBelt)} ${row.fromStripes} -> ${tBelt(row.toBelt)} ${row.toStripes}`,
+    [t("csv.change")]: `${pickBeltLabel(row.fromBeltLabelEs, row.fromBeltLabelEn, locale)} ${row.fromStripes} -> ${pickBeltLabel(row.toBeltLabelEs, row.toBeltLabelEn, locale)} ${row.toStripes}`,
   }));
 
   return (
@@ -212,7 +224,8 @@ function PromotionsInRangePanel({ rows }: { rows: PromotionInRangePanelRow[] }) 
                   {row.firstName} {row.lastName}
                 </span>
                 <span>
-                  {tBelt(row.fromBelt)} {row.fromStripes} → {tBelt(row.toBelt)} {row.toStripes}
+                  {pickBeltLabel(row.fromBeltLabelEs, row.fromBeltLabelEn, locale)} {row.fromStripes} →{" "}
+                  {pickBeltLabel(row.toBeltLabelEs, row.toBeltLabelEn, locale)} {row.toStripes}
                 </span>
               </li>
             ))}

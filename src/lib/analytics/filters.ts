@@ -1,6 +1,6 @@
 import { DateTime } from "luxon";
 import { ZONE } from "@/lib/scheduling/zone";
-import type { StaffSession } from "@/lib/auth/session";
+import type { TenantContext } from "@/lib/tenant/types";
 
 /**
  * The default headline-metrics window (spec's own words: "active-window
@@ -18,7 +18,7 @@ export interface AnalyticsFilters {
    * non-ADMIN (DIRECTOR/INSTRUCTOR) session, regardless of how many
    * academies they're assigned to. A non-ADMIN session is never widened by
    * this: every panel's query function independently ANDs in
-   * `academyScopeWhere(session)` regardless of `academyId`, so `null` here
+   * `branchScopeWhere(context)` regardless of `academyId`, so `null` here
    * simply defers entirely to that session-level scope rather than
    * redundantly (and, for a multi-academy DIRECTOR, incorrectly) re-pinning
    * to a single academy.
@@ -67,13 +67,13 @@ function parseDateParam(value: string | undefined): DateTime | null {
  * taken one step further here: rather than re-pinning to `academyIds[0]`
  * (which would silently drop any additional `StaffAssignment` a DIRECTOR
  * with more than one academy has), `academyId: null` lets their full
- * session-level scope apply via `academyScopeWhere(session)`, the same
+ * session-level scope apply via `branchScopeWhere(context)`, the same
  * `{ in: [...] }` fragment `listStudents` itself relies on. `academy=ambas`,
  * or its absence, resolves ADMIN to `academyId: null` the same way —
  * "every academy in scope".
  */
 export function resolveAnalyticsFilters(
-  session: StaffSession,
+  context: TenantContext,
   searchParams: AnalyticsSearchParams,
   today: DateTime = DateTime.now().setZone(ZONE),
 ): AnalyticsFilters {
@@ -85,14 +85,14 @@ export function resolveAnalyticsFilters(
   const from = (bothValid ? parsedFrom : to.minus({ days: DEFAULT_RANGE_DAYS })).startOf("day");
 
   let academyId: string | null;
-  if (session.role === "ADMIN") {
+  if (context.organizationRole === "ADMIN") {
     const requested = searchParams.academy;
     academyId = !requested || requested === "ambas" ? null : requested;
   } else {
     // DIRECTOR/INSTRUCTOR: never gets the picker (spec's "Locations
     // (admin only)" line), so whatever `academy` they pass is ignored —
     // `null` here defers entirely to the session's own scope
-    // (`academyScopeWhere(session)`, applied independently by every panel's
+    // (`branchScopeWhere(context)`, applied independently by every panel's
     // query function), rather than pinning to just their FIRST assignment
     // and silently dropping any others.
     academyId = null;

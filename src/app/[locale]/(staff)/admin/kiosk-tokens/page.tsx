@@ -1,7 +1,7 @@
 import { DateTime } from "luxon";
 import { getLocale, getTranslations } from "next-intl/server";
-import { requireStaffSession } from "@/lib/auth/session";
-import { prisma } from "@/lib/prisma";
+import { requireTenantContext } from "@/lib/tenant/context";
+import { getScopedDb } from "@/lib/tenant/scoped-client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Pill, type PillProps } from "@/components/ui/pill";
@@ -39,15 +39,20 @@ export default async function KioskTokensPage() {
   // below is day-to-day academy operations a director owns. Regenerating the
   // shared device credential is NOT — that button stays ADMIN-only further
   // down, for the same reason this whole page used to be.
-  const session = await requireStaffSession(["ADMIN", "DIRECTOR"]);
+  const context = await requireTenantContext(["ADMIN", "DIRECTOR"]);
 
-  // ADMIN sees every academy (unscoped); a DIRECTOR only their own — the same
-  // branch (staff)/layout.tsx already uses for the academy switcher.
+  // ADMIN sees every academy in their own organization (never another
+  // tenant's); a DIRECTOR only their own — the same branch (staff)/layout.tsx
+  // already uses for the academy switcher.
   const academies =
-    session.academyIds === "ALL"
-      ? await prisma.academy.findMany({ orderBy: { name: "asc" }, select: { id: true, name: true, slug: true } })
-      : await prisma.academy.findMany({
-          where: { id: { in: session.academyIds } },
+    context.academyIds === "ALL"
+      ? await getScopedDb(context).academy.findMany({
+          where: {},
+          orderBy: { name: "asc" },
+          select: { id: true, name: true, slug: true },
+        })
+      : await getScopedDb(context).academy.findMany({
+          where: { id: { in: context.academyIds } },
           orderBy: { name: "asc" },
           select: { id: true, name: true, slug: true },
         });
@@ -79,8 +84,12 @@ export default async function KioskTokensPage() {
               <CardTitle>{academy.name}</CardTitle>
             </CardHeader>
             <CardContent className="flex flex-col gap-6">
-              {session.role === "ADMIN" && (
-                <RegenerateKioskTokenButton academyId={academy.id} academySlug={academy.slug} />
+              {context.organizationRole === "ADMIN" && (
+                <RegenerateKioskTokenButton
+                  organizationId={context.organizationId}
+                  academyId={academy.id}
+                  academySlug={academy.slug}
+                />
               )}
 
               <section className="flex flex-col gap-3">
@@ -130,6 +139,7 @@ export default async function KioskTokensPage() {
                             </DataTableCell>
                             <DataTableCell>
                               <ChangeAttendanceClassForm
+                                organizationId={context.organizationId}
                                 attendanceRecordId={row.id}
                                 options={reassignOptions}
                               />

@@ -9,6 +9,7 @@ export class InAppChannel implements NotificationChannel {
     await prisma.notification.create({
       data: {
         userId: to.userId,
+        organizationId: to.organizationId,
         type: message.type,
         title: message.title,
         body: message.body,

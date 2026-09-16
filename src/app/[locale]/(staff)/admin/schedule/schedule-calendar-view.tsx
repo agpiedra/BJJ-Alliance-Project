@@ -36,11 +36,13 @@ export interface CalendarSession {
  * actions, reused as-is.
  */
 export function ScheduleCalendarView({
+  organizationId,
   days,
   sessions,
   legend,
   legendNote,
 }: {
+  organizationId: string;
   days: WeekCalendarDay[];
   sessions: CalendarSession[];
   legend: WeekCalendarLegendItem[];
@@ -112,8 +114,10 @@ export function ScheduleCalendarView({
                 </div>
               </div>
               <div className="flex flex-col gap-3 border-t border-border px-4 pt-4">
-                <EditClassSessionForm session={selected} renderAsDetails={false} />
-                {selected.active && <DeactivateClassSessionButton classSessionId={selected.id} />}
+                <EditClassSessionForm organizationId={organizationId} session={selected} renderAsDetails={false} />
+                {selected.active && (
+                  <DeactivateClassSessionButton organizationId={organizationId} classSessionId={selected.id} />
+                )}
               </div>
             </>
           )}

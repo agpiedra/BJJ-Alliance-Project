@@ -1,12 +1,15 @@
-import { prisma } from "@/lib/prisma";
 import { digestLookupSecret } from "@/lib/crypto";
 import { requireEnv } from "@/lib/env";
 import { attendanceDateFromZoned, crDayOfWeek, toAttendanceDate } from "@/lib/scheduling/zone";
 import { selectActiveSessionOccurrence } from "@/lib/scheduling/check-in-window";
 import { getAtBeltSummary, type AtBeltSummary } from "@/lib/students/attendance-summary";
+import type { BeltVisualData } from "@/components/belt-graphic/belt-graphic";
+import { resolvePromotionConfigMap } from "@/lib/promotion/config";
 import { isUniqueConstraintError } from "@/lib/prisma-errors";
 import { notifyEligibilityReached } from "@/lib/notifications/notify-eligibility";
 import { fireAndForget } from "@/lib/notifications/fire-and-forget";
+import { getScopedDb } from "@/lib/tenant/scoped-client";
+import type { AccessContext } from "@/lib/tenant/types";
 import {
   AttendanceMatchSource,
   AttendanceType,
@@ -35,7 +38,15 @@ export interface PicklistEntry {
 export type CheckInResult =
   | {
       ok: true;
-      student: { firstName: string; lastName: string; currentBelt: string; currentStripes: number };
+      student: {
+        firstName: string;
+        lastName: string;
+        currentBelt: string;
+        currentBeltLabelEs: string;
+        currentBeltLabelEn: string;
+        currentBeltVisual: BeltVisualData;
+        currentStripes: number;
+      };
       summary: AtBeltSummary;
       earnedStripe: boolean;
       isVisitor: boolean;
@@ -60,6 +71,20 @@ export type CheckInResult =
 
 interface CommonInput {
   academyId: string;
+  /**
+   * 1f-3: the authority this check-in runs under, for `getScopedDb`'s
+   * organization enforcement. The kiosk route constructs a `KioskContext`
+   * from its verified device token; the portal's self-check-in action
+   * passes its own already-resolved `TenantContext` (a student acting on
+   * their own row). Kept separate from `academyId` rather than derived from
+   * it — a `TenantContext` has no single concrete academy id of its own
+   * (`academyIds` is a list-or-"ALL"), so the two can't collapse into one
+   * field. Both real callers construct `academyId` and `context` from the
+   * SAME already-verified source (the kiosk's own `academy` row; the
+   * portal's own `context.selfStudentId`-verified student row), so they are
+   * always consistent by construction.
+   */
+  context: AccessContext;
   source: AttendanceSource;
   now?: Date;
   /**
@@ -96,25 +121,72 @@ export async function performCheckIn(input: PerformCheckInInput): Promise<CheckI
   // (if useless) member of the `code` variant of the discriminated union —
   // `input.code ? ... : ...` would misroute it into the `studentId` branch,
   // where `input.studentId` is `undefined`, and
-  // `prisma.student.findUnique({ where: { id: undefined } })` throws instead
-  // of returning the documented `invalid_code`. Checking for `undefined`
-  // preserves the original behavior: an empty code hashes to a codeHash that
-  // matches no student, so it falls through to the `!student` branch below.
+  // `findUnique({ where: { id: undefined } })` throws instead of returning
+  // the documented `invalid_code`. Checking for `undefined` preserves the
+  // original behavior: an empty code hashes to a codeHash that matches no
+  // student, so it falls through to the `!student` branch below.
+  // MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 1: "Resolve the branch from its
+  // verified kiosk token, then derive its organization. Resolve student
+  // codes within that organization." `input.academyId` is already the
+  // token-verified branch by the time this function is called; organization
+  // scope comes from `input.context.organizationId`, resolved by the caller
+  // (route.ts's verified kiosk token, or the portal's own TenantContext).
+  const db = getScopedDb(input.context);
+
   const student = input.code !== undefined
-    ? await prisma.student.findUnique({
-        where: { codeHash: digestLookupSecret(input.code, requireEnv("CODE_PEPPER")) },
-        include: { homeAcademy: { select: { name: true } } },
+    ? await db.student.findUnique({
+        where: {
+          organizationId_codeHash: {
+            organizationId: input.context.organizationId,
+            codeHash: digestLookupSecret(input.code, requireEnv("CODE_PEPPER")),
+          },
+        },
+        include: {
+          homeAcademy: { select: { name: true } },
+          currentRank: {
+            select: {
+              code: true,
+              labelEs: true,
+              labelEn: true,
+              primaryColor: true,
+              centerStripeColor: true,
+              barColor: true,
+              stripeColors: true,
+              maxStripes: true,
+              visibleStripeSlots: true,
+            },
+          },
+        },
       })
-    : await prisma.student.findUnique({
+    : await db.student.findUnique({
         where: { id: input.studentId },
-        include: { homeAcademy: { select: { name: true } } },
+        include: {
+          homeAcademy: { select: { name: true } },
+          currentRank: {
+            select: {
+              code: true,
+              labelEs: true,
+              labelEn: true,
+              primaryColor: true,
+              centerStripeColor: true,
+              barColor: true,
+              stripeColors: true,
+              maxStripes: true,
+              visibleStripeSlots: true,
+            },
+          },
+        },
       });
 
+  // Organization scope is enforced structurally by `getScopedDb` above for
+  // BOTH paths — including the studentId path (picker-answer / offline
+  // replay), which used to have no organization filter of its own and
+  // relied on a manual compare here instead.
   if (!student || student.status !== StudentStatus.ACTIVE) {
     return { ok: false, error: "invalid_code" };
   }
 
-  const sessions = await prisma.classSession.findMany({
+  const sessions = await db.classSession.findMany({
     where: { academyId: input.academyId, active: true },
   });
 
@@ -149,7 +221,7 @@ export async function performCheckIn(input: PerformCheckInInput): Promise<CheckI
     // "That day" is `now`'s own CR calendar day. Unlike the AUTO branch there
     // is no occurrence to anchor to, so there is nothing to straddle midnight:
     // a tap at 23:50 CR belongs to that day's schedule, full stop.
-    const todaysSessions = await prisma.classSession.findMany({
+    const todaysSessions = await db.classSession.findMany({
       where: { academyId: input.academyId, active: true, dayOfWeek: crDayOfWeek(now) },
       orderBy: { startTime: "asc" },
     });
@@ -188,7 +260,7 @@ export async function performCheckIn(input: PerformCheckInInput): Promise<CheckI
   // index on (studentId, date) WHERE classSessionId IS NULL would close it, if
   // duplicate UNMATCHED rows ever actually show up in practice.
   if (!classSession) {
-    const existing = await prisma.attendanceRecord.findFirst({
+    const existing = await db.attendanceRecord.findFirst({
       where: {
         studentId: student.id,
         classSessionId: null,
@@ -202,14 +274,18 @@ export async function performCheckIn(input: PerformCheckInInput): Promise<CheckI
     }
   }
 
-  const summaryBefore = await getAtBeltSummary(student.id);
+  // Resolved once and reused for both summaries below (same student, same
+  // org) rather than once per call.
+  const configByTrack = await resolvePromotionConfigMap(input.context.organizationId);
+  const summaryBefore = await getAtBeltSummary(student.id, configByTrack);
 
   let created: { id: string };
   try {
-    created = await prisma.attendanceRecord.create({
+    created = await db.attendanceRecord.create({
       data: {
         studentId: student.id,
         academyId: input.academyId,
+        organizationId: input.context.organizationId,
         classSessionId: classSession?.id ?? null,
         occurredAt: now,
         date: attendanceDate,
@@ -230,10 +306,10 @@ export async function performCheckIn(input: PerformCheckInInput): Promise<CheckI
     throw error;
   }
 
-  const summaryAfter = await getAtBeltSummary(student.id);
+  const summaryAfter = await getAtBeltSummary(student.id, configByTrack);
 
-  if (summaryBefore.remainingToNextStripe === 1 && summaryAfter.remainingToNextStripe !== 1) {
-    const type = summaryAfter.examEligible ? "EXAM_THRESHOLD" : "STRIPE_THRESHOLD";
+  if (summaryBefore.remainingAttendance === 1 && summaryAfter.remainingAttendance !== 1) {
+    const type = summaryAfter.nextTarget === "BELT" && summaryAfter.isEligible ? "EXAM_THRESHOLD" : "STRIPE_THRESHOLD";
     // See fire-and-forget.ts for why this is wrapped in after() with a
     // fallback rather than left as a bare un-awaited promise.
     fireAndForget("notifyEligibilityReached", () => notifyEligibilityReached(student.id, type));
@@ -244,15 +320,25 @@ export async function performCheckIn(input: PerformCheckInInput): Promise<CheckI
     student: {
       firstName: student.firstName,
       lastName: student.lastName,
-      currentBelt: student.currentBelt,
+      currentBelt: student.currentRank.code,
+      currentBeltLabelEs: student.currentRank.labelEs,
+      currentBeltLabelEn: student.currentRank.labelEn,
+      currentBeltVisual: {
+        primaryColor: student.currentRank.primaryColor,
+        centerStripeColor: student.currentRank.centerStripeColor,
+        barColor: student.currentRank.barColor,
+        stripeColors: student.currentRank.stripeColors,
+        maxStripes: student.currentRank.maxStripes,
+        visibleStripeSlots: student.currentRank.visibleStripeSlots,
+      },
       currentStripes: student.currentStripes,
     },
     summary: summaryAfter,
     // "This specific check-in was the one that crossed the threshold" — works
     // for both the ordinary stripe-earning case and the exam-eligibility case,
     // since getAtBeltSummary already folds exam-threshold progress into
-    // remainingToNextStripe once a student is at max stripes.
-    earnedStripe: summaryBefore.remainingToNextStripe === 1 && summaryAfter.remainingToNextStripe !== 1,
+    // remainingAttendance once a student is at max stripes.
+    earnedStripe: summaryBefore.remainingAttendance === 1 && summaryAfter.remainingAttendance !== 1,
     isVisitor: student.homeAcademyId !== input.academyId,
     homeAcademyName: student.homeAcademy.name,
     attendanceRecordId: created.id,

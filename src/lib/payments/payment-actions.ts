@@ -4,7 +4,8 @@ import { z } from "zod";
 import { revalidatePath } from "next/cache";
 import { getLocale } from "next-intl/server";
 import { prisma } from "@/lib/prisma";
-import { isAcademyInScope, requireStaffSession } from "@/lib/auth/session";
+import { isAcademyInTenantScope, resolveActionContext } from "@/lib/tenant/context";
+import { getScopedDb } from "@/lib/tenant/scoped-client";
 import { PaymentMethod, PaymentStatus, Prisma } from "@/generated/prisma/client";
 import { CUSTOM_PROMO_PLAN_NAME } from "@/lib/payments/custom-promo-plan-name";
 import { currentCrDateParts } from "@/lib/payments/get-current-period";
@@ -62,8 +63,14 @@ const recordPaymentSchema = z.object({
  * atomic — no window for a concurrent recording to land between the read
  * and the write and produce a misleading audit trail.
  */
-export async function recordPayment(_prevState: ActionState, formData: FormData): Promise<ActionState> {
-  const session = await requireStaffSession(["ADMIN", "DIRECTOR"]);
+export async function recordPayment(
+  organizationId: string,
+  _prevState: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const auth = await resolveActionContext(organizationId, ["ADMIN", "DIRECTOR"]);
+  if (!auth.ok) return { error: "notFound" };
+  const context = auth.context;
 
   const parsed = recordPaymentSchema.safeParse(Object.fromEntries(formData.entries()));
 
@@ -77,12 +84,12 @@ export async function recordPayment(_prevState: ActionState, formData: FormData)
     return { error: "periodTooFarInFuture" };
   }
 
-  const student = await prisma.student.findUnique({
+  const student = await getScopedDb(context).student.findUnique({
     where: { id: data.studentId },
-    select: { id: true, homeAcademyId: true },
+    select: { id: true, homeAcademyId: true, organizationId: true },
   });
 
-  if (!student || !isAcademyInScope(session, student.homeAcademyId)) {
+  if (!student || !isAcademyInTenantScope(context, student.homeAcademyId)) {
     return { error: "notFound" };
   }
 
@@ -123,6 +130,7 @@ export async function recordPayment(_prevState: ActionState, formData: FormData)
       create: {
         studentId: student.id,
         academyId: student.homeAcademyId,
+        organizationId: student.organizationId,
         year: data.year,
         month: data.month,
         planId: data.planId,
@@ -133,7 +141,7 @@ export async function recordPayment(_prevState: ActionState, formData: FormData)
         promoName: data.promoName,
         promoReason: data.promoReason,
         promoRecurring: data.promoRecurring ?? false,
-        recordedById: session.userId,
+        recordedById: context.actorUserId,
       },
       // `data.amount`/`data.notes`/etc. being `undefined` here means the
       // director left the field blank on the form: the form either submits
@@ -158,14 +166,14 @@ export async function recordPayment(_prevState: ActionState, formData: FormData)
         promoName: data.promoName ?? null,
         promoReason: data.promoReason ?? null,
         promoRecurring: data.promoRecurring ?? false,
-        recordedById: session.userId,
+        recordedById: context.actorUserId,
         recordedAt: new Date(),
       },
     });
 
     await tx.auditLog.create({
       data: {
-        actorId: session.userId,
+        actorId: context.actorUserId,
         academyId: student.homeAcademyId,
         action: "payment.record",
         entityType: "PaymentPeriod",
@@ -243,14 +251,21 @@ export async function recordPayment(_prevState: ActionState, formData: FormData)
  * heuristic if it ever picks the wrong plan for an academy's makeup —
  * cheap to add later, not worth it for a single quick-mark button today.
  */
-export async function markPaymentPaid(studentId: string, year: number, month: number): Promise<ActionState> {
-  const session = await requireStaffSession(["ADMIN", "DIRECTOR"]);
+export async function markPaymentPaid(
+  organizationId: string,
+  studentId: string,
+  year: number,
+  month: number,
+): Promise<ActionState> {
+  const auth = await resolveActionContext(organizationId, ["ADMIN", "DIRECTOR"]);
+  if (!auth.ok) return { error: "notFound" };
+  const context = auth.context;
 
-  const student = await prisma.student.findUnique({
+  const student = await getScopedDb(context).student.findUnique({
     where: { id: studentId },
-    select: { id: true, homeAcademyId: true },
+    select: { id: true, homeAcademyId: true, organizationId: true },
   });
-  if (!student || !isAcademyInScope(session, student.homeAcademyId)) {
+  if (!student || !isAcademyInTenantScope(context, student.homeAcademyId)) {
     return { error: "notFound" };
   }
 
@@ -309,5 +324,5 @@ export async function markPaymentPaid(studentId: string, year: number, month: nu
   if (existing?.promoReason) fd.set("promoReason", existing.promoReason);
   if (existing?.promoRecurring) fd.set("promoRecurring", "on");
 
-  return recordPayment({}, fd);
+  return recordPayment(organizationId, {}, fd);
 }

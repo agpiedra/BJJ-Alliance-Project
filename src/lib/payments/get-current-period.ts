@@ -30,6 +30,7 @@ const CURRENT_PERIOD_SELECT = {
   status: true,
   planId: true,
   academyId: true,
+  organizationId: true,
   amount: true,
   method: true,
   notes: true,
@@ -49,6 +50,7 @@ type RawPeriod = {
   status: PaymentStatus;
   planId: string;
   academyId: string;
+  organizationId: string;
   amount: { toNumber(): number } | null;
   method: PaymentMethod | null;
   notes: string | null;
@@ -183,6 +185,7 @@ async function materializeCarryForward(
         data: {
           studentId,
           academyId: candidate.academyId,
+          organizationId: candidate.organizationId,
           year: today.year,
           month: today.month,
           planId: candidate.planId,

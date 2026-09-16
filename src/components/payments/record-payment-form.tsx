@@ -40,6 +40,10 @@ export interface RecordPaymentDefaults {
 }
 
 export interface RecordPaymentFormProps {
+  /** 1f-4: bound into `recordPayment` as its explicit first argument, never
+   * read from the ambient session selector — the caller's own
+   * already-resolved `context.organizationId` at render time. */
+  organizationId: string;
   /** Every student the caller may pick from. The student-detail page passes
    * a single-item list (that student only); the /payments page passes every
    * active student in the session's academy scope. */
@@ -75,6 +79,7 @@ export interface RecordPaymentFormProps {
  * same component in both places," not two forks of the same form.
  */
 export function RecordPaymentForm({
+  organizationId,
   students,
   plans,
   lockedStudentId,
@@ -86,7 +91,7 @@ export function RecordPaymentForm({
   const t = useTranslations("students.detail.recordPayment");
   const tPaymentStatus = useTranslations("students.paymentStatus");
   const tMethod = useTranslations("payments.method");
-  const [state, formAction, isPending] = useActionState(recordPayment, INITIAL_STATE);
+  const [state, formAction, isPending] = useActionState(recordPayment.bind(null, organizationId), INITIAL_STATE);
 
   // Deliberately NOT `?? students[0]?.id` on the unscoped `/payments` page:
   // pre-selecting the alphabetically-first student would make the

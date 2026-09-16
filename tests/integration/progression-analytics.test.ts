@@ -1,21 +1,36 @@
 import "dotenv/config";
+import { getTestPrismaClient } from "../helpers/test-db";
 import { afterAll, describe, expect, it } from "vitest";
 import { DateTime } from "luxon";
-import { PrismaClient } from "../../src/generated/prisma/client";
-import type { Belt } from "../../src/generated/prisma/client";
-import { PrismaPg } from "@prisma/adapter-pg";
 import { requireEnv } from "../../src/lib/env";
+import { adultRankId, type BeltCode } from "../helpers/belt-ranks";
 import { digestLookupSecret, hashSecret } from "../../src/lib/crypto";
 import { toAttendanceDate, ZONE } from "../../src/lib/scheduling/zone";
-import type { StaffSession } from "../../src/lib/auth/session";
+import type { TenantContext, MembershipRole } from "../../src/lib/tenant/types";
 import type { AnalyticsFilters } from "../../src/lib/analytics/filters";
 
 const { getProgressionPlanningList, getBeltDistribution, getPromotionsInRange, projectThresholdDate } =
   await import("../../src/lib/analytics/progression");
 
-const adapter = new PrismaPg({ connectionString: requireEnv("DATABASE_URL") });
-const prisma = new PrismaClient({ adapter });
+const prisma = getTestPrismaClient();
+
+let allianceOrgIdPromise: Promise<string> | null = null;
+function getAllianceOrganizationId() {
+  allianceOrgIdPromise ??= prisma.organization.findUniqueOrThrow({ where: { slug: "alliance-cr" } }).then((o) => o.id);
+  return allianceOrgIdPromise;
+}
 const pepper = requireEnv("CODE_PEPPER");
+
+function ctx(role: MembershipRole, academyIds: string[] | "ALL", organizationId: string): TenantContext {
+  return {
+    kind: "tenant",
+    actorUserId: "x",
+    organizationId,
+    organizationRole: role,
+    academyIds,
+    selfStudentId: null,
+  };
+}
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -37,6 +52,7 @@ async function cleanup() {
   }
   if (cleanupUserIds.length > 0) {
     await prisma.promotion.deleteMany({ where: { awardedById: { in: cleanupUserIds } } });
+    await prisma.notification.deleteMany({ where: { userId: { in: cleanupUserIds } } });
     await prisma.user.deleteMany({ where: { id: { in: cleanupUserIds } } });
   }
   if (cleanupAcademyIds.length > 0) {
@@ -53,6 +69,7 @@ async function makeAcademy(label: string) {
       name: `${label} ${suffix}`,
       slug: `${label}-${suffix}`,
       kioskTokenHash: `${label}-hash-${suffix}`,
+      organizationId: await getAllianceOrganizationId(),
     },
   });
   cleanupAcademyIds.push(academy.id);
@@ -74,17 +91,19 @@ async function makeStaffUser(role: "ADMIN") {
 
 async function makeStudent(
   academyId: string,
-  overrides: { currentBelt: Belt; currentStripes: number; beltAwardedAt: Date; lastName?: string },
+  organizationId: string,
+  overrides: { currentBelt: BeltCode; currentStripes: number; beltAwardedAt: Date; lastName?: string },
 ) {
   const suffix = `${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
   const student = await prisma.student.create({
     data: {
       homeAcademyId: academyId,
+      organizationId,
       firstName: "ProgressionTest",
       lastName: overrides.lastName ?? `Student-${suffix}`,
       phone: "88880000",
       email: `progression-${suffix}@example.com`,
-      currentBelt: overrides.currentBelt,
+      currentRankId: adultRankId(overrides.currentBelt),
       currentStripes: overrides.currentStripes,
       beltAwardedAt: overrides.beltAwardedAt,
       status: "ACTIVE",
@@ -101,13 +120,20 @@ async function makeStudent(
  * comment), one per day starting at `startAt` — same helper shape as
  * promotion-queue.test.ts's `addAttendances`.
  */
-async function addAttendances(studentId: string, academyId: string, count: number, startAt: Date) {
+async function addAttendances(
+  studentId: string,
+  academyId: string,
+  organizationId: string,
+  count: number,
+  startAt: Date,
+) {
   if (count === 0) return;
   const rows = Array.from({ length: count }, (_, i) => {
     const occurredAt = new Date(startAt.getTime() + i * DAY_MS);
     return {
       studentId,
       academyId,
+      organizationId,
       occurredAt,
       date: toAttendanceDate(occurredAt),
       type: "CHECKIN" as const,
@@ -132,10 +158,10 @@ describe("getProgressionPlanningList", () => {
     // attendances (3 short of the next stripe) spread across the following
     // 27 days, all inside the 60-day recent window.
     const beltAwardedAt = TODAY.minus({ days: 40 }).toJSDate();
-    const student = await makeStudent(academy.id, { currentBelt: "WHITE", currentStripes: 0, beltAwardedAt });
-    await addAttendances(student.id, academy.id, 27, new Date(beltAwardedAt.getTime() + DAY_MS));
+    const student = await makeStudent(academy.id, academy.organizationId, { currentBelt: "WHITE", currentStripes: 0, beltAwardedAt });
+    await addAttendances(student.id, academy.id, academy.organizationId, 27, new Date(beltAwardedAt.getTime() + DAY_MS));
 
-    const director: StaffSession = { userId: "x", role: "DIRECTOR", academyIds: [academy.id] };
+    const director = ctx("DIRECTOR", [academy.id], academy.organizationId);
     const filters: AnalyticsFilters = { from: RANGE_FROM, to: RANGE_TO, academyId: academy.id };
 
     const rows = await getProgressionPlanningList(director, filters, TODAY);
@@ -160,10 +186,10 @@ describe("getProgressionPlanningList", () => {
     // by the recent window, per listApproachingStudents/getAtBeltSummary),
     // but the recent RATE is zero.
     const beltAwardedAt = TODAY.minus({ days: 200 }).toJSDate();
-    const student = await makeStudent(academy.id, { currentBelt: "WHITE", currentStripes: 0, beltAwardedAt });
-    await addAttendances(student.id, academy.id, 27, new Date(beltAwardedAt.getTime() + DAY_MS));
+    const student = await makeStudent(academy.id, academy.organizationId, { currentBelt: "WHITE", currentStripes: 0, beltAwardedAt });
+    await addAttendances(student.id, academy.id, academy.organizationId, 27, new Date(beltAwardedAt.getTime() + DAY_MS));
 
-    const director: StaffSession = { userId: "x", role: "DIRECTOR", academyIds: [academy.id] };
+    const director = ctx("DIRECTOR", [academy.id], academy.organizationId);
     const filters: AnalyticsFilters = { from: RANGE_FROM, to: RANGE_TO, academyId: academy.id };
 
     const rows = await getProgressionPlanningList(director, filters, TODAY);
@@ -181,10 +207,10 @@ describe("getProgressionPlanningList", () => {
     // 4 stripes (max) + attendancesForExam (30) more = 150 total, exactly at
     // the exam threshold — same fixture shape as promotion-queue.test.ts's
     // exam-eligible case.
-    const student = await makeStudent(academy.id, { currentBelt: "WHITE", currentStripes: 4, beltAwardedAt });
-    await addAttendances(student.id, academy.id, 150, new Date(beltAwardedAt.getTime() + DAY_MS));
+    const student = await makeStudent(academy.id, academy.organizationId, { currentBelt: "WHITE", currentStripes: 4, beltAwardedAt });
+    await addAttendances(student.id, academy.id, academy.organizationId, 150, new Date(beltAwardedAt.getTime() + DAY_MS));
 
-    const director: StaffSession = { userId: "x", role: "DIRECTOR", academyIds: [academy.id] };
+    const director = ctx("DIRECTOR", [academy.id], academy.organizationId);
     const filters: AnalyticsFilters = { from: RANGE_FROM, to: RANGE_TO, academyId: academy.id };
 
     const rows = await getProgressionPlanningList(director, filters, TODAY);
@@ -195,12 +221,12 @@ describe("getProgressionPlanningList", () => {
     const academyOne = await makeAcademy("progression-scope-one");
     const academyTwo = await makeAcademy("progression-scope-two");
     const beltAwardedAt = TODAY.minus({ days: 40 }).toJSDate();
-    const studentOne = await makeStudent(academyOne.id, { currentBelt: "WHITE", currentStripes: 0, beltAwardedAt });
-    const studentTwo = await makeStudent(academyTwo.id, { currentBelt: "WHITE", currentStripes: 0, beltAwardedAt });
-    await addAttendances(studentOne.id, academyOne.id, 27, new Date(beltAwardedAt.getTime() + DAY_MS));
-    await addAttendances(studentTwo.id, academyTwo.id, 27, new Date(beltAwardedAt.getTime() + DAY_MS));
+    const studentOne = await makeStudent(academyOne.id, academyOne.organizationId, { currentBelt: "WHITE", currentStripes: 0, beltAwardedAt });
+    const studentTwo = await makeStudent(academyTwo.id, academyTwo.organizationId, { currentBelt: "WHITE", currentStripes: 0, beltAwardedAt });
+    await addAttendances(studentOne.id, academyOne.id, academyOne.organizationId, 27, new Date(beltAwardedAt.getTime() + DAY_MS));
+    await addAttendances(studentTwo.id, academyTwo.id, academyTwo.organizationId, 27, new Date(beltAwardedAt.getTime() + DAY_MS));
 
-    const admin: StaffSession = { userId: "x", role: "ADMIN", academyIds: "ALL" };
+    const admin = ctx("ADMIN", "ALL", academyOne.organizationId);
     const filters: AnalyticsFilters = { from: RANGE_FROM, to: RANGE_TO, academyId: academyOne.id };
 
     const rows = await getProgressionPlanningList(admin, filters, TODAY);
@@ -209,7 +235,7 @@ describe("getProgressionPlanningList", () => {
   });
 
   it("an INSTRUCTOR session is rejected entirely (self-enforced role gate)", async () => {
-    const instructor: StaffSession = { userId: "x", role: "INSTRUCTOR", academyIds: [] };
+    const instructor = ctx("INSTRUCTOR", [], await getAllianceOrganizationId());
     const filters: AnalyticsFilters = { from: RANGE_FROM, to: RANGE_TO, academyId: null };
 
     await expect(getProgressionPlanningList(instructor, filters, TODAY)).rejects.toThrow("FORBIDDEN");
@@ -222,11 +248,11 @@ describe("getBeltDistribution", () => {
   it("counts ACTIVE students per belt, including a zero-count belt, ordered by belt progression", async () => {
     const academy = await makeAcademy("belt-distribution");
     const beltAwardedAt = TODAY.toJSDate();
-    await makeStudent(academy.id, { currentBelt: "WHITE", currentStripes: 0, beltAwardedAt });
-    await makeStudent(academy.id, { currentBelt: "WHITE", currentStripes: 1, beltAwardedAt });
-    await makeStudent(academy.id, { currentBelt: "BLUE", currentStripes: 0, beltAwardedAt });
+    await makeStudent(academy.id, academy.organizationId, { currentBelt: "WHITE", currentStripes: 0, beltAwardedAt });
+    await makeStudent(academy.id, academy.organizationId, { currentBelt: "WHITE", currentStripes: 1, beltAwardedAt });
+    await makeStudent(academy.id, academy.organizationId, { currentBelt: "BLUE", currentStripes: 0, beltAwardedAt });
 
-    const director: StaffSession = { userId: "x", role: "DIRECTOR", academyIds: [academy.id] };
+    const director = ctx("DIRECTOR", [academy.id], academy.organizationId);
     const filters: AnalyticsFilters = { from: RANGE_FROM, to: RANGE_TO, academyId: academy.id };
 
     const rows = await getBeltDistribution(director, filters);
@@ -241,10 +267,10 @@ describe("getBeltDistribution", () => {
     const academyOne = await makeAcademy("belt-scope-one");
     const academyTwo = await makeAcademy("belt-scope-two");
     const beltAwardedAt = TODAY.toJSDate();
-    await makeStudent(academyOne.id, { currentBelt: "BLUE", currentStripes: 0, beltAwardedAt });
-    await makeStudent(academyTwo.id, { currentBelt: "BLUE", currentStripes: 0, beltAwardedAt });
+    await makeStudent(academyOne.id, academyOne.organizationId, { currentBelt: "BLUE", currentStripes: 0, beltAwardedAt });
+    await makeStudent(academyTwo.id, academyTwo.organizationId, { currentBelt: "BLUE", currentStripes: 0, beltAwardedAt });
 
-    const director: StaffSession = { userId: "x", role: "DIRECTOR", academyIds: [academyOne.id] };
+    const director = ctx("DIRECTOR", [academyOne.id], academyOne.organizationId);
     const filters: AnalyticsFilters = { from: RANGE_FROM, to: RANGE_TO, academyId: academyOne.id };
 
     const rows = await getBeltDistribution(director, filters);
@@ -252,7 +278,7 @@ describe("getBeltDistribution", () => {
   });
 
   it("an INSTRUCTOR session is rejected entirely (self-enforced role gate)", async () => {
-    const instructor: StaffSession = { userId: "x", role: "INSTRUCTOR", academyIds: [] };
+    const instructor = ctx("INSTRUCTOR", [], await getAllianceOrganizationId());
     const filters: AnalyticsFilters = { from: RANGE_FROM, to: RANGE_TO, academyId: null };
 
     await expect(getBeltDistribution(instructor, filters)).rejects.toThrow("FORBIDDEN");
@@ -265,7 +291,7 @@ describe("getPromotionsInRange", () => {
   it("returns only promotions with awardedAt inside the range, newest first", async () => {
     const academy = await makeAcademy("promotions-range");
     const admin = await makeStaffUser("ADMIN");
-    const student = await makeStudent(academy.id, {
+    const student = await makeStudent(academy.id, academy.organizationId, {
       currentBelt: "BLUE",
       currentStripes: 0,
       beltAwardedAt: RANGE_FROM.toJSDate(),
@@ -275,9 +301,10 @@ describe("getPromotionsInRange", () => {
       data: {
         studentId: student.id,
         academyId: academy.id,
-        fromBelt: "WHITE",
+        organizationId: academy.organizationId,
+        fromRankId: adultRankId("WHITE"),
         fromStripes: 4,
-        toBelt: "BLUE",
+        toRankId: adultRankId("BLUE"),
         toStripes: 0,
         awardedById: admin.id,
         awardedAt: RANGE_FROM.plus({ days: 5 }).toJSDate(),
@@ -287,9 +314,10 @@ describe("getPromotionsInRange", () => {
       data: {
         studentId: student.id,
         academyId: academy.id,
-        fromBelt: "BLUE",
+        organizationId: academy.organizationId,
+        fromRankId: adultRankId("BLUE"),
         fromStripes: 0,
-        toBelt: "BLUE",
+        toRankId: adultRankId("BLUE"),
         toStripes: 1,
         awardedById: admin.id,
         awardedAt: RANGE_FROM.plus({ days: 10 }).toJSDate(),
@@ -299,9 +327,10 @@ describe("getPromotionsInRange", () => {
       data: {
         studentId: student.id,
         academyId: academy.id,
-        fromBelt: "BLUE",
+        organizationId: academy.organizationId,
+        fromRankId: adultRankId("BLUE"),
         fromStripes: 1,
-        toBelt: "BLUE",
+        toRankId: adultRankId("BLUE"),
         toStripes: 2,
         awardedById: admin.id,
         // Well before RANGE_FROM — must not appear.
@@ -309,7 +338,7 @@ describe("getPromotionsInRange", () => {
       },
     });
 
-    const director: StaffSession = { userId: "x", role: "DIRECTOR", academyIds: [academy.id] };
+    const director = ctx("DIRECTOR", [academy.id], academy.organizationId);
     const filters: AnalyticsFilters = { from: RANGE_FROM, to: RANGE_TO, academyId: academy.id };
 
     const rows = await getPromotionsInRange(director, filters);
@@ -324,12 +353,12 @@ describe("getPromotionsInRange", () => {
     const academyOne = await makeAcademy("promotions-scope-one");
     const academyTwo = await makeAcademy("promotions-scope-two");
     const admin = await makeStaffUser("ADMIN");
-    const studentOne = await makeStudent(academyOne.id, {
+    const studentOne = await makeStudent(academyOne.id, academyOne.organizationId, {
       currentBelt: "BLUE",
       currentStripes: 0,
       beltAwardedAt: RANGE_FROM.toJSDate(),
     });
-    const studentTwo = await makeStudent(academyTwo.id, {
+    const studentTwo = await makeStudent(academyTwo.id, academyTwo.organizationId, {
       currentBelt: "BLUE",
       currentStripes: 0,
       beltAwardedAt: RANGE_FROM.toJSDate(),
@@ -338,9 +367,10 @@ describe("getPromotionsInRange", () => {
       data: {
         studentId: studentOne.id,
         academyId: academyOne.id,
-        fromBelt: "WHITE",
+        organizationId: academyOne.organizationId,
+        fromRankId: adultRankId("WHITE"),
         fromStripes: 4,
-        toBelt: "BLUE",
+        toRankId: adultRankId("BLUE"),
         toStripes: 0,
         awardedById: admin.id,
         awardedAt: RANGE_FROM.plus({ days: 5 }).toJSDate(),
@@ -350,16 +380,17 @@ describe("getPromotionsInRange", () => {
       data: {
         studentId: studentTwo.id,
         academyId: academyTwo.id,
-        fromBelt: "WHITE",
+        organizationId: academyTwo.organizationId,
+        fromRankId: adultRankId("WHITE"),
         fromStripes: 4,
-        toBelt: "BLUE",
+        toRankId: adultRankId("BLUE"),
         toStripes: 0,
         awardedById: admin.id,
         awardedAt: RANGE_FROM.plus({ days: 5 }).toJSDate(),
       },
     });
 
-    const director: StaffSession = { userId: "x", role: "DIRECTOR", academyIds: [academyOne.id] };
+    const director = ctx("DIRECTOR", [academyOne.id], academyOne.organizationId);
     const filters: AnalyticsFilters = { from: RANGE_FROM, to: RANGE_TO, academyId: academyOne.id };
 
     const rows = await getPromotionsInRange(director, filters);
@@ -368,7 +399,7 @@ describe("getPromotionsInRange", () => {
   });
 
   it("an INSTRUCTOR session is rejected entirely (self-enforced role gate)", async () => {
-    const instructor: StaffSession = { userId: "x", role: "INSTRUCTOR", academyIds: [] };
+    const instructor = ctx("INSTRUCTOR", [], await getAllianceOrganizationId());
     const filters: AnalyticsFilters = { from: RANGE_FROM, to: RANGE_TO, academyId: null };
 
     await expect(getPromotionsInRange(instructor, filters)).rejects.toThrow("FORBIDDEN");

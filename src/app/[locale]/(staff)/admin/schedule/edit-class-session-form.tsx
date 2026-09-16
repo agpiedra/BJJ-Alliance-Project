@@ -34,9 +34,11 @@ type EditableClassSession = {
 // the Sheet itself is already the "opened" affordance — one component, two
 // call sites, per REDESIGN_BRIEF.md Phase 5's own suggestion.
 export function EditClassSessionForm({
+  organizationId,
   session,
   renderAsDetails = true,
 }: {
+  organizationId: string;
   session: EditableClassSession;
   renderAsDetails?: boolean;
 }) {
@@ -44,7 +46,10 @@ export function EditClassSessionForm({
   const tField = useTranslations("adminSchedule.create");
   const tDay = useTranslations("dayOfWeek");
   const tType = useTranslations("classType");
-  const [state, formAction, isPending] = useActionState(updateClassSession, INITIAL_STATE);
+  const [state, formAction, isPending] = useActionState(
+    updateClassSession.bind(null, organizationId),
+    INITIAL_STATE,
+  );
   const idPrefix = useId();
 
   const form = (

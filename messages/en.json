@@ -83,6 +83,11 @@
       "submit": "Reset password",
       "invalidToken": "This link is invalid or has expired.",
       "success": "Your password has been reset. You can now sign in."
+    },
+    "orgUnavailable": {
+      "heading": "Organization unavailable",
+      "body": "Your organization isn't available right now. Please contact your organization's administrator.",
+      "signOut": "Sign out"
     }
   },
   "dashboard": {
@@ -491,7 +496,11 @@
         "columnDate": "Date",
         "columnChange": "Change",
         "columnBy": "Awarded by",
-        "columnNotes": "Notes"
+        "columnSource": "Source",
+        "columnNotes": "Notes",
+        "sourceMANUAL": "Manual",
+        "sourceAUTO": "Automatic",
+        "sourceCORRECTION": "Correction"
       },
       "attendanceHistory": {
         "heading": "Attendance history"
@@ -567,14 +576,54 @@
         "notFound": "Could not approve this student.",
         "notPending": "This student is no longer pending approval."
       },
-      "atBeltSummary": {
-        "heading": "Progress at current belt",
+      "promociones": {
+        "heading": "Promotions",
         "atBeltCount": "Attendances at this belt",
         "lifetimeCount": "Lifetime attendances",
-        "remainingToNextStripe": "Remaining to next stripe",
-        "examEligible": "Exam eligible",
-        "yes": "Yes",
-        "no": "No"
+        "nextTargetSTRIPE": "Next: stripe {ordinal}",
+        "nextTargetBELT": "Next: belt exam",
+        "nextTargetNONE": "No further automatic progression",
+        "nextTargetMANUAL": "Next: at the coach's discretion",
+        "progressAttendance": "{current} / {target} · {remaining} remaining",
+        "progressDueDate": "Next grade on {date}",
+        "progressManual": "Promotion is at the coach's discretion.",
+        "eligibleNow": "Eligible now.",
+        "readOnlyNote": "Only admins and directors can award or correct promotions.",
+        "award": {
+          "button": "Award promotion",
+          "confirm": "Award this promotion?",
+          "success": "Promotion awarded.",
+          "error": {
+            "notFound": "Could not find this student.",
+            "notActive": "This student is not active.",
+            "notEligible": "This student is not eligible right now.",
+            "conflict": "Someone else already updated this student. Refresh to see the current state.",
+            "generic": "Something went wrong."
+          }
+        },
+        "correction": {
+          "toggle": "Manual promote / correct",
+          "heading": "Manual promote / correct",
+          "warning": "This bypasses eligibility. Use it to promote early or to fix a mistaken entry.",
+          "rank": "Rank",
+          "stripes": "Degrees",
+          "beltAwardedAt": "Belt anchor (leave blank to keep unchanged)",
+          "timeAnchorAt": "Time anchor (leave blank to keep unchanged)",
+          "clearTimeAnchor": "Clear time anchor",
+          "note": "Reason (required)",
+          "submit": "Save correction",
+          "cancel": "Cancel",
+          "success": "Correction saved.",
+          "invalid": "Please check the form for errors.",
+          "error": {
+            "notFound": "Could not find this student.",
+            "notActive": "This student is not active.",
+            "invalidTarget": "That rank/degree combination isn't valid.",
+            "noteRequired": "A reason is required.",
+            "conflict": "Someone else already updated this student. Refresh to see the current state.",
+            "generic": "Something went wrong."
+          }
+        }
       },
       "adjustment": {
         "toggle": "Add adjustment",
@@ -722,6 +771,7 @@
     "alreadyCheckedIn": "Already checked in today",
     "noActiveClass": "No active class",
     "invalidToken": "This kiosk isn't configured correctly. Contact an administrator.",
+    "orgUnavailable": "Check-in is temporarily unavailable. Please contact your academy.",
     "networkError": "Couldn't connect. Please try again.",
     "genericError": "Something went wrong. Please try again.",
     "rateLimited": "Too many attempts. Please wait a moment.",

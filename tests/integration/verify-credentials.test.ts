@@ -1,13 +1,11 @@
 import "dotenv/config";
+import { getTestPrismaClient } from "../helpers/test-db";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { PrismaClient, Role } from "../../src/generated/prisma/client";
-import { PrismaPg } from "@prisma/adapter-pg";
+import { Role } from "../../src/generated/prisma/client";
 import { hashSecret } from "../../src/lib/crypto";
-import { requireEnv } from "../../src/lib/env";
 import { verifyCredentials } from "../../src/lib/auth/verify-credentials";
 
-const adapter = new PrismaPg({ connectionString: requireEnv("DATABASE_URL") });
-const prisma = new PrismaClient({ adapter });
+const prisma = getTestPrismaClient();
 
 const TEST_EMAIL = "phase2-auth-fixture@example.test";
 const TEST_PASSWORD = "correct horse battery staple";

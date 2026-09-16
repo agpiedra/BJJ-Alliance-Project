@@ -15,7 +15,7 @@ describe("renderNotificationMessage", () => {
     // notification time; see notify-eligibility.ts's own comment).
     const result = renderNotificationMessage(
       "STRIPE_THRESHOLD",
-      { studentName: "Ana Pérez", belt: "BLUE", stripes: 3 },
+      { studentName: "Ana Pérez", beltLabelEs: "Azul", beltLabelEn: "Blue", stripes: 3 },
       "es",
     );
     expect(result.type).toBe("STRIPE_THRESHOLD");
@@ -30,13 +30,13 @@ describe("renderNotificationMessage", () => {
     // spot-checks that the ES message keys, not the EN ones, were used.
     expect(result.body).toContain("grado");
     expect(result.body).toContain("3");
-    expect(result.body).toContain("Azul"); // translated belt name (es), not the raw "BLUE" enum value
+    expect(result.body).toContain("Azul"); // beltLabelEs, picked because locale is "es"
   });
 
   it("STRIPE_THRESHOLD: en locale renders a non-empty, English-appropriate title/body and echoes the type", () => {
     const result = renderNotificationMessage(
       "STRIPE_THRESHOLD",
-      { studentName: "Ana Pérez", belt: "BLUE", stripes: 3 },
+      { studentName: "Ana Pérez", beltLabelEs: "Azul", beltLabelEn: "Blue", stripes: 3 },
       "en",
     );
     expect(result.type).toBe("STRIPE_THRESHOLD");
@@ -50,10 +50,10 @@ describe("renderNotificationMessage", () => {
     expect(result.body).toContain("Blue");
   });
 
-  it("EXAM_THRESHOLD: es locale uses 'elegible' and translates the belt", () => {
+  it("EXAM_THRESHOLD: es locale uses 'elegible' and the belt's Spanish label", () => {
     const result = renderNotificationMessage(
       "EXAM_THRESHOLD",
-      { studentName: "Carlos Ruiz", belt: "PURPLE" },
+      { studentName: "Carlos Ruiz", beltLabelEs: "Morado", beltLabelEn: "Purple" },
       "es",
     );
     expect(result.type).toBe("EXAM_THRESHOLD");
@@ -63,10 +63,10 @@ describe("renderNotificationMessage", () => {
     expect(result.body).toContain("Morado");
   });
 
-  it("EXAM_THRESHOLD: en locale uses 'eligible' and translates the belt", () => {
+  it("EXAM_THRESHOLD: en locale uses 'eligible' and the belt's English label", () => {
     const result = renderNotificationMessage(
       "EXAM_THRESHOLD",
-      { studentName: "Carlos Ruiz", belt: "PURPLE" },
+      { studentName: "Carlos Ruiz", beltLabelEs: "Morado", beltLabelEn: "Purple" },
       "en",
     );
     expect(result.type).toBe("EXAM_THRESHOLD");

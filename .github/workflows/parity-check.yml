@@ -1,0 +1,109 @@
+name: Parity check
+
+# docs/MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 0 (rev 10): "seed -> snapshot ->
+# migrate -> snapshot -> diff. Any unexpected difference fails the build."
+# Runs alongside typecheck/lint/test/build on every push and PR — the CI
+# database is a throwaway service container, never a real Alliance database.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  typecheck-lint-test-build:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: alliance
+          POSTGRES_PASSWORD: alliance_ci_password
+          POSTGRES_DB: alliance_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      # DATABASE_URL exists only so tsc/eslint/next build don't choke on
+      # requireEnv("DATABASE_URL") at import time — no step here connects to
+      # it directly except through the guarded TEST_DATABASE_URL below.
+      DATABASE_URL: postgresql://alliance:alliance_ci_password@localhost:5432/alliance_ci?schema=public
+      # A second logical database on the SAME throwaway service container —
+      # "test" in its name satisfies scripts/lib/test-database-guard.ts, and
+      # its host/port/name never match DATABASE_URL above.
+      TEST_DATABASE_URL: postgresql://alliance:alliance_ci_password@localhost:5432/alliance_ci_test?schema=public
+      # A third logical database, empty, Prisma uses to compute what the
+      # migration history produces (pnpm db:check-drift below).
+      SHADOW_DATABASE_URL: postgresql://alliance:alliance_ci_password@localhost:5432/alliance_ci_shadow?schema=public
+      CODE_PEPPER: ci-only-code-pepper-not-a-real-secret
+      AUTH_SECRET: ci-only-auth-secret-not-a-real-secret
+      APP_URL: http://localhost:3000
+      RESEND_API_KEY: re_ci_placeholder_not_a_real_key
+      EMAIL_FROM: "Alliance BJJ <notifications@resend.dev>"
+      CRON_SECRET: ci-only-cron-secret
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Create the second (test) database
+        run: PGPASSWORD=alliance_ci_password psql -h localhost -U alliance -d alliance_ci -c "CREATE DATABASE alliance_ci_test;"
+
+      - name: Create the third (shadow) database
+        run: PGPASSWORD=alliance_ci_password psql -h localhost -U alliance -d alliance_ci -c "CREATE DATABASE alliance_ci_shadow;"
+
+      - name: Generate Prisma client
+        run: pnpm db:generate
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Guard usage check — docs/MULTI_ACADEMY_AND_KIDS_BELTS.md global rule (rev 16)
+        run: pnpm check:guard-usage
+
+      - name: Pending-callers registry — symbols built ahead of their caller (informational)
+        run: pnpm check:pending-callers
+
+      - name: Migrate the dev-role database (needed for unit/build steps only)
+        run: pnpm exec prisma migrate deploy
+
+      - name: Drift check — migration history vs the just-migrated database
+        run: pnpm db:check-drift
+
+      - name: Unit tests
+        run: pnpm test:unit
+
+      - name: Integration tests (against TEST_DATABASE_URL only)
+        run: pnpm test:integration
+
+      - name: Build
+        run: pnpm build
+
+      - name: Parity check — seed -> snapshot -> migrate -> snapshot -> diff
+        run: pnpm ci:parity-check
+
+      - name: Upload snapshots for inspection
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: seed-snapshots
+          path: ci/seed-snapshots/
+          retention-days: 14

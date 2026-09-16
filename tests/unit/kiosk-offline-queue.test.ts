@@ -263,6 +263,24 @@ describe("offline-queue", () => {
     expect(seenCodes).toEqual(["1111", "2222"]);
   });
 
+  it("leaves the entry queued and stops flushing on a 403 org_unavailable (transient) response", async () => {
+    await enqueueOfflineCheckIn({ academySlug: "demo", token: "tok", code: "1234" });
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(403, { ok: false, error: "org_unavailable" }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await flushOfflineQueue();
+
+    // Not dropped: the entry survives and is retried once the organization
+    // is reactivated (same unrotated kiosk token).
+    const fetchMock2 = vi.fn().mockResolvedValue(jsonResponse(200, { ok: true }));
+    vi.stubGlobal("fetch", fetchMock2);
+    await flushOfflineQueue();
+    expect(fetchMock2).toHaveBeenCalledTimes(1);
+  });
+
   it("leaves the entry queued and stops flushing on a thrown network-level failure", async () => {
     await enqueueOfflineCheckIn({ academySlug: "demo", token: "tok", code: "1234" });
 

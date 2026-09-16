@@ -1,6 +1,7 @@
 import { DateTime } from "luxon";
 import { getLocale, getTranslations } from "next-intl/server";
-import { requireStaffSession } from "@/lib/auth/session";
+import { requireTenantContext } from "@/lib/tenant/context";
+import { getScopedDb } from "@/lib/tenant/scoped-client";
 import { prisma } from "@/lib/prisma";
 import { Card, CardContent } from "@/components/ui/card";
 import { FilterBar, FilterBarSearch, FilterBarSelect } from "@/components/ui/filter-bar";
@@ -20,9 +21,10 @@ import { BeltBar } from "@/components/belt-graphic/belt-bar";
 import { ProgressToNextGrade } from "@/components/belt-graphic/progress-to-next-grade";
 import { listStudents } from "./actions";
 import { CreateStudentForm } from "./create-student-form";
-import { Belt, StudentStatus } from "@/generated/prisma/client";
+import { StudentStatus } from "@/generated/prisma/client";
 import { getAtBeltSummary } from "@/lib/students/attendance-summary";
-import { classifyEligibility, type BeltRequirementLike } from "@/lib/students/eligibility";
+import { resolvePromotionConfigMap } from "@/lib/promotion/config";
+import type { NextTarget } from "@/lib/promotion/engine";
 import { promotionDistance, compareByPromotion } from "@/lib/students/promotion-distance";
 import { formatTimestampInAcademyZone } from "@/lib/format-date";
 import { currentCrDateParts, getCurrentPaymentPeriod } from "@/lib/payments/get-current-period";
@@ -34,7 +36,11 @@ import { ZONE } from "@/lib/scheduling/zone";
 // academy roster) — never frozen at build time, same reasoning as /signup.
 export const dynamic = "force-dynamic";
 
-const BELT_OPTIONS = Object.values(Belt);
+// MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 2: the old `Belt` enum is gone
+// (replaced by BeltRank, which is data now) — this roster filter only needs
+// the 5 known adult codes, so a plain local literal list stays, same as
+// every other belt-select in this codebase.
+const BELT_OPTIONS = ["WHITE", "BLUE", "PURPLE", "BROWN", "BLACK"] as const;
 const STATUS_OPTIONS = Object.values(StudentStatus);
 const PAYMENT_STATUS_OPTIONS: ContactPaymentStatus[] = ["PAID", "PENDING", "OVERDUE", "PROMO", "EXEMPT", "NOT_RECORDED"];
 
@@ -51,8 +57,8 @@ const STATUS_ALL = "ALL";
 // merely inside the contact-list's own outreach window.
 const STALE_ATTENDANCE_DAYS = 14;
 
-function parseBelt(value: string | undefined): Belt | undefined {
-  return value && (BELT_OPTIONS as string[]).includes(value) ? (value as Belt) : undefined;
+function parseBelt(value: string | undefined): string | undefined {
+  return value && (BELT_OPTIONS as readonly string[]).includes(value) ? value : undefined;
 }
 
 function parseStatus(value: string | undefined): StudentStatus | undefined {
@@ -102,15 +108,16 @@ function paymentStatusLabel(
  */
 function resolveProgressTarget(summary: {
   atBeltCount: number;
-  nextStripeAt: number | null;
+  currentStripes: number;
+  nextTarget: NextTarget;
   maxStripes: number;
   attendancesPerStripe: number;
   attendancesForExam: number;
 }): { current: number; target: number } | null {
-  if (summary.nextStripeAt !== null) {
-    return { current: summary.atBeltCount, target: summary.nextStripeAt };
+  if (summary.nextTarget === "STRIPE") {
+    return { current: summary.atBeltCount, target: (summary.currentStripes + 1) * summary.attendancesPerStripe };
   }
-  if (summary.attendancesForExam > 0) {
+  if (summary.nextTarget === "BELT" && summary.attendancesForExam > 0) {
     return {
       current: summary.atBeltCount,
       target: summary.maxStripes * summary.attendancesPerStripe + summary.attendancesForExam,
@@ -132,10 +139,10 @@ export default async function StudentsPage({
 }: {
   searchParams: Promise<StudentsSearchParams>;
 }) {
-  const session = await requireStaffSession();
+  const context = await requireTenantContext();
   const params = await searchParams;
 
-  const students = await listStudents(session, {
+  const students = await listStudents(context, {
     search: params.search,
     belt: parseBelt(params.belt),
     status: parseStatus(params.status),
@@ -148,10 +155,13 @@ export default async function StudentsPage({
   // roster).
   const today = currentCrDateParts();
   const now = DateTime.now().setZone(ZONE);
+  // Resolved ONCE for the whole roster, not once per row — see
+  // resolvePromotionConfigMap's own doc comment on the N+1 this avoids.
+  const configByTrack = await resolvePromotionConfigMap(context.organizationId);
   const rosterExtras = await Promise.all(
     students.map(async (student) => {
       const [summary, lastAttendance, currentPeriod] = await Promise.all([
-        getAtBeltSummary(student.id),
+        getAtBeltSummary(student.id, configByTrack),
         prisma.attendanceRecord.findFirst({
           where: { studentId: student.id },
           orderBy: { occurredAt: "desc" },
@@ -160,20 +170,15 @@ export default async function StudentsPage({
         getCurrentPaymentPeriod(student.id, today),
       ]);
 
-      const requirement: BeltRequirementLike = {
-        attendancesPerStripe: summary.attendancesPerStripe,
-        maxStripes: summary.maxStripes,
-        attendancesForExam: summary.attendancesForExam,
-      };
-      const eligibility = classifyEligibility(
-        {
-          nextStripeAt: summary.nextStripeAt,
-          remainingToNextStripe: summary.remainingToNextStripe,
-          examEligible: summary.examEligible,
-        },
-        summary.currentStripes,
-        requirement,
-      );
+      // Mechanical migration off eligibility.ts's classifyEligibility (Phase
+      // 2c-ii) — same two branches this roster badge ever checked, now read
+      // straight from the engine's own vocabulary.
+      const eligibility: "stripe-eligible" | "exam-eligible" | "none" =
+        summary.nextTarget === "STRIPE" && summary.isEligible
+          ? "stripe-eligible"
+          : summary.nextTarget === "BELT" && summary.isEligible
+            ? "exam-eligible"
+            : "none";
 
       const overdue = isOverdue(currentPeriod, today);
       // Same precedence the roster's payment pill already used before this
@@ -201,8 +206,8 @@ export default async function StudentsPage({
         currentPeriod,
         paymentStatus,
         distance: promotionDistance({
-          examEligible: summary.examEligible,
-          remainingToNextStripe: summary.remainingToNextStripe,
+          examEligible: summary.nextTarget === "BELT" && summary.isEligible,
+          remainingToNextStripe: summary.remainingAttendance,
         }),
       };
     }),
@@ -235,11 +240,15 @@ export default async function StudentsPage({
   // (unrestricted scope), or only the academies this DIRECTOR/INSTRUCTOR is
   // actually assigned to (spec §1b — non-admins get no switcher for
   // academies outside their scope).
-  const scopedAcademyIds = Array.isArray(session.academyIds) ? session.academyIds : [];
+  const scopedAcademyIds = Array.isArray(context.academyIds) ? context.academyIds : [];
   const academies =
-    session.role === "ADMIN"
-      ? await prisma.academy.findMany({ orderBy: { name: "asc" }, select: { id: true, name: true } })
-      : await prisma.academy.findMany({
+    context.organizationRole === "ADMIN"
+      ? await getScopedDb(context).academy.findMany({
+          where: {},
+          orderBy: { name: "asc" },
+          select: { id: true, name: true },
+        })
+      : await getScopedDb(context).academy.findMany({
           where: { id: { in: scopedAcademyIds } },
           orderBy: { name: "asc" },
           select: { id: true, name: true },
@@ -248,10 +257,11 @@ export default async function StudentsPage({
   // Page-header sub line numbers (Rule 5: "numbers get context") — scoped
   // the same way listStudents itself scopes a non-ADMIN session, so a
   // DIRECTOR/INSTRUCTOR only ever sees counts for their own academy/academies.
-  const scopedAcademyWhere = session.role === "ADMIN" ? {} : { homeAcademyId: { in: scopedAcademyIds } };
+  const scopedAcademyWhere =
+    context.organizationRole === "ADMIN" ? {} : { homeAcademyId: { in: scopedAcademyIds } };
   const [activeCount, inactiveCount] = await Promise.all([
-    prisma.student.count({ where: { ...scopedAcademyWhere, status: "ACTIVE" } }),
-    prisma.student.count({ where: { ...scopedAcademyWhere, status: "INACTIVE" } }),
+    getScopedDb(context).student.count({ where: { ...scopedAcademyWhere, status: "ACTIVE" } }),
+    getScopedDb(context).student.count({ where: { ...scopedAcademyWhere, status: "INACTIVE" } }),
   ]);
 
   const t = await getTranslations("students");
@@ -260,7 +270,7 @@ export default async function StudentsPage({
   const tPaymentStatus = await getTranslations("students.paymentStatus");
   const locale = await getLocale();
 
-  const canCreate = session.role === "ADMIN" || session.role === "DIRECTOR";
+  const canCreate = context.organizationRole === "ADMIN" || context.organizationRole === "DIRECTOR";
 
   return (
     <main className="flex flex-col gap-6 p-4 sm:p-6">
@@ -275,7 +285,7 @@ export default async function StudentsPage({
       {/* Server-side gate is the real enforcement (createStudent itself
           re-checks the role) — this only avoids showing the control to a
           role that would just be rejected, as defense in depth. */}
-      {canCreate && <CreateStudentForm academies={academies} />}
+      {canCreate && <CreateStudentForm organizationId={context.organizationId} academies={academies} />}
 
       <Card>
         <form method="get">
@@ -331,7 +341,7 @@ export default async function StudentsPage({
               ))}
             </FilterBarSelect>
 
-            {session.role === "ADMIN" && (
+            {context.organizationRole === "ADMIN" && (
               <>
                 <label htmlFor="students-academy" className="sr-only">
                   {t("filters.academy")}
@@ -399,9 +409,19 @@ export default async function StudentsPage({
                       </DataTableCell>
                       <DataTableCell>
                         <div className="flex items-center gap-2">
-                          <BeltBar belt={student.currentBelt} stripes={student.currentStripes} />
+                          <BeltBar
+                            belt={{
+                              primaryColor: student.currentRank.primaryColor,
+                              centerStripeColor: student.currentRank.centerStripeColor,
+                              barColor: student.currentRank.barColor,
+                              stripeColors: student.currentRank.stripeColors,
+                              maxStripes: student.currentRank.maxStripes,
+                              visibleStripeSlots: student.currentRank.visibleStripeSlots,
+                            }}
+                            stripes={student.currentStripes}
+                          />
                           <span className="whitespace-nowrap">
-                            {tBelt(student.currentBelt)} ·{" "}
+                            {locale === "es" ? student.currentRank.labelEs : student.currentRank.labelEn} ·{" "}
                             <span className="font-medium">
                               {t("beltStripes", { count: student.currentStripes })}
                             </span>

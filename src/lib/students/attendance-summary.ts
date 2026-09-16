@@ -1,19 +1,43 @@
 import { prisma } from "@/lib/prisma";
-import { AttendanceMatchSource, Belt, type Prisma } from "@/generated/prisma/client";
-import { computeBeltProgress, MissingBeltRequirementError } from "@/lib/students/eligibility";
-import { isNotFoundError } from "@/lib/prisma-errors";
+import { AttendanceMatchSource, type Prisma, type PromotionMode, type Track } from "@/generated/prisma/client";
+import { DateTime } from "luxon";
+import { ZONE } from "@/lib/scheduling/zone";
+import { evaluatePromotion, InvalidPromotionConfigError, type NextTarget } from "@/lib/promotion/engine";
+import type { ResolvedTrackConfig } from "@/lib/promotion/config";
+import type { BeltVisualData } from "@/components/belt-graphic/belt-graphic";
 
 export interface AtBeltSummary {
-  currentBelt: Belt;
+  currentBelt: string;
+  /** Phase 3a rev 19: labels are per-organization data, not `belt.<code>`
+   * message keys — a caller with its own locale picks one of these two. */
+  currentBeltLabelEs: string;
+  currentBeltLabelEn: string;
+  /** Phase 3b: the real per-rank color data for BeltGraphic/BeltBar. */
+  currentBeltVisual: BeltVisualData;
   currentStripes: number;
   atBeltCount: number;
   lifetimeCount: number;
   attendancesPerStripe: number;
   maxStripes: number;
   attendancesForExam: number;
-  nextStripeAt: number | null;
-  remainingToNextStripe: number | null;
-  examEligible: boolean;
+  /** MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 2c-i: the engine's own vocabulary. */
+  nextTarget: NextTarget;
+  remainingAttendance: number | null;
+  isEligible: boolean;
+  /** Phase 2d: the Promociones card picks its display branch (attendance count vs. due date vs. "at the coach's discretion") from this. */
+  mode: PromotionMode;
+  /** Non-null only for TIME/HYBRID's active target — the engine's own dueDate, not recomputed here. */
+  dueDate: Date | null;
+  /**
+   * Phase 2c-ii: award.ts needs the CURRENT rank's own id/order (from this
+   * same read — never a separate lookup, see finding I-1's history) to
+   * resolve the "to" rank for a real write: same rank (stripe award) or the
+   * real next rank by track order (belt award), never eligibility.ts's old
+   * hardcoded BELT_ORDER array.
+   */
+  currentRankId: string;
+  track: Track;
+  currentRankOrder: number;
 }
 
 /**
@@ -44,8 +68,8 @@ export interface AtBeltSummary {
  * (prisma/schema.prisma), so only genuinely-unmatched taps are filtered.
  *
  * This filters `atBeltCount` ONLY — the one number belt math reads
- * (`nextStripeAt` / `remainingToNextStripe` / `examEligible` all derive from
- * it). It deliberately does NOT filter `lifetimeCount`, which no belt math
+ * (`nextTarget` / `remainingAttendance` / `isEligible` all derive from it).
+ * It deliberately does NOT filter `lifetimeCount`, which no belt math
  * touches: its only consumer renders it as "Lifetime attendances" /
  * "Asistencias totales" on the student detail page, a plain physical-attendance
  * total. The distinction between the two counts is temporal (before vs. after
@@ -63,13 +87,62 @@ const PROMOTION_RELEVANT: Prisma.AttendanceRecordWhereInput = {
   ],
 };
 
-export async function getAtBeltSummary(studentId: string): Promise<AtBeltSummary> {
+/**
+ * `configByTrack` — resolved ONCE per request/batch by the caller via
+ * `resolvePromotionConfigMap`, never looked up in here. A lookup inside this
+ * per-student function would be an N+1 on every list surface that calls it
+ * for many students (the promotion queue, the roster page) — see
+ * `resolvePromotionConfigMap`'s own doc comment.
+ */
+export async function getAtBeltSummary(
+  studentId: string,
+  configByTrack: Map<Track, ResolvedTrackConfig>,
+): Promise<AtBeltSummary> {
   const student = await prisma.student.findUniqueOrThrow({
     where: { id: studentId },
-    select: { currentBelt: true, currentStripes: true, beltAwardedAt: true, homeAcademyId: true },
+    select: {
+      track: true,
+      currentStripes: true,
+      beltAwardedAt: true,
+      timeAnchorAt: true,
+      // MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 2: currentRankId is a required
+      // FK, so the requirement row is guaranteed present — no separate
+      // lookup, no per-academy override fallback (dropped; branch overrides
+      // never existed in real data and are undefined anyway once a
+      // student's attendance pools cross-branch into one progression), and
+      // no "missing config" error path left to handle.
+      currentRank: {
+        select: {
+          id: true,
+          code: true,
+          labelEs: true,
+          labelEn: true,
+          order: true,
+          maxStripes: true,
+          attendancesPerStripe: true,
+          attendancesForExam: true,
+          monthsPerStripe: true,
+          monthsForExam: true,
+          isTerminal: true,
+          primaryColor: true,
+          centerStripeColor: true,
+          barColor: true,
+          stripeColors: true,
+          visibleStripeSlots: true,
+        },
+      },
+    },
   });
 
-  const requirement = await resolveBeltRequirement(student.currentBelt, student.homeAcademyId);
+  const config = configByTrack.get(student.track);
+  if (!config) {
+    // A genuine org-level config gap (PromotionConfig row missing for this
+    // track) — never a per-student data gap, so it must never be mistaken
+    // for the vanished-student P2025 case callers like promotion-queue.ts
+    // rely on distinguishing. Reuses engine.ts's own error type rather than
+    // inventing a third one for the same "org config is broken" concept.
+    throw new InvalidPromotionConfigError(`No PromotionConfig found for organization/track ${student.track}.`);
+  }
 
   const [atBeltAgg, lifetimeAgg] = await Promise.all([
     prisma.attendanceRecord.aggregate({
@@ -87,39 +160,57 @@ export async function getAtBeltSummary(studentId: string): Promise<AtBeltSummary
   const atBeltCount = atBeltAgg._sum.delta ?? 0;
   const lifetimeCount = lifetimeAgg._sum.delta ?? 0;
 
-  const progress = computeBeltProgress(atBeltCount, student.currentStripes, requirement);
+  // attendancesPerStripe/attendancesForExam are nullable on BeltRank (null
+  // only means "this track has never used ATTENDANCE/HYBRID mode" — see
+  // BeltRank's schema doc comment); every seeded rank today is ATTENDANCE,
+  // so these are populated except BLACK's terminal 0/0. evaluatePromotion
+  // itself gets the raw nullable values — BLACK short-circuits to "NONE"
+  // before either field is ever read, so the null-vs-0 distinction never
+  // matters for real data; the ??-to-0 here is purely for this function's
+  // own display-oriented output fields.
+  const attendancesPerStripe = student.currentRank.attendancesPerStripe ?? 0;
+  const attendancesForExam = student.currentRank.attendancesForExam ?? 0;
+
+  const engineResult = evaluatePromotion({
+    mode: config.mode,
+    currentStripes: student.currentStripes,
+    maxStripes: student.currentRank.maxStripes,
+    isTerminal: student.currentRank.isTerminal,
+    hasNextRank: !student.currentRank.isTerminal,
+    attendancesPerStripe: student.currentRank.attendancesPerStripe,
+    attendancesForExam: student.currentRank.attendancesForExam,
+    promotionRelevantAttendance: atBeltCount,
+    monthsPerStripe: student.currentRank.monthsPerStripe,
+    monthsForExam: student.currentRank.monthsForExam,
+    timeAnchorAt: student.timeAnchorAt ? DateTime.fromJSDate(student.timeAnchorAt, { zone: ZONE }) : null,
+    evaluationDate: DateTime.now().setZone(ZONE),
+  });
 
   return {
-    currentBelt: student.currentBelt,
+    currentBelt: student.currentRank.code,
+    currentBeltLabelEs: student.currentRank.labelEs,
+    currentBeltLabelEn: student.currentRank.labelEn,
+    currentBeltVisual: {
+      primaryColor: student.currentRank.primaryColor,
+      centerStripeColor: student.currentRank.centerStripeColor,
+      barColor: student.currentRank.barColor,
+      stripeColors: student.currentRank.stripeColors,
+      maxStripes: student.currentRank.maxStripes,
+      visibleStripeSlots: student.currentRank.visibleStripeSlots,
+    },
     currentStripes: student.currentStripes,
     atBeltCount,
     lifetimeCount,
-    attendancesPerStripe: requirement.attendancesPerStripe,
-    maxStripes: requirement.maxStripes,
-    attendancesForExam: requirement.attendancesForExam,
-    ...progress,
+    attendancesPerStripe,
+    maxStripes: student.currentRank.maxStripes,
+    attendancesForExam,
+    nextTarget: engineResult.nextTarget,
+    remainingAttendance: engineResult.remainingAttendance,
+    isEligible: engineResult.isEligible,
+    mode: config.mode,
+    dueDate: engineResult.dueDate ? engineResult.dueDate.toJSDate() : null,
+    currentRankId: student.currentRank.id,
+    track: student.track,
+    currentRankOrder: student.currentRank.order,
   };
-}
-
-async function resolveBeltRequirement(belt: string, homeAcademyId: string) {
-  const perAcademy = await prisma.beltRequirement.findUnique({
-    where: { academyId_belt: { academyId: homeAcademyId, belt: belt as never } },
-  });
-  if (perAcademy) return perAcademy;
-
-  try {
-    return await prisma.beltRequirement.findFirstOrThrow({
-      where: { academyId: null, belt: belt as never },
-    });
-  } catch (error) {
-    // This lookup's own P2025 always means the global-default row is
-    // missing — a config bug, never a benign race — so it's rethrown as a
-    // distinctly-typed error rather than left as Prisma's generic P2025.
-    // See `MissingBeltRequirementError`'s doc comment (eligibility.ts) for
-    // why callers depend on this being a distinguishable TYPE.
-    if (isNotFoundError(error)) {
-      throw new MissingBeltRequirementError(belt);
-    }
-    throw error;
-  }
 }

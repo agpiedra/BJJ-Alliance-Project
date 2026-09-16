@@ -26,7 +26,13 @@ export async function notifyEligibilityReached(
   try {
     const student = await prisma.student.findUnique({
       where: { id: studentId },
-      select: { firstName: true, lastName: true, currentBelt: true, currentStripes: true, homeAcademyId: true },
+      select: {
+        firstName: true,
+        lastName: true,
+        currentStripes: true,
+        homeAcademyId: true,
+        currentRank: { select: { labelEs: true, labelEn: true } },
+      },
     });
     if (!student) return;
 
@@ -39,7 +45,8 @@ export async function notifyEligibilityReached(
     // and its "eligible for" (not "earned") copy.
     const data = {
       studentName: `${student.firstName} ${student.lastName}`,
-      belt: student.currentBelt,
+      beltLabelEs: student.currentRank.labelEs,
+      beltLabelEn: student.currentRank.labelEn,
       stripes: student.currentStripes + 1,
     };
 

@@ -14,6 +14,17 @@ enum Role {
   STUDENT
 }
 
+/// MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 1. SUPER_ADMIN is deliberately NOT a
+/// value here (Appendix C decision 5) — it is a separate boolean on User,
+/// granted only through a documented bootstrap, never representable as
+/// "member of org X with role SUPER_ADMIN".
+enum OrganizationStatus {
+  PENDING
+  ACTIVE
+  SUSPENDED
+  CANCELLED
+}
+
 enum StaffRole {
   DIRECTOR
   INSTRUCTOR
@@ -26,12 +37,33 @@ enum NotificationType {
   WEEKLY_DIGEST
 }
 
-enum Belt {
-  WHITE
-  BLUE
-  PURPLE
-  BROWN
-  BLACK
+/// MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 2. Only ADULT has real data;
+/// Phase 3 seeds KIDS. Appendix B Q4 (custom tracks) is still open — a fixed
+/// enum is deliberate for now, not a foreclosure of that answer.
+enum Track {
+  ADULT
+  KIDS
+}
+
+/// MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 2. Governs one (organizationId,
+/// track) via PromotionConfig — "the active rule mode" the engine reads.
+enum PromotionMode {
+  ATTENDANCE
+  TIME
+  HYBRID
+  MANUAL
+}
+
+/// MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 2. MANUAL/AUTO distinguish a
+/// human confirm from a scheduled job (spec: "do not invent a human
+/// awardedBy user" for automatic awards — see Promotion.awardedById below).
+/// CORRECTION is declared now, ahead of Phase 2d's manual-correction action,
+/// so that action's migration is purely additive columns, never an enum
+/// value add on a live column.
+enum PromotionSource {
+  MANUAL
+  AUTO
+  CORRECTION
 }
 
 enum StudentStatus {
@@ -98,8 +130,65 @@ enum ClassType {
   COMPETITION
 }
 
+/// MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 1 — the SaaS tenant. Distinct from
+/// Academy (a physical branch within one Organization): never conflate the
+/// two, per the spec's own terminology table.
+model Organization {
+  id            String             @id @default(cuid())
+  slug          String             @unique
+  name          String
+  shortName     String?
+  status        OrganizationStatus @default(PENDING)
+  timezone      String             @default("America/Costa_Rica")
+  defaultLocale String             @default("es")
+  contactName   String?
+  contactEmail  String?
+  contactPhone  String?
+  internalNotes String?
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+  approvedAt    DateTime?
+  approvedById  String?
+
+  approvedBy        User?                    @relation("OrganizationApprovedBy", fields: [approvedById], references: [id])
+  memberships       OrganizationMembership[]
+  academies         Academy[]
+  students          Student[]
+  classSessions     ClassSession[]
+  attendanceRecords AttendanceRecord[]
+  promotions        Promotion[]
+  beltRanks         BeltRank[]
+  promotionConfigs  PromotionConfig[]
+  paymentPlans      PaymentPlan[]
+  paymentPeriods    PaymentPeriod[]
+  kioskAttempts     KioskAttempt[]
+  staffAssignments  StaffAssignment[]
+  auditLogs         AuditLog[]
+  notifications     Notification[]
+}
+
+/// The only authorization source for ADMIN/DIRECTOR/INSTRUCTOR/STUDENT access
+/// (Appendix C decision 4) — User.role is retained temporarily during the
+/// staged migration (see that decision's 4-step sequence) but membership,
+/// not the role column, is what every new authorization check reads.
+model OrganizationMembership {
+  id             String   @id @default(cuid())
+  userId         String
+  organizationId String
+  role           Role
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  user         User         @relation(fields: [userId], references: [id])
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@unique([userId, organizationId])
+  @@index([organizationId])
+}
+
 model Academy {
   id             String   @id @default(cuid())
+  organizationId String
   name           String
   slug           String   @unique
   address        String?
@@ -109,16 +198,25 @@ model Academy {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
+  organization      Organization       @relation(fields: [organizationId], references: [id])
   staffAssignments  StaffAssignment[]
   homeStudents      Student[]          @relation("HomeAcademy")
   classSessions     ClassSession[]
   attendanceRecords AttendanceRecord[]
   promotions        Promotion[]
-  beltRequirements  BeltRequirement[]
   paymentPlans      PaymentPlan[]
   paymentPeriods    PaymentPeriod[]
   auditLogs         AuditLog[]
   kioskAttempts     KioskAttempt[]
+
+  // Composite FK target: MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 1 requires
+  // e.g. "a student's home branch belongs to the same organization" enforced
+  // by the database, not just application code. Every model below that
+  // references an Academy does so via (organizationId, academyId) against
+  // this composite unique, so a cross-organization pairing is rejected by
+  // Postgres itself, not merely by a query filter someone could forget.
+  @@unique([organizationId, id])
+  @@index([organizationId])
 }
 
 model User {
@@ -126,17 +224,23 @@ model User {
   email        String   @unique
   passwordHash String
   role         Role
+  /// MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 1, Appendix C decision 5 — a
+  /// platform-wide grant, explicitly bootstrapped, never inferred from a
+  /// form/profile field and never representable inside OrganizationMembership.role.
+  isSuperAdmin Boolean  @default(false)
   locale       String   @default("es")
   active       Boolean  @default(true)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  staffAssignments       StaffAssignment[]
-  student                Student?
-  auditLogs              AuditLog[]
-  promotionsAwarded      Promotion[]
-  paymentPeriodsRecorded PaymentPeriod[]
-  notifications          Notification[]
+  staffAssignments        StaffAssignment[]
+  student                 Student?
+  auditLogs               AuditLog[]
+  promotionsAwarded       Promotion[]
+  paymentPeriodsRecorded  PaymentPeriod[]
+  notifications           Notification[]
+  organizationMemberships OrganizationMembership[]
+  organizationsApproved   Organization[]           @relation("OrganizationApprovedBy")
 
   attendanceRecordsCreated   AttendanceRecord[]   @relation("AttendanceCreatedBy")
   attendanceRecordsCorrected AttendanceRecord[]   @relation("AttendanceCorrectedBy")
@@ -157,23 +261,27 @@ model PasswordResetToken {
 }
 
 model StaffAssignment {
-  id        String    @id @default(cuid())
-  userId    String
-  academyId String
-  role      StaffRole
-  createdAt DateTime  @default(now())
+  id             String    @id @default(cuid())
+  userId         String
+  academyId      String
+  organizationId String
+  role           StaffRole
+  createdAt      DateTime  @default(now())
 
-  user    User    @relation(fields: [userId], references: [id])
-  academy Academy @relation(fields: [academyId], references: [id])
+  user         User         @relation(fields: [userId], references: [id])
+  academy      Academy      @relation(fields: [organizationId, academyId], references: [organizationId, id])
+  organization Organization @relation(fields: [organizationId], references: [id])
 
   @@unique([userId, academyId])
   @@index([academyId])
+  @@index([organizationId])
 }
 
 model Student {
   id               String        @id @default(cuid())
   userId           String?       @unique
   homeAcademyId    String
+  organizationId   String
   firstName        String
   lastName         String
   phone            String
@@ -182,10 +290,26 @@ model Student {
   guardianName     String?
   guardianPhone    String?
   emergencyContact String?
-  currentBelt      Belt          @default(WHITE)
   currentStripes   Int           @default(0)
   beltAwardedAt    DateTime      @default(now())
-  codeHash         String        @unique
+  /// MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 2. ADULT for every pre-Phase-3
+  /// student — Phase 3 adds the KIDS onboarding flow.
+  track            Track         @default(ADULT)
+  /// Replaces the old `currentBelt` enum column (dropped in this same
+  /// constrain migration) — backfilled from it by
+  /// scripts/backfill-belt-ranks.ts, verified equal by
+  /// scripts/verify-belt-migration.ts before this column was made required.
+  currentRankId    String
+  /// TIME/HYBRID mode only. Deliberately separate from beltAwardedAt (spec:
+  /// "keep time anchors separate from cumulative attendance accounting") —
+  /// every awarded promotion (stripe OR belt) resets this, unlike
+  /// beltAwardedAt, which resets only on a belt award. Null for a student
+  /// whose track has never used TIME/HYBRID mode.
+  timeAnchorAt     DateTime?
+  /// MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 1: "Replace global student
+  /// code-hash uniqueness with organization-scoped uniqueness" — see the
+  /// @@unique([organizationId, codeHash]) below. No longer @unique on its own.
+  codeHash         String
   status           StudentStatus @default(PENDING)
   joinedAt         DateTime      @default(now())
   notes            String?
@@ -193,17 +317,24 @@ model Student {
   updatedAt        DateTime      @updatedAt
 
   user              User?              @relation(fields: [userId], references: [id])
-  homeAcademy       Academy            @relation("HomeAcademy", fields: [homeAcademyId], references: [id])
+  homeAcademy       Academy            @relation("HomeAcademy", fields: [organizationId, homeAcademyId], references: [organizationId, id])
+  currentRank       BeltRank           @relation("CurrentRank", fields: [organizationId, currentRankId], references: [organizationId, id])
   attendanceRecords AttendanceRecord[]
   promotions        Promotion[]
   paymentPeriods    PaymentPeriod[]
+  organization      Organization       @relation(fields: [organizationId], references: [id])
 
+  @@unique([organizationId, codeHash])
+  @@unique([organizationId, id])
   @@index([homeAcademyId])
+  @@index([organizationId])
+  @@index([currentRankId])
 }
 
 model ClassSession {
   id                    String    @id @default(cuid())
   academyId             String
+  organizationId        String
   dayOfWeek             DayOfWeek
   startTime             String
   durationMinutes       Int
@@ -214,17 +345,21 @@ model ClassSession {
   createdAt             DateTime  @default(now())
   updatedAt             DateTime  @updatedAt
 
-  academy           Academy            @relation(fields: [academyId], references: [id])
+  academy           Academy            @relation(fields: [organizationId, academyId], references: [organizationId, id])
   attendanceRecords AttendanceRecord[]
+  organization      Organization       @relation(fields: [organizationId], references: [id])
 
   @@unique([academyId, dayOfWeek, startTime, name])
+  @@unique([organizationId, id])
   @@index([academyId])
+  @@index([organizationId])
 }
 
 model AttendanceRecord {
-  id             String           @id @default(cuid())
+  id             String                @id @default(cuid())
   studentId      String
   academyId      String
+  organizationId String
   classSessionId String?
   occurredAt     DateTime
   /// Calendar date in America/Costa_Rica (UTC-6, no DST), NOT a naive UTC
@@ -232,13 +367,13 @@ model AttendanceRecord {
   /// UTC calendar day. Whoever writes this field (Phase 3) must derive it via
   /// Luxon + the project's America/Costa_Rica zone helper, never
   /// `occurredAt.toISOString().slice(0, 10)`.
-  date           DateTime         @db.Date
+  date           DateTime              @db.Date
   type           AttendanceType
-  delta          Int              @default(1)
+  delta          Int                   @default(1)
   source         AttendanceSource
   reason         String?
   createdById    String?
-  createdAt      DateTime         @default(now())
+  createdAt      DateTime              @default(now())
   /// Provenance of `classSessionId`. UNMATCHED means the tap happened on a day
   /// with no classes at all, so `classSessionId` is null and staff review it
   /// from the Kiosco page's "Marcajes de hoy" table.
@@ -248,86 +383,197 @@ model AttendanceRecord {
   correctedById  String?
   correctedAt    DateTime?
 
-  student      Student       @relation(fields: [studentId], references: [id])
-  academy      Academy       @relation(fields: [academyId], references: [id])
-  classSession ClassSession? @relation(fields: [classSessionId], references: [id])
+  student      Student       @relation(fields: [organizationId, studentId], references: [organizationId, id])
+  academy      Academy       @relation(fields: [organizationId, academyId], references: [organizationId, id])
+  classSession ClassSession? @relation(fields: [organizationId, classSessionId], references: [organizationId, id])
   // Two distinct relations to User (who wrote it vs. who corrected it) — Prisma
   // requires an explicit name on each to tell them apart.
   createdBy    User?         @relation("AttendanceCreatedBy", fields: [createdById], references: [id])
   correctedBy  User?         @relation("AttendanceCorrectedBy", fields: [correctedById], references: [id])
+  organization Organization  @relation(fields: [organizationId], references: [id])
 
   @@unique([studentId, classSessionId, date])
   @@index([studentId, occurredAt])
   @@index([academyId, occurredAt])
+  @@index([organizationId])
 }
 
 model Promotion {
-  id          String   @id @default(cuid())
-  studentId   String
-  academyId   String
-  fromBelt    Belt
-  fromStripes Int
-  toBelt      Belt
-  toStripes   Int
-  awardedById String
-  awardedAt   DateTime @default(now())
-  notes       String?
+  id             String          @id @default(cuid())
+  studentId      String
+  academyId      String
+  organizationId String
+  fromStripes    Int
+  toStripes      Int
+  /// Replace the old `fromBelt`/`toBelt` enum columns (dropped in this same
+  /// constrain migration) — backfilled and verified the same way
+  /// Student.currentRankId was, above.
+  fromRankId     String
+  toRankId       String
+  /// Nullable so an automatic-job award never has to invent a human actor
+  /// (spec: "do not invent a human awardedBy user") — see `source` below,
+  /// which is what actually distinguishes a human confirm from a job run.
+  awardedById    String?
+  /// Every row up to and including Phase 1 was a manual queue confirm — the
+  /// @default(MANUAL) below is the factually correct backfilled value for
+  /// all of them, not a placeholder.
+  source         PromotionSource @default(MANUAL)
+  awardedAt      DateTime        @default(now())
+  notes          String?
 
-  student   Student @relation(fields: [studentId], references: [id])
-  academy   Academy @relation(fields: [academyId], references: [id])
-  awardedBy User    @relation(fields: [awardedById], references: [id])
+  student      Student      @relation(fields: [organizationId, studentId], references: [organizationId, id])
+  academy      Academy      @relation(fields: [organizationId, academyId], references: [organizationId, id])
+  fromRank     BeltRank     @relation("PromotionFromRank", fields: [organizationId, fromRankId], references: [organizationId, id])
+  toRank       BeltRank     @relation("PromotionToRank", fields: [organizationId, toRankId], references: [organizationId, id])
+  awardedBy    User?        @relation(fields: [awardedById], references: [id])
+  organization Organization @relation(fields: [organizationId], references: [id])
 
   @@index([studentId])
+  @@index([organizationId])
+  @@index([fromRankId])
+  @@index([toRankId])
 }
 
-model BeltRequirement {
+/// MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 2. Replaces BeltRequirement
+/// (dropped below) — strictly organization-owned, no per-academy override.
+/// Appendix B Q1 (answered with evidence during
+/// planning): branch overrides never existed in real data, and are
+/// semantically undefined anyway once a student's attendance pools
+/// cross-branch into one progression, which is how Alliance actually works.
+/// If a real customer ever needs per-branch rules, that is designed then,
+/// against an actual requirement — pre-launch this would be a cheap
+/// migration, not a reason to carry a dead fallback path into two new
+/// tables the way BeltRequirement's own academyId column sat unused.
+model BeltRank {
   id                   String   @id @default(cuid())
-  academyId            String?
-  belt                 Belt
-  attendancesPerStripe Int
+  organizationId       String
+  track                Track
+  /// Stable string key, e.g. "WHITE" — doubles as the belt.<code> i18n
+  /// lookup key, preserving every existing translation call site. A string,
+  /// not an enum, because the value set must vary by (organization, track)
+  /// once Phase 3 seeds KIDS codes; a Prisma enum's value set is fixed at
+  /// the schema level and can't do that.
+  code                 String
+  /// Rank labels are per-organization DATA, not translation-file keys (spec
+  /// rev 19) — a customer academy can rename a rank or define one this
+  /// codebase never anticipated, and a message-file key would have nothing
+  /// to look up for it. The label travels with the row. `belt.<code>` i18n
+  /// keys still exist for the two purely-static, non-org-driven uses (the
+  /// marketing landing page and the pre-Phase-3b `/dev/belts` stub) — never
+  /// for a real loaded rank.
+  labelEs              String
+  labelEn              String
+  /// Promotion sequence within (organizationId, track), 1-based (spec rev
+  /// 18): rank order+1 is "the next rank" from order. Enforced unique here;
+  /// contiguity (no gaps, starts at 1) is a validation-function concern
+  /// (src/lib/promotion/config.ts), not a DB constraint.
+  order                Int
   maxStripes           Int
-  /// Attendances required at the current belt AFTER the 4th stripe, NOT the
-  /// spec table's cumulative "total to become exam-eligible" (e.g. White's
-  /// spec total of 150 = 4 stripes × 30 + this field's 30 more).
-  attendancesForExam   Int
+  /// Null only when this track has never used ATTENDANCE/HYBRID mode.
+  /// Deliberately NOT nulled just because the currently active mode doesn't
+  /// read it — see src/lib/promotion/config.ts's updateTrackConfig, which
+  /// preserves whichever mode's fields it isn't asked to change so a
+  /// director switching ATTENDANCE -> TIME -> ATTENDANCE gets their
+  /// original numbers back, not a blank form.
+  attendancesPerStripe Int?
+  attendancesForExam   Int?
+  /// Null only when this track has never used TIME/HYBRID mode. Same
+  /// preserve-on-switch contract as the attendance fields above.
+  monthsPerStripe      Int?
+  monthsForExam        Int?
+  /// Spec: "Terminal ranks may award remaining degrees if configured to do
+  /// so. After their final degree, nextTarget is NONE." True on exactly the
+  /// highest-`order` rank in the track — validated, not inferred from
+  /// `order` alone.
+  isTerminal           Boolean  @default(false)
+  /// One entry per stripe slot, length == maxStripes. Phase 3 renders these
+  /// as tape colors; Phase 2 seeds and validates but nothing reads them yet.
+  stripeColors         String[]
+  /// The belt bar's own tape-slot ceiling (Appendix A: "always draws at
+  /// most 4 tapes ... while the counter climbs to maxStripes") — independent
+  /// of maxStripes so a rank with more degrees than visible slots stays
+  /// representable.
+  visibleStripeSlots   Int      @default(4)
+  /// Phase 3b: real per-row color data, replacing the hardcoded adult-only
+  /// BELT_FILL_CLASS/TIP_FILL_CLASS Tailwind-token maps — same "data, not a
+  /// fixed enum" reasoning as labelEs/labelEn (rev 19). Hex strings, not
+  /// CSS custom properties: a customer catalog's colors can't be assumed to
+  /// exist as a design token.
+  primaryColor         String
+  /// The color of the centre stripe band running lengthwise through the
+  /// middle third of the belt (e.g. grey_white's white band on a grey
+  /// belt), null for a rank with no centre stripe. Revision 21: replaces
+  /// isSplit + splitColor — a kids "_white"/"_black" rank is its own color
+  /// with a contrasting band down the centre, not two colored halves.
+  centerStripeColor    String?
+  /// The rank bar's own color — spec: "never hardcode black: a black belt's
+  /// bar is red, and coral belts differ again."
+  barColor             String
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
 
-  /// NULL academyId is a meaningful sentinel ("Alliance-wide default"), not an
-  /// absence — onDelete: Restrict so deleting an academy can never silently
-  /// promote its per-academy override into the global default.
-  academy Academy? @relation(fields: [academyId], references: [id], onDelete: Restrict)
+  organization    Organization @relation(fields: [organizationId], references: [id])
+  currentStudents Student[]    @relation("CurrentRank")
+  promotionsFrom  Promotion[]  @relation("PromotionFromRank")
+  promotionsTo    Promotion[]  @relation("PromotionToRank")
 
-  @@unique([academyId, belt])
+  // Composite FK target, same convention as Academy's own @@unique([organizationId, id])
+  // (Phase 1) — Student.currentRank / Promotion.fromRank / Promotion.toRank
+  // all reference (organizationId, id) together, so a cross-organization
+  // rank reference is rejected by Postgres itself.
+  @@unique([organizationId, id])
+  @@unique([organizationId, track, code])
+  @@unique([organizationId, track, order])
+  @@index([organizationId])
+}
+
+model PromotionConfig {
+  id                    String        @id @default(cuid())
+  organizationId        String
+  track                 Track
+  mode                  PromotionMode
+  requiresCoachApproval Boolean       @default(true)
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@unique([organizationId, track])
+  @@index([organizationId])
 }
 
 model PaymentPlan {
-  id          String   @id @default(cuid())
-  academyId   String
-  name        String
-  description String?
-  active      Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id             String   @id @default(cuid())
+  academyId      String
+  organizationId String
+  name           String
+  description    String?
+  active         Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
-  academy        Academy         @relation(fields: [academyId], references: [id])
+  academy        Academy         @relation(fields: [organizationId, academyId], references: [organizationId, id])
   paymentPeriods PaymentPeriod[]
+  organization   Organization    @relation(fields: [organizationId], references: [id])
 
   @@unique([academyId, name])
+  @@unique([organizationId, id])
+  @@index([organizationId])
 }
 
 model PaymentPeriod {
-  id           String        @id @default(cuid())
-  studentId    String
-  academyId    String
-  year         Int
-  month        Int
-  planId       String
-  status       PaymentStatus
-  amount       Decimal?      @db.Decimal(10, 2)
-  notes        String?
-  recordedById String
-  recordedAt   DateTime      @default(now())
+  id             String         @id @default(cuid())
+  studentId      String
+  academyId      String
+  organizationId String
+  year           Int
+  month          Int
+  planId         String
+  status         PaymentStatus
+  amount         Decimal?       @db.Decimal(10, 2)
+  notes          String?
+  recordedById   String
+  recordedAt     DateTime       @default(now())
   // REDESIGN_BRIEF.md Phase 6.2 additions — recordedById/recordedAt above
   // already existed pre-brief, so only these four are new.
   method         PaymentMethod?
@@ -335,29 +581,32 @@ model PaymentPeriod {
   promoReason    String?
   promoRecurring Boolean        @default(false)
 
-  student    Student     @relation(fields: [studentId], references: [id])
-  academy    Academy     @relation(fields: [academyId], references: [id])
-  plan       PaymentPlan @relation(fields: [planId], references: [id])
-  recordedBy User        @relation(fields: [recordedById], references: [id])
+  student      Student      @relation(fields: [organizationId, studentId], references: [organizationId, id])
+  academy      Academy      @relation(fields: [organizationId, academyId], references: [organizationId, id])
+  plan         PaymentPlan  @relation(fields: [organizationId, planId], references: [organizationId, id])
+  recordedBy   User         @relation(fields: [recordedById], references: [id])
+  organization Organization @relation(fields: [organizationId], references: [id])
 
   @@unique([studentId, year, month])
   @@index([academyId, year, month])
+  @@index([organizationId])
 }
 
 model KioskAttempt {
-  id        String @id @default(cuid())
-  academyId String
+  id              String   @id @default(cuid())
+  academyId       String
+  organizationId  String
   /// The rate-limit / lockout KEY: the HMAC digest of the kiosk token the
   /// attempt was presented with (the same value stored in
   /// `Academy.kioskTokenHash`). Keyed on the verified token rather than the
   /// caller's IP because `x-forwarded-for` is client-supplied and can be
   /// rotated per request to evade the counter entirely — and, with no reverse
   /// proxy in front, degenerates to one shared "unknown" bucket for everyone.
-  kioskTokenHash String
+  kioskTokenHash  String
   /// Best-effort audit metadata ONLY — never part of the rate-limit key, and
   /// never trusted for a security decision (see `kioskTokenHash`).
-  ipAddress String
-  success   Boolean
+  ipAddress       String
+  success         Boolean
   /// Whether this row counts toward the 5-failure lockout anchor.
   ///
   /// `success: false` alone is too coarse: `already_checked_in` and
@@ -376,39 +625,69 @@ model KioskAttempt {
   countsAsFailure Boolean  @default(true)
   createdAt       DateTime @default(now())
 
-  academy Academy @relation(fields: [academyId], references: [id])
+  academy      Academy      @relation(fields: [organizationId, academyId], references: [organizationId, id])
+  organization Organization @relation(fields: [organizationId], references: [id])
 
   @@index([academyId, kioskTokenHash, createdAt])
+  @@index([organizationId])
 }
 
 model AuditLog {
-  id         String   @id @default(cuid())
-  actorId    String
-  academyId  String?
-  action     String
-  entityType String
-  entityId   String
-  before     Json?
-  after      Json?
-  createdAt  DateTime @default(now())
+  id             String   @id @default(cuid())
+  /// MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 2c-iii: null for an automated
+  /// system action (e.g. the promotion auto-award job) — "record automatic
+  /// awards with an explicit system actor/source, do not invent a human
+  /// awardedBy user" applies to the audit trail too, not just
+  /// Promotion.awardedById. Same nullability reasoning as organizationId
+  /// below: a real absence, not a data gap.
+  actorId        String?
+  academyId      String?
+  /// MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 1, Appendix C decision 2. Cannot
+  /// be derived through academyId alone: organization-level actions (approve,
+  /// suspend, grace change, invoice — Phase 6) have no academy at all, and a
+  /// join through a null academyId would yield null for exactly the rows
+  /// Phase 6's audit trail needs. Nullable covers genuine platform-level entries.
+  organizationId String?
+  action         String
+  entityType     String
+  entityId       String
+  before         Json?
+  after          Json?
+  createdAt      DateTime @default(now())
 
-  actor   User     @relation(fields: [actorId], references: [id])
-  academy Academy? @relation(fields: [academyId], references: [id])
+  actor        User?         @relation(fields: [actorId], references: [id])
+  academy      Academy?      @relation(fields: [academyId], references: [id])
+  organization Organization? @relation(fields: [organizationId], references: [id])
 
   @@index([entityType, entityId])
   @@index([actorId])
+  @@index([organizationId])
 }
 
 model Notification {
-  id        String           @id @default(cuid())
-  userId    String
-  type      NotificationType
-  title     String
-  body      String
-  readAt    DateTime?
-  createdAt DateTime         @default(now())
+  id             String           @id @default(cuid())
+  userId         String
+  /// MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 1, Appendix C decision 3 (revised
+  /// in rev 15): NOT NULL, unlike AuditLog's nullable organizationId. The
+  /// difference is who reads the row — AuditLog has exactly one reader (the
+  /// platform admin), so a null there has one well-defined meaning
+  /// ("platform-level, not tenant-visible"). Notification is read by tenant
+  /// users, so a null has no defined audience: for a user in two
+  /// organizations, it would have to appear under both or neither, which is
+  /// a cross-tenant visibility decision made by omission, not a real answer.
+  /// Every NotificationType today (STRIPE_THRESHOLD, EXAM_THRESHOLD,
+  /// NEW_SIGNUP, WEEKLY_DIGEST) already derives from one academy, so nothing
+  /// requires the null case to exist.
+  organizationId String
+  type           NotificationType
+  title          String
+  body           String
+  readAt         DateTime?
+  createdAt      DateTime         @default(now())
 
-  user User @relation(fields: [userId], references: [id])
+  user         User         @relation(fields: [userId], references: [id])
+  organization Organization @relation(fields: [organizationId], references: [id])
 
   @@index([userId, readAt])
+  @@index([organizationId])
 }

@@ -12,10 +12,11 @@ export { CUSTOM_PROMO_PLAN_NAME };
  * is a no-op `update: {}` against the same row.
  */
 export async function ensureCustomPromoPlan(academyId: string): Promise<{ id: string; name: string }> {
+  const academy = await prisma.academy.findUniqueOrThrow({ where: { id: academyId }, select: { organizationId: true } });
   return prisma.paymentPlan.upsert({
     where: { academyId_name: { academyId, name: CUSTOM_PROMO_PLAN_NAME } },
     update: {},
-    create: { academyId, name: CUSTOM_PROMO_PLAN_NAME },
+    create: { academyId, organizationId: academy.organizationId, name: CUSTOM_PROMO_PLAN_NAME },
     select: { id: true, name: true },
   });
 }

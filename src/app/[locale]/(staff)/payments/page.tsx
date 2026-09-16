@@ -1,5 +1,6 @@
 import { getLocale, getTranslations } from "next-intl/server";
-import { academyScopeWhere, requireStaffSession } from "@/lib/auth/session";
+import { requireTenantContext, branchScopeWhere } from "@/lib/tenant/context";
+import { getScopedDb } from "@/lib/tenant/scoped-client";
 import { prisma } from "@/lib/prisma";
 import { Card, CardContent, CardHeader, CardTitle, CardAction } from "@/components/ui/card";
 import { StatRow, StatTile } from "@/components/ui/stat-tile";
@@ -27,7 +28,7 @@ function joinNames(names: string[], max = 3): string {
 }
 
 export default async function PaymentsPage() {
-  const session = await requireStaffSession();
+  const context = await requireTenantContext();
   const t = await getTranslations("payments");
   const locale = await getLocale();
   const today = currentCrDateParts();
@@ -35,13 +36,15 @@ export default async function PaymentsPage() {
   // REDESIGN_BRIEF.md Phase 8: instructor gets a read-only Pagos view (stat
   // row + Estado del mes, no Registrar pago card, no write actions) — the
   // real enforcement stays server-side in `recordPayment`/`markPaymentPaid`
-  // (both still `requireStaffSession(["ADMIN", "DIRECTOR"])`, unchanged);
+  // (both still `requireTenantContext(["ADMIN", "DIRECTOR"])`, unchanged);
   // this only decides what the page renders.
-  const canRecordPayments = session.role === "ADMIN" || session.role === "DIRECTOR";
+  const canRecordPayments = context.organizationRole === "ADMIN" || context.organizationRole === "DIRECTOR";
 
-  const scope = academyScopeWhere(session);
-  const academies = await prisma.academy.findMany({
-    where: scope.academyId ? { id: { in: scope.academyId.in } } : {},
+  const scope = branchScopeWhere(context);
+  const academies = await getScopedDb(context).academy.findMany({
+    where: {
+      ...(scope.academyId ? { id: { in: scope.academyId.in } } : {}),
+    },
     orderBy: { name: "asc" },
     select: { id: true, name: true },
   });
@@ -51,7 +54,7 @@ export default async function PaymentsPage() {
   }
 
   const [rows, plans] = await Promise.all([
-    listCurrentPaymentStatus(session, today),
+    listCurrentPaymentStatus(context, today),
     prisma.paymentPlan.findMany({
       where: { academyId: { in: academies.map((a) => a.id) }, active: true },
       orderBy: { name: "asc" },
@@ -122,6 +125,7 @@ export default async function PaymentsPage() {
           </CardHeader>
           <CardContent className="pt-4">
             <RecordPaymentForm
+              organizationId={context.organizationId}
               students={students}
               plans={plans}
               canManagePromotions={canRecordPayments}
@@ -140,6 +144,7 @@ export default async function PaymentsPage() {
         </CardHeader>
         <CardContent className="flex flex-col gap-4 pt-4">
           <PaymentsTable
+            organizationId={context.organizationId}
             rows={rows}
             plans={plans}
             academies={academies}

@@ -1,22 +1,22 @@
 import "dotenv/config";
+import { getTestPrismaClient } from "../helpers/test-db";
 import { DateTime } from "luxon";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { PrismaClient } from "../../src/generated/prisma/client";
-import { PrismaPg } from "@prisma/adapter-pg";
 import { requireEnv } from "../../src/lib/env";
 import { digestLookupSecret, hashSecret } from "../../src/lib/crypto";
 import { ZONE } from "../../src/lib/scheduling/zone";
 import { ensureCustomPromoPlan, CUSTOM_PROMO_PLAN_NAME } from "../../src/lib/payments/ensure-custom-promo-plan";
+import { adultRankId } from "../helpers/belt-ranks";
 
-// `recordPayment` reaches `requireStaffSession()` -> `getStaffSession()` ->
+// `recordPayment` reaches `requireTenantContext()` -> `getTenantContext()` ->
 // next-auth's `auth()`, which needs a real HTTP request's cookies to resolve
 // a JWT session — unavailable in a plain integration test. Mocking `@/auth`'s
 // `auth()` lets this Server Action be exercised directly against the real
 // DB, matching `tests/integration/promotion-actions.test.ts`'s established
 // pattern for a cookie-bound write action, while still using real `User` /
-// `StaffAssignment` rows underneath so `getStaffSession()`'s own DB queries
-// run unmodified.
-let currentSession: { user: { id: string; role: string } } | null = null;
+// `OrganizationMembership` / `StaffAssignment` rows underneath so
+// `getTenantContext()`'s own DB queries run unmodified.
+let currentSession: { user: { id: string; role: string } | null; activeOrganizationId?: string } | null = null;
 
 vi.mock("@/auth", () => ({
   auth: () => Promise.resolve(currentSession),
@@ -24,8 +24,7 @@ vi.mock("@/auth", () => ({
 
 const { recordPayment, markPaymentPaid } = await import("../../src/lib/payments/payment-actions");
 
-const adapter = new PrismaPg({ connectionString: requireEnv("DATABASE_URL") });
-const prisma = new PrismaClient({ adapter });
+const prisma = getTestPrismaClient();
 const pepper = requireEnv("CODE_PEPPER");
 
 function formData(fields: Record<string, string>): FormData {
@@ -51,7 +50,13 @@ async function cleanup() {
     await prisma.student.deleteMany({ where: { id: { in: cleanupStudentIds } } });
   }
   if (cleanupUserIds.length > 0) {
+    await prisma.organizationMembership.deleteMany({ where: { userId: { in: cleanupUserIds } } });
     await prisma.staffAssignment.deleteMany({ where: { userId: { in: cleanupUserIds } } });
+    // Now that the test database is genuinely isolated (previously this ran
+    // against the shared dev database, where a stray Notification row here
+    // apparently never existed or never got exercised), a User FK from
+    // Notification blocks the delete below unless cleared first.
+    await prisma.notification.deleteMany({ where: { userId: { in: cleanupUserIds } } });
     await prisma.user.deleteMany({ where: { id: { in: cleanupUserIds } } });
   }
 }
@@ -64,6 +69,12 @@ async function paymentPeriodIdsFor(studentIds: string[]): Promise<string[]> {
   return rows.map((r) => r.id);
 }
 
+let allianceOrgIdPromise: Promise<string> | null = null;
+function getAllianceOrganizationId() {
+  allianceOrgIdPromise ??= prisma.organization.findUniqueOrThrow({ where: { slug: "alliance-cr" } }).then((o) => o.id);
+  return allianceOrgIdPromise;
+}
+
 async function makeStaffUser(role: "ADMIN" | "DIRECTOR" | "INSTRUCTOR", label: string, academyId?: string) {
   const suffix = `${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
   const user = await prisma.user.create({
@@ -74,23 +85,38 @@ async function makeStaffUser(role: "ADMIN" | "DIRECTOR" | "INSTRUCTOR", label: s
     },
   });
   cleanupUserIds.push(user.id);
+
+  const organizationId = academyId
+    ? (await prisma.academy.findUniqueOrThrow({ where: { id: academyId }, select: { organizationId: true } }))
+        .organizationId
+    : await getAllianceOrganizationId();
+
+  await prisma.organizationMembership.create({ data: { userId: user.id, organizationId, role } });
+
   if (academyId && role !== "ADMIN") {
     await prisma.staffAssignment.create({
-      data: { userId: user.id, academyId, role: role === "DIRECTOR" ? "DIRECTOR" : "INSTRUCTOR" },
+      data: {
+        userId: user.id,
+        academyId,
+        organizationId,
+        role: role === "DIRECTOR" ? "DIRECTOR" : "INSTRUCTOR",
+      },
     });
   }
-  return user;
+  return { ...user, organizationId };
 }
 
-async function makeStudent(academyId: string, lastName?: string) {
+async function makeStudent(academyId: string, organizationId: string, lastName?: string) {
   const suffix = `${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
   const student = await prisma.student.create({
     data: {
       homeAcademyId: academyId,
+      organizationId,
       firstName: "PaymentActionTest",
       lastName: lastName ?? `Student-${suffix}`,
       phone: "88880000",
       email: `payment-action-${suffix}@example.com`,
+      currentRankId: adultRankId("WHITE"),
       status: "ACTIVE",
       codeHash: digestLookupSecret(`payment-action-${suffix}`, pepper),
     },
@@ -124,10 +150,11 @@ describe("recordPayment", () => {
       where: { academyId: escazu.id, name: "Mensualidad" },
     });
     const admin = await makeStaffUser("ADMIN", "record-admin");
-    const student = await makeStudent(escazu.id);
+    const student = await makeStudent(escazu.id, escazu.organizationId);
 
-    currentSession = { user: { id: admin.id, role: "ADMIN" } };
+    currentSession = { user: { id: admin.id, role: "ADMIN" }, activeOrganizationId: admin.organizationId };
     const result = await recordPayment(
+      admin.organizationId,
       {},
       formData({
         studentId: student.id,
@@ -166,10 +193,11 @@ describe("recordPayment", () => {
       where: { academyId: escazu.id, name: "Mensualidad" },
     });
     const admin = await makeStaffUser("ADMIN", "record-again-admin");
-    const student = await makeStudent(escazu.id);
+    const student = await makeStudent(escazu.id, escazu.organizationId);
 
-    currentSession = { user: { id: admin.id, role: "ADMIN" } };
+    currentSession = { user: { id: admin.id, role: "ADMIN" }, activeOrganizationId: admin.organizationId };
     const first = await recordPayment(
+      admin.organizationId,
       {},
       formData({
         studentId: student.id,
@@ -183,6 +211,7 @@ describe("recordPayment", () => {
     expect(first.ok).toBe(true);
 
     const second = await recordPayment(
+      admin.organizationId,
       {},
       formData({
         studentId: student.id,
@@ -217,10 +246,11 @@ describe("recordPayment", () => {
       where: { academyId: escalante.id, name: "Mensualidad" },
     });
     const admin = await makeStaffUser("ADMIN", "record-wrongplan-admin");
-    const student = await makeStudent(escazu.id);
+    const student = await makeStudent(escazu.id, escazu.organizationId);
 
-    currentSession = { user: { id: admin.id, role: "ADMIN" } };
+    currentSession = { user: { id: admin.id, role: "ADMIN" }, activeOrganizationId: admin.organizationId };
     const result = await recordPayment(
+      admin.organizationId,
       {},
       formData({
         studentId: student.id,
@@ -242,11 +272,12 @@ describe("recordPayment", () => {
       where: { academyId: escazu.id, name: "Mensualidad" },
     });
     const instructor = await makeStaffUser("INSTRUCTOR", "record-instructor", escazu.id);
-    const student = await makeStudent(escazu.id);
+    const student = await makeStudent(escazu.id, escazu.organizationId);
 
-    currentSession = { user: { id: instructor.id, role: "INSTRUCTOR" } };
+    currentSession = { user: { id: instructor.id, role: "INSTRUCTOR" }, activeOrganizationId: instructor.organizationId };
     await expect(
       recordPayment(
+        instructor.organizationId,
         {},
         formData({ studentId: student.id, year: "2026", month: "6", planId: plan.id, status: "PAID" }),
       ),
@@ -263,10 +294,11 @@ describe("recordPayment", () => {
       where: { academyId: escazu.id, name: "Mensualidad" },
     });
     const outOfScopeDirector = await makeStaffUser("DIRECTOR", "record-scope-director", escalante.id);
-    const student = await makeStudent(escazu.id);
+    const student = await makeStudent(escazu.id, escazu.organizationId);
 
-    currentSession = { user: { id: outOfScopeDirector.id, role: "DIRECTOR" } };
+    currentSession = { user: { id: outOfScopeDirector.id, role: "DIRECTOR" }, activeOrganizationId: outOfScopeDirector.organizationId };
     const result = await recordPayment(
+      outOfScopeDirector.organizationId,
       {},
       formData({ studentId: student.id, year: "2026", month: "7", planId: plan.id, status: "PAID" }),
     );
@@ -282,10 +314,11 @@ describe("recordPayment", () => {
       where: { academyId: escazu.id, name: "Mensualidad" },
     });
     const director = await makeStaffUser("DIRECTOR", "record-inscope-director", escazu.id);
-    const student = await makeStudent(escazu.id);
+    const student = await makeStudent(escazu.id, escazu.organizationId);
 
-    currentSession = { user: { id: director.id, role: "DIRECTOR" } };
+    currentSession = { user: { id: director.id, role: "DIRECTOR" }, activeOrganizationId: director.organizationId };
     const result = await recordPayment(
+      director.organizationId,
       {},
       formData({ studentId: student.id, year: "2026", month: "8", planId: plan.id, status: "PAID" }),
     );
@@ -301,10 +334,11 @@ describe("recordPayment", () => {
       where: { academyId: escazu.id, name: "Mensualidad" },
     });
     const admin = await makeStaffUser("ADMIN", "record-badmonth-admin");
-    const student = await makeStudent(escazu.id);
+    const student = await makeStudent(escazu.id, escazu.organizationId);
 
-    currentSession = { user: { id: admin.id, role: "ADMIN" } };
+    currentSession = { user: { id: admin.id, role: "ADMIN" }, activeOrganizationId: admin.organizationId };
     const result = await recordPayment(
+      admin.organizationId,
       {},
       formData({ studentId: student.id, year: "2026", month: "13", planId: plan.id, status: "PAID" }),
     );
@@ -331,10 +365,11 @@ describe("recordPayment", () => {
       where: { academyId: escazu.id, name: "Mensualidad" },
     });
     const admin = await makeStaffUser("ADMIN", "record-blank-optional-admin");
-    const student = await makeStudent(escazu.id);
+    const student = await makeStudent(escazu.id, escazu.organizationId);
 
-    currentSession = { user: { id: admin.id, role: "ADMIN" } };
+    currentSession = { user: { id: admin.id, role: "ADMIN" }, activeOrganizationId: admin.organizationId };
     const result = await recordPayment(
+      admin.organizationId,
       {},
       formData({
         studentId: student.id,
@@ -375,11 +410,12 @@ describe("recordPayment", () => {
       where: { academyId: escazu.id, name: "Mensualidad" },
     });
     const admin = await makeStaffUser("ADMIN", "record-clear-on-correct-admin");
-    const student = await makeStudent(escazu.id);
+    const student = await makeStudent(escazu.id, escazu.organizationId);
 
-    currentSession = { user: { id: admin.id, role: "ADMIN" } };
+    currentSession = { user: { id: admin.id, role: "ADMIN" }, activeOrganizationId: admin.organizationId };
 
     const first = await recordPayment(
+      admin.organizationId,
       {},
       formData({
         studentId: student.id,
@@ -401,6 +437,7 @@ describe("recordPayment", () => {
     // omitted entirely — exactly what the fixed form now sends for a blank
     // optional field on a correction, not "" for either.
     const second = await recordPayment(
+      admin.organizationId,
       {},
       formData({
         studentId: student.id,
@@ -434,10 +471,11 @@ describe("recordPayment", () => {
       where: { academyId: escazu.id, name: "Mensualidad" },
     });
     const admin = await makeStaffUser("ADMIN", "record-zeromonth-admin");
-    const student = await makeStudent(escazu.id);
+    const student = await makeStudent(escazu.id, escazu.organizationId);
 
-    currentSession = { user: { id: admin.id, role: "ADMIN" } };
+    currentSession = { user: { id: admin.id, role: "ADMIN" }, activeOrganizationId: admin.organizationId };
     const result = await recordPayment(
+      admin.organizationId,
       {},
       formData({ studentId: student.id, year: "2026", month: "0", planId: plan.id, status: "PAID" }),
     );
@@ -454,10 +492,11 @@ describe("recordPayment", () => {
       where: { academyId: escazu.id, name: "Mensualidad" },
     });
     const admin = await makeStaffUser("ADMIN", "record-method-admin");
-    const student = await makeStudent(escazu.id);
+    const student = await makeStudent(escazu.id, escazu.organizationId);
 
-    currentSession = { user: { id: admin.id, role: "ADMIN" } };
+    currentSession = { user: { id: admin.id, role: "ADMIN" }, activeOrganizationId: admin.organizationId };
     const result = await recordPayment(
+      admin.organizationId,
       {},
       formData({
         studentId: student.id,
@@ -479,10 +518,11 @@ describe("recordPayment", () => {
     const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
     const promoPlan = await ensureCustomPromoPlan(escazu.id);
     const admin = await makeStaffUser("ADMIN", "record-promo-noname-admin");
-    const student = await makeStudent(escazu.id);
+    const student = await makeStudent(escazu.id, escazu.organizationId);
 
-    currentSession = { user: { id: admin.id, role: "ADMIN" } };
+    currentSession = { user: { id: admin.id, role: "ADMIN" }, activeOrganizationId: admin.organizationId };
     const result = await recordPayment(
+      admin.organizationId,
       {},
       formData({ studentId: student.id, year: "2026", month: "6", planId: promoPlan.id, status: "PROMO" }),
     );
@@ -497,10 +537,11 @@ describe("recordPayment", () => {
     const promoPlan = await ensureCustomPromoPlan(escazu.id);
     expect(promoPlan.name).toBe(CUSTOM_PROMO_PLAN_NAME);
     const admin = await makeStaffUser("ADMIN", "record-promo-admin");
-    const student = await makeStudent(escazu.id);
+    const student = await makeStudent(escazu.id, escazu.organizationId);
 
-    currentSession = { user: { id: admin.id, role: "ADMIN" } };
+    currentSession = { user: { id: admin.id, role: "ADMIN" }, activeOrganizationId: admin.organizationId };
     const result = await recordPayment(
+      admin.organizationId,
       {},
       formData({
         studentId: student.id,
@@ -531,11 +572,12 @@ describe("recordPayment", () => {
       where: { academyId: escazu.id, name: "Mensualidad" },
     });
     const admin = await makeStaffUser("ADMIN", "record-future-admin");
-    const student = await makeStudent(escazu.id);
+    const student = await makeStudent(escazu.id, escazu.organizationId);
     const tooFar = DateTime.now().setZone(ZONE).plus({ months: 2 });
 
-    currentSession = { user: { id: admin.id, role: "ADMIN" } };
+    currentSession = { user: { id: admin.id, role: "ADMIN" }, activeOrganizationId: admin.organizationId };
     const result = await recordPayment(
+      admin.organizationId,
       {},
       formData({
         studentId: student.id,
@@ -557,11 +599,12 @@ describe("recordPayment", () => {
       where: { academyId: escazu.id, name: "Mensualidad" },
     });
     const admin = await makeStaffUser("ADMIN", "record-nextmonth-admin");
-    const student = await makeStudent(escazu.id);
+    const student = await makeStudent(escazu.id, escazu.organizationId);
     const nextMonth = DateTime.now().setZone(ZONE).plus({ months: 1 });
 
-    currentSession = { user: { id: admin.id, role: "ADMIN" } };
+    currentSession = { user: { id: admin.id, role: "ADMIN" }, activeOrganizationId: admin.organizationId };
     const result = await recordPayment(
+      admin.organizationId,
       {},
       formData({
         studentId: student.id,
@@ -572,6 +615,56 @@ describe("recordPayment", () => {
       }),
     );
     expect(result.ok).toBe(true);
+  });
+
+  it("1f-4: an ADMIN's real membership doesn't help against an organizationId their tab doesn't belong to — the stale-tab/tampered-bind case — refused as notFound, writes nothing, and audits the attempt", async () => {
+    const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+    const plan = await prisma.paymentPlan.findFirstOrThrow({
+      where: { academyId: escazu.id, name: "Mensualidad" },
+    });
+    const admin = await makeStaffUser("ADMIN", "record-crossorg-admin");
+    const student = await makeStudent(escazu.id, escazu.organizationId);
+
+    const otherOrg = await prisma.organization.create({
+      data: { slug: `payment-crossorg-${Date.now()}`, name: "Cross-Org Test Org", status: "ACTIVE" },
+    });
+
+    try {
+      // The session's own ambient selector still points at the admin's real
+      // (Alliance) organization — proving the refusal comes from the
+      // EXPLICIT organizationId argument this call names, not from the
+      // cookie. A legitimate action bound to this admin's own org (below)
+      // still succeeds with the exact same ambient session.
+      currentSession = { user: { id: admin.id, role: "ADMIN" }, activeOrganizationId: admin.organizationId };
+
+      const result = await recordPayment(
+        otherOrg.id,
+        {},
+        formData({ studentId: student.id, year: "2026", month: "1", planId: plan.id, status: "PAID" }),
+      );
+      expect(result.error).toBe("notFound");
+
+      const period = await paymentPeriodFor(student.id, 2026, 1);
+      expect(period).toBeNull();
+
+      const refusalAudit = await prisma.auditLog.findFirst({
+        where: { actorId: admin.id, action: "organization.accessRefused", entityId: otherOrg.id },
+      });
+      expect(refusalAudit).not.toBeNull();
+      expect(refusalAudit?.organizationId).toBe(otherOrg.id);
+
+      // The SAME admin, SAME ambient session, acting on their OWN org still
+      // works — this isn't a broken admin, it's an org-specific refusal.
+      const legitimate = await recordPayment(
+        admin.organizationId,
+        {},
+        formData({ studentId: student.id, year: "2026", month: "1", planId: plan.id, status: "PAID" }),
+      );
+      expect(legitimate.ok).toBe(true);
+    } finally {
+      await prisma.auditLog.deleteMany({ where: { organizationId: otherOrg.id } });
+      await prisma.organization.delete({ where: { id: otherOrg.id } });
+    }
   });
 });
 
@@ -618,11 +711,12 @@ describe("markPaymentPaid", () => {
       where: { academyId: escazu.id, name: "Mensualidad" },
     });
     const admin = await makeStaffUser("ADMIN", "markpaid-existing-admin");
-    const student = await makeStudent(escazu.id);
+    const student = await makeStudent(escazu.id, escazu.organizationId);
     await prisma.paymentPeriod.create({
       data: {
         studentId: student.id,
         academyId: escazu.id,
+        organizationId: escazu.organizationId,
         year: 2026,
         month: 5,
         planId: plan.id,
@@ -632,8 +726,8 @@ describe("markPaymentPaid", () => {
       },
     });
 
-    currentSession = { user: { id: admin.id, role: "ADMIN" } };
-    const result = await markPaymentPaid(student.id, 2026, 5);
+    currentSession = { user: { id: admin.id, role: "ADMIN" }, activeOrganizationId: admin.organizationId };
+    const result = await markPaymentPaid(admin.organizationId, student.id, 2026, 5);
     expect(result.ok).toBe(true);
 
     const period = await paymentPeriodFor(student.id, 2026, 5);
@@ -648,10 +742,10 @@ describe("markPaymentPaid", () => {
       where: { academyId: escazu.id, name: "Mensualidad" },
     });
     const admin = await makeStaffUser("ADMIN", "markpaid-fresh-admin");
-    const student = await makeStudent(escazu.id);
+    const student = await makeStudent(escazu.id, escazu.organizationId);
 
-    currentSession = { user: { id: admin.id, role: "ADMIN" } };
-    const result = await markPaymentPaid(student.id, 2026, 6);
+    currentSession = { user: { id: admin.id, role: "ADMIN" }, activeOrganizationId: admin.organizationId };
+    const result = await markPaymentPaid(admin.organizationId, student.id, 2026, 6);
     expect(result.ok).toBe(true);
 
     const period = await paymentPeriodFor(student.id, 2026, 6);
@@ -662,10 +756,10 @@ describe("markPaymentPaid", () => {
   it("an INSTRUCTOR session is rejected (role gate), matching recordPayment's own", async () => {
     const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
     const instructor = await makeStaffUser("INSTRUCTOR", "markpaid-instructor", escazu.id);
-    const student = await makeStudent(escazu.id);
+    const student = await makeStudent(escazu.id, escazu.organizationId);
 
-    currentSession = { user: { id: instructor.id, role: "INSTRUCTOR" } };
-    await expect(markPaymentPaid(student.id, 2026, 7)).rejects.toThrow("FORBIDDEN");
+    currentSession = { user: { id: instructor.id, role: "INSTRUCTOR" }, activeOrganizationId: instructor.organizationId };
+    await expect(markPaymentPaid(instructor.organizationId, student.id, 2026, 7)).rejects.toThrow("FORBIDDEN");
 
     const period = await paymentPeriodFor(student.id, 2026, 7);
     expect(period).toBeNull();
@@ -679,11 +773,12 @@ describe("markPaymentPaid", () => {
     const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
     const promoPlan = await ensureCustomPromoPlan(escazu.id);
     const admin = await makeStaffUser("ADMIN", "markpaid-promo-admin");
-    const student = await makeStudent(escazu.id);
+    const student = await makeStudent(escazu.id, escazu.organizationId);
     await prisma.paymentPeriod.create({
       data: {
         studentId: student.id,
         academyId: escazu.id,
+        organizationId: escazu.organizationId,
         year: 2026,
         month: 8,
         planId: promoPlan.id,
@@ -696,8 +791,8 @@ describe("markPaymentPaid", () => {
       },
     });
 
-    currentSession = { user: { id: admin.id, role: "ADMIN" } };
-    const result = await markPaymentPaid(student.id, 2026, 8);
+    currentSession = { user: { id: admin.id, role: "ADMIN" }, activeOrganizationId: admin.organizationId };
+    const result = await markPaymentPaid(admin.organizationId, student.id, 2026, 8);
     expect(result.ok).toBe(true);
 
     const period = await paymentPeriodFor(student.id, 2026, 8);

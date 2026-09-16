@@ -1,14 +1,11 @@
-import { prisma } from "@/lib/prisma";
-import { academyScopeWhere, type StaffSession } from "@/lib/auth/session";
+import { branchScopeWhere } from "@/lib/tenant/context";
+import type { BeltVisualData } from "@/components/belt-graphic/belt-graphic";
+import { getScopedDb } from "@/lib/tenant/scoped-client";
+import type { TenantContext } from "@/lib/tenant/types";
 import { getAtBeltSummary } from "@/lib/students/attendance-summary";
-import {
-  classifyEligibility,
-  MissingBeltRequirementError,
-  type BeltRequirementLike,
-  type EligibilityStatus,
-} from "@/lib/students/eligibility";
+import { resolvePromotionConfigMap } from "@/lib/promotion/config";
+import { MissingTimeAnchorError } from "@/lib/promotion/engine";
 import { isNotFoundError } from "@/lib/prisma-errors";
-import type { Belt } from "@/generated/prisma/client";
 
 export interface PromotionCandidate {
   studentId: string;
@@ -16,25 +13,41 @@ export interface PromotionCandidate {
   lastName: string;
   homeAcademyId: string;
   homeAcademyName: string;
-  currentBelt: Belt;
+  currentBelt: string;
+  currentBeltLabelEs: string;
+  currentBeltLabelEn: string;
+  currentBeltVisual: BeltVisualData;
   currentStripes: number;
   status: "stripe-eligible" | "exam-eligible" | "approaching";
   atBeltCount: number;
-  remainingToNextStripe: number | null;
+  remainingAttendance: number | null;
 }
 
-async function classifyActiveStudents(session: StaffSession): Promise<
-  Array<{ candidate: PromotionCandidate; status: EligibilityStatus }>
+type QueueStatus = "stripe-eligible" | "exam-eligible" | "approaching" | "none";
+
+/**
+ * MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 2c-i: preserved exactly as the old
+ * eligibility.ts's `classifyEligibility` default — a behavior-preserving
+ * migration, not a redesign. Known limitation (doesn't generalize per belt
+ * or per academy): see scripts/pending-callers.ts's KNOWN_LIMITATIONS,
+ * tracked as a Phase 4 settings candidate.
+ */
+const APPROACHING_THRESHOLD = 5;
+
+async function classifyActiveStudents(context: TenantContext): Promise<
+  Array<{ candidate: PromotionCandidate; status: QueueStatus }>
 > {
-  const scope = academyScopeWhere(session);
-  const students = await prisma.student.findMany({
+  const branchScope = branchScopeWhere(context);
+  const students = await getScopedDb(context).student.findMany({
     where: {
       status: "ACTIVE",
-      // academyScopeWhere returns a fragment keyed `academyId`, but
-      // Student's tenancy column is `homeAcademyId` — see academyScopeWhere's
-      // own doc comment on why this can't be spread directly, and
-      // src/app/[locale]/(staff)/dashboard/page.tsx for the established translation.
-      ...(scope.academyId ? { homeAcademyId: scope.academyId } : {}),
+      // branchScopeWhere returns a fragment keyed `academyId`, but Student's
+      // tenancy column is `homeAcademyId` — see its own doc comment on why
+      // this can't be spread directly, and
+      // src/app/[locale]/(staff)/dashboard/page.tsx for the established
+      // translation. Organization scope itself comes from `getScopedDb`,
+      // unconditionally.
+      ...(branchScope.academyId ? { homeAcademyId: branchScope.academyId } : {}),
     },
     select: {
       id: true,
@@ -42,10 +55,15 @@ async function classifyActiveStudents(session: StaffSession): Promise<
       lastName: true,
       homeAcademyId: true,
       homeAcademy: { select: { name: true } },
-      currentBelt: true,
-      currentStripes: true,
     },
   });
+
+  // Resolved ONCE for this whole batch, not once per student — a lookup
+  // inside getAtBeltSummary would be an N+1 (see resolvePromotionConfigMap's
+  // own doc comment).
+  const configByTrack = await resolvePromotionConfigMap(context.organizationId);
+
+  let skippedForMissingTimeAnchor = 0;
 
   const results = await Promise.all(
     students.map(async (student) => {
@@ -66,47 +84,26 @@ async function classifyActiveStudents(session: StaffSession): Promise<
       // so there is no window at all in which the two calls can observe
       // different states of the world.
       //
-      // The remaining problem a plain broad catch would reintroduce:
-      // `getAtBeltSummary` itself internally resolves BOTH the student row
-      // AND the belt requirement, and can raise Prisma's generic P2025
-      // "not found" for either — but only one of those is benign. A missing
-      // global `BeltRequirement` row is a seed-data/config bug that must
-      // propagate loudly, not be silently treated like a vanished student.
-      // That's solved by TYPE rather than by call site: `getAtBeltSummary`'s
-      // internal belt-requirement resolution throws a distinctly-typed
-      // `MissingBeltRequirementError` for ITS P2025, instead of leaving it as
-      // a generic P2025 — so any plain P2025 that reaches this catch can only
-      // have come from `getAtBeltSummary`'s internal
-      // `findUniqueOrThrow(student)`, i.e. the student vanished.
-      //
-      // There is now only ONE call (`getAtBeltSummary`) needed per student,
-      // not two — it already carries `attendancesPerStripe`/`maxStripes`/
-      // `attendancesForExam` from its own belt-requirement resolution, so the
-      // `BeltRequirementLike` object `classifyEligibility` needs is built
-      // directly from its return value rather than from a second, separate
-      // lookup. This also structurally removes the `Promise.all`
-      // first-rejection-ordering non-determinism the two-call version had,
-      // and the snapshot/fresh-belt mismatch risk of resolving the belt
-      // requirement against a value that could differ from what
-      // `getAtBeltSummary` itself read.
+      // `getAtBeltSummary` resolves `currentRank` in the same query as the
+      // student row (a required FK since Phase 2's schema), so the only
+      // P2025 it can raise is from its own `findUniqueOrThrow(student)` —
+      // i.e. the student vanished.
       try {
-        const summary = await getAtBeltSummary(student.id);
-        const requirement: BeltRequirementLike = {
-          attendancesPerStripe: summary.attendancesPerStripe,
-          maxStripes: summary.maxStripes,
-          attendancesForExam: summary.attendancesForExam,
-        };
-        // Read from `summary` (the same call that produced the progress
-        // numbers below), not the outer `findMany`'s `student.currentBelt`/
-        // `currentStripes` — same root cause as Phase 4 Task 3 fix round 1's
-        // finding I-1 (promotion-actions.ts), though here it's read-only
-        // display data (this list view writes nothing), so a stale pairing
-        // is cosmetic rather than a false permanent record.
-        const status = classifyEligibility(
-          { nextStripeAt: summary.nextStripeAt, remainingToNextStripe: summary.remainingToNextStripe, examEligible: summary.examEligible },
-          summary.currentStripes,
-          requirement,
-        );
+        const summary = await getAtBeltSummary(student.id, configByTrack);
+        let status: QueueStatus;
+        if (summary.nextTarget === "STRIPE" && summary.isEligible) {
+          status = "stripe-eligible";
+        } else if (summary.nextTarget === "BELT" && summary.isEligible) {
+          status = "exam-eligible";
+        } else if (
+          summary.remainingAttendance !== null &&
+          summary.remainingAttendance > 0 &&
+          summary.remainingAttendance <= APPROACHING_THRESHOLD
+        ) {
+          status = "approaching";
+        } else {
+          status = "none";
+        }
         return {
           status,
           candidate: {
@@ -116,42 +113,62 @@ async function classifyActiveStudents(session: StaffSession): Promise<
             homeAcademyId: student.homeAcademyId,
             homeAcademyName: student.homeAcademy.name,
             currentBelt: summary.currentBelt,
+            currentBeltLabelEs: summary.currentBeltLabelEs,
+            currentBeltLabelEn: summary.currentBeltLabelEn,
+            currentBeltVisual: summary.currentBeltVisual,
             currentStripes: summary.currentStripes,
             status: status as "stripe-eligible" | "exam-eligible" | "approaching",
             atBeltCount: summary.atBeltCount,
-            remainingToNextStripe: summary.remainingToNextStripe,
+            remainingAttendance: summary.remainingAttendance,
           },
         };
       } catch (error) {
-        // Real configuration bug — must fail the whole batch loudly, not be
-        // swallowed as if this were a lone vanished student.
-        if (error instanceof MissingBeltRequirementError) {
-          throw error;
+        // A TIME/HYBRID student with no timeAnchorAt is a per-student data
+        // gap (e.g. a mode switch that missed backfilling an anchor), not an
+        // org config bug — excluding just this row is right (2b's own
+        // design: "strict engine, caller decides handling"), but excluding
+        // it SILENTLY would let the director see a shorter list with no
+        // reason why — the exact failure shape this project keeps finding.
+        // Logged loudly instead, with the student id, so "the queue looks
+        // short" is traceable to a cause.
+        if (error instanceof MissingTimeAnchorError) {
+          skippedForMissingTimeAnchor++;
+          console.warn(
+            `listPromotionQueue: skipped student ${student.id} (org ${context.organizationId}, homeAcademyId ${student.homeAcademyId}) — ${error.message}`,
+          );
+          return null;
         }
-        // Any other Prisma "not found" here can now only mean the student
-        // itself vanished (getAtBeltSummary's internal findUniqueOrThrow) —
-        // benign, exclude it from the batch.
+        // Any other P2025 here can only mean the student itself vanished
+        // (getAtBeltSummary's internal findUniqueOrThrow) — benign, exclude
+        // it from the batch. Anything else (including
+        // InvalidPromotionConfigError — a real org-level config bug) is
+        // unexpected and must fail the whole batch loudly, not be swallowed
+        // per-row.
         if (isNotFoundError(error)) {
           return null;
         }
-        // Anything else is unexpected — don't broaden the catch beyond the
-        // two distinguishable cases above.
         throw error;
       }
     }),
   );
 
-  return results.filter((r): r is { candidate: PromotionCandidate; status: EligibilityStatus } => r !== null);
+  if (skippedForMissingTimeAnchor > 0) {
+    console.warn(
+      `listPromotionQueue: ${skippedForMissingTimeAnchor} student(s) skipped for org ${context.organizationId} — missing time anchor.`,
+    );
+  }
+
+  return results.filter((r): r is { candidate: PromotionCandidate; status: QueueStatus } => r !== null);
 }
 
-export async function listPromotionQueue(session: StaffSession): Promise<PromotionCandidate[]> {
-  const classified = await classifyActiveStudents(session);
+export async function listPromotionQueue(context: TenantContext): Promise<PromotionCandidate[]> {
+  const classified = await classifyActiveStudents(context);
   return classified
     .filter((r) => r.status === "stripe-eligible" || r.status === "exam-eligible")
     .map((r) => r.candidate);
 }
 
-export async function listApproachingStudents(session: StaffSession): Promise<PromotionCandidate[]> {
-  const classified = await classifyActiveStudents(session);
+export async function listApproachingStudents(context: TenantContext): Promise<PromotionCandidate[]> {
+  const classified = await classifyActiveStudents(context);
   return classified.filter((r) => r.status === "approaching").map((r) => r.candidate);
 }

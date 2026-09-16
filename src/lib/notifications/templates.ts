@@ -1,5 +1,5 @@
 import { createTranslator } from "next-intl";
-import type { Belt, NotificationType } from "@/generated/prisma/client";
+import type { NotificationType } from "@/generated/prisma/client";
 import { routing } from "@/i18n/routing";
 import type { RenderedMessage } from "@/lib/notifications/types";
 import esMessages from "../../../messages/es.json";
@@ -22,9 +22,12 @@ function messagesFor(locale: string): typeof esMessages {
   return MESSAGES[locale] ?? MESSAGES[routing.defaultLocale];
 }
 
-function translateBelt(belt: Belt, locale: string): string {
-  const t = createTranslator({ locale, messages: messagesFor(locale), namespace: "belt" });
-  return t(belt);
+/** Phase 3a rev 19: `data`'s belt is a label PAIR (`beltLabelEs`/`beltLabelEn`)
+ * sourced from the rank row, never a `belt.<code>` message key — this
+ * module has no live DB/rank-row access when called from a background job,
+ * so it picks whichever of the two the caller's `locale` names. */
+function pickBeltLabel(data: Record<string, unknown>, locale: string): string {
+  return locale === "es" ? (data.beltLabelEs as string) : (data.beltLabelEn as string);
 }
 
 /**
@@ -46,7 +49,7 @@ export function renderNotificationMessage(
     // `earnedStripe` true, `summaryAfter.examEligible` false).
     case "STRIPE_THRESHOLD": {
       const studentName = data.studentName as string;
-      const belt = translateBelt(data.belt as Belt, locale);
+      const belt = pickBeltLabel(data, locale);
       const stripes = data.stripes as number;
       return {
         type,
@@ -60,7 +63,7 @@ export function renderNotificationMessage(
     // `summaryAfter.examEligible` true).
     case "EXAM_THRESHOLD": {
       const studentName = data.studentName as string;
-      const belt = translateBelt(data.belt as Belt, locale);
+      const belt = pickBeltLabel(data, locale);
       return {
         type,
         title: t("examThreshold.title", { studentName }),

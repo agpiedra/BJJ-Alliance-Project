@@ -15,7 +15,27 @@ import { Heatmap } from "@/components/ui/heatmap";
 import { FilterBar, FilterBarSearch, FilterBarSelect } from "@/components/ui/filter-bar";
 import { EmptyState } from "@/components/ui/empty-state";
 import { BeltBar } from "@/components/belt-graphic/belt-bar";
+import type { BeltVisualData } from "@/components/belt-graphic/belt-graphic";
 import { ProgressToNextGrade } from "@/components/belt-graphic/progress-to-next-grade";
+
+// Static illustrative examples for this design-system showcase — not real
+// rank rows, so the color data is hardcoded here rather than fetched.
+const EXAMPLE_BLUE: BeltVisualData = {
+  primaryColor: "#215DA5",
+  centerStripeColor: null,
+  barColor: "#111116",
+  stripeColors: ["#FFFFFF", "#FFFFFF", "#FFFFFF", "#FFFFFF"],
+  maxStripes: 4,
+  visibleStripeSlots: 4,
+};
+const EXAMPLE_BLACK: BeltVisualData = {
+  primaryColor: "#111116",
+  centerStripeColor: null,
+  barColor: "#B63B32",
+  stripeColors: [],
+  maxStripes: 0,
+  visibleStripeSlots: 4,
+};
 
 /**
  * Dev-only preview of the Phase 3 component library (REDESIGN_BRIEF.md) —
@@ -123,7 +143,7 @@ export default function DevComponentsPage() {
               <DataTableCell>Fabiola Chaves</DataTableCell>
               <DataTableCell>
                 <div className="flex items-center gap-2">
-                  <BeltBar belt="BLUE" stripes={4} />
+                  <BeltBar belt={EXAMPLE_BLUE} stripes={4} />
                   <span>Azul · 4 franjas</span>
                 </div>
               </DataTableCell>
@@ -138,7 +158,7 @@ export default function DevComponentsPage() {
               <DataTableCell>José Mora</DataTableCell>
               <DataTableCell>
                 <div className="flex items-center gap-2">
-                  <BeltBar belt="BLACK" stripes={2} />
+                  <BeltBar belt={EXAMPLE_BLACK} stripes={2} />
                   <span>Negra · 2 franjas</span>
                 </div>
               </DataTableCell>

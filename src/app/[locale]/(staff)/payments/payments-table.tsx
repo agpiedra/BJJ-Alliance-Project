@@ -26,6 +26,9 @@ import { formatRecordedBy } from "@/lib/payments/format-recorded-by";
 import type { CurrentPaymentRow, PaymentBucket } from "@/lib/payments/list-current-status";
 
 export interface PaymentsTableProps {
+  /** 1f-4: bound into `markPaymentPaid`/passed to `RecordPaymentForm` —
+   * never read from the ambient session selector. */
+  organizationId: string;
   rows: CurrentPaymentRow[];
   plans: RecordPaymentPlanOption[];
   academies: { id: string; name: string }[];
@@ -49,6 +52,7 @@ function pillVariantFor(bucket: PaymentBucket): "ok" | "warn" | "bad" | "accent"
 }
 
 export function PaymentsTable({
+  organizationId,
   rows: initialRows,
   plans,
   academies,
@@ -116,7 +120,7 @@ export function PaymentsTable({
     // `initialRows`, so there is nothing to undo.
     startMarkPaidTransition(async () => {
       setOptimisticPaid(row.studentId);
-      const result = await markPaymentPaid(row.studentId, currentYear, currentMonth);
+      const result = await markPaymentPaid(organizationId, row.studentId, currentYear, currentMonth);
 
       setPendingStudentIds((prev) => {
         const next = new Set(prev);
@@ -316,6 +320,7 @@ export function PaymentsTable({
               </SheetHeader>
               <div className="px-4 pb-4">
                 <RecordPaymentForm
+                  organizationId={organizationId}
                   students={[
                     {
                       id: editRow.studentId,

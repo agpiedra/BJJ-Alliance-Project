@@ -11,15 +11,20 @@ const INITIAL_STATE: RegenerateKioskTokenState = {};
 // is server-side in `regenerateKioskToken` itself (requireStaffSession(["ADMIN"])),
 // never this UI check alone.
 export function RegenerateKioskTokenButton({
+  organizationId,
   academyId,
   academySlug,
 }: {
+  organizationId: string;
   academyId: string;
   academySlug: string;
 }) {
   const t = useTranslations("adminKioskTokens");
   const locale = useLocale();
-  const [state, formAction, isPending] = useActionState(regenerateKioskToken, INITIAL_STATE);
+  const [state, formAction, isPending] = useActionState(
+    regenerateKioskToken.bind(null, organizationId),
+    INITIAL_STATE,
+  );
 
   // Built client-side from the plaintext token this action just returned —
   // never round-tripped through the server a second time, since the token

@@ -1,7 +1,7 @@
 import { DateTime } from "luxon";
 import { getLocale, getTranslations } from "next-intl/server";
-import { requireStaffSession } from "@/lib/auth/session";
-import { prisma } from "@/lib/prisma";
+import { requireTenantContext } from "@/lib/tenant/context";
+import { getScopedDb } from "@/lib/tenant/scoped-client";
 import { ZONE } from "@/lib/scheduling/zone";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -72,7 +72,7 @@ export default async function AnalyticsPage({
   // ADMIN/DIRECTOR only (spec's "Locations (admin only)" line aside, the
   // page as a whole is director-level) — INSTRUCTOR gets neither the nav
   // link (see dashboard/page.tsx) nor a working direct-URL visit.
-  const session = await requireStaffSession(["ADMIN", "DIRECTOR"]);
+  const context = await requireTenantContext(["ADMIN", "DIRECTOR"]);
   const params = await searchParams;
   // Captured once and threaded through both `resolveAnalyticsFilters` and
   // `computeQuickRange` below, rather than each defaulting to its own
@@ -80,10 +80,10 @@ export default async function AnalyticsPage({
   // (comparing `filters.from`/`to` against a freshly computed preset) can
   // never mismatch by a few milliseconds around a day boundary.
   const now = DateTime.now().setZone(ZONE);
-  const filters = resolveAnalyticsFilters(session, params, now);
+  const filters = resolveAnalyticsFilters(context, params, now);
 
   // Every query function in this module self-enforces the same ADMIN/
-  // DIRECTOR gate against `session` independently of this page — this call
+  // DIRECTOR gate against `context` independently of this page — this call
   // can never surface a result an INSTRUCTOR shouldn't see, even if this
   // page's own gate above were ever bypassed or miscopied.
   const locale = await getLocale();
@@ -101,18 +101,18 @@ export default async function AnalyticsPage({
     retentionList,
     weeklyTrend,
   ] = await Promise.all([
-    getHeadlineTiles(session, filters),
+    getHeadlineTiles(context, filters),
     // §4.3 Task 2: "each with a comparison line vs. the previous period" —
     // reuses `getHeadlineTiles` itself against `previousEquivalentRange`
     // (already exported by headline-tiles.ts) rather than a second,
     // drifting computation of what "the previous period" means.
-    getHeadlineTiles(session, previousFilters),
-    getClassPopularity(session, filters, locale),
-    getProgressionPlanningList(session, filters),
-    getBeltDistribution(session, filters),
-    getPromotionsInRange(session, filters),
-    getRetentionList(session, filters),
-    getWeeklyAttendanceTrend(session, filters),
+    getHeadlineTiles(context, previousFilters),
+    getClassPopularity(context, filters, locale),
+    getProgressionPlanningList(context, filters),
+    getBeltDistribution(context, filters),
+    getPromotionsInRange(context, filters),
+    getRetentionList(context, filters),
+    getWeeklyAttendanceTrend(context, filters),
   ]);
 
   // ADMIN-only panel (spec's "Locations (admin only)" heading) — skip
@@ -121,8 +121,8 @@ export default async function AnalyticsPage({
   // a DIRECTOR anyway (this is the one panel in the phase where DIRECTOR is
   // rejected outright, not narrowed), so this check only saves the query.
   const [locationComparison, crossTraining] =
-    session.role === "ADMIN"
-      ? await Promise.all([getLocationComparison(session, filters), getCrossTraining(session, filters)])
+    context.organizationRole === "ADMIN"
+      ? await Promise.all([getLocationComparison(context, filters), getCrossTraining(context, filters)])
       : [[], []];
 
   // §4.3 Task 3/5: BarList + "Detalle por clase" both derive from the same
@@ -168,8 +168,12 @@ export default async function AnalyticsPage({
   // academy by resolveAnalyticsFilters, matching the roster page's own
   // ADMIN-only academy switcher.
   const academies =
-    session.role === "ADMIN"
-      ? await prisma.academy.findMany({ orderBy: { name: "asc" }, select: { id: true, name: true } })
+    context.organizationRole === "ADMIN"
+      ? await getScopedDb(context).academy.findMany({
+          where: {},
+          orderBy: { name: "asc" },
+          select: { id: true, name: true },
+        })
       : [];
 
   const t = await getTranslations("dashboard.analytics");
@@ -213,7 +217,7 @@ export default async function AnalyticsPage({
   const quickRanges = QUICK_RANGE_KEYS.map((key: QuickRangeKey) => {
     const range = computeQuickRange(key, now);
     const linkParams = new URLSearchParams({ from: range.from, to: range.to });
-    if (session.role === "ADMIN" && filters.academyId) {
+    if (context.organizationRole === "ADMIN" && filters.academyId) {
       linkParams.set("academy", filters.academyId);
     }
     return {
@@ -290,7 +294,7 @@ export default async function AnalyticsPage({
                 className="w-auto"
               />
             </label>
-            {session.role === "ADMIN" && (
+            {context.organizationRole === "ADMIN" && (
               <label htmlFor="analytics-academy" className="flex flex-col gap-1 text-sm">
                 <span>{t("filters.academy")}</span>
                 <FilterBarSelect id="analytics-academy" name="academy" defaultValue={filters.academyId ?? "ambas"}>
@@ -390,7 +394,7 @@ export default async function AnalyticsPage({
         promotionsInRange={promotionsInRangeRows}
       />
 
-      {session.role === "ADMIN" && (
+      {context.organizationRole === "ADMIN" && (
         <LocationsPanel comparison={locationComparison} crossTraining={crossTraining} />
       )}
 

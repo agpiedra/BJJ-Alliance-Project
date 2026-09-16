@@ -1,7 +1,7 @@
 import { DateTime } from "luxon";
 import { getLocale, getTranslations } from "next-intl/server";
-import { academyScopeWhere, requireStaffSession } from "@/lib/auth/session";
-import { prisma } from "@/lib/prisma";
+import { requireTenantContext, branchScopeWhere } from "@/lib/tenant/context";
+import { getScopedDb } from "@/lib/tenant/scoped-client";
 import { ZONE } from "@/lib/scheduling/zone";
 import { BeltBar } from "@/components/belt-graphic/belt-bar";
 import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -27,7 +27,9 @@ import {
 } from "@/lib/students/promotion-queue";
 import { listOverdueStudents, type OverdueStudent } from "@/lib/payments/list-overdue";
 import { getAtBeltSummary } from "@/lib/students/attendance-summary";
-import { nextBelt } from "@/lib/students/eligibility";
+import { resolvePromotionConfigMap } from "@/lib/promotion/config";
+type Belt = "WHITE" | "BLUE" | "PURPLE" | "BROWN" | "BLACK";
+import { resolveNextRank } from "@/lib/promotion/config";
 import { getWeeklyAttendanceTrend } from "@/lib/analytics/retention";
 import { getBeltDistribution } from "@/lib/analytics/progression";
 import type { AnalyticsFilters } from "@/lib/analytics/filters";
@@ -42,7 +44,7 @@ import { formatTimestampInAcademyZone } from "@/lib/format-date";
 import { ConfirmPromotionButton } from "./confirm-promotion-button";
 import { WeeklyAttendanceChart } from "./weekly-attendance-chart";
 import { buildWhatsAppLink } from "./whatsapp-link";
-import type { Belt, Prisma } from "@/generated/prisma/client";
+import type { Prisma } from "@/generated/prisma/client";
 import { cn } from "cn";
 
 // Same reasoning as the roster page: the pending-approvals count is staff
@@ -113,7 +115,7 @@ function paymentStatusLabel(status: ContactPaymentStatus, tPaymentStatus: (key: 
 }
 
 export default async function DashboardPage() {
-  const staffSession = await requireStaffSession();
+  const context = await requireTenantContext();
   const t = await getTranslations("dashboard");
   const tBelt = await getTranslations("belt");
   const tPaymentStatus = await getTranslations("students.paymentStatus");
@@ -122,16 +124,17 @@ export default async function DashboardPage() {
   const locale = await getLocale();
   const now = DateTime.now().setZone(ZONE);
 
-  // academyScopeWhere(session) returns a fragment keyed `academyId`, but
+  // branchScopeWhere(context) returns a fragment keyed `academyId`, but
   // Student's tenancy column is `homeAcademyId` — spreading the fragment
   // directly would throw a Prisma validation error for any non-ADMIN
   // session (confirmed while manually verifying this task). Translate it
   // the same way src/app/[locale]/(staff)/students/actions.ts's listStudents does,
   // so a DIRECTOR/INSTRUCTOR only ever sees the pending count for their own
-  // academy/academies — never a global count — and ADMIN (whose scope
-  // fragment is `{}`) sees every pending student.
-  const scope = academyScopeWhere(staffSession);
-  const pendingCount = await prisma.student.count({
+  // academy/academies — never a global count — and ADMIN sees every
+  // pending student in their own organization (never another tenant's, via
+  // `getScopedDb`, unconditionally).
+  const scope = branchScopeWhere(context);
+  const pendingCount = await getScopedDb(context).student.count({
     where: {
       ...(scope.academyId ? { homeAcademyId: scope.academyId } : {}),
       status: "PENDING",
@@ -143,29 +146,29 @@ export default async function DashboardPage() {
   // read-only. Checked here, before the query even runs, so an INSTRUCTOR
   // session never executes a query whose result would just be thrown away;
   // `listOverdueStudents` also self-enforces this same gate against
-  // `staffSession.role`, so this is belt-and-suspenders, not the only check.
+  // `context.organizationRole`, so this is belt-and-suspenders, not the only check.
   // The same boolean also gates §4.1 Task 2's weekly-attendance chart and
   // belt-distribution panel below — both back onto `getWeeklyAttendanceTrend`
   // / `getBeltDistribution` (src/lib/analytics/{retention,progression}.ts),
   // which are themselves self-enforced ADMIN/DIRECTOR-only, so INSTRUCTOR
   // never sees that whole section, matching "keep the existing role-gating
   // exactly as it is today" for this dashboard.
-  const canViewOverduePayments = staffSession.role === "ADMIN" || staffSession.role === "DIRECTOR";
+  const canViewOverduePayments = context.organizationRole === "ADMIN" || context.organizationRole === "DIRECTOR";
 
-  // Both promotion queries scope by academyScopeWhere internally (see
+  // Both promotion queries scope by getScopedDb/branchScopeWhere internally (see
   // promotion-queue.ts) the same way pendingCount does above — a
   // DIRECTOR/INSTRUCTOR only ever sees their own academy/academies here too.
   const [promotionQueue, approachingStudents, overdueStudents] = await Promise.all([
-    listPromotionQueue(staffSession),
-    listApproachingStudents(staffSession),
-    canViewOverduePayments ? listOverdueStudents(staffSession) : Promise.resolve<OverdueStudent[]>([]),
+    listPromotionQueue(context),
+    listApproachingStudents(context),
+    canViewOverduePayments ? listOverdueStudents(context) : Promise.resolve<OverdueStudent[]>([]),
   ]);
 
   // Confirming a promotion is ADMIN/DIRECTOR only (spec §3 excludes
   // INSTRUCTOR from promotions, same restriction confirmPromotion enforces
   // server-side) — mirrors student detail page's `canEdit` gate. INSTRUCTOR
   // sessions still see both lists in full, just without the button.
-  const canConfirmPromotion = staffSession.role === "ADMIN" || staffSession.role === "DIRECTOR";
+  const canConfirmPromotion = context.organizationRole === "ADMIN" || context.organizationRole === "DIRECTOR";
 
   // §4.1 stat row: "Alumnos activos" / "Asistencias esta semana", plus last
   // week's count so the second tile can carry a real vs.-last-week
@@ -178,23 +181,25 @@ export default async function DashboardPage() {
 
   const weeklyAttendanceConditions = (from: DateTime, to: DateTime): Prisma.AttendanceRecordWhereInput => ({
     AND: [
-      academyScopeWhere(staffSession),
+      branchScopeWhere(context),
       { type: "CHECKIN" },
       { occurredAt: { gte: from.toJSDate(), lte: to.toJSDate() } },
     ],
   });
 
   const [activeStudentCount, weeklyAttendanceCount, previousWeekAttendanceCount, academyRows] = await Promise.all([
-    prisma.student.count({
+    getScopedDb(context).student.count({
       where: {
         status: "ACTIVE",
         ...(scope.academyId ? { homeAcademyId: scope.academyId } : {}),
       },
     }),
-    prisma.attendanceRecord.count({ where: weeklyAttendanceConditions(currentWeekStart, currentWeekEnd) }),
-    prisma.attendanceRecord.count({ where: weeklyAttendanceConditions(previousWeekStart, previousWeekEnd) }),
-    prisma.academy.findMany({
-      where: scope.academyId ? { id: { in: scope.academyId.in } } : {},
+    getScopedDb(context).attendanceRecord.count({ where: weeklyAttendanceConditions(currentWeekStart, currentWeekEnd) }),
+    getScopedDb(context).attendanceRecord.count({ where: weeklyAttendanceConditions(previousWeekStart, previousWeekEnd) }),
+    getScopedDb(context).academy.findMany({
+      where: {
+        ...(scope.academyId ? { id: { in: scope.academyId.in } } : {}),
+      },
       orderBy: { name: "asc" },
       select: { name: true },
     }),
@@ -248,20 +253,27 @@ export default async function DashboardPage() {
       academyId: null,
     };
     const [trend, distribution, stripeThresholdRows] = await Promise.all([
-      getWeeklyAttendanceTrend(staffSession, eightWeekFilters),
-      getBeltDistribution(staffSession, eightWeekFilters),
+      getWeeklyAttendanceTrend(context, eightWeekFilters),
+      getBeltDistribution(context, eightWeekFilters),
       // Real thresholds (30/65/75/85 in the seeded default data), never
-      // hardcoded — the belt-distribution caption states whatever
-      // `BeltRequirement` actually says. Global (academyId: null) rows only:
-      // this caption states one general rule, not every academy's override.
-      prisma.beltRequirement.findMany({
-        where: { academyId: null, belt: { in: ["WHITE", "BLUE", "PURPLE", "BROWN"] } },
-        select: { belt: true, attendancesPerStripe: true },
+      // hardcoded — the belt-distribution caption states whatever BeltRank
+      // actually says. Organization-owned, no per-branch override (Phase 2:
+      // branch overrides never existed in real data and are undefined once
+      // a student's attendance pools cross-branch into one progression) —
+      // this caption states one general rule, never another tenant's.
+      getScopedDb(context).beltRank.findMany({
+        where: {
+          track: "ADULT",
+          code: { in: ["WHITE", "BLUE", "PURPLE", "BROWN"] },
+        },
+        select: { code: true, attendancesPerStripe: true },
       }),
     ]);
     weeklyTrend = trend;
     beltDistribution = distribution;
-    stripeThresholdByBelt = new Map(stripeThresholdRows.map((row) => [row.belt, row.attendancesPerStripe]));
+    stripeThresholdByBelt = new Map(
+      stripeThresholdRows.map((row) => [row.code as Belt, row.attendancesPerStripe ?? 0]),
+    );
   }
 
   const beltDistributionHasData = beltDistribution.some((row) => row.count > 0);
@@ -273,7 +285,7 @@ export default async function DashboardPage() {
   }));
 
   // §4.1 Task 3a: "Asistencia promedio por franja" — every role, no gate.
-  const franjaGrid = await getFranjaHeatmap(staffSession);
+  const franjaGrid = await getFranjaHeatmap(context);
   const franjaRowLabels = TIME_BAND_ORDER.map((band) => tBand(band));
   const franjaColLabels = FRANJA_DAY_ORDER.map((day) => tDay(day).slice(0, 3));
   const franjaCells: HeatmapCell[][] = TIME_BAND_ORDER.map((_, bandIndex) =>
@@ -288,21 +300,30 @@ export default async function DashboardPage() {
   // §4.1 Task 3b: "Cola de promociones" row text ("29 / 30 · 4.ª franja
   // blanca" / "63 / 65 · examen de morada"). `PromotionCandidate` alone
   // doesn't carry the threshold (Y) once a candidate has already crossed
-  // it — `remainingToNextStripe` is clamped to 0 at that point — so this
+  // it — `remainingAttendance` is clamped to 0 at that point — so this
   // reuses `getAtBeltSummary` (already built, already used internally by
   // `promotion-queue.ts`'s own classification) per candidate rather than a
   // second query; the list is always small (a handful of eligible students).
+  // Resolved ONCE for this whole batch, not once per candidate — see
+  // resolvePromotionConfigMap's own doc comment on the N+1 this avoids.
+  const queueConfigByTrack = await resolvePromotionConfigMap(context.organizationId);
   const queueRows = await Promise.all(
     promotionQueue.map(async (candidate) => {
-      const summary = await getAtBeltSummary(candidate.studentId);
+      const summary = await getAtBeltSummary(candidate.studentId, queueConfigByTrack);
       if (candidate.status === "exam-eligible") {
-        const target = nextBelt(summary.currentBelt);
+        // Real catalog lookup (Phase 2c-ii) — replaces eligibility.ts's old
+        // hardcoded BELT_ORDER array. A read/display path: a broken catalog
+        // degrades to a blank belt name here rather than throwing and
+        // taking down the whole dashboard for every viewer (see
+        // resolveNextRank's own doc comment).
+        const target = await resolveNextRank(context, summary.track, summary.currentRankOrder);
+        const targetLabel = target ? (locale === "es" ? target.labelEs : target.labelEn) : "";
         return {
           candidate,
           detail: t("panel.promotionQueue.examRow", {
             current: summary.atBeltCount,
             target: summary.maxStripes * summary.attendancesPerStripe + summary.attendancesForExam,
-            belt: target ? tBelt(target) : "",
+            belt: targetLabel,
           }),
         };
       }
@@ -310,30 +331,30 @@ export default async function DashboardPage() {
         candidate,
         detail: t("panel.promotionQueue.stripeRow", {
           current: summary.atBeltCount,
-          target: summary.nextStripeAt ?? summary.atBeltCount,
+          target: (summary.currentStripes + 1) * summary.attendancesPerStripe,
           ordinal: summary.currentStripes + 1,
-          belt: tBelt(summary.currentBelt),
+          belt: locale === "es" ? summary.currentBeltLabelEs : summary.currentBeltLabelEn,
         }),
       };
     }),
   );
 
-  // "Próximos" list: `atBeltCount`/`remainingToNextStripe` are already both
+  // "Próximos" list: `atBeltCount`/`remainingAttendance` are already both
   // on `PromotionCandidate` (approaching status always has a positive
   // remaining count) — no extra query needed here, unlike the queue above.
   const upcomingRows = approachingStudents.map((candidate: PromotionCandidate) => ({
     candidate,
     detail: t("panel.promotionQueue.upcomingRow", {
       current: candidate.atBeltCount,
-      target: candidate.atBeltCount + (candidate.remainingToNextStripe ?? 0),
-      remaining: candidate.remainingToNextStripe ?? 0,
+      target: candidate.atBeltCount + (candidate.remainingAttendance ?? 0),
+      remaining: candidate.remainingAttendance ?? 0,
     }),
   }));
 
   // §4.1 Task 4: "Alumnos por contactar" — every role, no gate (see
   // contact-list.ts's own doc comment on why this is NOT a lowered-threshold
   // `getRetentionList`).
-  const contactList = await listStudentsToContact(staffSession);
+  const contactList = await listStudentsToContact(context);
 
   return (
     <main className="flex flex-col gap-6 p-4 sm:p-6">
@@ -460,7 +481,7 @@ export default async function DashboardPage() {
               <div className="flex flex-col divide-y divide-border">
                 {queueRows.map(({ candidate, detail }) => (
                   <div key={candidate.studentId} className="flex items-center gap-3 py-2.5 first:pt-0 last:pb-0">
-                    <BeltBar belt={candidate.currentBelt} stripes={candidate.currentStripes} />
+                    <BeltBar belt={candidate.currentBeltVisual} stripes={candidate.currentStripes} />
                     <div className="flex min-w-0 flex-1 flex-col">
                       <span className="truncate text-sm font-medium">
                         {candidate.firstName} {candidate.lastName}
@@ -471,7 +492,12 @@ export default async function DashboardPage() {
                         (confirmPromotion re-checks role + scope) — this only
                         avoids showing a control to a role that would just be
                         rejected, as defense in depth. */}
-                    {canConfirmPromotion && <ConfirmPromotionButton studentId={candidate.studentId} />}
+                    {canConfirmPromotion && (
+                      <ConfirmPromotionButton
+                        organizationId={context.organizationId}
+                        studentId={candidate.studentId}
+                      />
+                    )}
                   </div>
                 ))}
               </div>
@@ -485,7 +511,8 @@ export default async function DashboardPage() {
                 {upcomingRows.map(({ candidate, detail }) => (
                   <div key={candidate.studentId} className="flex items-center justify-between gap-2 text-xs">
                     <span className="truncate text-muted-foreground">
-                      {candidate.firstName} {candidate.lastName} · {tBelt(candidate.currentBelt)}
+                      {candidate.firstName} {candidate.lastName} ·{" "}
+                      {locale === "es" ? candidate.currentBeltLabelEs : candidate.currentBeltLabelEn}
                     </span>
                     <span className="shrink-0 font-mono tabular-nums text-muted-foreground">{detail}</span>
                   </div>
@@ -534,7 +561,7 @@ export default async function DashboardPage() {
                           {entry.firstName} {entry.lastName}
                         </div>
                         <div className="text-[11px] text-muted-foreground">
-                          {tBelt(entry.currentBelt)} · {entry.atBeltCount}
+                          {locale === "es" ? entry.currentBeltLabelEs : entry.currentBeltLabelEn} · {entry.atBeltCount}
                           {entry.nextStripeAt != null ? ` / ${entry.nextStripeAt}` : ""}
                         </div>
                       </DataTableCell>
@@ -582,7 +609,7 @@ export default async function DashboardPage() {
           reachable only by typing the URL. Shown to ADMIN sessions only,
           matching each page's own `requireStaffSession(["ADMIN"])` gate —
           this is navigation convenience, not the access control. */}
-      {staffSession.role === "ADMIN" && (
+      {context.organizationRole === "ADMIN" && (
         <Card>
           <CardHeader className="border-b">
             <CardTitle>{t("adminSection")}</CardTitle>

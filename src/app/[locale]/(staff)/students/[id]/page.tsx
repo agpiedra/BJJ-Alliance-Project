@@ -1,11 +1,11 @@
 import { notFound } from "next/navigation";
 import { getTranslations } from "next-intl/server";
-import { requireStaffSession } from "@/lib/auth/session";
+import { requireTenantContext } from "@/lib/tenant/context";
 import { prisma } from "@/lib/prisma";
-import { BeltGraphic } from "@/components/belt-graphic/belt-graphic";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getAtBeltSummary } from "@/lib/students/attendance-summary";
+import { resolvePromotionConfigMap } from "@/lib/promotion/config";
 import { formatTimestampInAcademyZone } from "@/lib/format-date";
 import { formatMonthYear } from "@/lib/format-month";
 import { currentCrDateParts } from "@/lib/payments/get-current-period";
@@ -19,6 +19,7 @@ import { ApproveStudentButton } from "./approve-student-button";
 import { RegenerateCodeButton } from "./regenerate-code-button";
 import { AddAdjustmentForm } from "./add-adjustment-form";
 import { RecordPaymentForm } from "@/components/payments/record-payment-form";
+import { PromocionesCard, type PromocionesHistoryRow } from "./promociones-card";
 
 // Staff data an admin/director/instructor could change without a redeploy —
 // never frozen at build time, same reasoning as the roster page.
@@ -40,35 +41,60 @@ export default async function StudentDetailPage({
 }: {
   params: Promise<{ locale: string; id: string }>;
 }) {
-  const session = await requireStaffSession();
+  const context = await requireTenantContext();
   const { locale, id } = await params;
 
+  // MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 2d: this staff route previously had
+  // NO restriction limiting a STUDENT-role session to their own record —
+  // `isAcademyInTenantScope` only checks branch scope, so any student could
+  // load ANY other student's full profile (phone, email, payment history)
+  // in the same academy by guessing/typing a URL. A real, pre-existing gap,
+  // surfaced while implementing the Promociones card's own STUDENT row
+  // ("their own progress only"). Same 404-not-forbidden discipline as the
+  // out-of-scope case below — a student probing another student's id learns
+  // nothing from the response shape.
+  if (context.organizationRole === "STUDENT" && context.selfStudentId !== id) {
+    notFound();
+  }
+
   // getStudentForStaff returns null both when the id doesn't exist at all
-  // and when it exists but is outside this session's academy scope — the
-  // page can't tell the two apart, and shouldn't: both render as a plain
-  // 404, never a distinguishable "forbidden" that would confirm a guessed
-  // id belongs to someone.
-  const student = await getStudentForStaff(session, id);
+  // and when it exists but is outside this session's organization/academy
+  // scope — the page can't tell the two apart, and shouldn't: both render
+  // as a plain 404, never a distinguishable "forbidden" that would confirm
+  // a guessed id belongs to someone.
+  const student = await getStudentForStaff(context, id);
   if (!student) {
     notFound();
   }
 
-  const summary = await getAtBeltSummary(student.id);
+  const configByTrack = await resolvePromotionConfigMap(context.organizationId);
+  const summary = await getAtBeltSummary(student.id, configByTrack);
   const promotionHistory = await getPromotionHistory(student.id);
   const paymentHistory = await getPaymentHistory(student.id);
 
   const t = await getTranslations("students");
   const tDetail = await getTranslations("students.detail");
   const tStatus = await getTranslations("students.status");
-  const tBelt = await getTranslations("belt");
   const tPaymentStatus = await getTranslations("students.paymentStatus");
 
   // Edit/archive are gated to ADMIN/DIRECTOR in the UI as defense in depth —
   // the real gate is server-side in updateStudent/archiveStudent
-  // (requireStaffSession(["ADMIN", "DIRECTOR"]) + a fresh isAcademyInScope
+  // (requireTenantContext(["ADMIN", "DIRECTOR"]) + a fresh isAcademyInTenantScope
   // check). Code regeneration has no role restriction (spec §4.1), so it's
   // shown to any staff session.
-  const canEdit = session.role === "ADMIN" || session.role === "DIRECTOR";
+  const canEdit = context.organizationRole === "ADMIN" || context.organizationRole === "DIRECTOR";
+
+  // Promociones card: the manual-correction form's rank dropdown. Only
+  // fetched for a session that can actually act (canEdit) — INSTRUCTOR/
+  // STUDENT sessions never render the form at all, so this query would be
+  // pure waste for them.
+  const rankOptions = canEdit
+    ? await prisma.beltRank.findMany({
+        where: { organizationId: context.organizationId, track: student.track },
+        orderBy: { order: "asc" },
+        select: { id: true, code: true, order: true },
+      })
+    : [];
 
   // `recordPayment` re-checks ADMIN/DIRECTOR + plan-academy scope itself —
   // this fetch just avoids the extra query/render when the form won't be
@@ -94,6 +120,35 @@ export default async function StudentDetailPage({
     return formatMonthYear(year, month, locale);
   }
 
+  // MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 2d: MANUAL mode has no engine
+  // target to show ("at the coach's discretion") — the card's own vocabulary
+  // adds a fourth display-only value the engine itself never produces.
+  const cardNextTarget = summary.mode === "MANUAL" ? "MANUAL_DISPLAY" : summary.nextTarget;
+  const dueDateFormatted = formatTimestampInAcademyZone(summary.dueDate, locale);
+  // Phase 3a rev 19: labels are per-organization data on the rank row —
+  // resolved HERE (this page already has the viewer's locale) rather than
+  // inside any client component, which never translates a code itself.
+  const currentBeltLabel = locale === "es" ? student.currentRank.labelEs : student.currentRank.labelEn;
+  const currentBeltVisual = {
+    primaryColor: student.currentRank.primaryColor,
+    centerStripeColor: student.currentRank.centerStripeColor,
+    barColor: student.currentRank.barColor,
+    stripeColors: student.currentRank.stripeColors,
+    maxStripes: student.currentRank.maxStripes,
+    visibleStripeSlots: student.currentRank.visibleStripeSlots,
+  };
+  const promocionesHistory: PromocionesHistoryRow[] = promotionHistory.map((promotion) => ({
+    id: promotion.id,
+    fromBeltLabel: locale === "es" ? promotion.fromBeltLabelEs : promotion.fromBeltLabelEn,
+    fromStripes: promotion.fromStripes,
+    toBeltLabel: locale === "es" ? promotion.toBeltLabelEs : promotion.toBeltLabelEn,
+    toStripes: promotion.toStripes,
+    awardedAtFormatted: formatTimestampInAcademyZone(promotion.awardedAt, locale) ?? "—",
+    awardedByName: promotion.awardedByName,
+    source: promotion.source,
+    notes: promotion.notes,
+  }));
+
   return (
     <main className="flex flex-col gap-6 p-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -106,12 +161,32 @@ export default async function StudentDetailPage({
         <Badge variant="outline">{tStatus(student.status)}</Badge>
       </div>
 
-      {/* Read-only. Belt and stripes are NOT editable from this page:
-          changing them is Phase 4's promotion flow, which must also write a
-          `Promotion` row and reset `beltAwardedAt`. A plain field edit would
-          desync rank from promotion history and from the
-          attendance-since-promotion counter Phase 3 derives. */}
-      <BeltGraphic belt={student.currentBelt} stripes={student.currentStripes} />
+      {/* MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 2d — "Awarding from the
+          student detail page." Replaces the old read-only belt graphic +
+          at-belt-summary card + standalone promotion-history card with one
+          component: read-only display for every role, plus (ADMIN/DIRECTOR
+          only) the award button and manual-correction form, both thin
+          wrappers around the SAME `awardPromotion`/`correctPromotion` the
+          dashboard queue and Phase 4's future flows will share. */}
+      <PromocionesCard
+        organizationId={context.organizationId}
+        studentId={student.id}
+        belt={currentBeltVisual}
+        label={currentBeltLabel}
+        currentStripes={student.currentStripes}
+        maxStripes={summary.maxStripes}
+        atBeltCount={summary.atBeltCount}
+        lifetimeCount={summary.lifetimeCount}
+        nextTarget={cardNextTarget}
+        remainingAttendance={summary.remainingAttendance}
+        attendancesPerStripe={summary.attendancesPerStripe}
+        dueDateFormatted={dueDateFormatted}
+        isEligible={summary.isEligible}
+        mode={summary.mode}
+        history={promocionesHistory}
+        canAct={canEdit}
+        rankOptions={rankOptions}
+      />
 
       <Card>
         <CardHeader>
@@ -129,7 +204,7 @@ export default async function StudentDetailPage({
             </div>
             <div>
               <dt className="text-sm text-muted-foreground">{t("create.currentBelt")}</dt>
-              <dd>{tBelt(student.currentBelt)}</dd>
+              <dd>{currentBeltLabel}</dd>
             </div>
             <div>
               <dt className="text-sm text-muted-foreground">{t("create.currentStripes")}</dt>
@@ -163,92 +238,10 @@ export default async function StudentDetailPage({
         </CardContent>
       </Card>
 
-      {/* Task 2's getAtBeltSummary, surfaced here now that it exists — the
-          same figures the kiosk shows a student at check-in time, but for
-          staff reviewing this profile. */}
-      <Card>
-        <CardHeader>
-          <CardTitle>{tDetail("atBeltSummary.heading")}</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <dl className="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2">
-            <div>
-              <dt className="text-sm text-muted-foreground">{tDetail("atBeltSummary.atBeltCount")}</dt>
-              <dd>{summary.atBeltCount}</dd>
-            </div>
-            <div>
-              <dt className="text-sm text-muted-foreground">{tDetail("atBeltSummary.lifetimeCount")}</dt>
-              <dd>{summary.lifetimeCount}</dd>
-            </div>
-            <div>
-              <dt className="text-sm text-muted-foreground">
-                {tDetail("atBeltSummary.remainingToNextStripe")}
-              </dt>
-              <dd>{summary.remainingToNextStripe ?? "—"}</dd>
-            </div>
-            <div>
-              <dt className="text-sm text-muted-foreground">{tDetail("atBeltSummary.examEligible")}</dt>
-              <dd>{summary.examEligible ? tDetail("atBeltSummary.yes") : tDetail("atBeltSummary.no")}</dd>
-            </div>
-          </dl>
-        </CardContent>
-      </Card>
-
-      {/* Real data as of Task 5 — every Promotion row for this student,
-          newest first. The payment-history card below is now real data too
-          (Phase 6 Task 2); only the attendance-history card immediately
-          after it is still a genuine `comingLater` placeholder — this
-          staff-facing attendance ledger view was never in either task's
-          scope (the student's own portal already has one via
-          `getAttendanceHistory`). */}
-      <Card>
-        <CardHeader>
-          <CardTitle>{tDetail("promotionHistory.heading")}</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {promotionHistory.length === 0 ? (
-            <p className="text-muted-foreground">{tDetail("promotionHistory.empty")}</p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-sm">
-                <thead>
-                  <tr className="text-muted-foreground">
-                    <th className="pb-2 pr-4 font-medium">
-                      {tDetail("promotionHistory.columnDate")}
-                    </th>
-                    <th className="pb-2 pr-4 font-medium">
-                      {tDetail("promotionHistory.columnChange")}
-                    </th>
-                    <th className="pb-2 pr-4 font-medium">
-                      {tDetail("promotionHistory.columnBy")}
-                    </th>
-                    <th className="pb-2 font-medium">
-                      {tDetail("promotionHistory.columnNotes")}
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {promotionHistory.map((promotion) => (
-                    <tr key={promotion.id} className="border-t">
-                      <td className="py-2 pr-4 align-top whitespace-nowrap">
-                        {formatTimestampInAcademyZone(promotion.awardedAt, locale)}
-                      </td>
-                      <td className="py-2 pr-4 align-top whitespace-nowrap">
-                        {tBelt(promotion.fromBelt)} {promotion.fromStripes} →{" "}
-                        {tBelt(promotion.toBelt)} {promotion.toStripes}
-                      </td>
-                      <td className="py-2 pr-4 align-top">{promotion.awardedByName}</td>
-                      <td className="py-2 align-top whitespace-pre-wrap">
-                        {promotion.notes ?? "—"}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      {/* Real data as of Task 5 — the attendance-history card immediately
+          below is still a genuine `comingLater` placeholder — this
+          staff-facing attendance ledger view was never in scope (the
+          student's own portal already has one via `getAttendanceHistory`). */}
       <Card>
         <CardHeader>
           <CardTitle>{tDetail("attendanceHistory.heading")}</CardTitle>
@@ -302,25 +295,30 @@ export default async function StudentDetailPage({
         </CardContent>
       </Card>
 
-      <RegenerateCodeButton studentId={student.id} />
+      <RegenerateCodeButton organizationId={context.organizationId} studentId={student.id} />
 
       {/* Any staff role can add an adjustment (spec §3 grants attendance
           marking/correction to INSTRUCTOR too) — deliberately NOT inside the
           canEdit gate below, which is ADMIN/DIRECTOR only. The server-side
           addAttendanceAdjustment is the real enforcement either way. */}
-      <AddAdjustmentForm studentId={student.id} />
+      <AddAdjustmentForm organizationId={context.organizationId} studentId={student.id} />
 
       {canEdit && (
         <div className="flex flex-col gap-4">
           {/* Only a PENDING student can be approved — the server action
               re-asserts that precondition itself; this just avoids offering
               a button that would always fail. */}
-          {student.status === "PENDING" && <ApproveStudentButton studentId={student.id} />}
-          <EditStudentForm student={student} />
+          {student.status === "PENDING" && (
+            <ApproveStudentButton organizationId={context.organizationId} studentId={student.id} />
+          )}
+          <EditStudentForm
+            organizationId={context.organizationId}
+            student={{ ...student, currentBeltLabel }}
+          />
           {/* ADMIN/DIRECTOR only, same as edit/archive above — the real
               enforcement is server-side in recordPayment itself
-              (requireStaffSession(["ADMIN", "DIRECTOR"]) + a fresh
-              isAcademyInScope + plan-academy cross-check). Same shared
+              (requireTenantContext(["ADMIN", "DIRECTOR"]) + a fresh
+              isAcademyInTenantScope + plan-academy cross-check). Same shared
               `RecordPaymentForm` the new `/payments` route uses
               (REDESIGN_BRIEF.md §6.1) — locked to this one student here,
               wrapped in the same <details> toggle this page has always used. */}
@@ -328,6 +326,7 @@ export default async function StudentDetailPage({
             <summary className="cursor-pointer font-medium">{tDetail("recordPayment.toggle")}</summary>
             <div className="mt-4">
               <RecordPaymentForm
+                organizationId={context.organizationId}
                 students={[
                   {
                     id: student.id,
@@ -345,6 +344,7 @@ export default async function StudentDetailPage({
             </div>
           </details>
           <ArchiveStudentButton
+            organizationId={context.organizationId}
             studentId={student.id}
             disabled={student.status === "ARCHIVED"}
           />

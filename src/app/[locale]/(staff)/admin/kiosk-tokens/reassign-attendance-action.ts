@@ -3,8 +3,8 @@
 import { z } from "zod";
 import { revalidatePath } from "next/cache";
 import { getLocale } from "next-intl/server";
-import { prisma } from "@/lib/prisma";
-import { isAcademyInScope, requireStaffSession } from "@/lib/auth/session";
+import { isAcademyInTenantScope, resolveActionContext } from "@/lib/tenant/context";
+import { getScopedDb } from "@/lib/tenant/scoped-client";
 import { reassignAttendance } from "@/lib/kiosk/reassign-attendance";
 import { AttendanceMatchSource } from "@/generated/prisma/client";
 import type { ActionState } from "@/lib/action-state";
@@ -30,29 +30,33 @@ const schema = z.object({
  * academy and that same weekday.
  */
 export async function reassignAttendanceRecord(
+  organizationId: string,
   _prevState: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
-  const session = await requireStaffSession(["ADMIN", "DIRECTOR", "INSTRUCTOR"]);
+  const auth = await resolveActionContext(organizationId, ["ADMIN", "DIRECTOR", "INSTRUCTOR"]);
+  if (!auth.ok) return { error: "notFound" };
+  const context = auth.context;
 
   const parsed = schema.safeParse(Object.fromEntries(formData.entries()));
   if (!parsed.success) {
     return { error: "notFound" };
   }
 
-  const record = await prisma.attendanceRecord.findUnique({
+  const record = await getScopedDb(context).attendanceRecord.findUnique({
     where: { id: parsed.data.attendanceRecordId },
-    select: { academyId: true },
+    select: { academyId: true, organizationId: true },
   });
 
-  if (!record || !isAcademyInScope(session, record.academyId)) {
+  if (!record || !isAcademyInTenantScope(context, record.academyId)) {
     return { error: "notFound" };
   }
 
   const result = await reassignAttendance(parsed.data.attendanceRecordId, parsed.data.classSessionId, {
-    actorUserId: session.userId,
+    actorUserId: context.actorUserId,
     matchSource: AttendanceMatchSource.STAFF_CORRECTED,
     expectedAcademyId: record.academyId,
+    context,
   });
 
   if (!result.ok) {

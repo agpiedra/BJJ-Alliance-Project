@@ -83,6 +83,11 @@
       "submit": "Restablecer",
       "invalidToken": "Este enlace no es válido o ya expiró.",
       "success": "Tu contraseña fue restablecida. Ya puedes iniciar sesión."
+    },
+    "orgUnavailable": {
+      "heading": "Organización no disponible",
+      "body": "Tu organización no está disponible en este momento. Por favor contactá al administrador de tu organización.",
+      "signOut": "Cerrar sesión"
     }
   },
   "dashboard": {
@@ -491,7 +496,11 @@
         "columnDate": "Fecha",
         "columnChange": "Cambio",
         "columnBy": "Otorgada por",
-        "columnNotes": "Notas"
+        "columnSource": "Origen",
+        "columnNotes": "Notas",
+        "sourceMANUAL": "Manual",
+        "sourceAUTO": "Automática",
+        "sourceCORRECTION": "Corrección"
       },
       "attendanceHistory": {
         "heading": "Historial de asistencia"
@@ -567,14 +576,54 @@
         "notFound": "No se pudo aprobar este estudiante.",
         "notPending": "Este estudiante ya no está pendiente de aprobación."
       },
-      "atBeltSummary": {
-        "heading": "Progreso en el cinturón actual",
+      "promociones": {
+        "heading": "Promociones",
         "atBeltCount": "Asistencias en este cinturón",
         "lifetimeCount": "Asistencias totales",
-        "remainingToNextStripe": "Faltan para el siguiente grado",
-        "examEligible": "Elegible para examen",
-        "yes": "Sí",
-        "no": "No"
+        "nextTargetSTRIPE": "Próximo: grado {ordinal}",
+        "nextTargetBELT": "Próximo: examen de cinturón",
+        "nextTargetNONE": "Sin más progresión automática",
+        "nextTargetMANUAL": "Próximo: a discreción del entrenador",
+        "progressAttendance": "{current} / {target} · faltan {remaining}",
+        "progressDueDate": "Próximo grado el {date}",
+        "progressManual": "La promoción queda a discreción del entrenador.",
+        "eligibleNow": "Elegible ahora.",
+        "readOnlyNote": "Solo administradores y directores pueden otorgar o corregir promociones.",
+        "award": {
+          "button": "Otorgar promoción",
+          "confirm": "¿Otorgar esta promoción?",
+          "success": "Promoción otorgada.",
+          "error": {
+            "notFound": "No se encontró este estudiante.",
+            "notActive": "Este estudiante no está activo.",
+            "notEligible": "Este estudiante no es elegible en este momento.",
+            "conflict": "Otra persona ya actualizó a este estudiante. Actualiza la página para ver el estado actual.",
+            "generic": "Ocurrió un error."
+          }
+        },
+        "correction": {
+          "toggle": "Promover / corregir manualmente",
+          "heading": "Promover / corregir manualmente",
+          "warning": "Esto omite la elegibilidad. Úsalo para promover antes de tiempo o corregir un registro equivocado.",
+          "rank": "Cinturón",
+          "stripes": "Grados",
+          "beltAwardedAt": "Ancla de cinturón (deja en blanco para no cambiarla)",
+          "timeAnchorAt": "Ancla de tiempo (deja en blanco para no cambiarla)",
+          "clearTimeAnchor": "Borrar ancla de tiempo",
+          "note": "Motivo (obligatorio)",
+          "submit": "Guardar corrección",
+          "cancel": "Cancelar",
+          "success": "Corrección guardada.",
+          "invalid": "Revisa el formulario, hay errores.",
+          "error": {
+            "notFound": "No se encontró este estudiante.",
+            "notActive": "Este estudiante no está activo.",
+            "invalidTarget": "Esa combinación de cinturón/grado no es válida.",
+            "noteRequired": "El motivo es obligatorio.",
+            "conflict": "Otra persona ya actualizó a este estudiante. Actualiza la página para ver el estado actual.",
+            "generic": "Ocurrió un error."
+          }
+        }
       },
       "adjustment": {
         "toggle": "Agregar ajuste",
@@ -722,6 +771,7 @@
     "alreadyCheckedIn": "Ya marcaste asistencia hoy",
     "noActiveClass": "No hay clase activa",
     "invalidToken": "Este kiosco no está configurado correctamente. Contacta a un administrador.",
+    "orgUnavailable": "El registro de asistencia no está disponible temporalmente. Por favor contactá a tu academia.",
     "networkError": "No se pudo conectar. Intenta de nuevo.",
     "genericError": "Ocurrió un error. Intenta de nuevo.",
     "rateLimited": "Demasiados intentos. Espera un momento.",

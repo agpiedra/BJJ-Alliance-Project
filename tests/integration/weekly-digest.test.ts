@@ -1,12 +1,12 @@
 import "dotenv/config";
+import { getTestPrismaClient } from "../helpers/test-db";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DateTime } from "luxon";
-import { PrismaClient } from "../../src/generated/prisma/client";
-import { PrismaPg } from "@prisma/adapter-pg";
 import { requireEnv } from "../../src/lib/env";
 import { digestLookupSecret, hashSecret } from "../../src/lib/crypto";
 import { toAttendanceDate, ZONE } from "../../src/lib/scheduling/zone";
 import type { ResendClient } from "../../src/lib/notifications/email-channel";
+import { adultRankId } from "../helpers/belt-ranks";
 
 // Mutable state a hoisted `vi.mock` factory (below) reads at call time, so a
 // single test can direct exactly one academy id to fail and one to succeed
@@ -16,7 +16,11 @@ import type { ResendClient } from "../../src/lib/notifications/email-channel";
 // happy-path route test below unaffected (both ids stay `null` for them).
 const digestFailureState = vi.hoisted(() => ({
   failAcademyId: null as string | null,
-  okAcademyId: null as string | null,
+  // A Set, not a single id: the deterministic seed (prisma/seed.ts)
+  // guarantees Escazú and Escalante always exist with real staff users, so
+  // the "processes real academies" test below needs both protected from a
+  // real Resend call, not just one.
+  okAcademyIds: new Set<string>(),
 }));
 
 vi.mock("../../src/lib/notifications/weekly-digest", async (importOriginal) => {
@@ -27,7 +31,7 @@ vi.mock("../../src/lib/notifications/weekly-digest", async (importOriginal) => {
       if (academyId === digestFailureState.failAcademyId) {
         throw new Error("SIMULATED_FAILURE_FOR_TEST");
       }
-      if (academyId === digestFailureState.okAcademyId) {
+      if (digestFailureState.okAcademyIds.has(academyId)) {
         // Succeeds without touching the real DB/email path — resolving
         // staff recipients for real would email every real ADMIN user in
         // the shared dev DB, which this test has no business doing.
@@ -41,8 +45,7 @@ vi.mock("../../src/lib/notifications/weekly-digest", async (importOriginal) => {
 const { sendWeeklyDigestForAcademy } = await import("../../src/lib/notifications/weekly-digest");
 const { GET } = await import("../../src/app/api/cron/weekly-digest/route");
 
-const adapter = new PrismaPg({ connectionString: requireEnv("DATABASE_URL") });
-const prisma = new PrismaClient({ adapter });
+const prisma = getTestPrismaClient();
 const pepper = requireEnv("CODE_PEPPER");
 
 const nowCr = DateTime.now().setZone(ZONE);
@@ -62,7 +65,9 @@ async function cleanup() {
     await prisma.paymentPlan.deleteMany({ where: { id: { in: cleanupPlanIds } } });
   }
   if (cleanupUserIds.length > 0) {
+    await prisma.organizationMembership.deleteMany({ where: { userId: { in: cleanupUserIds } } });
     await prisma.staffAssignment.deleteMany({ where: { userId: { in: cleanupUserIds } } });
+    await prisma.notification.deleteMany({ where: { userId: { in: cleanupUserIds } } });
     await prisma.user.deleteMany({ where: { id: { in: cleanupUserIds } } });
   }
   if (cleanupAcademyIds.length > 0) {
@@ -74,6 +79,16 @@ function suffix() {
   return `${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
 }
 
+// Fixture academies must live inside the real seeded Alliance organization
+// (not a fresh scratch one) so admin-wide, org-unscoped queries elsewhere in
+// the suite (e.g. promotion-queue.test.ts) don't crash resolving a
+// BeltRequirement that only the real org's academies have.
+let allianceOrgIdPromise: Promise<string> | null = null;
+function getAllianceOrganizationId() {
+  allianceOrgIdPromise ??= prisma.organization.findUniqueOrThrow({ where: { slug: "alliance-cr" } }).then((o) => o.id);
+  return allianceOrgIdPromise;
+}
+
 function findCallTo(client: RecordingResendClient, email: string) {
   return client.calls.find((c) => c.to === email);
 }
@@ -81,13 +96,28 @@ function findCallTo(client: RecordingResendClient, email: string) {
 async function makeAcademy(label: string) {
   const s = suffix();
   const academy = await prisma.academy.create({
-    data: { name: `${label} ${s}`, slug: `${label}-${s}`, kioskTokenHash: `${label}-hash-${s}` },
+    data: {
+      name: `${label} ${s}`,
+      slug: `${label}-${s}`,
+      kioskTokenHash: `${label}-hash-${s}`,
+      organizationId: await getAllianceOrganizationId(),
+    },
   });
   cleanupAcademyIds.push(academy.id);
   return academy;
 }
 
-async function makeStaffUser(role: "ADMIN" | "DIRECTOR", label: string, academyId?: string, locale: string = "es") {
+// `resolveStaffRecipients` resolves ADMIN through OrganizationMembership,
+// scoped to the target academy's own organization, not `User.role` globally
+// — every staff fixture needs a real membership row, not just DIRECTOR's
+// StaffAssignment.
+async function makeStaffUser(
+  role: "ADMIN" | "DIRECTOR",
+  label: string,
+  organizationId: string,
+  academyId?: string,
+  locale: string = "es",
+) {
   const s = suffix();
   const user = await prisma.user.create({
     data: {
@@ -98,21 +128,26 @@ async function makeStaffUser(role: "ADMIN" | "DIRECTOR", label: string, academyI
     },
   });
   cleanupUserIds.push(user.id);
+  await prisma.organizationMembership.create({ data: { userId: user.id, organizationId, role } });
   if (academyId && role !== "ADMIN") {
-    await prisma.staffAssignment.create({ data: { userId: user.id, academyId, role: "DIRECTOR" } });
+    await prisma.staffAssignment.create({
+      data: { userId: user.id, academyId, organizationId, role: "DIRECTOR" },
+    });
   }
   return user;
 }
 
-async function makeStudent(academyId: string) {
+async function makeStudent(academyId: string, organizationId: string) {
   const s = suffix();
   const student = await prisma.student.create({
     data: {
       homeAcademyId: academyId,
+      organizationId,
       firstName: "WeeklyDigestTest",
       lastName: `Student-${s}`,
       phone: "88880000",
       email: `weekly-digest-${s}@example.com`,
+      currentRankId: adultRankId("WHITE"),
       status: "ACTIVE",
       joinedAt: nowCr.minus({ years: 1 }).toJSDate(),
       codeHash: digestLookupSecret(`weekly-digest-${s}`, pepper),
@@ -122,12 +157,13 @@ async function makeStudent(academyId: string) {
   return student;
 }
 
-async function makeCheckin(studentId: string, academyId: string, occurredAt: DateTime) {
+async function makeCheckin(studentId: string, academyId: string, organizationId: string, occurredAt: DateTime) {
   const at = occurredAt.toJSDate();
   await prisma.attendanceRecord.create({
     data: {
       studentId,
       academyId,
+      organizationId,
       occurredAt: at,
       date: toAttendanceDate(at),
       type: "CHECKIN",
@@ -137,19 +173,26 @@ async function makeCheckin(studentId: string, academyId: string, occurredAt: Dat
   });
 }
 
-async function makePlan(academyId: string) {
+async function makePlan(academyId: string, organizationId: string) {
   const plan = await prisma.paymentPlan.create({
-    data: { academyId, name: `Weekly Digest Plan ${suffix()}` },
+    data: { academyId, organizationId, name: `Weekly Digest Plan ${suffix()}` },
   });
   cleanupPlanIds.push(plan.id);
   return plan;
 }
 
-async function makePaidCurrentMonth(studentId: string, academyId: string, planId: string, recordedById: string) {
+async function makePaidCurrentMonth(
+  studentId: string,
+  academyId: string,
+  organizationId: string,
+  planId: string,
+  recordedById: string,
+) {
   await prisma.paymentPeriod.create({
     data: {
       studentId,
       academyId,
+      organizationId,
       planId,
       recordedById,
       year: nowCr.year,
@@ -185,49 +228,49 @@ describe("sendWeeklyDigestForAcademy", () => {
   it("computes correct attendance/inactive/overdue counts, emails only that academy's recipients, and never writes a Notification row", async () => {
     const academyA = await makeAcademy("weekly-digest-a");
     const academyB = await makeAcademy("weekly-digest-b");
-    const plan = await makePlan(academyA.id);
-    const planB = await makePlan(academyB.id);
+    const plan = await makePlan(academyA.id, academyA.organizationId);
+    const planB = await makePlan(academyB.id, academyB.organizationId);
 
-    const admin = await makeStaffUser("ADMIN", "wd-admin");
-    const directorA = await makeStaffUser("DIRECTOR", "wd-director-a", academyA.id);
-    const directorB = await makeStaffUser("DIRECTOR", "wd-director-b", academyB.id);
+    const admin = await makeStaffUser("ADMIN", "wd-admin", academyA.organizationId);
+    const directorA = await makeStaffUser("DIRECTOR", "wd-director-a", academyA.organizationId, academyA.id);
+    const directorB = await makeStaffUser("DIRECTOR", "wd-director-b", academyB.organizationId, academyB.id);
 
     // A1/A2: inside the trailing-7-day window, paid this month (not overdue).
-    const a1 = await makeStudent(academyA.id);
-    await makeCheckin(a1.id, academyA.id, nowCr.minus({ days: 1 }));
-    await makePaidCurrentMonth(a1.id, academyA.id, plan.id, admin.id);
+    const a1 = await makeStudent(academyA.id, academyA.organizationId);
+    await makeCheckin(a1.id, academyA.id, academyA.organizationId, nowCr.minus({ days: 1 }));
+    await makePaidCurrentMonth(a1.id, academyA.id, academyA.organizationId, plan.id, admin.id);
 
-    const a2 = await makeStudent(academyA.id);
-    await makeCheckin(a2.id, academyA.id, nowCr.minus({ days: 5 }));
-    await makePaidCurrentMonth(a2.id, academyA.id, plan.id, admin.id);
+    const a2 = await makeStudent(academyA.id, academyA.organizationId);
+    await makeCheckin(a2.id, academyA.id, academyA.organizationId, nowCr.minus({ days: 5 }));
+    await makePaidCurrentMonth(a2.id, academyA.id, academyA.organizationId, plan.id, admin.id);
 
     // A3: OUTSIDE the trailing-7-day window (9 days ago) — must NOT count
     // toward attendance, and 9 days is under the 30-day inactive threshold
     // so it must not count as inactive either. Paid this month.
-    const a3 = await makeStudent(academyA.id);
-    await makeCheckin(a3.id, academyA.id, nowCr.minus({ days: 9 }));
-    await makePaidCurrentMonth(a3.id, academyA.id, plan.id, admin.id);
+    const a3 = await makeStudent(academyA.id, academyA.organizationId);
+    await makeCheckin(a3.id, academyA.id, academyA.organizationId, nowCr.minus({ days: 9 }));
+    await makePaidCurrentMonth(a3.id, academyA.id, academyA.organizationId, plan.id, admin.id);
 
     // A4: last attendance 45 days ago — outside the attendance window, and
     // squarely in the retention list's 30+ "inactive" bucket. Paid this
     // month so it doesn't also count as overdue.
-    const a4 = await makeStudent(academyA.id);
-    await makeCheckin(a4.id, academyA.id, nowCr.minus({ days: 45 }));
-    await makePaidCurrentMonth(a4.id, academyA.id, plan.id, admin.id);
+    const a4 = await makeStudent(academyA.id, academyA.organizationId);
+    await makeCheckin(a4.id, academyA.id, academyA.organizationId, nowCr.minus({ days: 45 }));
+    await makePaidCurrentMonth(a4.id, academyA.id, academyA.organizationId, plan.id, admin.id);
 
     // A5/A6/A7: recent attendance (inside window, not inactive), but no
     // PaymentPeriod row for the current month at all — overdue.
-    const a5 = await makeStudent(academyA.id);
-    await makeCheckin(a5.id, academyA.id, nowCr.minus({ days: 2 }));
-    const a6 = await makeStudent(academyA.id);
-    await makeCheckin(a6.id, academyA.id, nowCr.minus({ days: 3 }));
-    const a7 = await makeStudent(academyA.id);
-    await makeCheckin(a7.id, academyA.id, nowCr.minus({ days: 4 }));
+    const a5 = await makeStudent(academyA.id, academyA.organizationId);
+    await makeCheckin(a5.id, academyA.id, academyA.organizationId, nowCr.minus({ days: 2 }));
+    const a6 = await makeStudent(academyA.id, academyA.organizationId);
+    await makeCheckin(a6.id, academyA.id, academyA.organizationId, nowCr.minus({ days: 3 }));
+    const a7 = await makeStudent(academyA.id, academyA.organizationId);
+    await makeCheckin(a7.id, academyA.id, academyA.organizationId, nowCr.minus({ days: 4 }));
 
     // Academy B: one overdue student, to prove academy A's digest doesn't
     // leak counts from another academy.
-    const b1 = await makeStudent(academyB.id);
-    await makeCheckin(b1.id, academyB.id, nowCr.minus({ days: 1 }));
+    const b1 = await makeStudent(academyB.id, academyB.organizationId);
+    await makeCheckin(b1.id, academyB.id, academyB.organizationId, nowCr.minus({ days: 1 }));
     void planB;
 
     const notificationCountBefore = await prisma.notification.count({ where: { type: "WEEKLY_DIGEST" } });
@@ -282,8 +325,8 @@ describe("sendWeeklyDigestForAcademy", () => {
     // rendered per-recipient locale correctly before this fix — this proves
     // that behavior survived the refactor onto the shared helper.
     const academy = await makeAcademy("weekly-digest-locale");
-    const enAdmin = await makeStaffUser("ADMIN", "wd-locale-admin", undefined, "en");
-    const esDirector = await makeStaffUser("DIRECTOR", "wd-locale-director", academy.id, "es");
+    const enAdmin = await makeStaffUser("ADMIN", "wd-locale-admin", academy.organizationId, undefined, "en");
+    const esDirector = await makeStaffUser("DIRECTOR", "wd-locale-director", academy.organizationId, academy.id, "es");
 
     const client = new RecordingResendClient();
     await sendWeeklyDigestForAcademy(academy.id, client);
@@ -305,7 +348,7 @@ describe("sendWeeklyDigestForAcademy", () => {
     // dispatchToRecipients now gives it dispatchNotification's existing
     // failure-observability for free.
     const academy = await makeAcademy("weekly-digest-fail-log");
-    const admin = await makeStaffUser("ADMIN", "wd-faillog-admin", undefined, "en");
+    const admin = await makeStaffUser("ADMIN", "wd-faillog-admin", academy.organizationId, undefined, "en");
 
     const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
@@ -345,22 +388,32 @@ describe("GET /api/cron/weekly-digest", () => {
   });
 
   it("processes real academies and returns a well-shaped response", async () => {
-    // A real Academy with no kioskTokenHash conflicts and nothing else
-    // seeded — sendWeeklyDigestForAcademy still succeeds for it (zero counts,
-    // zero recipients means zero emails sent, but no throw), proving this
-    // route iterates every real Academy row rather than a hardcoded list.
+    // The deterministic seed guarantees Escazú and Escalante always exist
+    // with real staff users, so resolving their recipients for real would
+    // email them via the real Resend API — mocked as no-ops here, same as
+    // the failure-isolation test below, so this test can assert the route's
+    // shape without depending on RESEND_API_KEY being a real credential.
     // NOTE: this only exercises the happy path against whatever academies
     // happen to exist — it does not prove failure isolation. See the next
     // test for that.
-    const request = new Request("http://localhost/api/cron/weekly-digest", {
-      headers: { authorization: "Bearer test-cron-secret" },
-    });
-    const response = await GET(request);
-    expect(response.status).toBe(200);
-    const body = await response.json();
-    expect(body.ok).toBe(true);
-    expect(typeof body.processed).toBe("number");
-    expect(Array.isArray(body.errors)).toBe(true);
+    const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+    const escalante = await prisma.academy.findUniqueOrThrow({ where: { slug: "escalante" } });
+    digestFailureState.okAcademyIds.add(escazu.id);
+    digestFailureState.okAcademyIds.add(escalante.id);
+
+    try {
+      const request = new Request("http://localhost/api/cron/weekly-digest", {
+        headers: { authorization: "Bearer test-cron-secret" },
+      });
+      const response = await GET(request);
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.ok).toBe(true);
+      expect(typeof body.processed).toBe("number");
+      expect(Array.isArray(body.errors)).toBe(true);
+    } finally {
+      digestFailureState.okAcademyIds.clear();
+    }
   });
 
   it("one academy's failure doesn't block others: a rejecting academy is reported as an error while a succeeding one still gets processed", async () => {
@@ -368,7 +421,7 @@ describe("GET /api/cron/weekly-digest", () => {
     const academyOk = await makeAcademy("weekly-digest-cron-ok");
 
     digestFailureState.failAcademyId = academyFail.id;
-    digestFailureState.okAcademyId = academyOk.id;
+    digestFailureState.okAcademyIds.add(academyOk.id);
 
     try {
       const request = new Request("http://localhost/api/cron/weekly-digest", {
@@ -403,7 +456,7 @@ describe("GET /api/cron/weekly-digest", () => {
       expect(okWasAttempted).toBe(true);
     } finally {
       digestFailureState.failAcademyId = null;
-      digestFailureState.okAcademyId = null;
+      digestFailureState.okAcademyIds.clear();
     }
   });
 });

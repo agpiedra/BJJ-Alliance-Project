@@ -1,28 +1,32 @@
 import "dotenv/config";
+import { getTestPrismaClient } from "../helpers/test-db";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { PrismaClient } from "../../src/generated/prisma/client";
-import { PrismaPg } from "@prisma/adapter-pg";
 import { requireEnv } from "../../src/lib/env";
 import { digestLookupSecret, hashSecret } from "../../src/lib/crypto";
 import { toAttendanceDate } from "../../src/lib/scheduling/zone";
+import type { TenantContext } from "../../src/lib/tenant/types";
+import { adultRankId } from "../helpers/belt-ranks";
+import { ALLIANCE_ATTENDANCE_CONFIG } from "../helpers/promotion-config";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 // `getStudentForStaff` / `updateStudent` / `archiveStudent` /
 // `approveStudent` / `regenerateStudentCode` all reach
-// `requireStaffSession()` -> `getStaffSession()` -> next-auth's `auth()`,
+// `requireTenantContext()` -> `getTenantContext()` -> next-auth's `auth()`,
 // which needs a real HTTP request's cookies to resolve a JWT session —
 // unavailable in a plain integration test. Mocking `@/auth`'s `auth()` lets
 // these Server Actions be exercised directly (matching this repo's existing
 // pattern of testing action-shaped logic against the real DB) while still
-// using real `User` / `StaffAssignment` rows underneath so
-// `getStaffSession()`'s own DB queries run unmodified.
+// using real `User` / `OrganizationMembership` / `StaffAssignment` rows
+// underneath so `getTenantContext()`'s own DB queries run unmodified.
 //
 // NOTE: every session below must name a user id that genuinely exists and is
-// `active`, because `getStaffSession()` now re-reads `role`/`active` from the
-// DB on every call and fails closed on a mismatch — a made-up id no longer
-// resolves to a session at all.
-let currentSession: { user: { id: string; role: string } } | null = null;
+// `active`, and (for anything that drives an action, not the standalone
+// `getStaffSession()` tests below) an `activeOrganizationId` matching a real
+// `OrganizationMembership` row — `getTenantContext()`/`getStaffSession()`
+// both re-read from the DB on every call and fail closed on a mismatch or
+// absence.
+let currentSession: { user: { id: string; role: string } | null; activeOrganizationId?: string } | null = null;
 
 vi.mock("@/auth", () => ({
   auth: () => Promise.resolve(currentSession),
@@ -36,10 +40,25 @@ const { addAttendanceAdjustment } = await import(
   "../../src/app/[locale]/(staff)/students/[id]/adjustment-actions"
 );
 const { getStaffSession } = await import("../../src/lib/auth/session");
+const { getTenantContext } = await import("../../src/lib/tenant/context");
 const { getAtBeltSummary } = await import("../../src/lib/students/attendance-summary");
 
-const adapter = new PrismaPg({ connectionString: requireEnv("DATABASE_URL") });
-const prisma = new PrismaClient({ adapter });
+const prisma = getTestPrismaClient();
+
+let allianceOrgIdPromise: Promise<string> | null = null;
+function getAllianceOrganizationId() {
+  allianceOrgIdPromise ??= prisma.organization.findUniqueOrThrow({ where: { slug: "alliance-cr" } }).then((o) => o.id);
+  return allianceOrgIdPromise;
+}
+
+/** Resolves the current mocked session into a real `TenantContext`, asserting it resolved successfully — the same DB-backed resolution `requireTenantContext()` itself does. */
+async function resolveContext(): Promise<TenantContext> {
+  const result = await getTenantContext();
+  if (result.status !== "OK") {
+    throw new Error(`Expected tenant context to resolve OK, got ${result.status}`);
+  }
+  return result.context;
+}
 const pepper = requireEnv("CODE_PEPPER");
 
 /** A sha256 hex digest — the exact shape `Student.codeHash` takes. */
@@ -75,7 +94,9 @@ async function cleanup() {
     await prisma.student.deleteMany({ where: { id: { in: cleanupStudentIds } } });
   }
   if (cleanupUserIds.length > 0) {
+    await prisma.organizationMembership.deleteMany({ where: { userId: { in: cleanupUserIds } } });
     await prisma.staffAssignment.deleteMany({ where: { userId: { in: cleanupUserIds } } });
+    await prisma.notification.deleteMany({ where: { userId: { in: cleanupUserIds } } });
     await prisma.user.deleteMany({ where: { id: { in: cleanupUserIds } } });
   }
 }
@@ -94,16 +115,34 @@ async function makeStaffUser(
     },
   });
   cleanupUserIds.push(user.id);
+
+  const organizationId = academyId
+    ? (await prisma.academy.findUniqueOrThrow({ where: { id: academyId }, select: { organizationId: true } }))
+        .organizationId
+    : await getAllianceOrganizationId();
+
+  // requireTenantContext() (which every action under test now calls
+  // internally) resolves role from a real OrganizationMembership row, not
+  // from User.role — without this, every action call below would resolve
+  // NO_MEMBERSHIP regardless of the mocked session's activeOrganizationId.
+  await prisma.organizationMembership.create({ data: { userId: user.id, organizationId, role } });
+
   if (academyId && role !== "ADMIN") {
     await prisma.staffAssignment.create({
-      data: { userId: user.id, academyId, role: role === "DIRECTOR" ? "DIRECTOR" : "INSTRUCTOR" },
+      data: {
+        userId: user.id,
+        academyId,
+        organizationId,
+        role: role === "DIRECTOR" ? "DIRECTOR" : "INSTRUCTOR",
+      },
     });
   }
-  return user;
+  return { ...user, organizationId };
 }
 
 async function makeStudent(
   academyId: string,
+  organizationId: string,
   overrides: Partial<{
     status: "PENDING" | "ACTIVE" | "INACTIVE" | "ARCHIVED";
     lastName: string;
@@ -116,11 +155,12 @@ async function makeStudent(
   const student = await prisma.student.create({
     data: {
       homeAcademyId: academyId,
+      organizationId,
       firstName: "DetailTest",
       lastName: overrides.lastName ?? "Original",
       phone: "88880099",
       email: `detail-test-${suffix}@example.com`,
-      currentBelt: overrides.currentBelt ?? "PURPLE",
+      currentRankId: adultRankId(overrides.currentBelt ?? "PURPLE"),
       currentStripes: overrides.currentStripes ?? 1,
       codeHash: digestLookupSecret(`detail-test-${suffix}`, pepper),
       ...(overrides.status ? { status: overrides.status } : {}),
@@ -134,12 +174,19 @@ async function makeStudent(
 /** Writes `count` real CHECKIN rows, one per day starting at `startAt` — the
  * same shape `tests/integration/attendance-summary.test.ts` uses to build up
  * atBeltCount toward a stripe threshold. */
-async function addCheckins(studentId: string, academyId: string, count: number, startAt: Date) {
+async function addCheckins(
+  studentId: string,
+  academyId: string,
+  organizationId: string,
+  count: number,
+  startAt: Date,
+) {
   const rows = Array.from({ length: count }, (_, i) => {
     const occurredAt = new Date(startAt.getTime() + i * DAY_MS);
     return {
       studentId,
       academyId,
+      organizationId,
       occurredAt,
       date: toAttendanceDate(occurredAt),
       type: "CHECKIN" as const,
@@ -178,24 +225,23 @@ describe("student detail actions", () => {
 
     const admin = await makeStaffUser("ADMIN", "detail-test-admin");
 
-    const student = await makeStudent(escazu.id);
+    const student = await makeStudent(escazu.id, escazu.organizationId);
     const originalCodeHash = student.codeHash;
 
     // --- getStudentForStaff: out-of-scope sees null, ADMIN sees the row ---
-    currentSession = { user: { id: outOfScopeDirector.id, role: "DIRECTOR" } };
-    const outOfScopeSession = await getStaffSession();
-    expect(outOfScopeSession).not.toBeNull();
-    await expect(getStudentForStaff(outOfScopeSession!, student.id)).resolves.toBeNull();
+    currentSession = { user: { id: outOfScopeDirector.id, role: "DIRECTOR" }, activeOrganizationId: outOfScopeDirector.organizationId };
+    const outOfScopeContext = await resolveContext();
+    await expect(getStudentForStaff(outOfScopeContext, student.id)).resolves.toBeNull();
 
-    currentSession = { user: { id: admin.id, role: "ADMIN" } };
-    const adminSession = await getStaffSession();
-    expect(adminSession).not.toBeNull();
-    const found = await getStudentForStaff(adminSession!, student.id);
+    currentSession = { user: { id: admin.id, role: "ADMIN" }, activeOrganizationId: admin.organizationId };
+    const adminContext = await resolveContext();
+    const found = await getStudentForStaff(adminContext, student.id);
     expect(found?.id).toBe(student.id);
 
     // --- updateStudent: out-of-scope DIRECTOR is rejected, row untouched ---
-    currentSession = { user: { id: outOfScopeDirector.id, role: "DIRECTOR" } };
+    currentSession = { user: { id: outOfScopeDirector.id, role: "DIRECTOR" }, activeOrganizationId: outOfScopeDirector.organizationId };
     const rejectedUpdate = await updateStudent(
+      outOfScopeDirector.organizationId,
       {},
       formData({
         studentId: student.id,
@@ -212,8 +258,9 @@ describe("student detail actions", () => {
     expect(await auditRowsFor(student.id, "student.update")).toHaveLength(0);
 
     // --- updateStudent: ADMIN (in scope) succeeds ---
-    currentSession = { user: { id: admin.id, role: "ADMIN" } };
+    currentSession = { user: { id: admin.id, role: "ADMIN" }, activeOrganizationId: admin.organizationId };
     const acceptedUpdate = await updateStudent(
+      admin.organizationId,
       {},
       formData({
         studentId: student.id,
@@ -232,6 +279,7 @@ describe("student detail actions", () => {
     // hand-crafted payload naming them is ignored, since the zod schema
     // strips unknown keys and the update data object never reads them.
     const beltTamper = await updateStudent(
+      admin.organizationId,
       {},
       formData({
         studentId: student.id,
@@ -244,8 +292,11 @@ describe("student detail actions", () => {
       }),
     );
     expect(beltTamper.ok).toBe(true);
-    const afterBeltTamper = await prisma.student.findUniqueOrThrow({ where: { id: student.id } });
-    expect(afterBeltTamper.currentBelt).toBe("PURPLE");
+    const afterBeltTamper = await prisma.student.findUniqueOrThrow({
+      where: { id: student.id },
+      include: { currentRank: { select: { code: true } } },
+    });
+    expect(afterBeltTamper.currentRank.code).toBe("PURPLE");
     expect(afterBeltTamper.currentStripes).toBe(1);
 
     // --- the successful updates each wrote an audit row ---
@@ -263,21 +314,33 @@ describe("student detail actions", () => {
     expect(JSON.stringify(firstUpdateAudit.after)).not.toMatch(SHA256_HEX);
 
     // --- archiveStudent: out-of-scope DIRECTOR is rejected, status untouched ---
-    currentSession = { user: { id: outOfScopeDirector.id, role: "DIRECTOR" } };
-    const rejectedArchive = await archiveStudent({}, formData({ studentId: student.id }));
+    currentSession = { user: { id: outOfScopeDirector.id, role: "DIRECTOR" }, activeOrganizationId: outOfScopeDirector.organizationId };
+    const rejectedArchive = await archiveStudent(
+      outOfScopeDirector.organizationId,
+      {},
+      formData({ studentId: student.id }),
+    );
     expect(rejectedArchive.error).toBe("notFound");
     const afterRejectedArchive = await prisma.student.findUniqueOrThrow({ where: { id: student.id } });
     expect(afterRejectedArchive.status).not.toBe("ARCHIVED");
 
     // --- regenerateStudentCode: out-of-scope DIRECTOR is rejected, codeHash untouched ---
-    const rejectedRegenerate = await regenerateStudentCode({}, formData({ studentId: student.id }));
+    const rejectedRegenerate = await regenerateStudentCode(
+      outOfScopeDirector.organizationId,
+      {},
+      formData({ studentId: student.id }),
+    );
     expect(rejectedRegenerate.error).toBe("notFound");
     const afterRejectedRegenerate = await prisma.student.findUniqueOrThrow({ where: { id: student.id } });
     expect(afterRejectedRegenerate.codeHash).toBe(originalCodeHash);
 
     // --- regenerateStudentCode: any in-scope staff role (INSTRUCTOR here) succeeds ---
-    currentSession = { user: { id: inScopeInstructor.id, role: "INSTRUCTOR" } };
-    const acceptedRegenerate = await regenerateStudentCode({}, formData({ studentId: student.id }));
+    currentSession = { user: { id: inScopeInstructor.id, role: "INSTRUCTOR" }, activeOrganizationId: inScopeInstructor.organizationId };
+    const acceptedRegenerate = await regenerateStudentCode(
+      inScopeInstructor.organizationId,
+      {},
+      formData({ studentId: student.id }),
+    );
     expect(acceptedRegenerate.ok).toBe(true);
     expect(acceptedRegenerate.code).toMatch(/^\d{4}$/);
     const afterAcceptedRegenerate = await prisma.student.findUniqueOrThrow({ where: { id: student.id } });
@@ -303,8 +366,8 @@ describe("student detail actions", () => {
     expect(regeneratePayload).not.toContain(acceptedRegenerate.code!);
 
     // --- archiveStudent: ADMIN (in scope) succeeds — status flips, row still exists ---
-    currentSession = { user: { id: admin.id, role: "ADMIN" } };
-    const acceptedArchive = await archiveStudent({}, formData({ studentId: student.id }));
+    currentSession = { user: { id: admin.id, role: "ADMIN" }, activeOrganizationId: admin.organizationId };
+    const acceptedArchive = await archiveStudent(admin.organizationId, {}, formData({ studentId: student.id }));
     expect(acceptedArchive.ok).toBe(true);
     const afterAcceptedArchive = await prisma.student.findUnique({ where: { id: student.id } });
     expect(afterAcceptedArchive).not.toBeNull();
@@ -323,10 +386,10 @@ describe("student detail actions", () => {
   it("approveStudent flips PENDING -> ACTIVE, audits it, and refuses any other starting status", async () => {
     const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
     const admin = await makeStaffUser("ADMIN", "approve-test-admin");
-    const pendingStudent = await makeStudent(escazu.id, { status: "PENDING", lastName: "Pending" });
+    const pendingStudent = await makeStudent(escazu.id, escazu.organizationId, { status: "PENDING", lastName: "Pending" });
 
-    currentSession = { user: { id: admin.id, role: "ADMIN" } };
-    const approved = await approveStudent({}, formData({ studentId: pendingStudent.id }));
+    currentSession = { user: { id: admin.id, role: "ADMIN" }, activeOrganizationId: admin.organizationId };
+    const approved = await approveStudent(admin.organizationId, {}, formData({ studentId: pendingStudent.id }));
     expect(approved.ok).toBe(true);
 
     const afterApproval = await prisma.student.findUniqueOrThrow({ where: { id: pendingStudent.id } });
@@ -342,13 +405,17 @@ describe("student detail actions", () => {
     expect(approveAudits[0].after).toMatchObject({ status: "ACTIVE" });
 
     // Approving again (now ACTIVE) is refused, and writes no second audit row.
-    const secondApproval = await approveStudent({}, formData({ studentId: pendingStudent.id }));
+    const secondApproval = await approveStudent(admin.organizationId, {}, formData({ studentId: pendingStudent.id }));
     expect(secondApproval.error).toBe("notPending");
     expect(await auditRowsFor(pendingStudent.id, "student.approve")).toHaveLength(1);
 
     // An ARCHIVED student can't be quietly resurrected through this path.
-    const archivedStudent = await makeStudent(escazu.id, { status: "ARCHIVED", lastName: "Archived" });
-    const archivedApproval = await approveStudent({}, formData({ studentId: archivedStudent.id }));
+    const archivedStudent = await makeStudent(escazu.id, escazu.organizationId, { status: "ARCHIVED", lastName: "Archived" });
+    const archivedApproval = await approveStudent(
+      admin.organizationId,
+      {},
+      formData({ studentId: archivedStudent.id }),
+    );
     expect(archivedApproval.error).toBe("notPending");
     expect(
       (await prisma.student.findUniqueOrThrow({ where: { id: archivedStudent.id } })).status,
@@ -359,10 +426,10 @@ describe("student detail actions", () => {
     const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
     const escalante = await prisma.academy.findUniqueOrThrow({ where: { slug: "escalante" } });
     const director = await makeStaffUser("DIRECTOR", "approve-scope-director", escalante.id);
-    const student = await makeStudent(escazu.id, { status: "PENDING", lastName: "OtherAcademy" });
+    const student = await makeStudent(escazu.id, escazu.organizationId, { status: "PENDING", lastName: "OtherAcademy" });
 
-    currentSession = { user: { id: director.id, role: "DIRECTOR" } };
-    const rejected = await approveStudent({}, formData({ studentId: student.id }));
+    currentSession = { user: { id: director.id, role: "DIRECTOR" }, activeOrganizationId: director.organizationId };
+    const rejected = await approveStudent(director.organizationId, {}, formData({ studentId: student.id }));
     expect(rejected.error).toBe("notFound");
     expect((await prisma.student.findUniqueOrThrow({ where: { id: student.id } })).status).toBe(
       "PENDING",
@@ -379,12 +446,13 @@ describe("student detail actions", () => {
     it("rejects updateStudent, archiveStudent and approveStudent with FORBIDDEN, mutating nothing", async () => {
       const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
       const instructor = await makeStaffUser("INSTRUCTOR", "role-reject-instructor", escazu.id);
-      const student = await makeStudent(escazu.id, { status: "PENDING", lastName: "RoleReject" });
+      const student = await makeStudent(escazu.id, escazu.organizationId, { status: "PENDING", lastName: "RoleReject" });
 
-      currentSession = { user: { id: instructor.id, role: "INSTRUCTOR" } };
+      currentSession = { user: { id: instructor.id, role: "INSTRUCTOR" }, activeOrganizationId: instructor.organizationId };
 
       await expect(
         updateStudent(
+          instructor.organizationId,
           {},
           formData({
             studentId: student.id,
@@ -396,13 +464,13 @@ describe("student detail actions", () => {
         ),
       ).rejects.toThrow("FORBIDDEN");
 
-      await expect(archiveStudent({}, formData({ studentId: student.id }))).rejects.toThrow(
-        "FORBIDDEN",
-      );
+      await expect(
+        archiveStudent(instructor.organizationId, {}, formData({ studentId: student.id })),
+      ).rejects.toThrow("FORBIDDEN");
 
-      await expect(approveStudent({}, formData({ studentId: student.id }))).rejects.toThrow(
-        "FORBIDDEN",
-      );
+      await expect(
+        approveStudent(instructor.organizationId, {}, formData({ studentId: student.id })),
+      ).rejects.toThrow("FORBIDDEN");
 
       const untouched = await prisma.student.findUniqueOrThrow({ where: { id: student.id } });
       expect(untouched.firstName).toBe("DetailTest");
@@ -410,6 +478,67 @@ describe("student detail actions", () => {
       expect(untouched.status).toBe("PENDING");
       expect(await prisma.auditLog.count({ where: { entityId: student.id } })).toBe(0);
     });
+  });
+
+  // 1f-4: the two-tab cross-organization vulnerability. A real ADMIN
+  // membership in their own org must NOT help them act on an
+  // `organizationId` their current tab doesn't name — `resolveActionContext`
+  // must refuse each call with the action's own generic shape, write an
+  // `organization.accessRefused` AuditLog row server-side, and leave the
+  // student untouched, while the SAME session acting on their own org still
+  // succeeds normally.
+  it("1f-4: an ADMIN's real membership doesn't help against an organizationId their tab doesn't belong to — updateStudent, archiveStudent, approveStudent and regenerateStudentCode all refuse, audit, and mutate nothing; the same admin acting on their own org still succeeds", async () => {
+    const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+    const admin = await makeStaffUser("ADMIN", "crossorg-detail-admin");
+    const student = await makeStudent(escazu.id, escazu.organizationId, { status: "PENDING", lastName: "CrossOrg" });
+
+    const otherOrg = await prisma.organization.create({
+      data: { slug: `detail-crossorg-${Date.now()}`, name: "Cross-Org Test Org", status: "ACTIVE" },
+    });
+
+    try {
+      currentSession = { user: { id: admin.id, role: "ADMIN" }, activeOrganizationId: admin.organizationId };
+
+      const rejectedUpdate = await updateStudent(
+        otherOrg.id,
+        {},
+        formData({
+          studentId: student.id,
+          firstName: "Hacked",
+          lastName: "ShouldNotLand",
+          phone: "00000000",
+          email: `crossorg-hacked-${student.id}@example.com`,
+        }),
+      );
+      expect(rejectedUpdate.error).toBe("notFound");
+
+      const rejectedArchive = await archiveStudent(otherOrg.id, {}, formData({ studentId: student.id }));
+      expect(rejectedArchive.error).toBe("notFound");
+
+      const rejectedApprove = await approveStudent(otherOrg.id, {}, formData({ studentId: student.id }));
+      expect(rejectedApprove.error).toBe("notFound");
+
+      const rejectedRegenerate = await regenerateStudentCode(otherOrg.id, {}, formData({ studentId: student.id }));
+      expect(rejectedRegenerate.error).toBe("notFound");
+
+      const untouched = await prisma.student.findUniqueOrThrow({ where: { id: student.id } });
+      expect(untouched.firstName).toBe("DetailTest");
+      expect(untouched.lastName).toBe("CrossOrg");
+      expect(untouched.status).toBe("PENDING");
+      expect(untouched.codeHash).toBe(student.codeHash);
+
+      const refusalAudits = await prisma.auditLog.findMany({
+        where: { actorId: admin.id, action: "organization.accessRefused", entityId: otherOrg.id },
+      });
+      expect(refusalAudits.length).toBe(4);
+
+      // The same admin, same session, acting on their OWN org still succeeds.
+      const legitimateApprove = await approveStudent(admin.organizationId, {}, formData({ studentId: student.id }));
+      expect(legitimateApprove.ok).toBe(true);
+    } finally {
+      await prisma.auditLog.deleteMany({ where: { organizationId: otherOrg.id } });
+      await prisma.organization.delete({ where: { id: otherOrg.id } });
+    }
   });
 
   // Finding 6: the JWT lives for up to 30 days, so `role`/`active` in it are
@@ -451,7 +580,7 @@ describe("student detail actions", () => {
       // claim must be refused outright, not silently downgraded.
       await prisma.user.update({ where: { id: demoted.id }, data: { role: "INSTRUCTOR" } });
       await prisma.staffAssignment.create({
-        data: { userId: demoted.id, academyId: escazu.id, role: "INSTRUCTOR" },
+        data: { userId: demoted.id, academyId: escazu.id, organizationId: escazu.organizationId, role: "INSTRUCTOR" },
       });
       expect(await getStaffSession()).toBeNull();
 
@@ -478,18 +607,19 @@ describe("student detail actions", () => {
     it("a positive adjustment increases atBeltCount, verified via getAtBeltSummary", async () => {
       const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
       const admin = await makeStaffUser("ADMIN", "adj-positive-admin");
-      const student = await makeStudent(escazu.id, { lastName: "AdjPositive" });
+      const student = await makeStudent(escazu.id, escazu.organizationId, { lastName: "AdjPositive" });
 
-      const before = await getAtBeltSummary(student.id);
+      const before = await getAtBeltSummary(student.id, ALLIANCE_ATTENDANCE_CONFIG);
 
-      currentSession = { user: { id: admin.id, role: "ADMIN" } };
+      currentSession = { user: { id: admin.id, role: "ADMIN" }, activeOrganizationId: admin.organizationId };
       const result = await addAttendanceAdjustment(
+        admin.organizationId,
         {},
         formData({ studentId: student.id, delta: "3", reason: "makeup classes" }),
       );
       expect(result.ok).toBe(true);
 
-      const after = await getAtBeltSummary(student.id);
+      const after = await getAtBeltSummary(student.id, ALLIANCE_ATTENDANCE_CONFIG);
       expect(after.atBeltCount).toBe(before.atBeltCount + 3);
       expect(after.lifetimeCount).toBe(before.lifetimeCount + 3);
 
@@ -513,38 +643,40 @@ describe("student detail actions", () => {
       const beltAwardedAt = new Date("2026-03-01T12:00:00Z");
       // WHITE requires 30 attendancesPerStripe (see prisma/seed) — 30
       // CHECKIN rows crosses the first-stripe threshold exactly.
-      const student = await makeStudent(escazu.id, {
+      const student = await makeStudent(escazu.id, escazu.organizationId, {
         lastName: "AdjNegative",
         currentBelt: "WHITE",
         currentStripes: 0,
         beltAwardedAt,
       });
 
-      await addCheckins(student.id, escazu.id, 30, new Date(beltAwardedAt.getTime() + DAY_MS));
-      const crossed = await getAtBeltSummary(student.id);
+      await addCheckins(student.id, escazu.id, escazu.organizationId, 30, new Date(beltAwardedAt.getTime() + DAY_MS));
+      const crossed = await getAtBeltSummary(student.id, ALLIANCE_ATTENDANCE_CONFIG);
       expect(crossed.atBeltCount).toBe(30);
-      expect(crossed.remainingToNextStripe).toBe(0);
+      expect(crossed.remainingAttendance).toBe(0);
 
-      currentSession = { user: { id: admin.id, role: "ADMIN" } };
+      currentSession = { user: { id: admin.id, role: "ADMIN" }, activeOrganizationId: admin.organizationId };
       const result = await addAttendanceAdjustment(
+        admin.organizationId,
         {},
         formData({ studentId: student.id, delta: "-5", reason: "duplicate check-ins removed" }),
       );
       expect(result.ok).toBe(true);
 
       // Back below the threshold it had just crossed.
-      const after = await getAtBeltSummary(student.id);
+      const after = await getAtBeltSummary(student.id, ALLIANCE_ATTENDANCE_CONFIG);
       expect(after.atBeltCount).toBe(25);
-      expect(after.remainingToNextStripe).toBe(5);
+      expect(after.remainingAttendance).toBe(5);
     });
 
     it("an in-scope INSTRUCTOR can successfully add an adjustment — the one write in this file INSTRUCTOR is allowed to make", async () => {
       const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
       const instructor = await makeStaffUser("INSTRUCTOR", "adj-instructor", escazu.id);
-      const student = await makeStudent(escazu.id, { lastName: "AdjInstructor" });
+      const student = await makeStudent(escazu.id, escazu.organizationId, { lastName: "AdjInstructor" });
 
-      currentSession = { user: { id: instructor.id, role: "INSTRUCTOR" } };
+      currentSession = { user: { id: instructor.id, role: "INSTRUCTOR" }, activeOrganizationId: instructor.organizationId };
       const result = await addAttendanceAdjustment(
+        instructor.organizationId,
         {},
         formData({ studentId: student.id, delta: "1", reason: "instructor correction" }),
       );
@@ -562,12 +694,13 @@ describe("student detail actions", () => {
       const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
       const escalante = await prisma.academy.findUniqueOrThrow({ where: { slug: "escalante" } });
       const outOfScopeDirector = await makeStaffUser("DIRECTOR", "adj-scope-director", escalante.id);
-      const student = await makeStudent(escazu.id, { lastName: "AdjScope" });
+      const student = await makeStudent(escazu.id, escazu.organizationId, { lastName: "AdjScope" });
 
       const countBefore = await prisma.attendanceRecord.count({ where: { studentId: student.id } });
 
-      currentSession = { user: { id: outOfScopeDirector.id, role: "DIRECTOR" } };
+      currentSession = { user: { id: outOfScopeDirector.id, role: "DIRECTOR" }, activeOrganizationId: outOfScopeDirector.organizationId };
       const result = await addAttendanceAdjustment(
+        outOfScopeDirector.organizationId,
         {},
         formData({ studentId: student.id, delta: "2", reason: "should not land" }),
       );
@@ -580,14 +713,15 @@ describe("student detail actions", () => {
     it("a missing or empty reason is rejected by zod validation before any DB write", async () => {
       const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
       const admin = await makeStaffUser("ADMIN", "adj-invalid-admin");
-      const student = await makeStudent(escazu.id, { lastName: "AdjInvalid" });
+      const student = await makeStudent(escazu.id, escazu.organizationId, { lastName: "AdjInvalid" });
 
       const countBefore = await prisma.attendanceRecord.count({ where: { studentId: student.id } });
 
-      currentSession = { user: { id: admin.id, role: "ADMIN" } };
+      currentSession = { user: { id: admin.id, role: "ADMIN" }, activeOrganizationId: admin.organizationId };
 
       // Missing `reason` entirely.
       const missingReason = await addAttendanceAdjustment(
+        admin.organizationId,
         {},
         formData({ studentId: student.id, delta: "1" }),
       );
@@ -596,6 +730,7 @@ describe("student detail actions", () => {
 
       // Present but empty.
       const emptyReason = await addAttendanceAdjustment(
+        admin.organizationId,
         {},
         formData({ studentId: student.id, delta: "1", reason: "" }),
       );
@@ -604,6 +739,45 @@ describe("student detail actions", () => {
 
       const countAfter = await prisma.attendanceRecord.count({ where: { studentId: student.id } });
       expect(countAfter).toBe(countBefore);
+    });
+
+    it("1f-4: an ADMIN's real membership doesn't help against an organizationId their tab doesn't belong to — refuses, audits, and creates no AttendanceRecord; the same admin acting on their own org still succeeds", async () => {
+      const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+      const admin = await makeStaffUser("ADMIN", "adj-crossorg-admin");
+      const student = await makeStudent(escazu.id, escazu.organizationId, { lastName: "AdjCrossOrg" });
+
+      const otherOrg = await prisma.organization.create({
+        data: { slug: `adj-crossorg-${Date.now()}`, name: "Cross-Org Test Org", status: "ACTIVE" },
+      });
+
+      try {
+        currentSession = { user: { id: admin.id, role: "ADMIN" }, activeOrganizationId: admin.organizationId };
+
+        const countBefore = await prisma.attendanceRecord.count({ where: { studentId: student.id } });
+        const rejected = await addAttendanceAdjustment(
+          otherOrg.id,
+          {},
+          formData({ studentId: student.id, delta: "3", reason: "should not land" }),
+        );
+        expect(rejected.error).toBe("notFound");
+        expect(await prisma.attendanceRecord.count({ where: { studentId: student.id } })).toBe(countBefore);
+
+        const refusalAudit = await prisma.auditLog.findFirst({
+          where: { actorId: admin.id, action: "organization.accessRefused", entityId: otherOrg.id },
+        });
+        expect(refusalAudit).not.toBeNull();
+
+        // The same admin, same session, acting on their OWN org still succeeds.
+        const legitimate = await addAttendanceAdjustment(
+          admin.organizationId,
+          {},
+          formData({ studentId: student.id, delta: "3", reason: "legitimate makeup classes" }),
+        );
+        expect(legitimate.ok).toBe(true);
+      } finally {
+        await prisma.auditLog.deleteMany({ where: { organizationId: otherOrg.id } });
+        await prisma.organization.delete({ where: { id: otherOrg.id } });
+      }
     });
   });
 });

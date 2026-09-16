@@ -1,6 +1,8 @@
 import { DateTime } from "luxon";
 import { prisma } from "@/lib/prisma";
-import { academyScopeWhere, type StaffSession } from "@/lib/auth/session";
+import { branchScopeWhere } from "@/lib/tenant/context";
+import { getScopedDb } from "@/lib/tenant/scoped-client";
+import type { TenantContext } from "@/lib/tenant/types";
 import { currentCrDateParts } from "@/lib/payments/get-current-period";
 import type { Prisma } from "@/generated/prisma/client";
 import type { AnalyticsFilters } from "@/lib/analytics/filters";
@@ -97,10 +99,11 @@ export function countEnrolledAtRangeStart(
  * never left to the page to hide a result it would otherwise discard.
  *
  * Scoped to enrolled (`status: "ACTIVE"`) students, combining BOTH
- * `academyScopeWhere(session)` (translated to `homeAcademyId` — the same
- * translation Phase 2/4/6 already established, since `academyScopeWhere`
+ * `branchScopeWhere(context)` (translated to `homeAcademyId` — the same
+ * translation Phase 2/4/6 already established, since `branchScopeWhere`
  * returns a fragment keyed `academyId` but Student's tenancy column is
- * `homeAcademyId`) AND `filters.academyId` when set. The session's own scope
+ * `homeAcademyId`) AND `filters.academyId` when set. Organization scope
+ * comes from `getScopedDb`, unconditionally. The session's own scope
  * is applied independently of `filters.academyId` — never trusted alone —
  * so a DIRECTOR session passed a filter naming a DIFFERENT academy (e.g. a
  * hand-built `AnalyticsFilters` that bypassed `resolveAnalyticsFilters`)
@@ -123,23 +126,23 @@ export function countEnrolledAtRangeStart(
  * applied here to "did this student show up" instead.
  */
 export async function getHeadlineTiles(
-  session: StaffSession,
+  context: TenantContext,
   filters: AnalyticsFilters,
 ): Promise<HeadlineTiles> {
-  if (session.role !== "ADMIN" && session.role !== "DIRECTOR") {
+  if (context.organizationRole !== "ADMIN" && context.organizationRole !== "DIRECTOR") {
     throw new Error("FORBIDDEN");
   }
 
-  const scope = academyScopeWhere(session);
+  const branchScope = branchScopeWhere(context);
   const conditions: Prisma.StudentWhereInput[] = [{ status: "ACTIVE" }];
-  if (scope.academyId) {
-    conditions.push({ homeAcademyId: scope.academyId });
+  if (branchScope.academyId) {
+    conditions.push({ homeAcademyId: branchScope.academyId });
   }
   if (filters.academyId) {
     conditions.push({ homeAcademyId: filters.academyId });
   }
 
-  const students = await prisma.student.findMany({
+  const students = await getScopedDb(context).student.findMany({
     where: { AND: conditions },
     select: { id: true, joinedAt: true },
   });

@@ -11,9 +11,18 @@ const INITIAL_STATE: ActionState = {};
 // Rendered only for an ADMIN session (page.tsx gate) — the real enforcement
 // is server-side in `deactivateClassSession` itself
 // (requireStaffSession(["ADMIN"])), never this UI check alone.
-export function DeactivateClassSessionButton({ classSessionId }: { classSessionId: string }) {
+export function DeactivateClassSessionButton({
+  organizationId,
+  classSessionId,
+}: {
+  organizationId: string;
+  classSessionId: string;
+}) {
   const t = useTranslations("adminSchedule.deactivate");
-  const [state, formAction, isPending] = useActionState(deactivateClassSession, INITIAL_STATE);
+  const [state, formAction, isPending] = useActionState(
+    deactivateClassSession.bind(null, organizationId),
+    INITIAL_STATE,
+  );
 
   return (
     <form

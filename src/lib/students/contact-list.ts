@@ -1,11 +1,14 @@
 import { DateTime } from "luxon";
 import { prisma } from "@/lib/prisma";
-import { academyScopeWhere, type StaffSession } from "@/lib/auth/session";
+import { branchScopeWhere } from "@/lib/tenant/context";
+import { getScopedDb } from "@/lib/tenant/scoped-client";
+import type { TenantContext } from "@/lib/tenant/types";
 import { ZONE } from "@/lib/scheduling/zone";
 import { getAtBeltSummary } from "@/lib/students/attendance-summary";
+import { resolvePromotionConfigMap } from "@/lib/promotion/config";
 import { currentCrDateParts, getCurrentPaymentPeriod } from "@/lib/payments/get-current-period";
 import { isOverdue } from "@/lib/payments/overdue";
-import type { Belt } from "@/generated/prisma/client";
+import type { BeltVisualData } from "@/components/belt-graphic/belt-graphic";
 
 /**
  * REDESIGN_BRIEF.md §4.1 Task 4's own threshold — deliberately NOT
@@ -34,7 +37,10 @@ export interface ContactListEntry {
   lastName: string;
   homeAcademyName: string;
   phone: string;
-  currentBelt: Belt;
+  currentBelt: string;
+  currentBeltLabelEs: string;
+  currentBeltLabelEn: string;
+  currentBeltVisual: BeltVisualData;
   atBeltCount: number;
   /** Next-stripe threshold for the "X / Y" sub-line — `null` only for a
    * maxed-out belt with no further stripe to project toward. */
@@ -48,8 +54,8 @@ export interface ContactListEntry {
 /**
  * "Alumnos por contactar" (REDESIGN_BRIEF.md §4.1 Task 4) — visible to every
  * staff role, unlike the weekly-attendance chart next to it on this same
- * page. Scoped by `academyScopeWhere` the same way `dashboard/page.tsx`
- * already scopes `pendingCount`.
+ * page. Scoped by `getScopedDb`/`branchScopeWhere` the same way
+ * `dashboard/page.tsx` already scopes `pendingCount`.
  *
  * Per-student payment status is computed the same `getCurrentPaymentPeriod` +
  * `isOverdue` way `students/page.tsx`'s roster already does — that page shows
@@ -61,13 +67,13 @@ export interface ContactListEntry {
  * `getRetentionList`'s "most urgent outreach target on top" convention.
  */
 export async function listStudentsToContact(
-  session: StaffSession,
+  context: TenantContext,
   thresholdDays: number = CONTACT_THRESHOLD_DAYS,
   today: { year: number; month: number; day: number } = currentCrDateParts(),
   now: DateTime = DateTime.now().setZone(ZONE),
 ): Promise<ContactListEntry[]> {
-  const scope = academyScopeWhere(session);
-  const students = await prisma.student.findMany({
+  const scope = branchScopeWhere(context);
+  const students = await getScopedDb(context).student.findMany({
     where: {
       status: "ACTIVE",
       ...(scope.academyId ? { homeAcademyId: scope.academyId } : {}),
@@ -106,10 +112,13 @@ export async function listStudentsToContact(
     })
     .filter(({ daysAbsent }) => isAbsentEnoughToContact(daysAbsent, thresholdDays));
 
+  // Resolved ONCE for this whole batch, not once per student — see
+  // resolvePromotionConfigMap's own doc comment on the N+1 this avoids.
+  const configByTrack = await resolvePromotionConfigMap(context.organizationId);
   const results = await Promise.all(
     qualifying.map(async ({ student, lastAttendanceAt, daysAbsent }) => {
       const [summary, currentPeriod] = await Promise.all([
-        getAtBeltSummary(student.id),
+        getAtBeltSummary(student.id, configByTrack),
         getCurrentPaymentPeriod(student.id, today),
       ]);
 
@@ -126,8 +135,12 @@ export async function listStudentsToContact(
         homeAcademyName: student.homeAcademy.name,
         phone: student.phone,
         currentBelt: summary.currentBelt,
+        currentBeltLabelEs: summary.currentBeltLabelEs,
+        currentBeltLabelEn: summary.currentBeltLabelEn,
+        currentBeltVisual: summary.currentBeltVisual,
         atBeltCount: summary.atBeltCount,
-        nextStripeAt: summary.nextStripeAt,
+        nextStripeAt:
+          summary.nextTarget === "STRIPE" ? (summary.currentStripes + 1) * summary.attendancesPerStripe : null,
         lastAttendanceAt,
         daysAbsent,
         paymentStatus,

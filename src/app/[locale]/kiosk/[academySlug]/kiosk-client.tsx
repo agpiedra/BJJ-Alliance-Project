@@ -6,7 +6,7 @@ import { DateTime } from "luxon";
 import { CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { BeltGraphic, type Belt } from "@/components/belt-graphic/belt-graphic";
+import { BeltGraphic, type BeltVisualData } from "@/components/belt-graphic/belt-graphic";
 import { enqueueOfflineCheckIn, flushOfflineQueue } from "@/lib/kiosk/offline-queue";
 import { ZONE } from "@/lib/scheduling/zone";
 
@@ -45,7 +45,15 @@ interface MatchedClass {
 /** The success (`ok: true`) shape of `POST /api/kiosk/check-in`'s JSON body. */
 interface CheckInSuccess {
   ok: true;
-  student: { firstName: string; lastName: string; currentBelt: string; currentStripes: number };
+  student: {
+    firstName: string;
+    lastName: string;
+    currentBelt: string;
+    currentBeltVisual: BeltVisualData;
+    currentBeltLabelEs: string;
+    currentBeltLabelEn: string;
+    currentStripes: number;
+  };
   summary: {
     atBeltCount: number;
     remainingToNextStripe: number | null;
@@ -67,6 +75,7 @@ type CheckInFailureReason =
   | "no_active_class"
   | "already_checked_in"
   | "invalid_token"
+  | "org_unavailable"
   | "rate_limited"
   | "locked_out"
   | "network_error"
@@ -497,6 +506,8 @@ function errorMessageKey(reason: CheckInFailureReason): string {
       return "noActiveClass";
     case "invalid_token":
       return "invalidToken";
+    case "org_unavailable":
+      return "orgUnavailable";
     case "network_error":
       return "networkError";
     case "queue_failed":
@@ -666,6 +677,7 @@ function ClassPicker({
 function SuccessView({ result, onCorrect }: { result: CheckInSuccess; onCorrect: () => void }) {
   const t = useTranslations("kiosk");
   const tDay = useTranslations("dayOfWeek");
+  const locale = useLocale();
   const { student, summary, earnedStripe, isVisitor, homeAcademyName, matchedClass } = result;
   const name = `${student.firstName} ${student.lastName}`;
   // Presentation-only derivation from numbers the API already computed
@@ -683,7 +695,11 @@ function SuccessView({ result, onCorrect }: { result: CheckInSuccess; onCorrect:
         {earnedStripe ? t("earnedStripeHeading", { name }) : t("successHeading", { name })}
       </h2>
 
-      <BeltGraphic belt={student.currentBelt as Belt} stripes={student.currentStripes} />
+      <BeltGraphic
+        belt={student.currentBeltVisual}
+        label={locale === "es" ? student.currentBeltLabelEs : student.currentBeltLabelEn}
+        stripes={student.currentStripes}
+      />
 
       {isVisitor && (
         <span className="rounded-full bg-secondary px-4 py-1.5 text-lg text-secondary-foreground">

@@ -1,12 +1,25 @@
 import { DateTime } from "luxon";
 import { prisma } from "@/lib/prisma";
-import { academyScopeWhere, type StaffSession } from "@/lib/auth/session";
+import { branchScopeWhere } from "@/lib/tenant/context";
+import { getScopedDb } from "@/lib/tenant/scoped-client";
+import type { AccessContext, TenantContext } from "@/lib/tenant/types";
 import { ZONE } from "@/lib/scheduling/zone";
 import type { Prisma } from "@/generated/prisma/client";
 import type { AnalyticsFilters } from "@/lib/analytics/filters";
 
-function requireDirectorRole(session: StaffSession): void {
-  if (session.role !== "ADMIN" && session.role !== "DIRECTOR") {
+/**
+ * A system job (e.g. the weekly-digest cron) is inherently trusted — it has
+ * no per-user role to gate on, and is never subject to the same staff-role
+ * restriction a real user session is. A kiosk is the opposite: it has no
+ * business calling staff analytics at all, so it is always FORBIDDEN here,
+ * never treated like a trusted system caller.
+ */
+function requireDirectorRole(context: AccessContext): void {
+  if (context.kind === "system-job") return;
+  if (context.kind === "kiosk") {
+    throw new Error("FORBIDDEN");
+  }
+  if (context.organizationRole !== "ADMIN" && context.organizationRole !== "DIRECTOR") {
     throw new Error("FORBIDDEN");
   }
 }
@@ -50,8 +63,9 @@ const BUCKET_RANK: Record<"30" | "60" | "90", number> = { "90": 0, "60": 1, "30"
  * self-enforced. Only `ACTIVE` students are retention concerns: a `PENDING`
  * student never joined and an `ARCHIVED` one has already left, so neither is
  * "at risk of leaving" — scoped the same AND-array way `getHeadlineTiles`
- * scopes Student (`academyScopeWhere` translated to `homeAcademyId` AND
- * `filters.academyId` when set, never spread into one object literal).
+ * scopes Student (`branchScopeWhere` translated to `homeAcademyId` AND
+ * `filters.academyId` when set, never spread into one object literal;
+ * organization scope itself comes from `getScopedDb`, unconditionally).
  *
  * "Last seen" is the most recent `CHECKIN` `AttendanceRecord.occurredAt` for
  * the student, considering ALL history up to `filters.to` — never bounded by
@@ -74,21 +88,21 @@ const BUCKET_RANK: Record<"30" | "60" | "90", number> = { "90": 0, "60": 1, "30"
  * targets at the top, not alphabetical order.
  */
 export async function getRetentionList(
-  session: StaffSession,
+  context: AccessContext,
   filters: AnalyticsFilters,
 ): Promise<RetentionEntry[]> {
-  requireDirectorRole(session);
+  requireDirectorRole(context);
 
-  const scope = academyScopeWhere(session);
+  const branchScope = branchScopeWhere(context);
   const conditions: Prisma.StudentWhereInput[] = [{ status: "ACTIVE" }];
-  if (scope.academyId) {
-    conditions.push({ homeAcademyId: scope.academyId });
+  if (branchScope.academyId) {
+    conditions.push({ homeAcademyId: branchScope.academyId });
   }
   if (filters.academyId) {
     conditions.push({ homeAcademyId: filters.academyId });
   }
 
-  const students = await prisma.student.findMany({
+  const students = await getScopedDb(context).student.findMany({
     where: { AND: conditions },
     select: { id: true, firstName: true, lastName: true, phone: true },
   });
@@ -138,8 +152,9 @@ export async function getRetentionList(
  * DIRECTOR only, self-enforced. Scoped the same AND-array way
  * `getPromotionsInRange` scopes `Promotion`: `AttendanceRecord.academyId` is
  * already the right tenancy column (no `homeAcademyId`-style translation
- * needed), so `academyScopeWhere(session)` is pushed directly as its own AND
- * condition alongside `filters.academyId` when set.
+ * needed), so `branchScopeWhere(context)` is pushed directly as its own AND
+ * condition alongside `filters.academyId` when set (organization scope
+ * itself comes from `getScopedDb`, unconditionally).
  *
  * Buckets every `CHECKIN` in `[filters.from, filters.to]` into the
  * `America/Costa_Rica` ISO week (Monday-start) its `occurredAt` falls in —
@@ -158,13 +173,13 @@ export async function getRetentionList(
  * disconnected points with gapped, misleading x-spacing.
  */
 export async function getWeeklyAttendanceTrend(
-  session: StaffSession,
+  context: TenantContext,
   filters: AnalyticsFilters,
 ): Promise<Array<{ weekStart: string; count: number }>> {
-  requireDirectorRole(session);
+  requireDirectorRole(context);
 
   const conditions: Prisma.AttendanceRecordWhereInput[] = [
-    academyScopeWhere(session),
+    branchScopeWhere(context),
     { type: "CHECKIN" },
     { occurredAt: { gte: filters.from.toJSDate(), lte: filters.to.toJSDate() } },
   ];
@@ -172,7 +187,7 @@ export async function getWeeklyAttendanceTrend(
     conditions.push({ academyId: filters.academyId });
   }
 
-  const attendances = await prisma.attendanceRecord.findMany({
+  const attendances = await getScopedDb(context).attendanceRecord.findMany({
     where: { AND: conditions },
     select: { occurredAt: true },
   });

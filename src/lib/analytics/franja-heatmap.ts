@@ -1,14 +1,17 @@
 import { DateTime } from "luxon";
 import { prisma } from "@/lib/prisma";
-import { academyScopeWhere, type StaffSession } from "@/lib/auth/session";
+import { branchScopeWhere } from "@/lib/tenant/context";
+import { getScopedDb } from "@/lib/tenant/scoped-client";
+import type { TenantContext } from "@/lib/tenant/types";
 import { ZONE } from "@/lib/scheduling/zone";
 import type { DayOfWeek } from "@/generated/prisma/client";
 
 /**
  * Panel's "Asistencia promedio por franja" heatmap (REDESIGN_BRIEF.md §4.1
  * Task 3a) — every staff role, no role gate (unlike `getWeeklyAttendanceTrend`
- * next to it, which is ADMIN/DIRECTOR only). Scoped by `academyScopeWhere`
- * exactly like every other panel query in this file's sibling modules.
+ * next to it, which is ADMIN/DIRECTOR only). Scoped by `getScopedDb` +
+ * `branchScopeWhere` exactly like every other panel query in this file's
+ * sibling modules.
  */
 export const FRANJA_WINDOW_WEEKS = 4;
 
@@ -85,13 +88,12 @@ export interface FranjaCell {
  * not two competing cells.
  */
 export async function getFranjaHeatmap(
-  session: StaffSession,
+  context: TenantContext,
   windowWeeks: number = FRANJA_WINDOW_WEEKS,
   now: DateTime = DateTime.now().setZone(ZONE),
 ): Promise<FranjaCell[][]> {
-  const scope = academyScopeWhere(session);
-  const classSessions = await prisma.classSession.findMany({
-    where: { ...scope, dayOfWeek: { in: [...FRANJA_DAY_ORDER] } },
+  const classSessions = await getScopedDb(context).classSession.findMany({
+    where: { ...branchScopeWhere(context), dayOfWeek: { in: [...FRANJA_DAY_ORDER] } },
     select: { id: true, dayOfWeek: true, startTime: true, name: true },
   });
 

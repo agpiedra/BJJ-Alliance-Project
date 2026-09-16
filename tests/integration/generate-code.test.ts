@@ -1,12 +1,11 @@
 import "dotenv/config";
+import { getTestPrismaClient } from "../helpers/test-db";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { PrismaClient } from "../../src/generated/prisma/client";
-import { PrismaPg } from "@prisma/adapter-pg";
 import { requireEnv } from "../../src/lib/env";
 import { digestLookupSecret } from "../../src/lib/crypto";
+import { adultRankId } from "../helpers/belt-ranks";
 
-const adapter = new PrismaPg({ connectionString: requireEnv("DATABASE_URL") });
-const prisma = new PrismaClient({ adapter });
+const prisma = getTestPrismaClient();
 
 afterEach(() => {
   vi.doUnmock("node:crypto");
@@ -25,10 +24,12 @@ describe("generateStudentCode retry-on-collision", () => {
     const seeded = await prisma.student.create({
       data: {
         homeAcademyId: escazu.id,
+        organizationId: escazu.organizationId,
         firstName: "Taken",
         lastName: "Code",
         phone: "00000000",
         email: `taken-code-${Date.now()}@example.com`,
+        currentRankId: adultRankId("WHITE"),
         codeHash: takenHash,
       },
     });
@@ -50,12 +51,14 @@ describe("generateStudentCode retry-on-collision", () => {
       vi.resetModules();
 
       const { generateStudentCode } = await import("../../src/lib/students/generate-code");
-      const result = await generateStudentCode();
+      const result = await generateStudentCode(escazu.organizationId);
 
       expect(result.code).toBe(freeCode);
       expect(result.codeHash).toBe(digestLookupSecret(freeCode, pepper));
 
-      const stillFree = await prisma.student.findUnique({ where: { codeHash: result.codeHash } });
+      const stillFree = await prisma.student.findUnique({
+        where: { organizationId_codeHash: { organizationId: escazu.organizationId, codeHash: result.codeHash } },
+      });
       expect(stillFree).toBeNull();
     } finally {
       await prisma.student.delete({ where: { id: seeded.id } });
