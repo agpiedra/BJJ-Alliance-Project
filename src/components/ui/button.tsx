@@ -8,6 +8,12 @@ const buttonVariants = cva(
     variants: {
       variant: {
         default: "bg-primary text-primary-foreground hover:bg-primary/80",
+        // REDESIGN_BRIEF.md Phase 3 "Button" spec + the mock's own rendered
+        // CTAs (Inscribir alumno, Guardar pago, Graduar) all use solid gold
+        // for primary actions — extending the sanctioned gold-use list from
+        // "sidebar active-nav, banner accents, stat highlights" (Phase 1) to
+        // include primary CTA buttons, per "the mock wins for visuals."
+        primary: "bg-brand-gold text-brand-gold-foreground hover:bg-brand-gold/90",
         outline:
           "border-border bg-background hover:bg-muted hover:text-foreground aria-expanded:bg-muted aria-expanded:text-foreground dark:border-input dark:bg-input/30 dark:hover:bg-input/50",
         secondary:

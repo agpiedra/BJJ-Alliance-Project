@@ -1,8 +1,8 @@
 import "dotenv/config";
+import { getTestPrismaClient } from "../helpers/test-db";
 import { DateTime } from "luxon";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { PrismaClient, type DayOfWeek } from "../../src/generated/prisma/client";
-import { PrismaPg } from "@prisma/adapter-pg";
+import type { DayOfWeek } from "../../src/generated/prisma/client";
 import { requireEnv } from "../../src/lib/env";
 import { digestLookupSecret } from "../../src/lib/crypto";
 import { ZONE } from "../../src/lib/scheduling/zone";
@@ -36,12 +36,18 @@ vi.mock("../../src/lib/notifications/notify-eligibility", () => ({
  */
 const { POST } = await import("../../src/app/api/kiosk/check-in/route");
 
-const adapter = new PrismaPg({ connectionString: requireEnv("DATABASE_URL") });
-const prisma = new PrismaClient({ adapter });
+const prisma = getTestPrismaClient();
+
+let allianceOrgIdPromise: Promise<string> | null = null;
+function getAllianceOrganizationId() {
+  allianceOrgIdPromise ??= prisma.organization.findUniqueOrThrow({ where: { slug: "alliance-cr" } }).then((o) => o.id);
+  return allianceOrgIdPromise;
+}
 const pepper = requireEnv("CODE_PEPPER");
 
 const cleanupAcademyIds: string[] = [];
 const cleanupStudentIds: string[] = [];
+const cleanupOrganizationIds: string[] = [];
 
 /**
  * A CR-local weekday + "HH:mm" for the moment the suite starts, so a fixture
@@ -78,6 +84,11 @@ afterAll(async () => {
     await prisma.classSession.deleteMany({ where: { academyId: { in: cleanupAcademyIds } } });
     await prisma.academy.deleteMany({ where: { id: { in: cleanupAcademyIds } } });
   }
+  if (cleanupOrganizationIds.length > 0) {
+    await prisma.promotionConfig.deleteMany({ where: { organizationId: { in: cleanupOrganizationIds } } });
+    await prisma.beltRank.deleteMany({ where: { organizationId: { in: cleanupOrganizationIds } } });
+    await prisma.organization.deleteMany({ where: { id: { in: cleanupOrganizationIds } } });
+  }
 });
 
 /**
@@ -92,13 +103,19 @@ async function makeFixture() {
   const kioskTokenHash = digestLookupSecret(token, pepper);
 
   const academy = await prisma.academy.create({
-    data: { name: `Kiosk Route Fixture ${suffix}`, slug: `kiosk-route-${suffix}`, kioskTokenHash },
+    data: {
+      name: `Kiosk Route Fixture ${suffix}`,
+      slug: `kiosk-route-${suffix}`,
+      kioskTokenHash,
+      organizationId: await getAllianceOrganizationId(),
+    },
   });
   cleanupAcademyIds.push(academy.id);
 
   await prisma.classSession.create({
     data: {
       academyId: academy.id,
+      organizationId: academy.organizationId,
       dayOfWeek: todaysDayOfWeek,
       startTime: nowStartTime,
       durationMinutes: 60,
@@ -111,17 +128,104 @@ async function makeFixture() {
   return { academy, token, kioskTokenHash };
 }
 
-async function makeStudent(homeAcademyId: string) {
+/**
+ * A private organization + academy + open class, with its own kiosk token —
+ * used only by the suspended-organization tests below, which need to control
+ * the organization's `status` directly (the shared Alliance org is always
+ * ACTIVE and other test files depend on that).
+ */
+async function makeOrgFixture(status: "PENDING" | "ACTIVE" | "SUSPENDED" | "CANCELLED") {
+  const suffix = `${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
+  const organization = await prisma.organization.create({
+    data: { slug: `kiosk-org-${suffix}`, name: `Kiosk Org Fixture ${suffix}`, status },
+  });
+  cleanupOrganizationIds.push(organization.id);
+
+  const token = `kiosk-org-token-${suffix}`;
+  const kioskTokenHash = digestLookupSecret(token, pepper);
+  const academy = await prisma.academy.create({
+    data: {
+      name: `Kiosk Org Academy ${suffix}`,
+      slug: `kiosk-org-academy-${suffix}`,
+      kioskTokenHash,
+      organizationId: organization.id,
+    },
+  });
+  cleanupAcademyIds.push(academy.id);
+
+  await prisma.classSession.create({
+    data: {
+      academyId: academy.id,
+      organizationId: organization.id,
+      dayOfWeek: todaysDayOfWeek,
+      startTime: nowStartTime,
+      durationMinutes: 60,
+      name: "Open Now",
+      type: "GI",
+      countsTowardPromotion: true,
+    },
+  });
+
+  // A brand-new organization has no BeltRank rows at all — Student.currentRankId
+  // is a required FK, so `makeStudent` below find-or-creates the WHITE rank
+  // it needs for whatever organizationId it's given.
+
+  return { organization, academy, token };
+}
+
+/**
+ * Alliance (the shared org via makeFixture) already has the seeded WHITE
+ * rank at `adultRankId("WHITE")`; a scratch org from makeOrgFixture has
+ * none yet — this resolves either case uniformly with a find-or-create.
+ */
+async function resolveWhiteRankId(organizationId: string): Promise<string> {
+  const existing = await prisma.beltRank.findUnique({
+    where: { organizationId_track_code: { organizationId, track: "ADULT", code: "WHITE" } },
+    select: { id: true },
+  });
+  if (existing) return existing.id;
+
+  const created = await prisma.beltRank.create({
+    data: {
+      organizationId,
+      track: "ADULT",
+      code: "WHITE",
+      labelEs: "Blanco",
+      labelEn: "White",
+      primaryColor: "#F0EBE0",
+      barColor: "#111116",
+      order: 0,
+      maxStripes: 4,
+      attendancesPerStripe: 30,
+      attendancesForExam: 120,
+      stripeColors: ["#000000", "#000000", "#000000", "#000000"],
+      visibleStripeSlots: 4,
+    },
+  });
+  // getAtBeltSummary (MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 2c-i) requires a
+  // real PromotionConfig row for this organization/track — a scratch org's
+  // BeltRank alone isn't enough anymore, unlike before the engine migration.
+  await prisma.promotionConfig.upsert({
+    where: { organizationId_track: { organizationId, track: "ADULT" } },
+    update: {},
+    create: { organizationId, track: "ADULT", mode: "ATTENDANCE", requiresCoachApproval: true },
+  });
+  return created.id;
+}
+
+async function makeStudent(homeAcademyId: string, organizationId: string) {
   const suffix = `${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
   const code = `kiosk-route-code-${suffix}`;
+  const currentRankId = await resolveWhiteRankId(organizationId);
   const student = await prisma.student.create({
     data: {
       homeAcademyId,
+      organizationId,
       firstName: "KioskRouteTest",
       lastName: "Student",
       phone: "88882222",
       email: `kiosk-route-${suffix}@example.com`,
-      currentBelt: "WHITE",
+      currentRankId,
       currentStripes: 0,
       beltAwardedAt: new Date("2026-01-01T00:00:00Z"),
       status: "ACTIVE",
@@ -133,13 +237,20 @@ async function makeStudent(homeAcademyId: string) {
 }
 
 /** Writes `count` real CHECKIN rows (no classSessionId), one per day starting at `startAt`. */
-async function addSyntheticCheckins(studentId: string, academyId: string, count: number, startAt: Date) {
+async function addSyntheticCheckins(
+  studentId: string,
+  academyId: string,
+  organizationId: string,
+  count: number,
+  startAt: Date,
+) {
   const DAY_MS = 24 * 60 * 60 * 1000;
   const rows = Array.from({ length: count }, (_, i) => {
     const occurredAt = new Date(startAt.getTime() + i * DAY_MS);
     return {
       studentId,
       academyId,
+      organizationId,
       occurredAt,
       date: new Date(Date.UTC(occurredAt.getUTCFullYear(), occurredAt.getUTCMonth(), occurredAt.getUTCDate())),
       type: "CHECKIN" as const,
@@ -165,13 +276,13 @@ describe("POST /api/kiosk/check-in", () => {
 
   it("I-1: fires notifyEligibilityReached through the REAL route entry point when a check-in crosses the stripe threshold", async () => {
     const { academy, token } = await makeFixture();
-    const { student, code } = await makeStudent(academy.id);
+    const { student, code } = await makeStudent(academy.id, academy.organizationId);
 
     // WHITE belt requires 30 attendances/stripe (same fixture math as
     // perform-check-in.test.ts) — 29 synthetic + this route's real check-in
     // crosses the threshold. Must be on/after makeStudent's beltAwardedAt
     // (2026-01-01) — getAtBeltSummary only counts attendance from then on.
-    await addSyntheticCheckins(student.id, academy.id, 29, new Date("2026-01-02T12:00:00Z"));
+    await addSyntheticCheckins(student.id, academy.id, academy.organizationId, 29, new Date("2026-01-02T12:00:00Z"));
 
     const { status, json } = await post({ academySlug: academy.slug, token, code });
 
@@ -182,7 +293,7 @@ describe("POST /api/kiosk/check-in", () => {
 
   it("checks a student in and returns the documented 200 shape", async () => {
     const { academy, token } = await makeFixture();
-    const { student, code } = await makeStudent(academy.id);
+    const { student, code } = await makeStudent(academy.id, academy.organizationId);
 
     const { status, json } = await post({ academySlug: academy.slug, token, code });
 
@@ -208,13 +319,14 @@ describe("POST /api/kiosk/check-in", () => {
 
   it("REJECTS a VALID code with 429 while locked out, and writes NO AttendanceRecord", async () => {
     const { academy, token, kioskTokenHash } = await makeFixture();
-    const { student, code } = await makeStudent(academy.id);
+    const { student, code } = await makeStudent(academy.id, academy.organizationId);
 
     // Five genuine wrong-code guesses inside the trailing 60s window, exactly
     // as `finalizeKioskAttempt("invalid_code")` records them.
     await prisma.kioskAttempt.createMany({
       data: Array.from({ length: 5 }, (_, i) => ({
         academyId: academy.id,
+        organizationId: academy.organizationId,
         kioskTokenHash,
         ipAddress: "203.0.113.7",
         success: false,
@@ -247,7 +359,7 @@ describe("POST /api/kiosk/check-in", () => {
 
   it("records a wrong code as a COUNTING failure and a valid-code failure as a non-counting one", async () => {
     const { academy, token } = await makeFixture();
-    const { code } = await makeStudent(academy.id);
+    const { code } = await makeStudent(academy.id, academy.organizationId);
 
     const wrong = await post({ academySlug: academy.slug, token, code: "definitely-not-a-real-code" });
     expect(wrong.status).toBe(400);
@@ -274,8 +386,8 @@ describe("POST /api/kiosk/check-in", () => {
 
   it("does not lock the whole kiosk out after five double-taps by one student", async () => {
     const { academy, token } = await makeFixture();
-    const { code } = await makeStudent(academy.id);
-    const other = await makeStudent(academy.id);
+    const { code } = await makeStudent(academy.id, academy.organizationId);
+    const other = await makeStudent(academy.id, academy.organizationId);
 
     expect((await post({ academySlug: academy.slug, token, code })).status).toBe(200);
     for (let i = 0; i < 5; i++) {
@@ -304,6 +416,105 @@ describe("POST /api/kiosk/check-in", () => {
     // A request that never got past token verification never reaches the
     // limiter, so it leaves no attempt row to skew anyone's window.
     expect(await prisma.kioskAttempt.count({ where: { academyId: academy.id } })).toBe(0);
+  });
+
+  it("rejects a check-in against a PENDING/SUSPENDED/CANCELLED organization with a generic 403, before any student-code resolution", async () => {
+    for (const status of ["PENDING", "SUSPENDED", "CANCELLED"] as const) {
+      const { organization, academy, token } = await makeOrgFixture(status);
+      const { code } = await makeStudent(academy.id, organization.id);
+
+      // A genuinely valid code and a garbage one must produce the EXACT same
+      // response — the message must not disclose whether a submitted code
+      // was valid, per spec.
+      const validCode = await post({ academySlug: academy.slug, token, code });
+      const garbageCode = await post({ academySlug: academy.slug, token, code: "not-a-real-code" });
+
+      expect(validCode.status).toBe(403);
+      expect(validCode.json).toEqual({ ok: false, error: "org_unavailable" });
+      expect(garbageCode.status).toBe(403);
+      expect(garbageCode.json).toEqual({ ok: false, error: "org_unavailable" });
+
+      // Rejected before student-code resolution: no attendance was ever
+      // written, even for the genuinely valid code.
+      expect(await prisma.attendanceRecord.count({ where: { academyId: academy.id } })).toBe(0);
+
+      // Rejected before the rate-limit gate too: no KioskAttempt row exists
+      // for either request, matching the existing bad-token/unknown-slug
+      // behavior (a request that never gets past this checkpoint leaves no
+      // attempt row to skew anyone's window).
+      expect(await prisma.kioskAttempt.count({ where: { academyId: academy.id } })).toBe(0);
+    }
+  });
+
+  it("reactivating a SUSPENDED organization restores check-in with the SAME unrotated kiosk token, and prior attendance is unchanged", async () => {
+    const { organization, academy, token } = await makeOrgFixture("SUSPENDED");
+    const { student, code } = await makeStudent(academy.id, organization.id);
+
+    const rejected = await post({ academySlug: academy.slug, token, code });
+    expect(rejected.status).toBe(403);
+    expect(await prisma.attendanceRecord.count({ where: { studentId: student.id } })).toBe(0);
+
+    await prisma.organization.update({ where: { id: organization.id }, data: { status: "ACTIVE" } });
+
+    // Same academySlug, same never-rotated token.
+    const { status, json } = await post({ academySlug: academy.slug, token, code });
+    expect(status).toBe(200);
+    expect(json.ok).toBe(true);
+    expect(await prisma.attendanceRecord.count({ where: { studentId: student.id } })).toBe(1);
+  });
+
+  it("does not cross-match: two organizations' students may share the identical PIN, and each kiosk only checks in its own", async () => {
+    const orgA = await makeOrgFixture("ACTIVE");
+    const orgB = await makeOrgFixture("ACTIVE");
+    const sharedCode = "7391"; // identical plaintext PIN in both organizations
+
+    const studentA = await prisma.student.create({
+      data: {
+        homeAcademyId: orgA.academy.id,
+        organizationId: orgA.organization.id,
+        firstName: "SharedPin",
+        lastName: "OrgA",
+        phone: "88883333",
+        email: `kiosk-shared-pin-a-${Date.now()}@example.com`,
+        currentRankId: await resolveWhiteRankId(orgA.organization.id),
+        currentStripes: 0,
+        status: "ACTIVE",
+        codeHash: digestLookupSecret(sharedCode, pepper),
+      },
+    });
+    cleanupStudentIds.push(studentA.id);
+
+    const studentB = await prisma.student.create({
+      data: {
+        homeAcademyId: orgB.academy.id,
+        organizationId: orgB.organization.id,
+        firstName: "SharedPin",
+        lastName: "OrgB",
+        phone: "88884444",
+        email: `kiosk-shared-pin-b-${Date.now()}@example.com`,
+        currentRankId: await resolveWhiteRankId(orgB.organization.id),
+        currentStripes: 0,
+        status: "ACTIVE",
+        codeHash: digestLookupSecret(sharedCode, pepper),
+      },
+    });
+    cleanupStudentIds.push(studentB.id);
+
+    const resultA = await post({ academySlug: orgA.academy.slug, token: orgA.token, code: sharedCode });
+    expect(resultA.status).toBe(200);
+    expect((resultA.json.student as Record<string, unknown>).lastName).toBe("OrgA");
+
+    const resultB = await post({ academySlug: orgB.academy.slug, token: orgB.token, code: sharedCode });
+    expect(resultB.status).toBe(200);
+    expect((resultB.json.student as Record<string, unknown>).lastName).toBe("OrgB");
+
+    // Each check-in landed on the right student in the right organization —
+    // no cross-matching between the two identical PINs.
+    expect(await prisma.attendanceRecord.count({ where: { studentId: studentA.id } })).toBe(1);
+    expect(await prisma.attendanceRecord.count({ where: { studentId: studentB.id } })).toBe(1);
+    expect(
+      await prisma.attendanceRecord.findFirst({ where: { studentId: studentA.id, organizationId: orgB.organization.id } }),
+    ).toBeNull();
   });
 
   it("returns 400 invalid_request for a malformed body", async () => {

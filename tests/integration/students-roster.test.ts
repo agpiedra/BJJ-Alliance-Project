@@ -1,14 +1,24 @@
 import "dotenv/config";
+import { getTestPrismaClient } from "../helpers/test-db";
 import { afterAll, describe, expect, it } from "vitest";
-import { PrismaClient } from "../../src/generated/prisma/client";
-import { PrismaPg } from "@prisma/adapter-pg";
 import { requireEnv } from "../../src/lib/env";
 import { digestLookupSecret } from "../../src/lib/crypto";
+import { adultRankId } from "../helpers/belt-ranks";
 import { listStudents } from "../../src/app/[locale]/(staff)/students/actions";
-import type { StaffSession } from "../../src/lib/auth/session";
+import type { TenantContext, MembershipRole } from "../../src/lib/tenant/types";
 
-const adapter = new PrismaPg({ connectionString: requireEnv("DATABASE_URL") });
-const prisma = new PrismaClient({ adapter });
+const prisma = getTestPrismaClient();
+
+function ctx(role: MembershipRole, academyIds: string[] | "ALL", organizationId: string): TenantContext {
+  return {
+    kind: "tenant",
+    actorUserId: "x",
+    organizationId,
+    organizationRole: role,
+    academyIds,
+    selfStudentId: null,
+  };
+}
 
 describe("student roster — cross-academy isolation (feature-level, on top of Task 2's helper)", () => {
   const pepper = requireEnv("CODE_PEPPER");
@@ -29,10 +39,12 @@ describe("student roster — cross-academy isolation (feature-level, on top of T
     const escazuStudent = await prisma.student.create({
       data: {
         homeAcademyId: escazu.id,
+        organizationId: escazu.organizationId,
         firstName: "RosterIsolationTest",
         lastName: "EscazuStudent",
         phone: "88880001",
         email: `roster-isolation-escazu-${uniqueSuffix}@example.com`,
+        currentRankId: adultRankId("WHITE"),
         codeHash: digestLookupSecret(`roster-escazu-${uniqueSuffix}`, pepper),
       },
     });
@@ -41,30 +53,20 @@ describe("student roster — cross-academy isolation (feature-level, on top of T
     const escalanteStudent = await prisma.student.create({
       data: {
         homeAcademyId: escalante.id,
+        organizationId: escalante.organizationId,
         firstName: "RosterIsolationTest",
         lastName: "EscalanteStudent",
         phone: "88880002",
         email: `roster-isolation-escalante-${uniqueSuffix}@example.com`,
+        currentRankId: adultRankId("WHITE"),
         codeHash: digestLookupSecret(`roster-escalante-${uniqueSuffix}`, pepper),
       },
     });
     createdStudentIds.push(escalanteStudent.id);
 
-    const escalanteOnlySession: StaffSession = {
-      userId: "roster-test-instructor-escalante",
-      role: "INSTRUCTOR",
-      academyIds: [escalante.id],
-    };
-    const escazuOnlySession: StaffSession = {
-      userId: "roster-test-instructor-escazu",
-      role: "INSTRUCTOR",
-      academyIds: [escazu.id],
-    };
-    const adminSession: StaffSession = {
-      userId: "roster-test-admin",
-      role: "ADMIN",
-      academyIds: "ALL",
-    };
+    const escalanteOnlySession = ctx("INSTRUCTOR", [escalante.id], escalante.organizationId);
+    const escazuOnlySession = ctx("INSTRUCTOR", [escazu.id], escazu.organizationId);
+    const adminSession = ctx("ADMIN", "ALL", escazu.organizationId);
 
     // Scope the search to just our two throwaway rows so this assertion
     // holds regardless of whatever else is in the seeded/dev DB.
@@ -94,10 +96,12 @@ describe("student roster — cross-academy isolation (feature-level, on top of T
     const escazuStudent = await prisma.student.create({
       data: {
         homeAcademyId: escazu.id,
+        organizationId: escazu.organizationId,
         firstName: "RosterFilterTest",
         lastName: "EscazuStudent",
         phone: "88880003",
         email: `roster-filter-escazu-${uniqueSuffix}@example.com`,
+        currentRankId: adultRankId("WHITE"),
         codeHash: digestLookupSecret(`roster-filter-escazu-${uniqueSuffix}`, pepper),
       },
     });
@@ -106,20 +110,18 @@ describe("student roster — cross-academy isolation (feature-level, on top of T
     const escalanteStudent = await prisma.student.create({
       data: {
         homeAcademyId: escalante.id,
+        organizationId: escalante.organizationId,
         firstName: "RosterFilterTest",
         lastName: "EscalanteStudent",
         phone: "88880004",
         email: `roster-filter-escalante-${uniqueSuffix}@example.com`,
+        currentRankId: adultRankId("WHITE"),
         codeHash: digestLookupSecret(`roster-filter-escalante-${uniqueSuffix}`, pepper),
       },
     });
     createdStudentIds.push(escalanteStudent.id);
 
-    const adminSession: StaffSession = {
-      userId: "roster-test-admin-filter",
-      role: "ADMIN",
-      academyIds: "ALL",
-    };
+    const adminSession = ctx("ADMIN", "ALL", escazu.organizationId);
 
     const escazuOnly = await listStudents(adminSession, {
       search: "RosterFilterTest",
@@ -131,11 +133,7 @@ describe("student roster — cross-academy isolation (feature-level, on top of T
     // A non-admin's academyId filter is ignored, not trusted — an
     // Escalante-only session passing academyId: escazu.id must still be
     // fully scoped to Escalante, never widened.
-    const escalanteOnlySession: StaffSession = {
-      userId: "roster-test-instructor-filter",
-      role: "INSTRUCTOR",
-      academyIds: [escalante.id],
-    };
+    const escalanteOnlySession = ctx("INSTRUCTOR", [escalante.id], escalante.organizationId);
     const ignoredFilterView = await listStudents(escalanteOnlySession, {
       search: "RosterFilterTest",
       academyId: escazu.id,

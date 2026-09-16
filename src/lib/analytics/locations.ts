@@ -1,5 +1,5 @@
-import { prisma } from "@/lib/prisma";
-import type { StaffSession } from "@/lib/auth/session";
+import { getScopedDb } from "@/lib/tenant/scoped-client";
+import type { TenantContext } from "@/lib/tenant/types";
 import { getHeadlineTiles } from "@/lib/analytics/headline-tiles";
 import type { Prisma } from "@/generated/prisma/client";
 import type { AnalyticsFilters } from "@/lib/analytics/filters";
@@ -10,8 +10,8 @@ import type { AnalyticsFilters } from "@/lib/analytics/filters";
  * panel in this phase, rejects DIRECTOR outright rather than narrowing to
  * their own academy.
  */
-function requireAdminOnly(session: StaffSession): void {
-  if (session.role !== "ADMIN") {
+function requireAdminOnly(context: TenantContext): void {
+  if (context.organizationRole !== "ADMIN") {
     throw new Error("FORBIDDEN");
   }
 }
@@ -28,10 +28,13 @@ export interface LocationComparisonRow {
 /**
  * Director/admin locations panel — side-by-side per-academy comparison
  * (Phase 7 §4 Task 4, PROJECT_SPEC.md's "Locations (admin only)"). No
- * `academyScopeWhere(session)` composition is needed anywhere below: the
+ * `branchScopeWhere(context)` composition is needed anywhere below: the
  * gate above guarantees `session.academyIds === "ALL"` for every caller that
  * reaches this point, so that fragment would always resolve to `{}` — a
- * permanent no-op, not a missing scope check.
+ * permanent no-op, not a missing scope check. Organization scope is still
+ * mandatory, via `getScopedDb` (1f-3): this panel is org-scoped and
+ * deliberately branch-UNscoped — a cross-academy comparison BY DESIGN,
+ * never a cross-ORGANIZATION one.
  *
  * Queries the real `Academy` rows in scope (`filters.academyId` narrows to
  * one when set, else every academy — never a hardcoded "exactly two"). For
@@ -50,13 +53,13 @@ export interface LocationComparisonRow {
  * academy with no classes at all.
  */
 export async function getLocationComparison(
-  session: StaffSession,
+  context: TenantContext,
   filters: AnalyticsFilters,
 ): Promise<LocationComparisonRow[]> {
-  requireAdminOnly(session);
+  requireAdminOnly(context);
 
-  const academies = await prisma.academy.findMany({
-    where: filters.academyId ? { id: filters.academyId } : undefined,
+  const academies = await getScopedDb(context).academy.findMany({
+    where: { ...(filters.academyId ? { id: filters.academyId } : {}) },
     orderBy: { name: "asc" },
     select: { id: true, name: true },
   });
@@ -64,8 +67,8 @@ export async function getLocationComparison(
   return Promise.all(
     academies.map(async (academy) => {
       const [tiles, classCount] = await Promise.all([
-        getHeadlineTiles(session, { ...filters, academyId: academy.id }),
-        prisma.classSession.count({ where: { academyId: academy.id } }),
+        getHeadlineTiles(context, { ...filters, academyId: academy.id }),
+        getScopedDb(context).classSession.count({ where: { academyId: academy.id } }),
       ]);
 
       return {
@@ -90,8 +93,9 @@ export interface CrossTrainingEntry {
 
 /**
  * Director/admin cross-training panel (Phase 7 §4 Task 4) — same ADMIN-only
- * gate as `getLocationComparison`, for the same reason (`academyScopeWhere`
- * omitted below for the same "permanent no-op under this gate" reason).
+ * gate as `getLocationComparison`, for the same reason (`branchScopeWhere`
+ * omitted below for the same "permanent no-op under this gate" reason;
+ * organization scope still comes from `getScopedDb`, unconditionally).
  *
  * A "visit" is any `CHECKIN` `AttendanceRecord` whose `academyId` differs
  * from the student's own `homeAcademyId`, inside `filters.from`/`filters.to`
@@ -108,10 +112,10 @@ export interface CrossTrainingEntry {
  * meaningful rows first" convention (`getClassPopularity`'s ranking).
  */
 export async function getCrossTraining(
-  session: StaffSession,
+  context: TenantContext,
   filters: AnalyticsFilters,
 ): Promise<CrossTrainingEntry[]> {
-  requireAdminOnly(session);
+  requireAdminOnly(context);
 
   const conditions: Prisma.AttendanceRecordWhereInput[] = [
     { type: "CHECKIN" },
@@ -121,7 +125,7 @@ export async function getCrossTraining(
     conditions.push({ academyId: filters.academyId });
   }
 
-  const grouped = await prisma.attendanceRecord.groupBy({
+  const grouped = await getScopedDb(context).attendanceRecord.groupBy({
     by: ["studentId", "academyId"],
     where: { AND: conditions },
     _count: { _all: true },
@@ -129,13 +133,16 @@ export async function getCrossTraining(
   if (grouped.length === 0) return [];
 
   const studentIds = Array.from(new Set(grouped.map((g) => g.studentId)));
-  const students = await prisma.student.findMany({
+  const students = await getScopedDb(context).student.findMany({
     where: { id: { in: studentIds } },
     select: { id: true, firstName: true, lastName: true, homeAcademyId: true },
   });
   const studentById = new Map(students.map((s) => [s.id, s]));
 
-  const academies = await prisma.academy.findMany({ select: { id: true, name: true } });
+  const academies = await getScopedDb(context).academy.findMany({
+    where: {},
+    select: { id: true, name: true },
+  });
   const academyNameById = new Map(academies.map((a) => [a.id, a.name]));
 
   const entries: CrossTrainingEntry[] = [];

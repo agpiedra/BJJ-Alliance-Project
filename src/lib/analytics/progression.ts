@@ -1,10 +1,17 @@
 import { DateTime } from "luxon";
 import { prisma } from "@/lib/prisma";
-import { academyScopeWhere, type StaffSession } from "@/lib/auth/session";
+import { branchScopeWhere } from "@/lib/tenant/context";
+import { getScopedDb } from "@/lib/tenant/scoped-client";
+import type { TenantContext } from "@/lib/tenant/types";
 import { listApproachingStudents, type PromotionCandidate } from "@/lib/students/promotion-queue";
 import { ZONE } from "@/lib/scheduling/zone";
-import type { Belt, Prisma } from "@/generated/prisma/client";
+import type { Prisma } from "@/generated/prisma/client";
 import type { AnalyticsFilters } from "@/lib/analytics/filters";
+import type { BeltVisualData } from "@/components/belt-graphic/belt-graphic";
+
+/// MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 2: the old `Belt` enum is gone
+/// (replaced by BeltRank.code, a string).
+type Belt = "WHITE" | "BLUE" | "PURPLE" | "BROWN" | "BLACK";
 
 /**
  * How far back "recent" looks when computing a candidate's attendance rate
@@ -12,8 +19,8 @@ import type { AnalyticsFilters } from "@/lib/analytics/filters";
  */
 const RECENT_WINDOW_DAYS = 60;
 
-function requireDirectorRole(session: StaffSession): void {
-  if (session.role !== "ADMIN" && session.role !== "DIRECTOR") {
+function requireDirectorRole(context: TenantContext): void {
+  if (context.organizationRole !== "ADMIN" && context.organizationRole !== "DIRECTOR") {
     throw new Error("FORBIDDEN");
   }
 }
@@ -47,7 +54,10 @@ export interface ProgressionPlanningRow {
   firstName: string;
   lastName: string;
   homeAcademyName: string;
-  currentBelt: Belt;
+  currentBelt: string;
+  currentBeltLabelEs: string;
+  currentBeltLabelEn: string;
+  currentBeltVisual: BeltVisualData;
   currentStripes: number;
   atBeltCount: number;
   remainingToNextStripe: number | null;
@@ -128,7 +138,7 @@ async function computeRecentAttendanceRates(
  * agree on who counts as "approaching".
  *
  * `filters.academyId` narrows the result in memory (the session's own
- * `academyScopeWhere` is already applied inside `listApproachingStudents`) —
+ * `getScopedDb`/`branchScopeWhere` is already applied inside `listApproachingStudents`) —
  * needed for an ADMIN who picked one specific academy while their session
  * itself spans both.
  *
@@ -137,20 +147,20 @@ async function computeRecentAttendanceRates(
  * computed from `AttendanceRecord` (not carried by `PromotionCandidate`).
  */
 export async function getProgressionPlanningList(
-  session: StaffSession,
+  context: TenantContext,
   filters: AnalyticsFilters,
   today: DateTime = DateTime.now().setZone(ZONE),
 ): Promise<ProgressionPlanningRow[]> {
-  requireDirectorRole(session);
+  requireDirectorRole(context);
 
-  const allApproaching = await listApproachingStudents(session);
+  const allApproaching = await listApproachingStudents(context);
   const candidates: PromotionCandidate[] = filters.academyId
     ? allApproaching.filter((c) => c.homeAcademyId === filters.academyId)
     : allApproaching;
 
   if (candidates.length === 0) return [];
 
-  const students = await prisma.student.findMany({
+  const students = await getScopedDb(context).student.findMany({
     where: { id: { in: candidates.map((c) => c.studentId) } },
     select: { id: true, beltAwardedAt: true },
   });
@@ -170,11 +180,14 @@ export async function getProgressionPlanningList(
       lastName: candidate.lastName,
       homeAcademyName: candidate.homeAcademyName,
       currentBelt: candidate.currentBelt,
+      currentBeltLabelEs: candidate.currentBeltLabelEs,
+      currentBeltLabelEn: candidate.currentBeltLabelEn,
+      currentBeltVisual: candidate.currentBeltVisual,
       currentStripes: candidate.currentStripes,
       atBeltCount: candidate.atBeltCount,
-      remainingToNextStripe: candidate.remainingToNextStripe,
+      remainingToNextStripe: candidate.remainingAttendance,
       recentAttendancesPerWeek,
-      projectedDate: projectThresholdDate(candidate.remainingToNextStripe, recentAttendancesPerWeek, today),
+      projectedDate: projectThresholdDate(candidate.remainingAttendance, recentAttendancesPerWeek, today),
     };
   });
 }
@@ -190,8 +203,9 @@ const BELT_ORDER: readonly Belt[] = ["WHITE", "BLUE", "PURPLE", "BROWN", "BLACK"
  * Director/admin belt-distribution panel data (Phase 7 §4 Task 3) — ADMIN/
  * DIRECTOR only, self-enforced. A simple `groupBy(currentBelt)` count over
  * ACTIVE students, scoped the same AND-array way `getHeadlineTiles` scopes
- * Student (`academyScopeWhere` translated to `homeAcademyId`, AND
- * `filters.academyId` when set — never spread into one object literal).
+ * Student (`branchScopeWhere` translated to `homeAcademyId`, AND
+ * `filters.academyId` when set — never spread into one object literal;
+ * organization scope comes from `getScopedDb`, unconditionally).
  *
  * Every belt appears, including a belt with zero current students — same
  * "surface the empty slot, don't filter it away" posture `getClassPopularity`
@@ -200,26 +214,40 @@ const BELT_ORDER: readonly Belt[] = ["WHITE", "BLUE", "PURPLE", "BROWN", "BLACK"
  * return.
  */
 export async function getBeltDistribution(
-  session: StaffSession,
+  context: TenantContext,
   filters: AnalyticsFilters,
 ): Promise<BeltDistributionRow[]> {
-  requireDirectorRole(session);
+  requireDirectorRole(context);
 
-  const scope = academyScopeWhere(session);
+  const branchScope = branchScopeWhere(context);
   const conditions: Prisma.StudentWhereInput[] = [{ status: "ACTIVE" }];
-  if (scope.academyId) {
-    conditions.push({ homeAcademyId: scope.academyId });
+  if (branchScope.academyId) {
+    conditions.push({ homeAcademyId: branchScope.academyId });
   }
   if (filters.academyId) {
     conditions.push({ homeAcademyId: filters.academyId });
   }
 
-  const grouped = await prisma.student.groupBy({
-    by: ["currentBelt"],
-    where: { AND: conditions },
-    _count: { _all: true },
-  });
-  const countByBelt = new Map(grouped.map((g) => [g.currentBelt, g._count._all]));
+  // MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 2: groupBy can't group by a
+  // relation (currentRank), only the scalar FK — resolved to a belt code
+  // via a small BeltRank lookup, same pattern as scripts/alliance-baseline.ts.
+  const [grouped, ranks] = await Promise.all([
+    getScopedDb(context).student.groupBy({
+      by: ["currentRankId"],
+      where: { AND: conditions },
+      _count: { _all: true },
+    }),
+    getScopedDb(context).beltRank.findMany({
+      where: { track: "ADULT" },
+      select: { id: true, code: true },
+    }),
+  ]);
+  const codeByRankId = new Map(ranks.map((r) => [r.id, r.code]));
+  const countByBelt = new Map<string, number>();
+  for (const g of grouped) {
+    const code = codeByRankId.get(g.currentRankId);
+    if (code) countByBelt.set(code, (countByBelt.get(code) ?? 0) + g._count._all);
+  }
 
   return BELT_ORDER.map((belt) => ({ belt, count: countByBelt.get(belt) ?? 0 }));
 }
@@ -229,9 +257,13 @@ export interface PromotionInRangeRow {
   studentId: string;
   firstName: string;
   lastName: string;
-  fromBelt: Belt;
+  fromBelt: string;
+  fromBeltLabelEs: string;
+  fromBeltLabelEn: string;
   fromStripes: number;
-  toBelt: Belt;
+  toBelt: string;
+  toBeltLabelEs: string;
+  toBeltLabelEn: string;
   toStripes: number;
   awardedAt: DateTime;
 }
@@ -248,27 +280,27 @@ export interface PromotionInRangeRow {
  * detail page.
  */
 export async function getPromotionsInRange(
-  session: StaffSession,
+  context: TenantContext,
   filters: AnalyticsFilters,
 ): Promise<PromotionInRangeRow[]> {
-  requireDirectorRole(session);
+  requireDirectorRole(context);
 
   const conditions: Prisma.PromotionWhereInput[] = [
-    academyScopeWhere(session),
+    branchScopeWhere(context),
     { awardedAt: { gte: filters.from.toJSDate(), lte: filters.to.toJSDate() } },
   ];
   if (filters.academyId) {
     conditions.push({ academyId: filters.academyId });
   }
 
-  const promotions = await prisma.promotion.findMany({
+  const promotions = await getScopedDb(context).promotion.findMany({
     where: { AND: conditions },
     select: {
       id: true,
       studentId: true,
-      fromBelt: true,
+      fromRank: { select: { code: true, labelEs: true, labelEn: true } },
       fromStripes: true,
-      toBelt: true,
+      toRank: { select: { code: true, labelEs: true, labelEn: true } },
       toStripes: true,
       awardedAt: true,
       student: { select: { firstName: true, lastName: true } },
@@ -281,9 +313,13 @@ export async function getPromotionsInRange(
     studentId: promotion.studentId,
     firstName: promotion.student.firstName,
     lastName: promotion.student.lastName,
-    fromBelt: promotion.fromBelt,
+    fromBelt: promotion.fromRank.code,
+    fromBeltLabelEs: promotion.fromRank.labelEs,
+    fromBeltLabelEn: promotion.fromRank.labelEn,
     fromStripes: promotion.fromStripes,
-    toBelt: promotion.toBelt,
+    toBelt: promotion.toRank.code,
+    toBeltLabelEs: promotion.toRank.labelEs,
+    toBeltLabelEn: promotion.toRank.labelEn,
     toStripes: promotion.toStripes,
     awardedAt: DateTime.fromJSDate(promotion.awardedAt),
   }));

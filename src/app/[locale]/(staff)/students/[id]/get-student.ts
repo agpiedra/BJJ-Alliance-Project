@@ -1,5 +1,6 @@
-import { prisma } from "@/lib/prisma";
-import { isAcademyInScope, type StaffSession } from "@/lib/auth/session";
+import { isAcademyInTenantScope } from "@/lib/tenant/context";
+import { getScopedDb } from "@/lib/tenant/scoped-client";
+import type { TenantContext } from "@/lib/tenant/types";
 
 /**
  * Plain function — NOT a "use server" action, and deliberately kept out of
@@ -7,14 +8,15 @@ import { isAcademyInScope, type StaffSession } from "@/lib/auth/session";
  * directly). Two independent reasons, matching Task 7's
  * `students/actions.ts` split:
  *
- * 1. Security: this takes `session: StaffSession` as a plain parameter
+ * 1. Security: this takes `context: TenantContext` as a plain parameter
  *    rather than deriving it itself from the request. A "use server" export
  *    is invocable directly by anyone who can reach its action id with
  *    whatever serializable payload they send — so if this were a Server
- *    Action, a caller could forge `{ role: "ADMIN", academyIds: "ALL" }` and
- *    read any student regardless of academy. It's safe only because the
- *    detail page (a Server Component) is the sole caller and always passes a
- *    session it just obtained from `requireStaffSession()`.
+ *    Action, a caller could forge `{ organizationRole: "ADMIN", academyIds:
+ *    "ALL", organizationId: <any> }` and read any student regardless of
+ *    academy. It's safe only because the detail page (a Server Component) is
+ *    the sole caller and always passes a context it just obtained from
+ *    `requireTenantContext()`.
  * 2. Build correctness: this module imports Prisma (Node-only). Mixing it
  *    into a file that a Client Component also imports from (the edit form /
  *    archive button / regenerate button all import from `./actions`) made
@@ -28,13 +30,33 @@ import { isAcademyInScope, type StaffSession } from "@/lib/auth/session";
  * same result as a genuinely nonexistent id. The caller (`page.tsx`) turns
  * `null` into `notFound()`.
  */
-export async function getStudentForStaff(session: StaffSession, studentId: string) {
-  const student = await prisma.student.findUnique({
+export async function getStudentForStaff(context: TenantContext, studentId: string) {
+  const student = await getScopedDb(context).student.findUnique({
     where: { id: studentId },
-    include: { homeAcademy: { select: { id: true, name: true, slug: true } } },
+    include: {
+      homeAcademy: { select: { id: true, name: true, slug: true } },
+      currentRank: {
+        select: {
+          code: true,
+          labelEs: true,
+          labelEn: true,
+          primaryColor: true,
+          centerStripeColor: true,
+          barColor: true,
+          stripeColors: true,
+          maxStripes: true,
+          visibleStripeSlots: true,
+        },
+      },
+    },
   });
 
-  if (!student || !isAcademyInScope(session, student.homeAcademyId)) {
+  // Organization scope is enforced structurally by `getScopedDb` above —
+  // `student` is already `null` for a cross-organization id.
+  // `isAcademyInTenantScope` only checks branch-level scope on top of that,
+  // and returns true unconditionally for ADMIN's "ALL", which says nothing
+  // about which organization the academy belongs to.
+  if (!student || !isAcademyInTenantScope(context, student.homeAcademyId)) {
     return null;
   }
 

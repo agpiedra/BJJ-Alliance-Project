@@ -4,9 +4,13 @@ import { useActionState } from "react";
 import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { createStudent, type CreateStudentState } from "./create-student-action";
-import { Belt } from "@/generated/prisma/browser";
 
-const BELT_OPTIONS = Object.values(Belt);
+// MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 2: the old `Belt` enum is gone
+// (replaced by BeltRank, which is data now) — every existing student still
+// starts on one of these 5 adult ranks, so this stays a plain local literal
+// list, same as STRIPE_OPTIONS below, rather than a DB round trip for a
+// fixed 5-option dropdown.
+const BELT_OPTIONS = ["WHITE", "BLUE", "PURPLE", "BROWN", "BLACK"] as const;
 const STRIPE_OPTIONS = [0, 1, 2, 3, 4];
 
 const INITIAL_STATE: CreateStudentState = {};
@@ -14,12 +18,18 @@ const INITIAL_STATE: CreateStudentState = {};
 type Academy = { id: string; name: string };
 
 // Rendered only for ADMIN/DIRECTOR sessions (page.tsx gate) — but the real
-// enforcement is server-side in `createStudent` itself (requireStaffSession
-// + isAcademyInScope), never this UI check alone.
-export function CreateStudentForm({ academies }: { academies: Academy[] }) {
+// enforcement is server-side in `createStudent` itself (requireTenantContext
+// + isAcademyInTenantScope), never this UI check alone.
+export function CreateStudentForm({
+  organizationId,
+  academies,
+}: {
+  organizationId: string;
+  academies: Academy[];
+}) {
   const t = useTranslations("students.create");
   const tBelt = useTranslations("belt");
-  const [state, formAction, isPending] = useActionState(createStudent, INITIAL_STATE);
+  const [state, formAction, isPending] = useActionState(createStudent.bind(null, organizationId), INITIAL_STATE);
 
   const guardianNameErrors = state.fieldErrors?.guardianName;
 
@@ -69,7 +79,7 @@ export function CreateStudentForm({ academies }: { academies: Academy[] }) {
 
         <label className="flex flex-col gap-1">
           <span>{t("currentBelt")}</span>
-          <select name="currentBelt" required defaultValue={Belt.WHITE} className="rounded border px-3 py-2">
+          <select name="currentBelt" required defaultValue="WHITE" className="rounded border px-3 py-2">
             {BELT_OPTIONS.map((belt) => (
               <option key={belt} value={belt}>
                 {tBelt(belt)}

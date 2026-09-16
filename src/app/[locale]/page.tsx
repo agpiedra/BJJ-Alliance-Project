@@ -2,7 +2,7 @@ import { getTranslations } from "next-intl/server";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { BrandBanner } from "@/components/brand/brand-banner";
-import { BeltGraphic, type Belt } from "@/components/belt-graphic/belt-graphic";
+import { BeltGraphic, type BeltVisualData } from "@/components/belt-graphic/belt-graphic";
 import { getPublicHomeStats } from "./home-data";
 
 // Reads live, admin-editable data (academy/class-session counts, one
@@ -10,12 +10,37 @@ import { getPublicHomeStats } from "./home-data";
 // as the signup and kiosk pages, never frozen at build time.
 export const dynamic = "force-dynamic";
 
-const BELT_PROGRESSION: { belt: Belt; stripes: number }[] = [
-  { belt: "WHITE", stripes: 4 },
-  { belt: "BLUE", stripes: 4 },
-  { belt: "PURPLE", stripes: 4 },
-  { belt: "BROWN", stripes: 4 },
-  { belt: "BLACK", stripes: 0 },
+/** Static illustrative examples for this marketing page — not driven by
+ * any real organization's catalog, so the color data is hardcoded here
+ * (the same hex palette the real Alliance adult ranks are seeded with).
+ * `code` is kept only so the existing `tBelt(code)` lookup below (the
+ * deliberately-preserved static/marketing exception from Phase 3a) can
+ * still localize the caption. */
+function adultExample(code: string, primaryColor: string, barColor: string, stripes: number): {
+  code: string;
+  belt: BeltVisualData;
+  stripes: number;
+} {
+  return {
+    code,
+    belt: {
+      primaryColor,
+      centerStripeColor: null,
+      barColor,
+      stripeColors: Array.from({ length: 4 }, () => "#FFFFFF"),
+      maxStripes: stripes === 0 ? 0 : 4,
+      visibleStripeSlots: 4,
+    },
+    stripes,
+  };
+}
+
+const BELT_PROGRESSION = [
+  adultExample("WHITE", "#F0EBE0", "#111116", 4),
+  adultExample("BLUE", "#215DA5", "#111116", 4),
+  adultExample("PURPLE", "#652F94", "#111116", 4),
+  adultExample("BROWN", "#643D20", "#111116", 4),
+  adultExample("BLACK", "#111116", "#B63B32", 0),
 ];
 
 export default async function HomePage({
@@ -24,11 +49,17 @@ export default async function HomePage({
   params: Promise<{ locale: string }>;
 }) {
   const { locale } = await params;
-  const [t, tDay, tType, { academyCount, weeklyClassCount, previewAcademy, previewSessions }] =
+  // Phase 3a: this marketing illustration isn't driven by any real
+  // organization's catalog — it's a fixed, static example of the 5 adult
+  // belts, so it stays on `belt.<code>` message keys rather than a real
+  // rank row's labelEs/labelEn (the one other deliberate exception, besides
+  // the pre-Phase-3b /dev/belts stub).
+  const [t, tDay, tType, tBelt, { academyCount, weeklyClassCount, previewAcademy, previewSessions }] =
     await Promise.all([
       getTranslations("home"),
       getTranslations("dayOfWeek"),
       getTranslations("classType"),
+      getTranslations("belt"),
       getPublicHomeStats(),
     ]);
 
@@ -115,8 +146,8 @@ export default async function HomePage({
             {t("belts.description")}
           </p>
           <div className="flex flex-wrap items-center justify-center gap-4">
-            {BELT_PROGRESSION.map(({ belt, stripes }) => (
-              <BeltGraphic key={belt} belt={belt} stripes={stripes} />
+            {BELT_PROGRESSION.map(({ code, belt, stripes }) => (
+              <BeltGraphic key={code} belt={belt} label={tBelt(code)} stripes={stripes} />
             ))}
           </div>
         </section>

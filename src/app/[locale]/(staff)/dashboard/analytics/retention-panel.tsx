@@ -4,6 +4,18 @@ import { useLocale, useTranslations } from "next-intl";
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { formatTimestampInAcademyZone } from "@/lib/format-date";
 import type { RetentionEntry } from "@/lib/analytics/retention";
+import { Card, CardHeader, CardTitle, CardDescription, CardAction, CardContent } from "@/components/ui/card";
+import { Pill } from "@/components/ui/pill";
+import { EmptyState } from "@/components/ui/empty-state";
+import {
+  DataTable,
+  DataTableBody,
+  DataTableCell,
+  DataTableHead,
+  DataTableHeaderCell,
+  DataTableHeaderRow,
+  DataTableRow,
+} from "@/components/ui/data-table";
 import { ExportCsvButton } from "./export-csv-button";
 
 // `lastSeenAt` is a plain `Date | null` in the lib layer, but `page.tsx`
@@ -13,6 +25,12 @@ import { ExportCsvButton } from "./export-csv-button";
 // applied here too rather than assumed safe just because `Date` (unlike a
 // Luxon `DateTime`) happens to serialize.
 export type RetentionEntryPanelRow = Omit<RetentionEntry, "lastSeenAt"> & { lastSeenAt: string | null };
+
+const BUCKET_PILL_VARIANT = {
+  "30": "warn",
+  "60": "warn",
+  "90": "bad",
+} as const;
 
 /**
  * Retention panel (Phase 7 §4 Task 5) — visible to BOTH ADMIN and DIRECTOR
@@ -48,57 +66,101 @@ export function RetentionPanel({
     [t("list.csv.bucket")]: tBucket(entry.bucket),
   }));
 
+  // Rule 4: never render an empty/flat chart — a selection with no
+  // attendance signal at all across the whole 8-week trend gets the empty
+  // state instead (this check was previously missing here, unlike the
+  // dashboard page's own equivalent `WeeklyAttendanceChart`, which already
+  // guards on the same `some(count > 0)` condition).
+  const trendHasSignal = weeklyTrend.some((point) => point.count > 0);
+
   return (
-    <section className="flex flex-col gap-8">
-      <div className="flex flex-col gap-3">
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-medium">{t("list.heading")}</h2>
-          <ExportCsvButton rows={csvRows} filename="analytics-retention.csv" />
-        </div>
-
-        {entries.length === 0 ? (
-          <p className="text-muted-foreground">{t("list.empty")}</p>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
-              <thead>
-                <tr className="border-b">
-                  <th className="py-2 pr-4">{t("list.table.name")}</th>
-                  <th className="py-2 pr-4">{t("list.table.phone")}</th>
-                  <th className="py-2 pr-4">{t("list.table.lastSeenAt")}</th>
-                  <th className="py-2 pr-4">{t("list.table.bucket")}</th>
-                </tr>
-              </thead>
-              <tbody>
+    <section className="flex flex-col gap-4">
+      <Card>
+        <CardHeader className="border-b">
+          <CardTitle>{t("list.heading")}</CardTitle>
+          <CardAction>
+            <ExportCsvButton rows={csvRows} filename="analytics-retention.csv" />
+          </CardAction>
+        </CardHeader>
+        <CardContent>
+          {entries.length === 0 ? (
+            <EmptyState message={t("list.empty")} />
+          ) : (
+            <DataTable>
+              <DataTableHead>
+                <DataTableHeaderRow>
+                  <DataTableHeaderCell>{t("list.table.name")}</DataTableHeaderCell>
+                  <DataTableHeaderCell>{t("list.table.phone")}</DataTableHeaderCell>
+                  <DataTableHeaderCell>{t("list.table.lastSeenAt")}</DataTableHeaderCell>
+                  <DataTableHeaderCell>{t("list.table.bucket")}</DataTableHeaderCell>
+                </DataTableHeaderRow>
+              </DataTableHead>
+              <DataTableBody>
                 {entries.map((entry) => (
-                  <tr key={entry.studentId} className="border-b">
-                    <td className="py-2 pr-4 font-medium">{entry.name}</td>
-                    <td className="py-2 pr-4">{entry.phone}</td>
-                    <td className="py-2 pr-4">{formatLastSeen(entry.lastSeenAt)}</td>
-                    <td className="py-2 pr-4">{tBucket(entry.bucket)}</td>
-                  </tr>
+                  <DataTableRow key={entry.studentId}>
+                    <DataTableCell className="font-medium">{entry.name}</DataTableCell>
+                    <DataTableCell className="text-muted-foreground">{entry.phone}</DataTableCell>
+                    <DataTableCell>{formatLastSeen(entry.lastSeenAt)}</DataTableCell>
+                    <DataTableCell>
+                      <Pill variant={BUCKET_PILL_VARIANT[entry.bucket]}>{tBucket(entry.bucket)}</Pill>
+                    </DataTableCell>
+                  </DataTableRow>
                 ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+              </DataTableBody>
+            </DataTable>
+          )}
+        </CardContent>
+      </Card>
 
-      <div className="flex flex-col gap-3">
-        <h2 className="text-lg font-medium">{t("trend.heading")}</h2>
-        <p className="text-xs text-muted-foreground">{t("trend.caption")}</p>
-        <div className="h-72 w-full">
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={weeklyTrend} margin={{ top: 8, right: 8, bottom: 8, left: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="weekStart" />
-              <YAxis allowDecimals={false} />
-              <Tooltip />
-              <Line type="monotone" dataKey="count" name={t("trend.chart.count")} stroke="#2563eb" />
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
-      </div>
+      <Card>
+        <CardHeader className="border-b">
+          <CardTitle>{t("trend.heading")}</CardTitle>
+          {/* CardDescription (full-width row under the title), not
+              CardAction — CardAction is a right-aligned, width-uncapped slot
+              meant for a short button (see ExportCsvButton's own use of it
+              above), and this caption is a full sentence that would
+              otherwise squeeze both the title and itself into narrow ragged
+              columns at phone width. */}
+          <CardDescription>{t("trend.caption")}</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {trendHasSignal ? (
+            <div className="h-72 w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={weeklyTrend} margin={{ top: 8, right: 8, bottom: 8, left: 0 }}>
+                  <CartesianGrid strokeDasharray="3 4" stroke="var(--border)" vertical={false} />
+                  <XAxis
+                    dataKey="weekStart"
+                    tick={{ fontSize: 9.5, fill: "var(--muted-foreground)" }}
+                    axisLine={{ stroke: "var(--border)" }}
+                    tickLine={false}
+                  />
+                  <YAxis allowDecimals={false} tick={{ fontSize: 9.5, fill: "var(--muted-foreground)" }} />
+                  <Tooltip
+                    formatter={(value) => [value, t("trend.chart.count")]}
+                    contentStyle={{
+                      background: "var(--popover)",
+                      border: "1px solid var(--border)",
+                      borderRadius: 8,
+                      fontSize: 12,
+                    }}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="count"
+                    name={t("trend.chart.count")}
+                    stroke="var(--brand-gold)"
+                    strokeWidth={2.4}
+                    dot={{ r: 2.8, fill: "var(--card)", stroke: "var(--brand-gold)", strokeWidth: 1.8 }}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          ) : (
+            <EmptyState message={t("trend.empty")} />
+          )}
+        </CardContent>
+      </Card>
     </section>
   );
 }

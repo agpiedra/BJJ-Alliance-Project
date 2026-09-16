@@ -1,15 +1,14 @@
 import "dotenv/config";
+import { getTestPrismaClient } from "../helpers/test-db";
 import { afterAll, describe, expect, it } from "vitest";
-import { PrismaClient } from "../../src/generated/prisma/client";
-import { PrismaPg } from "@prisma/adapter-pg";
-import { requireEnv } from "../../src/lib/env";
 import type { DeliveryResult, NotificationChannel, Recipient, RenderedMessage } from "../../src/lib/notifications/types";
 
 const { InAppChannel } = await import("../../src/lib/notifications/in-app-channel");
 const { dispatchNotification } = await import("../../src/lib/notifications/dispatch");
 
-const adapter = new PrismaPg({ connectionString: requireEnv("DATABASE_URL") });
-const prisma = new PrismaClient({ adapter });
+const prisma = getTestPrismaClient();
+
+const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
 
 const cleanupUserIds: string[] = [];
 
@@ -59,7 +58,7 @@ describe("InAppChannel", () => {
   it("send creates a real Notification row with readAt null and the right userId/type/title/body", async () => {
     const user = await makeUser();
     const channel = new InAppChannel();
-    const recipient: Recipient = { userId: user.id, email: user.email, locale: user.locale };
+    const recipient: Recipient = { userId: user.id, email: user.email, locale: user.locale, organizationId: escazu.organizationId };
     const message: RenderedMessage = { type: "NEW_SIGNUP", title: "Nueva inscripción", body: "Alguien se registró." };
 
     const result = await channel.send(recipient, message);
@@ -81,8 +80,8 @@ describe("dispatchNotification", () => {
     const userA = await makeUser();
     const userB = await makeUser();
     const recipients: Recipient[] = [
-      { userId: userA.id, email: userA.email, locale: userA.locale },
-      { userId: userB.id, email: userB.email, locale: userB.locale },
+      { userId: userA.id, email: userA.email, locale: userA.locale, organizationId: escazu.organizationId },
+      { userId: userB.id, email: userB.email, locale: userB.locale, organizationId: escazu.organizationId },
     ];
     const message: RenderedMessage = { type: "NEW_SIGNUP", title: "t", body: "b" };
     const channel1 = new RecordingChannel();
@@ -100,8 +99,8 @@ describe("dispatchNotification", () => {
     const userA = await makeUser();
     const userB = await makeUser();
     const recipients: Recipient[] = [
-      { userId: userA.id, email: userA.email, locale: userA.locale },
-      { userId: userB.id, email: userB.email, locale: userB.locale },
+      { userId: userA.id, email: userA.email, locale: userA.locale, organizationId: escazu.organizationId },
+      { userId: userB.id, email: userB.email, locale: userB.locale, organizationId: escazu.organizationId },
     ];
     const message: RenderedMessage = { type: "NEW_SIGNUP", title: "t", body: "b" };
     const throwing = new ThrowingChannel();
@@ -122,7 +121,7 @@ describe("dispatchNotification", () => {
     const inApp = new InAppChannel();
     const throwing = new ThrowingChannel();
 
-    await dispatchNotification([{ userId: userA.id, email: userA.email, locale: userA.locale }], message, [
+    await dispatchNotification([{ userId: userA.id, email: userA.email, locale: userA.locale, organizationId: escazu.organizationId }], message, [
       throwing,
       inApp,
     ]);

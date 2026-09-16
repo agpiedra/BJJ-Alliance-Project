@@ -115,6 +115,7 @@ function evaluateRateLimit(recentFailures: WindowAttempt[]): { allowed: true } |
  */
 export async function reserveKioskAttempt(
   academyId: string,
+  organizationId: string,
   kioskTokenHash: string,
   ipAddress: string,
 ): Promise<ReserveResult> {
@@ -149,6 +150,7 @@ export async function reserveKioskAttempt(
       const attempt = await tx.kioskAttempt.create({
         data: {
           academyId,
+          organizationId,
           kioskTokenHash,
           ipAddress,
           success: false,

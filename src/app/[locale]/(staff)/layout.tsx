@@ -1,9 +1,12 @@
 import type { ReactNode } from "react";
 import { cookies } from "next/headers";
-import { getLocale } from "next-intl/server";
+import { getLocale, getTranslations } from "next-intl/server";
 import { getStaffSession } from "@/lib/auth/session";
-import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
+import { auth } from "@/auth";
+import { prisma } from "@/lib/prisma";
+import { SidebarProvider } from "@/components/ui/sidebar";
 import { StaffSidebar } from "@/components/staff-sidebar/staff-sidebar";
+import { StaffTopBar } from "@/components/staff-sidebar/staff-top-bar";
 import { NAV_ITEMS } from "@/components/staff-sidebar/nav-items";
 import { NotificationBell } from "./dashboard/notification-bell";
 import { getMyNotifications, getUnreadCount } from "./dashboard/notification-actions";
@@ -23,6 +26,47 @@ import { getMyNotifications, getUnreadCount } from "./dashboard/notification-act
 export default async function StaffLayout({ children }: { children: ReactNode }) {
   const locale = await getLocale();
   const session = await getStaffSession();
+
+  // Academy list for the switcher: every academy for ADMIN (unscoped),
+  // or only the academies this DIRECTOR/INSTRUCTOR is assigned to — same
+  // split students/page.tsx already uses for its own academy select.
+  const scopedAcademyIds =
+    session && Array.isArray(session.academyIds) ? session.academyIds : [];
+  const academies = session
+    ? session.role === "ADMIN"
+      ? await prisma.academy.findMany({ orderBy: { name: "asc" }, select: { id: true, name: true } })
+      : await prisma.academy.findMany({
+          where: { id: { in: scopedAcademyIds } },
+          orderBy: { name: "asc" },
+          select: { id: true, name: true },
+        })
+    : [];
+
+  const cookieStore = await cookies();
+  const requestedAcademyId = cookieStore.get("selected_academy")?.value ?? null;
+  const selectedAcademyId =
+    session?.role === "ADMIN" && academies.some((a) => a.id === requestedAcademyId)
+      ? requestedAcademyId
+      : null;
+
+  const tShell = await getTranslations("staffShell");
+  const academyLabel =
+    session?.role === "ADMIN"
+      ? (academies.find((a) => a.id === selectedAcademyId)?.name ?? tShell("academySwitcher.bothSelected"))
+      : academies.map((a) => a.name).join(", ");
+
+  // Active-student count for the "Alumnos" nav badge — same ACTIVE +
+  // home-academy scoping students/page.tsx's own query already uses,
+  // just narrowed to a count instead of a full roster fetch.
+  const activeStudentCount = session
+    ? await prisma.student.count({
+        where: {
+          status: "ACTIVE",
+          ...(session.academyIds === "ALL" ? {} : { homeAcademyId: { in: session.academyIds } }),
+        },
+      })
+    : 0;
+
   // `NAV_ITEMS`' `icon` (a component reference) and `visible` (a function)
   // can't cross the Server -> Client boundary as data — this resolves both
   // server-side into a plain, serializable shape (`StaffSidebarNavEntry`)
@@ -32,6 +76,8 @@ export default async function StaffLayout({ children }: { children: ReactNode })
         href: item.href,
         labelKey: item.labelKey,
         icon: <item.icon />,
+        group: item.group,
+        badge: item.href === "/students" ? activeStudentCount : undefined,
       }))
     : [];
 
@@ -47,12 +93,22 @@ export default async function StaffLayout({ children }: { children: ReactNode })
   // that file's `document.cookie = \`${SIDEBAR_COOKIE_NAME}=${openState}\``);
   // absent (first visit) defaults to expanded, same as the component's own
   // `defaultOpen = true` default.
-  const sidebarState = (await cookies()).get("sidebar_state")?.value;
+  const sidebarState = cookieStore.get("sidebar_state")?.value;
   const sidebarDefaultOpen = sidebarState !== "false";
+
+  const authSession = await auth();
 
   return (
     <SidebarProvider defaultOpen={sidebarDefaultOpen}>
-      <StaffSidebar locale={locale} navItems={navItems} />
+      <StaffSidebar
+        locale={locale}
+        navItems={navItems}
+        academySwitcher={{
+          academies,
+          selectedAcademyId,
+          readOnly: session?.role !== "ADMIN",
+        }}
+      />
       {/*
         Plain `<div>` carrying `SidebarInset`'s exact className, not
         `<SidebarInset>` itself — that vendored component hardcodes a
@@ -64,12 +120,19 @@ export default async function StaffLayout({ children }: { children: ReactNode })
       */}
       <div
         data-slot="sidebar-inset"
-        className="relative flex w-full flex-1 flex-col bg-background md:peer-data-[variant=inset]:m-2 md:peer-data-[variant=inset]:ml-0 md:peer-data-[variant=inset]:rounded-xl md:peer-data-[variant=inset]:shadow-sm md:peer-data-[variant=inset]:peer-data-[state=collapsed]:ml-2"
+        className="relative flex w-full min-w-0 flex-1 flex-col overflow-x-hidden bg-background md:peer-data-[variant=inset]:m-2 md:peer-data-[variant=inset]:ml-0 md:peer-data-[variant=inset]:rounded-xl md:peer-data-[variant=inset]:shadow-sm md:peer-data-[variant=inset]:peer-data-[state=collapsed]:ml-2"
       >
-        <header className="flex h-12 items-center justify-between border-b px-4">
-          <SidebarTrigger />
-          <NotificationBell initialNotifications={notifications} initialUnreadCount={unreadCount} />
-        </header>
+        {session && (
+          <StaffTopBar
+            locale={locale}
+            navItems={navItems}
+            userEmail={authSession?.user?.email ?? ""}
+            role={session.role}
+            academyLabel={academyLabel}
+          >
+            <NotificationBell initialNotifications={notifications} initialUnreadCount={unreadCount} />
+          </StaffTopBar>
+        )}
         {children}
       </div>
     </SidebarProvider>

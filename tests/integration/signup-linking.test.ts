@@ -1,10 +1,10 @@
 import "dotenv/config";
+import { getTestPrismaClient } from "../helpers/test-db";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
-import { PrismaClient } from "../../src/generated/prisma/client";
-import { PrismaPg } from "@prisma/adapter-pg";
 import { requireEnv } from "../../src/lib/env";
 import { digestLookupSecret } from "../../src/lib/crypto";
 import { signup } from "../../src/app/[locale]/signup/actions";
+import { adultRankId } from "../helpers/belt-ranks";
 
 // I-1 regression coverage: notifyNewSignup must still fire when a new
 // student signs up through this REAL server action entry point (not just via
@@ -18,8 +18,7 @@ vi.mock("../../src/lib/notifications/notify-new-signup", () => ({
 
 // `signup` is a genuinely anonymous action — no session, no cookies — so it
 // can be imported and called directly, unlike the staff actions.
-const adapter = new PrismaPg({ connectionString: requireEnv("DATABASE_URL") });
-const prisma = new PrismaClient({ adapter });
+const prisma = getTestPrismaClient();
 const pepper = requireEnv("CODE_PEPPER");
 
 const cleanupEmails: string[] = [];
@@ -57,11 +56,12 @@ describe("signup — a staff-created student's email is REFUSED, never duplicate
     const staffCreated = await prisma.student.create({
       data: {
         homeAcademyId: escalante.id,
+        organizationId: escalante.organizationId,
         firstName: "StaffEntered",
         lastName: "Purple",
         phone: "88887777",
         email,
-        currentBelt: "PURPLE",
+        currentRankId: adultRankId("PURPLE"),
         currentStripes: 3,
         codeHash: staffCodeHash,
         status: "ACTIVE",
@@ -98,13 +98,16 @@ describe("signup — a staff-created student's email is REFUSED, never duplicate
 
     // (c) the existing Student row is completely unchanged — still exactly
     //     one row, still unclaimed, every field as staff left it
-    const students = await prisma.student.findMany({ where: { email } });
+    const students = await prisma.student.findMany({
+      where: { email },
+      include: { currentRank: { select: { code: true } } },
+    });
     expect(students).toHaveLength(1);
     const untouched = students[0];
     expect(untouched.id).toBe(staffCreated.id);
     expect(untouched.userId).toBeNull();
     expect(untouched.codeHash).toBe(staffCodeHash);
-    expect(untouched.currentBelt).toBe("PURPLE");
+    expect(untouched.currentRank.code).toBe("PURPLE");
     expect(untouched.currentStripes).toBe(3);
     expect(untouched.homeAcademyId).toBe(escalante.id);
     expect(untouched.status).toBe("ACTIVE");

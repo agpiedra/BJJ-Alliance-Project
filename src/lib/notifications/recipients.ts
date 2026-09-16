@@ -7,12 +7,12 @@ import type { Recipient } from "@/lib/notifications/types";
  * ADMIN/DIRECTOR-gated-feature precedent, see the plan's ruling), plus every
  * active DIRECTOR/INSTRUCTOR with a `StaffAssignment` to that academy.
  *
- * Deliberately NOT routed through `academyScopeWhere`/`isAcademyInScope`
- * (`@/lib/auth/session`) — those answer "what can THIS CALLER see," a
+ * Deliberately NOT routed through `getScopedDb`/`isAcademyInTenantScope`
+ * (`@/lib/tenant/context`) — those answer "what can THIS CALLER see," a
  * question about an existing session's scope. This function answers a
  * different question — "who should be notified about academy X" — for a
  * concrete academy id with no caller session in play at all, so it queries
- * `StaffAssignment` directly instead.
+ * `OrganizationMembership`/`StaffAssignment` directly instead.
  *
  * Deduplicated by `userId` via a `Map`: an ADMIN is never also a DIRECTOR in
  * practice, but a `Map` keyed by `userId` is simpler than reasoning about
@@ -20,10 +20,23 @@ import type { Recipient } from "@/lib/notifications/types";
  * `StaffAssignment` row) could ever produce a duplicate.
  */
 export async function resolveStaffRecipients(academyId: string): Promise<Recipient[]> {
-  const [admins, assignments] = await Promise.all([
-    prisma.user.findMany({
-      where: { role: "ADMIN", active: true },
-      select: { id: true, email: true, locale: true },
+  // MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 1: Notification.organizationId is
+  // required — the org this notification is about (this academy's), not
+  // necessarily every recipient's only membership.
+  const academy = await prisma.academy.findUniqueOrThrow({
+    where: { id: academyId },
+    select: { organizationId: true },
+  });
+
+  // ADMINs are resolved through OrganizationMembership, scoped to this
+  // academy's own organization — never `User.role` globally, which would
+  // notify every ADMIN across every tenant about one organization's event
+  // (the exact 1d gap flagged when Notification.organizationId was added:
+  // "unscoped by organization... notifies every ADMIN everywhere").
+  const [adminMemberships, assignments] = await Promise.all([
+    prisma.organizationMembership.findMany({
+      where: { organizationId: academy.organizationId, role: "ADMIN", user: { active: true } },
+      select: { user: { select: { id: true, email: true, locale: true } } },
     }),
     prisma.staffAssignment.findMany({
       where: { academyId, user: { active: true } },
@@ -32,11 +45,21 @@ export async function resolveStaffRecipients(academyId: string): Promise<Recipie
   ]);
 
   const recipients = new Map<string, Recipient>();
-  for (const admin of admins) {
-    recipients.set(admin.id, { userId: admin.id, email: admin.email, locale: admin.locale });
+  for (const { user: admin } of adminMemberships) {
+    recipients.set(admin.id, {
+      userId: admin.id,
+      email: admin.email,
+      locale: admin.locale,
+      organizationId: academy.organizationId,
+    });
   }
   for (const { user } of assignments) {
-    recipients.set(user.id, { userId: user.id, email: user.email, locale: user.locale });
+    recipients.set(user.id, {
+      userId: user.id,
+      email: user.email,
+      locale: user.locale,
+      organizationId: academy.organizationId,
+    });
   }
 
   return [...recipients.values()];

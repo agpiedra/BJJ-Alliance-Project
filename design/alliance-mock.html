@@ -1,0 +1,1492 @@
+<title>Alliance Tatami</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+
+<style>
+/* ============================================================
+   TOKENS — tema claro por defecto, oscuro redefinido abajo
+   ============================================================ */
+:root{
+  --ground:#F7F6F2;
+  --surface:#FFFFFF;
+  --surface-2:#FBFAF5;
+  --surface-3:#F1EFE7;
+  --line:#E6E2D6;
+  --line-strong:#D3CDBC;
+  --text:#1A1813;
+  --text-2:#6B6557;
+  --text-3:#948E7E;
+
+  --accent:#E3B505;
+  --accent-hi:#F3C824;
+  --accent-soft:#FBF1C8;
+  --accent-line:#E8D48A;
+  --on-accent:#17150E;
+
+  --ok:#2E7D52;      --ok-soft:#E2F0E8;   --ok-line:#B8DAC7;
+  --warn:#A9711A;    --warn-soft:#FAEED6; --warn-line:#E6CE9C;
+  --bad:#B33A2B;     --bad-soft:#F9E3DF;  --bad-line:#E7BDB5;
+
+  --rail:#15140F;
+  --rail-2:#211F17;
+  --rail-line:#2E2B21;
+  --rail-text:#B5AE9C;
+  --rail-text-hi:#FFFFFF;
+
+  --m-gi:#2B5EA8;
+  --m-nogi:#1C7A6B;
+  --m-comp:#B5442E;
+  --m-strike:#6B3E9E;
+  --m-kids:#8A5A10;
+  --m-open:#4A5568;
+
+  --belt-white:#EFEADA;
+  --belt-blue:#2B5EA8;
+  --belt-purple:#6B3E9E;
+  --belt-brown:#6A4324;
+  --belt-black:#17171B;
+
+  --shadow:0 1px 2px rgba(26,24,19,.05), 0 8px 24px -16px rgba(26,24,19,.22);
+  --radius:10px;
+
+  --f-display:"Archivo","Helvetica Neue",Arial,sans-serif;
+  --f-ui:"IBM Plex Sans","Helvetica Neue",Arial,sans-serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,"SF Mono",Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --ground:#121109;
+    --surface:#1A1811;
+    --surface-2:#201E15;
+    --surface-3:#282519;
+    --line:#302C20;
+    --line-strong:#433E2D;
+    --text:#EFEBDF;
+    --text-2:#A49D8A;
+    --text-3:#7C7563;
+
+    --accent:#F0C523;
+    --accent-hi:#FFD745;
+    --accent-soft:#332C10;
+    --accent-line:#5A4C16;
+    --on-accent:#17150E;
+
+    --ok:#6FC292;   --ok-soft:#16261D;   --ok-line:#2C4A39;
+    --warn:#E0B25E; --warn-soft:#2A2113; --warn-line:#4E3D1E;
+    --bad:#E58877;  --bad-soft:#2B1814;  --bad-line:#4E2C25;
+
+    --rail:#0D0C08;
+    --rail-2:#18160F;
+    --rail-line:#26231A;
+    --rail-text:#948D7C;
+    --rail-text-hi:#FFFFFF;
+
+    --belt-white:#D9D3C2;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 10px 30px -20px rgba(0,0,0,.9);
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#121109; --surface:#1A1811; --surface-2:#201E15; --surface-3:#282519;
+  --line:#302C20; --line-strong:#433E2D;
+  --text:#EFEBDF; --text-2:#A49D8A; --text-3:#7C7563;
+  --accent:#F0C523; --accent-hi:#FFD745; --accent-soft:#332C10; --accent-line:#5A4C16; --on-accent:#17150E;
+  --ok:#6FC292; --ok-soft:#16261D; --ok-line:#2C4A39;
+  --warn:#E0B25E; --warn-soft:#2A2113; --warn-line:#4E3D1E;
+  --bad:#E58877; --bad-soft:#2B1814; --bad-line:#4E2C25;
+  --rail:#0D0C08; --rail-2:#18160F; --rail-line:#26231A; --rail-text:#948D7C; --rail-text-hi:#FFFFFF;
+  --belt-white:#D9D3C2;
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 10px 30px -20px rgba(0,0,0,.9);
+}
+
+/* ============================================================
+   BASE
+   ============================================================ */
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--ground); color:var(--text);
+  font-family:var(--f-ui); font-size:14px; line-height:1.5;
+  -webkit-font-smoothing:antialiased;
+}
+button,input,select,textarea{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+@media (prefers-reduced-motion: reduce){*{transition:none!important;animation:none!important}}
+
+/* ============================================================
+   LAYOUT
+   ============================================================ */
+.app{display:grid;grid-template-columns:232px minmax(0,1fr);min-height:100vh}
+
+/* --- rail --- */
+.rail{
+  background:var(--rail);color:var(--rail-text);
+  display:flex;flex-direction:column;gap:4px;
+  padding:18px 12px;position:sticky;top:0;height:100vh;
+  border-right:1px solid var(--rail-line);
+}
+.brand{display:flex;align-items:center;gap:10px;padding:4px 8px 16px}
+.brand-mark{
+  width:30px;height:30px;border-radius:7px;background:var(--accent);
+  display:grid;place-items:center;flex:none;
+  font-family:var(--f-display);font-weight:700;font-size:15px;color:var(--on-accent);
+}
+.brand-name{font-family:var(--f-display);font-weight:600;font-size:14px;color:var(--rail-text-hi);letter-spacing:.01em;line-height:1.2}
+.brand-sub{font-family:var(--f-mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--rail-text)}
+
+.gym-switch{
+  margin:0 4px 14px;padding:8px 10px;border-radius:8px;
+  background:var(--rail-2);border:1px solid var(--rail-line);
+  display:flex;align-items:center;gap:8px;cursor:pointer;width:calc(100% - 8px);text-align:left;
+}
+.gym-switch:hover{border-color:#3D3928}
+.gym-dot{width:7px;height:7px;border-radius:50%;background:var(--accent);flex:none}
+.gym-switch .lbl{flex:1;min-width:0}
+.gym-switch .lbl b{display:block;font-size:12.5px;font-weight:600;color:var(--rail-text-hi);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.gym-switch .lbl span{display:block;font-size:10.5px;color:var(--rail-text)}
+.gym-switch svg{flex:none;color:var(--rail-text)}
+
+.nav-label{font-family:var(--f-mono);font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;color:#5E594A;padding:10px 12px 5px}
+.nav-item{
+  display:flex;align-items:center;gap:10px;width:100%;
+  padding:8px 12px;border-radius:8px;border:0;background:none;
+  color:var(--rail-text);font-size:13.5px;cursor:pointer;text-align:left;
+  transition:background .12s,color .12s;
+}
+.nav-item svg{flex:none;opacity:.85}
+.nav-item:hover{background:var(--rail-2);color:var(--rail-text-hi)}
+.nav-item[aria-current="page"]{background:var(--accent);color:var(--on-accent);font-weight:600}
+.nav-item[aria-current="page"] svg{opacity:1}
+.nav-item .count{
+  margin-left:auto;font-family:var(--f-mono);font-size:10.5px;
+  background:var(--rail-2);border:1px solid var(--rail-line);color:var(--rail-text);
+  padding:1px 6px;border-radius:20px;
+}
+.nav-item[aria-current="page"] .count{background:rgba(0,0,0,.14);border-color:transparent;color:var(--on-accent)}
+.rail-foot{margin-top:auto;padding-top:14px;border-top:1px solid var(--rail-line);display:flex;flex-direction:column;gap:2px}
+
+/* --- main --- */
+.main{min-width:0;display:flex;flex-direction:column}
+.topbar{
+  display:flex;align-items:center;gap:12px;
+  padding:12px 28px;border-bottom:1px solid var(--line);
+  background:var(--surface);position:sticky;top:0;z-index:5;
+}
+.crumb{font-family:var(--f-mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--text-3)}
+.crumb b{color:var(--text-2);font-weight:500}
+.topbar .spacer{flex:1}
+.demo-chip{
+  font-family:var(--f-mono);font-size:10px;letter-spacing:.06em;text-transform:uppercase;
+  background:var(--accent-soft);border:1px solid var(--accent-line);color:var(--text-2);
+  padding:3px 8px;border-radius:20px;
+}
+.avatar{
+  width:28px;height:28px;border-radius:50%;background:var(--surface-3);
+  border:1px solid var(--line);display:grid;place-items:center;
+  font-family:var(--f-display);font-size:11px;font-weight:600;color:var(--text-2);
+}
+.page{padding:26px 28px 64px;max-width:1180px;width:100%}
+
+/* --- page header --- */
+.page-head{display:flex;align-items:flex-end;gap:16px;flex-wrap:wrap;margin-bottom:22px}
+.page-head .titles{flex:1;min-width:220px}
+.eyebrow{font-family:var(--f-mono);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--text-3);margin:0 0 4px}
+h1{font-family:var(--f-display);font-weight:600;font-size:31px;line-height:1.1;letter-spacing:-.02em;margin:0;text-wrap:balance}
+.sub{margin:6px 0 0;color:var(--text-2);font-size:13.5px}
+.head-actions{display:flex;gap:8px;flex-wrap:wrap}
+
+/* --- buttons --- */
+.btn{
+  display:inline-flex;align-items:center;gap:7px;
+  padding:8px 13px;border-radius:8px;border:1px solid var(--line-strong);
+  background:var(--surface);color:var(--text);font-size:13px;font-weight:500;
+  cursor:pointer;transition:background .12s,border-color .12s;
+}
+.btn:hover{background:var(--surface-2);border-color:var(--text-3)}
+.btn-primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent);font-weight:600}
+.btn-primary:hover{background:var(--accent-hi);border-color:var(--accent-hi)}
+.btn-ghost{border-color:transparent;background:none;color:var(--text-2)}
+.btn-ghost:hover{background:var(--surface-3);border-color:transparent}
+.btn-sm{padding:4px 9px;font-size:12px;border-radius:6px}
+
+/* --- cards --- */
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow)}
+.card-head{display:flex;align-items:baseline;gap:12px;padding:16px 18px 0}
+.card-head h2{font-family:var(--f-display);font-weight:600;font-size:15px;letter-spacing:-.01em;margin:0}
+.card-head .note{margin-left:auto;font-size:12px;color:var(--text-3)}
+.card-body{padding:16px 18px 18px}
+.grid{display:grid;gap:16px}
+.g-2{grid-template-columns:repeat(2,minmax(0,1fr))}
+.g-3{grid-template-columns:repeat(3,minmax(0,1fr))}
+.g-4{grid-template-columns:repeat(4,minmax(0,1fr))}
+.g-7-5{grid-template-columns:minmax(0,1.45fr) minmax(0,1fr)}
+.stack{display:flex;flex-direction:column;gap:16px}
+
+/* --- stat tiles --- */
+.stats{display:grid;gap:0;border:1px solid var(--line);border-radius:var(--radius);background:var(--surface);overflow:hidden;box-shadow:var(--shadow)}
+.stats.cols-4{grid-template-columns:repeat(4,minmax(0,1fr))}
+.stat{padding:15px 17px;border-right:1px solid var(--line);border-bottom:1px solid var(--line)}
+.stats.cols-4 .stat:nth-child(4n){border-right:0}
+.stats.cols-4 .stat:nth-last-child(-n+4){border-bottom:0}
+.stat .k{font-size:12px;color:var(--text-2);display:flex;align-items:center;gap:6px}
+.stat .v{font-family:var(--f-display);font-weight:600;font-size:30px;letter-spacing:-.02em;line-height:1.15;margin-top:5px;font-variant-numeric:tabular-nums}
+.stat .d{font-size:11.5px;color:var(--text-3);margin-top:2px;font-variant-numeric:tabular-nums}
+.stat .d.up{color:var(--ok)} .stat .d.down{color:var(--bad)}
+.stat.flag{box-shadow:inset 3px 0 0 var(--accent)}
+.stat.flag-bad{box-shadow:inset 3px 0 0 var(--bad)}
+
+/* --- pills --- */
+.pill{
+  display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:20px;
+  font-size:11.5px;font-weight:500;border:1px solid var(--line);background:var(--surface-3);color:var(--text-2);
+  white-space:nowrap;
+}
+.pill::before{content:"";width:5px;height:5px;border-radius:50%;background:currentColor;flex:none}
+.pill.ok{background:var(--ok-soft);border-color:var(--ok-line);color:var(--ok)}
+.pill.warn{background:var(--warn-soft);border-color:var(--warn-line);color:var(--warn)}
+.pill.bad{background:var(--bad-soft);border-color:var(--bad-line);color:var(--bad)}
+.pill.accent{background:var(--accent-soft);border-color:var(--accent-line);color:#8A6D06}
+:root[data-theme="dark"] .pill.accent,
+:root:not([data-theme="light"]) .pill.accent{color:var(--accent)}
+@media (prefers-color-scheme: light){:root:not([data-theme="dark"]) .pill.accent{color:#8A6D06}}
+.pill.plain::before{display:none}
+
+/* --- filters --- */
+.filters{display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding:14px 18px;border-bottom:1px solid var(--line)}
+.field{display:flex;flex-direction:column;gap:4px}
+.field label{font-family:var(--f-mono);font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--text-3)}
+.input,select.input{
+  padding:7px 10px;border:1px solid var(--line-strong);border-radius:7px;
+  background:var(--surface);color:var(--text);font-size:13px;min-width:0;
+}
+.input::placeholder{color:var(--text-3)}
+.input:focus{border-color:var(--accent);outline:none;box-shadow:0 0 0 3px var(--accent-soft)}
+.search{position:relative;flex:1;min-width:200px;max-width:340px}
+.search .input{width:100%;padding-left:31px}
+.search svg{position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--text-3)}
+
+/* --- tables --- */
+.table-wrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:13.5px}
+th{
+  font-family:var(--f-mono);font-size:9.5px;letter-spacing:.11em;text-transform:uppercase;
+  color:var(--text-3);font-weight:500;text-align:left;
+  padding:11px 18px;border-bottom:1px solid var(--line);white-space:nowrap;background:var(--surface-2);
+}
+td{padding:12px 18px;border-bottom:1px solid var(--line);vertical-align:middle}
+tbody tr:last-child td{border-bottom:0}
+tbody tr:hover{background:var(--surface-2)}
+.num{text-align:right;font-variant-numeric:tabular-nums}
+.name{font-weight:500}
+.name small{display:block;font-weight:400;font-size:11.5px;color:var(--text-3)}
+.muted{color:var(--text-3)}
+
+/* --- belt --- */
+.belt{display:flex;align-items:center;gap:9px}
+.belt-bar{display:flex;height:14px;width:86px;border-radius:3px;overflow:hidden;border:1px solid var(--line-strong);flex:none}
+.belt-main{flex:1}
+.belt-tip{width:30px;display:flex;align-items:center;justify-content:center;gap:2px;padding:0 3px}
+.belt-stripe{width:2.5px;height:100%;background:#F2EFE6;border-radius:1px}
+.belt-txt{font-size:12px;color:var(--text-2);white-space:nowrap}
+.belt-txt b{font-weight:500;color:var(--text)}
+
+/* --- progress --- */
+.prog{display:flex;align-items:center;gap:9px;min-width:132px}
+.prog-track{flex:1;height:5px;border-radius:3px;background:var(--surface-3);overflow:hidden;min-width:56px}
+.prog-fill{height:100%;border-radius:3px;background:var(--text-2)}
+.prog-fill.near{background:var(--accent)}
+.prog-num{font-family:var(--f-mono);font-size:11.5px;color:var(--text-2);font-variant-numeric:tabular-nums;white-space:nowrap}
+
+/* --- bar list (popularidad, cinturones) --- */
+.barlist{display:flex;flex-direction:column}
+.barrow{display:grid;grid-template-columns:minmax(120px,1.25fr) minmax(0,2.2fr) 42px;gap:12px;align-items:center;padding:6px 0}
+.barrow .lb{font-size:12.5px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.barrow .lb i{font-style:normal;color:var(--text-3);font-family:var(--f-mono);font-size:11px;margin-right:5px}
+.bar{height:12px;border-radius:3px;background:var(--accent);min-width:2px}
+.bar.dim{background:var(--surface-3);border:1px solid var(--line)}
+.barrow .vn{text-align:right;font-family:var(--f-mono);font-size:12px;color:var(--text-2);font-variant-numeric:tabular-nums}
+.bartrack{background:var(--surface-3);border-radius:3px;overflow:hidden}
+
+/* --- heatmap --- */
+.heat{display:grid;grid-template-columns:76px repeat(6,minmax(0,1fr));gap:4px;min-width:520px}
+.heat .hh{font-family:var(--f-mono);font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);text-align:center;padding-bottom:2px}
+.heat .rh{font-size:11.5px;color:var(--text-2);display:flex;align-items:center;justify-content:flex-end;padding-right:6px;text-align:right}
+.cell{
+  border-radius:6px;padding:9px 6px;text-align:center;border:1px solid var(--line);
+  background:var(--surface-2);
+}
+.cell .n{font-family:var(--f-display);font-weight:600;font-size:15px;font-variant-numeric:tabular-nums;line-height:1}
+.cell .t{font-size:9.5px;color:var(--text-3);margin-top:3px;line-height:1.2}
+.cell.empty{background:transparent;border-style:dashed;color:var(--text-3)}
+.cell.empty .n{font-weight:400;font-size:13px;color:var(--text-3)}
+
+/* --- promo queue --- */
+.queue{display:flex;flex-direction:column;gap:0}
+.qrow{display:flex;align-items:center;gap:12px;padding:11px 0;border-bottom:1px solid var(--line)}
+.qrow:last-child{border-bottom:0}
+.qrow .qn{flex:1;min-width:0}
+.qrow .qn b{display:block;font-weight:500;font-size:13.5px}
+.qrow .qn span{font-size:11.5px;color:var(--text-3)}
+
+/* --- form --- */
+.form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px 18px}
+.form-grid .field{gap:5px}
+.form-grid label{font-size:12px;font-family:var(--f-ui);letter-spacing:0;text-transform:none;color:var(--text-2)}
+.form-grid .input{width:100%}
+.form-foot{display:flex;align-items:center;gap:12px;margin-top:18px;padding-top:16px;border-top:1px solid var(--line);flex-wrap:wrap}
+.form-foot .hint{font-size:12px;color:var(--text-3);flex:1;min-width:180px}
+.seg{display:inline-flex;border:1px solid var(--line-strong);border-radius:8px;overflow:hidden;background:var(--surface)}
+.seg button{border:0;background:none;padding:7px 13px;font-size:13px;color:var(--text-2);cursor:pointer;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--accent);color:var(--on-accent);font-weight:600}
+
+/* --- misc --- */
+.chiprow{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:11.5px;color:var(--text-2);margin-top:12px}
+.legend i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+.empty-note{color:var(--text-3);font-size:12.5px;padding:6px 0}
+.kv{display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid var(--line);font-size:13px}
+.kv:last-child{border-bottom:0}
+.kv b{font-weight:500;font-variant-numeric:tabular-nums}
+
+/* ============================================================
+   CALENDARIO SEMANAL
+   ============================================================ */
+.cal-wrap{overflow-x:auto}
+.cal{
+  display:grid;
+  grid-template-columns:70px repeat(7,minmax(104px,1fr));
+  grid-template-rows:auto repeat(28,24px);
+  min-width:860px;position:relative;
+}
+.cal-day{
+  grid-row:1;padding:9px 6px 9px;text-align:center;
+  border-bottom:1px solid var(--line-strong);border-left:1px solid var(--line);
+  background:var(--surface-2);position:sticky;top:0;z-index:3;
+}
+.cal-day .d{font-family:var(--f-mono);font-size:9.5px;letter-spacing:.11em;text-transform:uppercase;color:var(--text-3)}
+.cal-day .n{font-family:var(--f-display);font-weight:600;font-size:16px;line-height:1.2;margin-top:2px;font-variant-numeric:tabular-nums}
+.cal-day.today{background:var(--accent-soft);border-bottom-color:var(--accent)}
+.cal-day.today .d{color:#8A6D06}
+:root[data-theme="dark"] .cal-day.today .d{color:var(--accent)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .cal-day.today .d{color:var(--accent)}}
+.cal-corner{grid-row:1;grid-column:1;background:var(--surface-2);border-bottom:1px solid var(--line-strong);position:sticky;top:0;z-index:3}
+
+.cal-col{grid-row:2 / -1;border-left:1px solid var(--line);z-index:0}
+.cal-col.off{background:repeating-linear-gradient(135deg,transparent,transparent 7px,var(--surface-2) 7px,var(--surface-2) 14px)}
+.cal-col.today{background:color-mix(in srgb, var(--accent) 7%, transparent)}
+.cal-line{grid-column:2 / -1;border-top:1px solid var(--line);z-index:0}
+.cal-line.half{border-top-style:dotted;opacity:.6}
+.cal-time{
+  grid-column:1;font-family:var(--f-mono);font-size:10px;color:var(--text-3);
+  text-align:right;padding-right:9px;transform:translateY(-1px);z-index:1;
+}
+
+.cal-ev{
+  z-index:2;margin:1px 3px;border-radius:6px;padding:4px 7px;color:#fff;
+  overflow:hidden;cursor:pointer;border:0;text-align:left;font-family:var(--f-ui);
+  display:flex;flex-direction:column;gap:1px;min-width:0;
+  transition:filter .12s,transform .12s;
+}
+.cal-ev:hover{filter:brightness(1.08);transform:translateY(-1px)}
+.cal-ev .t{font-weight:600;font-size:11.5px;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cal-ev .m{font-size:10px;opacity:.92;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cal-ev .h{font-family:var(--f-mono);font-size:9.5px;opacity:.82;margin-top:auto}
+.ev-gi{background:var(--m-gi)} .ev-nogi{background:var(--m-nogi)} .ev-comp{background:var(--m-comp)}
+.ev-strike{background:var(--m-strike)} .ev-kids{background:var(--m-kids)} .ev-open{background:var(--m-open)}
+
+.cal-legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--text-2);padding:14px 18px;border-top:1px solid var(--line)}
+.cal-legend i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:6px;vertical-align:-1px}
+.weeknav{display:flex;align-items:center;gap:6px}
+.weeknav .wlabel{font-size:13px;font-weight:500;min-width:150px;text-align:center;font-variant-numeric:tabular-nums}
+.icon-btn{
+  width:30px;height:30px;display:grid;place-items:center;border-radius:7px;
+  border:1px solid var(--line-strong);background:var(--surface);color:var(--text-2);cursor:pointer;
+}
+.icon-btn:hover{background:var(--surface-2)}
+
+/* ============================================================
+   VISTA PREVIA DEL KIOSCO
+   ============================================================ */
+.kiosk{
+  background:var(--rail);border-radius:12px;padding:26px 22px;color:#fff;
+  display:flex;flex-direction:column;align-items:center;gap:16px;min-height:392px;
+  border:1px solid var(--rail-line);
+}
+.kiosk .k-lbl{font-family:var(--f-mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--rail-text)}
+.kiosk h3{font-family:var(--f-display);font-weight:600;font-size:20px;margin:0;text-align:center;color:#fff}
+.pinbox{display:flex;gap:11px;margin:2px 0 4px}
+.pindot{width:15px;height:15px;border-radius:50%;border:2px solid #4A4636}
+.pindot.on{background:var(--accent);border-color:var(--accent)}
+.numpad{display:grid;grid-template-columns:repeat(3,66px);gap:9px}
+.numpad button{
+  height:52px;border-radius:10px;border:1px solid var(--rail-line);background:var(--rail-2);
+  color:#fff;font-family:var(--f-display);font-weight:600;font-size:21px;cursor:pointer;
+}
+.numpad button:hover{background:#2C2920}
+.numpad button.act{background:var(--accent);border-color:var(--accent);color:var(--on-accent);font-size:13px;font-family:var(--f-ui)}
+.k-check{
+  width:52px;height:52px;border-radius:50%;background:var(--ok);
+  display:grid;place-items:center;color:#fff;flex:none;
+}
+.k-prog{font-family:var(--f-mono);font-size:12.5px;color:var(--accent);font-variant-numeric:tabular-nums;text-align:center;line-height:1.4}
+.k-class{
+  width:100%;background:var(--rail-2);border:1px solid var(--rail-line);border-radius:10px;
+  padding:12px 14px;text-align:center;
+}
+.k-class .cn{font-weight:600;font-size:15px;color:#fff;margin-top:3px}
+.k-class .ct{font-family:var(--f-mono);font-size:11px;color:var(--rail-text);margin-top:2px}
+.k-link{
+  margin-top:10px;background:none;border:0;color:var(--accent);font-size:12.5px;
+  text-decoration:underline;cursor:pointer;
+}
+.k-foot{font-size:11.5px;color:var(--rail-text);text-align:center}
+
+/* ============================================================
+   RESPONSIVE
+   ============================================================ */
+@media (max-width:1040px){
+  .g-4{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .g-3{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .g-7-5{grid-template-columns:minmax(0,1fr)}
+  .stats.cols-4{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .stats.cols-4 .stat:nth-child(2n){border-right:0}
+  .stats.cols-4 .stat:nth-child(4n){border-right:0}
+  .stats.cols-4 .stat:nth-last-child(-n+4){border-bottom:1px solid var(--line)}
+  .stats.cols-4 .stat:nth-last-child(-n+2){border-bottom:0}
+}
+@media (max-width:860px){
+  .app{grid-template-columns:minmax(0,1fr)}
+  .rail{position:static;height:auto;flex-direction:row;align-items:center;overflow-x:auto;gap:6px;padding:10px 16px}
+  .rail .nav-label,.gym-switch,.rail-foot{display:none}
+  .brand{padding:0 10px 0 0}
+  .brand-text{display:none}
+  .nav-item{width:auto;white-space:nowrap}
+  .nav-item .count{display:none}
+  .page{padding:20px 16px 56px}
+  .topbar{padding:10px 16px}
+}
+@media (max-width:640px){
+  .g-2,.g-3,.g-4{grid-template-columns:minmax(0,1fr)}
+  .stats.cols-4{grid-template-columns:minmax(0,1fr)}
+  .stats.cols-4 .stat{border-right:0;border-bottom:1px solid var(--line)}
+  .stats.cols-4 .stat:last-child{border-bottom:0}
+  .form-grid{grid-template-columns:minmax(0,1fr)}
+  h1{font-size:26px}
+  .barrow{grid-template-columns:minmax(90px,1fr) minmax(0,1.6fr) 36px}
+}
+</style>
+
+<div class="app">
+
+  <!-- ====================== RAIL ====================== -->
+  <nav class="rail" aria-label="Secciones">
+    <div class="brand">
+      <div class="brand-mark">A</div>
+      <div class="brand-text">
+        <div class="brand-name">Alliance</div>
+        <div class="brand-sub">Tatami</div>
+      </div>
+    </div>
+
+    <button class="gym-switch" type="button" title="Cambiar de academia">
+      <span class="gym-dot"></span>
+      <span class="lbl"><b>Escazú</b><span>Ver ambas sedes</span></span>
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m7 15 5 5 5-5"/><path d="m7 9 5-5 5 5"/></svg>
+    </button>
+
+    <div class="nav-label">Operación</div>
+    <button class="nav-item" type="button" data-go="panel" aria-current="page">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>
+      Panel
+    </button>
+    <button class="nav-item" type="button" data-go="alumnos">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/></svg>
+      Alumnos <span class="count">9</span>
+    </button>
+    <button class="nav-item" type="button" data-go="pagos">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/></svg>
+      Pagos <span class="count">2</span>
+    </button>
+
+    <div class="nav-label">Análisis</div>
+    <button class="nav-item" type="button" data-go="resumen">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m7 14 3-4 3 3 5-7"/></svg>
+      Resumen
+    </button>
+
+    <div class="nav-label">Academia</div>
+    <button class="nav-item" type="button" data-go="horario">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+      Horario
+    </button>
+    <button class="nav-item" type="button" data-go="kiosco">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="15" r="4"/><path d="m10.8 12.2 8.2-8.2 2 2-2 2 1.5 1.5-2 2-1.5-1.5-2 2"/></svg>
+      Kiosco
+    </button>
+
+    <div class="rail-foot">
+      <button class="nav-item" type="button" data-go="panel">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2V21a2 2 0 1 1-4 0v-.1A1.7 1.7 0 0 0 7 19.4a1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0-1.2-2.9H1a2 2 0 1 1 0-4h.1A1.7 1.7 0 0 0 2.6 7a1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.7 1.7 0 0 0 8 2.6h.1A2 2 0 1 1 12 1v.1"/></svg>
+        Configuración
+      </button>
+      <button class="nav-item" type="button">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/></svg>
+        Salir
+      </button>
+    </div>
+  </nav>
+
+  <!-- ====================== MAIN ====================== -->
+  <div class="main">
+    <header class="topbar">
+      <span class="crumb">Alliance Costa Rica · <b id="crumb-screen">Panel</b></span>
+      <span class="spacer"></span>
+      <span class="demo-chip">Datos de ejemplo</span>
+      <button class="btn btn-sm" type="button" id="theme-toggle" title="Cambiar tema">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
+        Tema
+      </button>
+      <div class="avatar" title="Alexis Piedra — Admin">AP</div>
+    </header>
+
+    <!-- ============ PANEL ============ -->
+    <main class="page" id="s-panel">
+      <div class="page-head">
+        <div class="titles">
+          <p class="eyebrow">Viernes 11 de septiembre</p>
+          <h1>Buenas, Alexis</h1>
+          <p class="sub">Escazú y Escalante · 44 asistencias esta semana, 3 alumnos listos para grado.</p>
+        </div>
+        <div class="head-actions">
+          <button class="btn" type="button">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>
+            Actualizar
+          </button>
+          <button class="btn btn-primary" type="button">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+            Inscribir alumno
+          </button>
+        </div>
+      </div>
+
+      <div class="stats cols-4" style="margin-bottom:16px">
+        <div class="stat">
+          <div class="k">Alumnos activos</div>
+          <div class="v">9</div>
+          <div class="d up">+2 este mes</div>
+        </div>
+        <div class="stat">
+          <div class="k">Asistencias esta semana</div>
+          <div class="v">44</div>
+          <div class="d up">+7 vs. semana pasada</div>
+        </div>
+        <div class="stat flag">
+          <div class="k">Listos para grado</div>
+          <div class="v">3</div>
+          <div class="d">Fabiola, Natalia, José</div>
+        </div>
+        <div class="stat flag-bad">
+          <div class="k">Mensualidad atrasada</div>
+          <div class="v">2</div>
+          <div class="d down">Kevin S. · Andrés Q.</div>
+        </div>
+      </div>
+
+      <div class="grid g-7-5" style="margin-bottom:16px">
+        <!-- asistencia semanal -->
+        <section class="card">
+          <div class="card-head">
+            <h2>Asistencia semanal</h2>
+            <span class="note">Últimas 8 semanas · ambas sedes</span>
+          </div>
+          <div class="card-body">
+            <svg viewBox="0 0 560 196" width="100%" height="196" role="img" aria-label="Asistencias por semana: 31, 28, 35, 33, 38, 36, 41 y 44.">
+              <g stroke="var(--line)" stroke-width="1" stroke-dasharray="3 4">
+                <line x1="36" y1="16" x2="548" y2="16"/>
+                <line x1="36" y1="53" x2="548" y2="53"/>
+                <line x1="36" y1="90" x2="548" y2="90"/>
+                <line x1="36" y1="127" x2="548" y2="127"/>
+              </g>
+              <line x1="36" y1="164" x2="548" y2="164" stroke="var(--line-strong)" stroke-width="1"/>
+              <g fill="var(--text-3)" font-size="9.5" font-family="IBM Plex Mono, monospace" text-anchor="end">
+                <text x="28" y="19">48</text>
+                <text x="28" y="56">36</text>
+                <text x="28" y="93">24</text>
+                <text x="28" y="130">12</text>
+                <text x="28" y="167">0</text>
+              </g>
+              <path d="M36 68.4 L109 77.7 L182 56.1 L255 62.3 L329 46.8 L402 53 L475 37.6 L548 28.3 L548 164 L36 164 Z" fill="var(--accent)" fill-opacity="0.13"/>
+              <path d="M36 68.4 L109 77.7 L182 56.1 L255 62.3 L329 46.8 L402 53 L475 37.6 L548 28.3"
+                    fill="none" stroke="var(--accent)" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"/>
+              <g fill="var(--surface)" stroke="var(--accent)" stroke-width="1.8">
+                <circle cx="36" cy="68.4" r="2.8"/><circle cx="109" cy="77.7" r="2.8"/><circle cx="182" cy="56.1" r="2.8"/>
+                <circle cx="255" cy="62.3" r="2.8"/><circle cx="329" cy="46.8" r="2.8"/><circle cx="402" cy="53" r="2.8"/>
+                <circle cx="475" cy="37.6" r="2.8"/>
+              </g>
+              <circle cx="548" cy="28.3" r="5" fill="var(--accent)" stroke="var(--surface)" stroke-width="2"/>
+              <text x="548" y="19" fill="var(--text)" font-size="11.5" font-weight="600" font-family="Archivo, sans-serif" text-anchor="end">44</text>
+              <g fill="var(--text-3)" font-size="9" font-family="IBM Plex Mono, monospace" text-anchor="middle">
+                <text x="36" y="180">22 jul</text><text x="109" y="180">29 jul</text><text x="182" y="180">5 ago</text>
+                <text x="255" y="180">12 ago</text><text x="329" y="180">19 ago</text><text x="402" y="180">26 ago</text>
+                <text x="475" y="180">2 sep</text><text x="540" y="180">9 sep</text>
+              </g>
+            </svg>
+          </div>
+        </section>
+
+        <!-- cinturones -->
+        <section class="card">
+          <div class="card-head">
+            <h2>Distribución de cinturones</h2>
+          </div>
+          <div class="card-body">
+            <div class="barlist">
+              <div class="barrow"><span class="lb">Blanca</span><div class="bartrack"><div class="bar" style="width:100%;background:var(--belt-white);border:1px solid var(--line-strong)"></div></div><span class="vn">4</span></div>
+              <div class="barrow"><span class="lb">Azul</span><div class="bartrack"><div class="bar" style="width:75%;background:var(--belt-blue)"></div></div><span class="vn">3</span></div>
+              <div class="barrow"><span class="lb">Morada</span><div class="bartrack"><div class="bar" style="width:25%;background:var(--belt-purple)"></div></div><span class="vn">1</span></div>
+              <div class="barrow"><span class="lb">Café</span><div class="bartrack"><div class="bar" style="width:25%;background:var(--belt-brown)"></div></div><span class="vn">1</span></div>
+              <div class="barrow"><span class="lb muted">Negra</span><div class="bartrack"><div class="bar dim" style="width:2px"></div></div><span class="vn muted">0</span></div>
+            </div>
+            <div class="legend" style="border-top:1px solid var(--line);padding-top:12px">
+              <span>Promedio de asistencias por grado: <b>30 blanca</b> · 65 azul · 75 morada · 85 café</span>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <div class="grid g-7-5" style="margin-bottom:16px">
+        <!-- heatmap -->
+        <section class="card">
+          <div class="card-head">
+            <h2>Asistencia promedio por franja</h2>
+            <span class="note">Escazú · últimas 4 semanas</span>
+          </div>
+          <div class="card-body">
+            <div class="table-wrap">
+              <div class="heat">
+                <div></div>
+                <div class="hh">Lun</div><div class="hh">Mar</div><div class="hh">Mié</div><div class="hh">Jue</div><div class="hh">Vie</div><div class="hh">Sáb</div>
+
+                <div class="rh">Mañana<br>06:00</div>
+                <div class="cell" style="background:color-mix(in srgb, var(--accent) 14%, var(--surface))"><div class="n">4</div><div class="t">GI</div></div>
+                <div class="cell empty"><div class="n">—</div></div>
+                <div class="cell" style="background:color-mix(in srgb, var(--accent) 14%, var(--surface))"><div class="n">4</div><div class="t">GI</div></div>
+                <div class="cell empty"><div class="n">—</div></div>
+                <div class="cell empty"><div class="n">—</div></div>
+                <div class="cell" style="background:color-mix(in srgb, var(--accent) 26%, var(--surface))"><div class="n">7</div><div class="t">AM sábado</div></div>
+
+                <div class="rh">Mediodía<br>12:00</div>
+                <div class="cell" style="background:color-mix(in srgb, var(--accent) 26%, var(--surface))"><div class="n">7</div><div class="t">NO-GI</div></div>
+                <div class="cell" style="background:color-mix(in srgb, var(--accent) 11%, var(--surface))"><div class="n">3</div><div class="t">GI</div></div>
+                <div class="cell" style="background:color-mix(in srgb, var(--accent) 18%, var(--surface))"><div class="n">5</div><div class="t">NO-GI</div></div>
+                <div class="cell" style="background:color-mix(in srgb, var(--accent) 11%, var(--surface))"><div class="n">3</div><div class="t">GI</div></div>
+                <div class="cell" style="background:color-mix(in srgb, var(--accent) 11%, var(--surface))"><div class="n">3</div><div class="t">NO-GI</div></div>
+                <div class="cell empty"><div class="n">—</div></div>
+
+                <div class="rh">Tarde<br>18:00–18:30</div>
+                <div class="cell" style="background:color-mix(in srgb, var(--accent) 62%, var(--surface))"><div class="n">17</div><div class="t">GI principiantes</div></div>
+                <div class="cell" style="background:color-mix(in srgb, var(--accent) 41%, var(--surface))"><div class="n">11</div><div class="t">NO-GI</div></div>
+                <div class="cell" style="background:color-mix(in srgb, var(--accent) 52%, var(--surface))"><div class="n">14</div><div class="t">Competición</div></div>
+                <div class="cell" style="background:color-mix(in srgb, var(--accent) 33%, var(--surface))"><div class="n">9</div><div class="t">NO-GI</div></div>
+                <div class="cell" style="background:color-mix(in srgb, var(--accent) 37%, var(--surface))"><div class="n">10</div><div class="t">GI</div></div>
+                <div class="cell empty"><div class="n">—</div></div>
+
+                <div class="rh">Noche<br>19:00</div>
+                <div class="cell" style="background:color-mix(in srgb, var(--accent) 78%, var(--surface))"><div class="n">21</div><div class="t">GI avanzados</div></div>
+                <div class="cell" style="background:color-mix(in srgb, var(--accent) 70%, var(--surface))"><div class="n">19</div><div class="t">GI</div></div>
+                <div class="cell empty"><div class="n">—</div></div>
+                <div class="cell" style="background:color-mix(in srgb, var(--accent) 90%, var(--surface))"><div class="n">24</div><div class="t">GI todos</div></div>
+                <div class="cell empty"><div class="n">—</div></div>
+                <div class="cell empty"><div class="n">—</div></div>
+              </div>
+            </div>
+            <div class="legend">
+              <span><i style="background:color-mix(in srgb, var(--accent) 14%, var(--surface));border:1px solid var(--line)"></i>Baja</span>
+              <span><i style="background:color-mix(in srgb, var(--accent) 50%, var(--surface))"></i>Media</span>
+              <span><i style="background:var(--accent)"></i>Alta</span>
+              <span class="muted">El tatami se llena de noche; los mediodías tienen espacio de sobra.</span>
+            </div>
+          </div>
+        </section>
+
+        <!-- cola de promociones -->
+        <section class="card">
+          <div class="card-head">
+            <h2>Cola de promociones</h2>
+            <span class="note">3 elegibles</span>
+          </div>
+          <div class="card-body">
+            <div class="queue">
+              <div class="qrow">
+                <div class="belt-bar" aria-hidden="true"><span class="belt-main" style="background:var(--belt-white)"></span><span class="belt-tip" style="background:var(--belt-black)"><i class="belt-stripe"></i><i class="belt-stripe"></i><i class="belt-stripe"></i></span></div>
+                <div class="qn"><b>Natalia Jiménez</b><span>29 / 30 · 4.ª franja blanca</span></div>
+                <button class="btn btn-sm btn-primary" type="button">Graduar</button>
+              </div>
+              <div class="qrow">
+                <div class="belt-bar" aria-hidden="true"><span class="belt-main" style="background:var(--belt-blue)"></span><span class="belt-tip" style="background:var(--belt-black)"><i class="belt-stripe"></i><i class="belt-stripe"></i><i class="belt-stripe"></i><i class="belt-stripe"></i></span></div>
+                <div class="qn"><b>Fabiola Chaves</b><span>63 / 65 · examen de morada</span></div>
+                <button class="btn btn-sm btn-primary" type="button">Graduar</button>
+              </div>
+              <div class="qrow">
+                <div class="belt-bar" aria-hidden="true"><span class="belt-main" style="background:var(--belt-brown)"></span><span class="belt-tip" style="background:var(--belt-black)"><i class="belt-stripe"></i><i class="belt-stripe"></i></span></div>
+                <div class="qn"><b>José Mora</b><span>81 / 85 · 3.ª franja café</span></div>
+                <button class="btn btn-sm" type="button">Ver</button>
+              </div>
+            </div>
+          </div>
+          <div class="card-body" style="padding-top:0">
+            <div style="border-top:1px solid var(--line);padding-top:14px">
+              <div class="nav-label" style="padding:0 0 8px;color:var(--text-3)">Próximos</div>
+              <div class="kv"><span>Marcela Vargas · blanca</span><b class="muted">24 / 30 · faltan 6</b></div>
+              <div class="kv"><span>Diego Ramírez · morada</span><b class="muted">58 / 75 · faltan 17</b></div>
+              <div class="kv"><span>Alexis Piedra · azul</span><b class="muted">41 / 65 · faltan 24</b></div>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <!-- por contactar -->
+      <section class="card">
+        <div class="card-head">
+          <h2>Alumnos por contactar</h2>
+          <span class="note">Sin asistir hace más de 7 días</span>
+        </div>
+        <div class="table-wrap" style="margin-top:14px">
+          <table>
+            <thead>
+              <tr><th>Alumno</th><th>Academia</th><th>Teléfono</th><th>Última asistencia</th><th class="num">Días sin asistir</th><th>Pago</th><th></th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="name">Andrés Quesada<small>Azul · 12 / 65</small></td>
+                <td>Escazú</td><td class="muted">+506 8712 4409</td><td>22 ago 2026</td>
+                <td class="num" style="color:var(--bad);font-weight:600">20</td>
+                <td><span class="pill bad">Atrasado</span></td>
+                <td><button class="btn btn-sm" type="button">WhatsApp</button></td>
+              </tr>
+              <tr>
+                <td class="name">Kevin Solís<small>Blanca · 7 / 30</small></td>
+                <td>Escazú</td><td class="muted">+506 6034 1188</td><td>3 sep 2026</td>
+                <td class="num" style="color:var(--warn);font-weight:600">8</td>
+                <td><span class="pill bad">Atrasado</span></td>
+                <td><button class="btn btn-sm" type="button">WhatsApp</button></td>
+              </tr>
+              <tr>
+                <td class="name">Luis Céspedes<small>Blanca · 15 / 30</small></td>
+                <td>Escalante</td><td class="muted">+506 8845 2270</td><td>5 sep 2026</td>
+                <td class="num" style="font-weight:600">6</td>
+                <td><span class="pill accent">Promoción</span></td>
+                <td><button class="btn btn-sm" type="button">WhatsApp</button></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <!-- ============ ALUMNOS ============ -->
+    <main class="page" id="s-alumnos" hidden>
+      <div class="page-head">
+        <div class="titles">
+          <p class="eyebrow">Alliance · Gestión de academias</p>
+          <h1>Alumnos</h1>
+          <p class="sub">9 activos · 2 inactivos · las asistencias de ambas sedes suman al mismo grado.</p>
+        </div>
+        <div class="head-actions">
+          <button class="btn" type="button">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
+            Exportar CSV
+          </button>
+          <button class="btn btn-primary" type="button">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+            Inscribir alumno
+          </button>
+        </div>
+      </div>
+
+      <section class="card">
+        <div class="filters">
+          <div class="search">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+            <input class="input" id="f-buscar" type="search" placeholder="Buscar por nombre, correo o código de kiosco…" aria-label="Buscar alumno">
+          </div>
+          <select class="input" id="f-cinturon" aria-label="Cinturón"><option>Todos los cinturones</option><option>Blanca</option><option>Azul</option><option>Morada</option><option>Café</option><option>Negra</option></select>
+          <select class="input" id="f-estado" aria-label="Estado"><option>Activos</option><option>Todos los estados</option><option>Inactivos</option></select>
+          <select class="input" id="f-pago" aria-label="Pago"><option>Todos los pagos</option><option>Al día</option><option>Pendiente</option><option>Atrasado</option></select>
+          <select class="input" id="f-sede" aria-label="Academia"><option>Ambas sedes</option><option>Escazú</option><option>Escalante</option></select>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Alumno</th><th>Cinturón</th><th>Progreso al siguiente grado</th><th>Academia</th><th>Última asistencia</th><th>Pago</th><th></th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="name">Fabiola Chaves<small>fabiola.chaves@correo.cr · kiosco 4821</small></td>
+                <td><div class="belt"><div class="belt-bar"><span class="belt-main" style="background:var(--belt-blue)"></span><span class="belt-tip" style="background:var(--belt-black)"><i class="belt-stripe"></i><i class="belt-stripe"></i><i class="belt-stripe"></i><i class="belt-stripe"></i></span></div><span class="belt-txt">Azul <b>4 franjas</b></span></div></td>
+                <td><div class="prog"><div class="prog-track"><div class="prog-fill near" style="width:97%"></div></div><span class="prog-num">63 / 65</span></div></td>
+                <td>Escazú</td><td>10 sep 2026</td>
+                <td><span class="pill ok">Al día</span></td>
+                <td><span class="pill accent plain">Examen</span></td>
+              </tr>
+              <tr>
+                <td class="name">Natalia Jiménez<small>natalia.jimenez@correo.cr · kiosco 7130</small></td>
+                <td><div class="belt"><div class="belt-bar"><span class="belt-main" style="background:var(--belt-white)"></span><span class="belt-tip" style="background:var(--belt-black)"><i class="belt-stripe"></i><i class="belt-stripe"></i><i class="belt-stripe"></i></span></div><span class="belt-txt">Blanca <b>3 franjas</b></span></div></td>
+                <td><div class="prog"><div class="prog-track"><div class="prog-fill near" style="width:96%"></div></div><span class="prog-num">29 / 30</span></div></td>
+                <td>Escazú</td><td>10 sep 2026</td>
+                <td><span class="pill ok">Al día</span></td>
+                <td><span class="pill accent plain">Franja</span></td>
+              </tr>
+              <tr>
+                <td class="name">José Mora<small>jose.mora@correo.cr · kiosco 2264</small></td>
+                <td><div class="belt"><div class="belt-bar"><span class="belt-main" style="background:var(--belt-brown)"></span><span class="belt-tip" style="background:var(--belt-black)"><i class="belt-stripe"></i><i class="belt-stripe"></i></span></div><span class="belt-txt">Café <b>2 franjas</b></span></div></td>
+                <td><div class="prog"><div class="prog-track"><div class="prog-fill near" style="width:95%"></div></div><span class="prog-num">81 / 85</span></div></td>
+                <td>Escalante</td><td>8 sep 2026</td>
+                <td><span class="pill ok">Al día</span></td>
+                <td></td>
+              </tr>
+              <tr>
+                <td class="name">Diego Ramírez<small>diego.ramirez@correo.cr · kiosco 9052</small></td>
+                <td><div class="belt"><div class="belt-bar"><span class="belt-main" style="background:var(--belt-purple)"></span><span class="belt-tip" style="background:var(--belt-black)"><i class="belt-stripe"></i></span></div><span class="belt-txt">Morada <b>1 franja</b></span></div></td>
+                <td><div class="prog"><div class="prog-track"><div class="prog-fill" style="width:77%"></div></div><span class="prog-num">58 / 75</span></div></td>
+                <td>Escalante</td><td>9 sep 2026</td>
+                <td><span class="pill warn">Pendiente</span></td>
+                <td></td>
+              </tr>
+              <tr>
+                <td class="name">Alexis Piedra<small>alexis.piedra@correo.cr · kiosco 1007</small></td>
+                <td><div class="belt"><div class="belt-bar"><span class="belt-main" style="background:var(--belt-blue)"></span><span class="belt-tip" style="background:var(--belt-black)"><i class="belt-stripe"></i><i class="belt-stripe"></i></span></div><span class="belt-txt">Azul <b>2 franjas</b></span></div></td>
+                <td><div class="prog"><div class="prog-track"><div class="prog-fill" style="width:63%"></div></div><span class="prog-num">41 / 65</span></div></td>
+                <td>Escazú</td><td>10 sep 2026</td>
+                <td><span class="pill ok">Al día</span></td>
+                <td></td>
+              </tr>
+              <tr>
+                <td class="name">Marcela Vargas<small>marcela.vargas@correo.cr · kiosco 3376</small></td>
+                <td><div class="belt"><div class="belt-bar"><span class="belt-main" style="background:var(--belt-white)"></span><span class="belt-tip" style="background:var(--belt-black)"><i class="belt-stripe"></i><i class="belt-stripe"></i></span></div><span class="belt-txt">Blanca <b>2 franjas</b></span></div></td>
+                <td><div class="prog"><div class="prog-track"><div class="prog-fill" style="width:80%"></div></div><span class="prog-num">24 / 30</span></div></td>
+                <td>Escazú</td><td>10 sep 2026</td>
+                <td><span class="pill ok">Al día</span></td>
+                <td></td>
+              </tr>
+              <tr>
+                <td class="name">Luis Céspedes<small>luis.cespedes@correo.cr · kiosco 5518</small></td>
+                <td><div class="belt"><div class="belt-bar"><span class="belt-main" style="background:var(--belt-white)"></span><span class="belt-tip" style="background:var(--belt-black)"><i class="belt-stripe"></i></span></div><span class="belt-txt">Blanca <b>1 franja</b></span></div></td>
+                <td><div class="prog"><div class="prog-track"><div class="prog-fill" style="width:50%"></div></div><span class="prog-num">15 / 30</span></div></td>
+                <td>Escalante</td><td>5 sep 2026</td>
+                <td><span class="pill accent">Promoción</span></td>
+                <td></td>
+              </tr>
+              <tr>
+                <td class="name">Kevin Solís<small>kevin.solis@correo.cr · kiosco 6642</small></td>
+                <td><div class="belt"><div class="belt-bar"><span class="belt-main" style="background:var(--belt-white)"></span><span class="belt-tip" style="background:var(--belt-black)"></span></div><span class="belt-txt">Blanca <b>sin franjas</b></span></div></td>
+                <td><div class="prog"><div class="prog-track"><div class="prog-fill" style="width:23%"></div></div><span class="prog-num">7 / 30</span></div></td>
+                <td>Escazú</td><td>3 sep 2026</td>
+                <td><span class="pill bad">Atrasado</span></td>
+                <td></td>
+              </tr>
+              <tr>
+                <td class="name">Andrés Quesada<small>andres.quesada@correo.cr · kiosco 8890</small></td>
+                <td><div class="belt"><div class="belt-bar"><span class="belt-main" style="background:var(--belt-blue)"></span><span class="belt-tip" style="background:var(--belt-black)"></span></div><span class="belt-txt">Azul <b>sin franjas</b></span></div></td>
+                <td><div class="prog"><div class="prog-track"><div class="prog-fill" style="width:18%"></div></div><span class="prog-num">12 / 65</span></div></td>
+                <td>Escazú</td><td class="muted">22 ago 2026 · hace 20 días</td>
+                <td><span class="pill bad">Atrasado</span></td>
+                <td></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <!-- ============ RESUMEN / ANALÍTICA ============ -->
+    <main class="page" id="s-resumen" hidden>
+      <div class="page-head">
+        <div class="titles">
+          <p class="eyebrow">Alliance · Gestión de academias</p>
+          <h1>Resumen</h1>
+          <p class="sub">Del 12 de agosto al 11 de septiembre de 2026 · ambas sedes.</p>
+        </div>
+        <div class="head-actions">
+          <button class="btn" type="button">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
+            Exportar CSV
+          </button>
+        </div>
+      </div>
+
+      <section class="card" style="margin-bottom:16px">
+        <div class="filters" style="border-bottom:0">
+          <div class="seg" role="group" aria-label="Rango rápido">
+            <button type="button" data-range aria-pressed="false">7 días</button>
+            <button type="button" data-range aria-pressed="true">30 días</button>
+            <button type="button" data-range aria-pressed="false">90 días</button>
+            <button type="button" data-range aria-pressed="false">Año</button>
+          </div>
+          <div class="field"><label for="r-desde">Desde</label><input class="input" id="r-desde" type="date" value="2026-08-12"></div>
+          <div class="field"><label for="r-hasta">Hasta</label><input class="input" id="r-hasta" type="date" value="2026-09-11"></div>
+          <div class="field"><label for="r-sede">Academia</label><select class="input" id="r-sede"><option>Ambas sedes</option><option>Escazú</option><option>Escalante</option></select></div>
+          <button class="btn btn-primary" type="button" style="align-self:flex-end">Aplicar</button>
+        </div>
+      </section>
+
+      <div class="stats cols-4" style="margin-bottom:16px">
+        <div class="stat"><div class="k">Alumnos activos</div><div class="v">9</div><div class="d up">+2 vs. período anterior</div></div>
+        <div class="stat"><div class="k">Matriculados</div><div class="v">11</div><div class="d">2 inactivos</div></div>
+        <div class="stat"><div class="k">Nuevos en el período</div><div class="v">2</div><div class="d">Marcela V. · Luis C.</div></div>
+        <div class="stat"><div class="k">Sin actividad</div><div class="v">1</div><div class="d down">Andrés Q. · 20 días</div></div>
+        <div class="stat"><div class="k">Asistencias totales</div><div class="v">286</div><div class="d up">+31 vs. período anterior</div></div>
+        <div class="stat"><div class="k">Promedio por alumno</div><div class="v">31.8</div><div class="d">≈ 7 clases por semana</div></div>
+        <div class="stat"><div class="k">Pagado o promoción</div><div class="v">78%</div><div class="d down">−8 pts vs. agosto</div></div>
+        <div class="stat"><div class="k">Promociones</div><div class="v">3</div><div class="d">2 franjas · 1 cinturón</div></div>
+      </div>
+
+      <div class="grid g-7-5" style="margin-bottom:16px">
+        <section class="card">
+          <div class="card-head">
+            <h2>Popularidad de clases</h2>
+            <span class="note">Asistencias en el período</span>
+          </div>
+          <div class="card-body">
+            <div class="barlist">
+              <div class="barrow"><span class="lb"><i>jue</i>19:00 GI · Todos</span><div class="bartrack"><div class="bar" style="width:100%"></div></div><span class="vn">24</span></div>
+              <div class="barrow"><span class="lb"><i>lun</i>19:00 GI · Avanzados</span><div class="bartrack"><div class="bar" style="width:88%"></div></div><span class="vn">21</span></div>
+              <div class="barrow"><span class="lb"><i>mar</i>19:00 GI · Todos</span><div class="bartrack"><div class="bar" style="width:79%"></div></div><span class="vn">19</span></div>
+              <div class="barrow"><span class="lb"><i>lun</i>18:00 GI · Principiantes</span><div class="bartrack"><div class="bar" style="width:71%"></div></div><span class="vn">17</span></div>
+              <div class="barrow"><span class="lb"><i>mié</i>18:30 Competición</span><div class="bartrack"><div class="bar" style="width:58%"></div></div><span class="vn">14</span></div>
+              <div class="barrow"><span class="lb"><i>sáb</i>11:00 Open Mat</span><div class="bartrack"><div class="bar" style="width:50%"></div></div><span class="vn">12</span></div>
+              <div class="barrow"><span class="lb"><i>mar</i>18:00 NO-GI</span><div class="bartrack"><div class="bar" style="width:46%"></div></div><span class="vn">11</span></div>
+              <div class="barrow"><span class="lb"><i>vie</i>18:30 GI · Todos</span><div class="bartrack"><div class="bar" style="width:42%"></div></div><span class="vn">10</span></div>
+              <div class="barrow"><span class="lb"><i>jue</i>18:00 NO-GI</span><div class="bartrack"><div class="bar" style="width:38%"></div></div><span class="vn">9</span></div>
+              <div class="barrow"><span class="lb"><i>lun</i>12:00 NO-GI</span><div class="bartrack"><div class="bar" style="width:29%"></div></div><span class="vn">7</span></div>
+              <div class="barrow"><span class="lb"><i>sáb</i>10:00 Kids</span><div class="bartrack"><div class="bar" style="width:29%"></div></div><span class="vn">7</span></div>
+              <div class="barrow"><span class="lb"><i>mié</i>12:00 NO-GI</span><div class="bartrack"><div class="bar" style="width:21%"></div></div><span class="vn">5</span></div>
+            </div>
+            <div class="legend" style="border-top:1px solid var(--line);padding-top:12px;align-items:center;justify-content:space-between">
+              <span class="muted">6 clases más con 4 o menos asistencias.</span>
+              <button class="btn btn-sm" type="button">Ver las 18 clases</button>
+            </div>
+          </div>
+        </section>
+
+        <div class="stack">
+          <section class="card">
+            <div class="card-head"><h2>Mayor crecimiento</h2><span class="note">vs. período anterior</span></div>
+            <div class="card-body">
+              <div class="kv"><span>jue 19:00 GI · Todos</span><b style="color:var(--ok)">+9</b></div>
+              <div class="kv"><span>mié 18:30 Competición</span><b style="color:var(--ok)">+5</b></div>
+              <div class="kv"><span>sáb 11:00 Open Mat</span><b style="color:var(--ok)">+3</b></div>
+              <div class="kv"><span>lun 12:00 NO-GI</span><b style="color:var(--bad)">−4</b></div>
+              <div class="kv"><span>sáb 09:00 Striking</span><b style="color:var(--bad)">−6</b></div>
+            </div>
+          </section>
+          <section class="card">
+            <div class="card-head"><h2>Clases en riesgo</h2><span class="note">menos de 4 asistencias</span></div>
+            <div class="card-body">
+              <div class="chiprow">
+                <span class="pill bad">sáb 09:00 Striking · 2</span>
+                <span class="pill warn">mar 12:00 GI · 3</span>
+                <span class="pill warn">jue 12:00 GI · 3</span>
+                <span class="pill warn">vie 12:00 NO-GI · 3</span>
+                <span class="pill warn">lun 06:00 GI · 4</span>
+                <span class="pill warn">mié 06:00 GI · 4</span>
+              </div>
+              <p class="empty-note" style="margin:12px 0 0">Sostener seis clases con 3 alumnos cuesta el mismo instructor que una de 20. Vale la pena valorar fusionar los mediodías.</p>
+            </div>
+          </section>
+        </div>
+      </div>
+
+      <section class="card">
+        <div class="card-head"><h2>Detalle por clase</h2><span class="note">18 clases en el horario</span></div>
+        <div class="table-wrap" style="margin-top:14px">
+          <table>
+            <thead><tr><th>#</th><th>Clase</th><th>Modalidad</th><th class="num">Asistencias</th><th class="num">Período anterior</th><th class="num">Promedio por sesión</th><th>Tendencia</th></tr></thead>
+            <tbody>
+              <tr><td class="muted">1</td><td class="name">jue 19:00</td><td>GI · Todos los niveles</td><td class="num">24</td><td class="num muted">15</td><td class="num">6.0</td><td><span class="pill ok">+60%</span></td></tr>
+              <tr><td class="muted">2</td><td class="name">lun 19:00</td><td>GI · Avanzados</td><td class="num">21</td><td class="num muted">20</td><td class="num">5.3</td><td><span class="pill ok">+5%</span></td></tr>
+              <tr><td class="muted">3</td><td class="name">mar 19:00</td><td>GI · Todos los niveles</td><td class="num">19</td><td class="num muted">19</td><td class="num">4.8</td><td><span class="pill plain">Sin cambio</span></td></tr>
+              <tr><td class="muted">4</td><td class="name">lun 18:00</td><td>GI · Principiantes</td><td class="num">17</td><td class="num muted">14</td><td class="num">4.3</td><td><span class="pill ok">+21%</span></td></tr>
+              <tr><td class="muted">5</td><td class="name">mié 18:30</td><td>Competición</td><td class="num">14</td><td class="num muted">9</td><td class="num">3.5</td><td><span class="pill ok">+56%</span></td></tr>
+              <tr><td class="muted">6</td><td class="name">sáb 11:00</td><td>Open Mat</td><td class="num">12</td><td class="num muted">9</td><td class="num">3.0</td><td><span class="pill ok">+33%</span></td></tr>
+              <tr><td class="muted">7</td><td class="name">lun 12:00</td><td>NO-GI</td><td class="num">7</td><td class="num muted">11</td><td class="num">1.8</td><td><span class="pill bad">−36%</span></td></tr>
+              <tr><td class="muted">8</td><td class="name">sáb 09:00</td><td>Striking</td><td class="num">2</td><td class="num muted">8</td><td class="num">0.5</td><td><span class="pill bad">−75%</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <!-- ============ PAGOS ============ -->
+    <main class="page" id="s-pagos" hidden>
+      <div class="page-head">
+        <div class="titles">
+          <p class="eyebrow">Alliance · Gestión de academias</p>
+          <h1>Pagos</h1>
+          <p class="sub">Septiembre 2026 · registro manual, la app no procesa cobros.</p>
+        </div>
+        <div class="head-actions">
+          <button class="btn" type="button">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
+            Exportar CSV
+          </button>
+        </div>
+      </div>
+
+      <div class="stats cols-4" style="margin-bottom:16px">
+        <div class="stat"><div class="k">Al día</div><div class="v" style="color:var(--ok)">6</div><div class="d">de 9 alumnos activos</div></div>
+        <div class="stat"><div class="k">Pendiente</div><div class="v" style="color:var(--warn)">1</div><div class="d">Diego R. · vence 15 sep</div></div>
+        <div class="stat flag-bad"><div class="k">Atrasado</div><div class="v" style="color:var(--bad)">2</div><div class="d down">Kevin S. · Andrés Q.</div></div>
+        <div class="stat"><div class="k">Promoción o beca</div><div class="v">1</div><div class="d">Luis C. · sin cobro</div></div>
+      </div>
+
+      <section class="card" style="margin-bottom:16px">
+        <div class="card-head">
+          <h2>Registrar pago</h2>
+          <span class="note">Queda en bitácora con tu nombre y la hora</span>
+        </div>
+        <div class="card-body">
+          <div class="form-grid">
+            <div class="field">
+              <label for="p-alumno">Alumno</label>
+              <select class="input" id="p-alumno">
+                <option>Kevin Solís — Escazú</option><option>Andrés Quesada — Escazú</option>
+                <option>Diego Ramírez — Escalante</option><option>Alexis Piedra — Escazú</option>
+                <option>Fabiola Chaves — Escazú</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="p-plan">Plan</label>
+              <select class="input" id="p-plan"><option>Mensualidad</option><option>Trimestre</option><option>Clase suelta</option><option>Promoción personalizada</option></select>
+            </div>
+            <div class="field">
+              <label for="p-periodo">Período</label>
+              <input class="input" id="p-periodo" type="month" value="2026-09">
+            </div>
+            <div class="field">
+              <label for="p-metodo">Método</label>
+              <select class="input" id="p-metodo"><option>SINPE Móvil</option><option>Transferencia</option><option>Efectivo</option><option>Tarjeta</option></select>
+            </div>
+            <div class="field">
+              <label for="p-monto">Monto (₡)</label>
+              <input class="input" id="p-monto" type="text" inputmode="numeric" placeholder="45 000">
+            </div>
+            <div class="field">
+              <label for="p-estado">Estado</label>
+              <select class="input" id="p-estado"><option>Pagado</option><option>Pendiente</option><option>Atrasado</option><option>Exonerado</option></select>
+            </div>
+            <div class="field" style="grid-column:1 / -1">
+              <label for="p-notas">Notas</label>
+              <input class="input" id="p-notas" type="text" placeholder="Ej.: abonó la mitad, termina de pagar el 20">
+            </div>
+
+            <div id="promo-box" style="grid-column:1 / -1;background:var(--accent-soft);border:1px solid var(--accent-line);border-radius:var(--radius);padding:14px 16px" hidden>
+              <div class="nav-label" style="padding:0 0 10px;color:var(--text-2)">Promoción personalizada</div>
+              <div class="form-grid">
+                <div class="field">
+                  <label for="p-promo-nombre">Nombre de la promoción</label>
+                  <input class="input" id="p-promo-nombre" type="text" placeholder="Ej.: Beca competidor, 2×1 hermanos">
+                </div>
+                <div class="field">
+                  <label for="p-promo-monto">Monto acordado (₡)</label>
+                  <input class="input" id="p-promo-monto" type="text" inputmode="numeric" placeholder="0 para exonerar por completo">
+                </div>
+                <div class="field" style="grid-column:1 / -1">
+                  <label for="p-promo-motivo">Motivo</label>
+                  <input class="input" id="p-promo-motivo" type="text" placeholder="Ej.: compite por la academia en el Open de noviembre">
+                </div>
+                <label style="grid-column:1 / -1;display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text-2)">
+                  <input type="checkbox" id="p-promo-repetir">
+                  Repetir esta promoción todos los meses hasta que la quite
+                </label>
+              </div>
+              <p class="empty-note" style="margin:10px 0 0">Solo el director y el admin ven este bloque. Queda registrado quién la otorgó.</p>
+            </div>
+          </div>
+          <div class="form-foot">
+            <span class="hint">Marcar «Pagado» reactiva el acceso al kiosco del alumno de inmediato.</span>
+            <button class="btn" type="button">Cancelar</button>
+            <button class="btn btn-primary" type="button">Guardar pago</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card-head">
+          <h2>Estado del mes</h2>
+          <span class="note">Septiembre 2026 · ambas sedes</span>
+        </div>
+        <div class="filters" style="margin-top:14px">
+          <div class="search">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+            <input class="input" id="pg-buscar" type="search" placeholder="Buscar alumno…" aria-label="Buscar alumno en pagos">
+          </div>
+          <select class="input" id="pg-estado" aria-label="Filtrar por estado"><option>Todos los estados</option><option>Pagado</option><option>Pendiente</option><option>Atrasado</option><option>Exonerado</option></select>
+          <select class="input" id="pg-sede" aria-label="Filtrar por sede"><option>Ambas sedes</option><option>Escazú</option><option>Escalante</option></select>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Alumno</th><th>Academia</th><th>Plan</th><th class="num">Monto</th><th>Método</th><th>Registrado</th><th>Estado</th><th></th></tr></thead>
+            <tbody>
+              <tr>
+                <td class="name">Kevin Solís</td><td>Escazú</td><td class="muted">Mensualidad</td>
+                <td class="num muted">—</td><td class="muted">—</td><td class="muted">Última vez: julio</td>
+                <td><span class="pill bad" data-state>Atrasado</span></td>
+                <td><button class="btn btn-sm btn-primary" type="button" data-pay>Marcar pagado</button></td>
+              </tr>
+              <tr>
+                <td class="name">Andrés Quesada</td><td>Escazú</td><td class="muted">Mensualidad</td>
+                <td class="num muted">—</td><td class="muted">—</td><td class="muted">Última vez: julio</td>
+                <td><span class="pill bad" data-state>Atrasado</span></td>
+                <td><button class="btn btn-sm btn-primary" type="button" data-pay>Marcar pagado</button></td>
+              </tr>
+              <tr>
+                <td class="name">Diego Ramírez</td><td>Escalante</td><td class="muted">Mensualidad</td>
+                <td class="num muted">—</td><td class="muted">—</td><td class="muted">Vence 15 sep</td>
+                <td><span class="pill warn" data-state>Pendiente</span></td>
+                <td><button class="btn btn-sm btn-primary" type="button" data-pay>Marcar pagado</button></td>
+              </tr>
+              <tr>
+                <td class="name">Alexis Piedra</td><td>Escazú</td><td>Mensualidad</td>
+                <td class="num">₡ 45 000</td><td>SINPE Móvil</td><td>2 sep · Alexis P.</td>
+                <td><span class="pill ok" data-state>Pagado</span></td>
+                <td><button class="btn btn-sm btn-ghost" type="button">Ver recibo</button></td>
+              </tr>
+              <tr>
+                <td class="name">Fabiola Chaves</td><td>Escazú</td><td>Mensualidad</td>
+                <td class="num">₡ 45 000</td><td>Transferencia</td><td>1 sep · Alexis P.</td>
+                <td><span class="pill ok" data-state>Pagado</span></td>
+                <td><button class="btn btn-sm btn-ghost" type="button">Ver recibo</button></td>
+              </tr>
+              <tr>
+                <td class="name">Natalia Jiménez</td><td>Escazú</td><td>Trimestre</td>
+                <td class="num">₡ 120 000</td><td>Tarjeta</td><td>28 ago · Dir. Escazú</td>
+                <td><span class="pill ok" data-state>Pagado</span></td>
+                <td><button class="btn btn-sm btn-ghost" type="button">Ver recibo</button></td>
+              </tr>
+              <tr>
+                <td class="name">Marcela Vargas</td><td>Escazú</td><td>Mensualidad</td>
+                <td class="num">₡ 45 000</td><td>SINPE Móvil</td><td>3 sep · Alexis P.</td>
+                <td><span class="pill ok" data-state>Pagado</span></td>
+                <td><button class="btn btn-sm btn-ghost" type="button">Ver recibo</button></td>
+              </tr>
+              <tr>
+                <td class="name">José Mora</td><td>Escalante</td><td>Mensualidad</td>
+                <td class="num">₡ 45 000</td><td>Efectivo</td><td>5 sep · Dir. Escalante</td>
+                <td><span class="pill ok" data-state>Pagado</span></td>
+                <td><button class="btn btn-sm btn-ghost" type="button">Ver recibo</button></td>
+              </tr>
+              <tr>
+                <td class="name">Luis Céspedes</td><td>Escalante</td><td>Promoción o beca</td>
+                <td class="num muted">₡ 0</td><td class="muted">—</td><td>1 sep · Dir. Escalante</td>
+                <td><span class="pill accent" data-state>Exonerado</span></td>
+                <td><button class="btn btn-sm btn-ghost" type="button">Editar</button></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <!-- ============ HORARIO ============ -->
+    <main class="page" id="s-horario" hidden>
+      <div class="page-head">
+        <div class="titles">
+          <p class="eyebrow">Alliance · Gestión de academias</p>
+          <h1>Horario de clases</h1>
+          <p class="sub">Escazú · 18 clases por semana. Tocá una clase para editarla o pasar lista.</p>
+        </div>
+        <div class="head-actions">
+          <div class="seg" role="group" aria-label="Vista">
+            <button type="button" data-view aria-pressed="true">Semana</button>
+            <button type="button" data-view aria-pressed="false">Día</button>
+            <button type="button" data-view aria-pressed="false">Lista</button>
+          </div>
+          <button class="btn btn-primary" type="button">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+            Nueva clase
+          </button>
+        </div>
+      </div>
+
+      <section class="card">
+        <div class="filters">
+          <div class="weeknav">
+            <button class="icon-btn" type="button" aria-label="Semana anterior">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+            </button>
+            <span class="wlabel">6 – 12 de septiembre</span>
+            <button class="icon-btn" type="button" aria-label="Semana siguiente">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+            </button>
+            <button class="btn btn-sm" type="button">Hoy</button>
+          </div>
+          <span style="flex:1"></span>
+          <select class="input" id="h-sede" aria-label="Academia"><option>Escazú</option><option>Escalante</option></select>
+          <select class="input" id="h-prof" aria-label="Instructor"><option>Todos los instructores</option><option>Prof. Marvin Solano</option><option>Prof. Andrey Ruiz</option><option>Prof. Kimberly Rojas</option><option>Prof. Steven Mora</option></select>
+        </div>
+
+        <div class="cal-wrap">
+          <div class="cal">
+            <!-- encabezado -->
+            <div class="cal-corner"></div>
+            <div class="cal-day" style="grid-column:2"><div class="d">Dom</div><div class="n">6</div></div>
+            <div class="cal-day" style="grid-column:3"><div class="d">Lun</div><div class="n">7</div></div>
+            <div class="cal-day" style="grid-column:4"><div class="d">Mar</div><div class="n">8</div></div>
+            <div class="cal-day" style="grid-column:5"><div class="d">Mié</div><div class="n">9</div></div>
+            <div class="cal-day" style="grid-column:6"><div class="d">Jue</div><div class="n">10</div></div>
+            <div class="cal-day today" style="grid-column:7"><div class="d">Vie · hoy</div><div class="n">11</div></div>
+            <div class="cal-day" style="grid-column:8"><div class="d">Sáb</div><div class="n">12</div></div>
+
+            <!-- columnas -->
+            <div class="cal-col off" style="grid-column:2"></div>
+            <div class="cal-col" style="grid-column:3"></div>
+            <div class="cal-col" style="grid-column:4"></div>
+            <div class="cal-col" style="grid-column:5"></div>
+            <div class="cal-col" style="grid-column:6"></div>
+            <div class="cal-col today" style="grid-column:7"></div>
+            <div class="cal-col" style="grid-column:8"></div>
+
+            <!-- horas -->
+            <div class="cal-time" style="grid-row:2">06:00</div><div class="cal-line" style="grid-row:2"></div>
+            <div class="cal-time" style="grid-row:4">07:00</div><div class="cal-line" style="grid-row:4"></div>
+            <div class="cal-time" style="grid-row:6">08:00</div><div class="cal-line" style="grid-row:6"></div>
+            <div class="cal-time" style="grid-row:8">09:00</div><div class="cal-line" style="grid-row:8"></div>
+            <div class="cal-time" style="grid-row:10">10:00</div><div class="cal-line" style="grid-row:10"></div>
+            <div class="cal-time" style="grid-row:12">11:00</div><div class="cal-line" style="grid-row:12"></div>
+            <div class="cal-time" style="grid-row:14">12:00</div><div class="cal-line" style="grid-row:14"></div>
+            <div class="cal-time" style="grid-row:16">13:00</div><div class="cal-line" style="grid-row:16"></div>
+            <div class="cal-time" style="grid-row:18">14:00</div><div class="cal-line" style="grid-row:18"></div>
+            <div class="cal-time" style="grid-row:20">15:00</div><div class="cal-line" style="grid-row:20"></div>
+            <div class="cal-time" style="grid-row:22">16:00</div><div class="cal-line" style="grid-row:22"></div>
+            <div class="cal-time" style="grid-row:24">17:00</div><div class="cal-line" style="grid-row:24"></div>
+            <div class="cal-time" style="grid-row:26">18:00</div><div class="cal-line" style="grid-row:26"></div>
+            <div class="cal-time" style="grid-row:28">19:00</div><div class="cal-line" style="grid-row:28"></div>
+
+            <!-- lunes -->
+            <button class="cal-ev ev-gi" style="grid-column:3;grid-row:2/4"><span class="t">GI</span><span class="m">Prof. Marvin Solano</span><span class="h">06:00 – 07:00</span></button>
+            <button class="cal-ev ev-nogi" style="grid-column:3;grid-row:14/16"><span class="t">NO-GI</span><span class="m">Prof. Andrey Ruiz</span><span class="h">12:00 – 13:00</span></button>
+            <button class="cal-ev ev-gi" style="grid-column:3;grid-row:26/28"><span class="t">GI · Principiantes</span><span class="m">Prof. Marvin Solano</span><span class="h">18:00 – 19:00</span></button>
+            <button class="cal-ev ev-gi" style="grid-column:3;grid-row:28/30"><span class="t">GI · Avanzados</span><span class="m">Prof. Marvin Solano</span><span class="h">19:00 – 20:00</span></button>
+
+            <!-- martes -->
+            <button class="cal-ev ev-gi" style="grid-column:4;grid-row:14/16"><span class="t">GI</span><span class="m">Prof. Marvin Solano</span><span class="h">12:00 – 13:00</span></button>
+            <button class="cal-ev ev-nogi" style="grid-column:4;grid-row:26/28"><span class="t">NO-GI · Todos</span><span class="m">Prof. Andrey Ruiz</span><span class="h">18:00 – 19:00</span></button>
+            <button class="cal-ev ev-gi" style="grid-column:4;grid-row:28/30"><span class="t">GI · Todos</span><span class="m">Prof. Marvin Solano</span><span class="h">19:00 – 20:00</span></button>
+
+            <!-- miércoles -->
+            <button class="cal-ev ev-gi" style="grid-column:5;grid-row:2/4"><span class="t">GI</span><span class="m">Prof. Marvin Solano</span><span class="h">06:00 – 07:00</span></button>
+            <button class="cal-ev ev-nogi" style="grid-column:5;grid-row:14/16"><span class="t">NO-GI</span><span class="m">Prof. Andrey Ruiz</span><span class="h">12:00 – 13:00</span></button>
+            <button class="cal-ev ev-comp" style="grid-column:5;grid-row:27/30"><span class="t">Competición</span><span class="m">Prof. Steven Mora</span><span class="h">18:30 – 20:00</span></button>
+
+            <!-- jueves -->
+            <button class="cal-ev ev-gi" style="grid-column:6;grid-row:14/16"><span class="t">GI</span><span class="m">Prof. Marvin Solano</span><span class="h">12:00 – 13:00</span></button>
+            <button class="cal-ev ev-nogi" style="grid-column:6;grid-row:26/28"><span class="t">NO-GI · Todos</span><span class="m">Prof. Andrey Ruiz</span><span class="h">18:00 – 19:00</span></button>
+            <button class="cal-ev ev-gi" style="grid-column:6;grid-row:28/30"><span class="t">GI · Todos</span><span class="m">Prof. Marvin Solano</span><span class="h">19:00 – 20:00</span></button>
+
+            <!-- viernes -->
+            <button class="cal-ev ev-nogi" style="grid-column:7;grid-row:14/16"><span class="t">NO-GI</span><span class="m">Prof. Andrey Ruiz</span><span class="h">12:00 – 13:00</span></button>
+            <button class="cal-ev ev-gi" style="grid-column:7;grid-row:27/29"><span class="t">GI · Todos</span><span class="m">Prof. Marvin Solano</span><span class="h">18:30 – 19:30</span></button>
+
+            <!-- sábado -->
+            <button class="cal-ev ev-strike" style="grid-column:8;grid-row:8/10"><span class="t">Striking</span><span class="m">Coach Diego Ramírez</span><span class="h">09:00 – 10:00</span></button>
+            <button class="cal-ev ev-kids" style="grid-column:8;grid-row:10/12"><span class="t">Kids</span><span class="m">Prof. Kimberly Rojas</span><span class="h">10:00 – 11:00</span></button>
+            <button class="cal-ev ev-open" style="grid-column:8;grid-row:12/15"><span class="t">Open Mat</span><span class="m">Sin instructor asignado</span><span class="h">11:00 – 12:30</span></button>
+          </div>
+        </div>
+
+        <div class="cal-legend">
+          <span><i style="background:var(--m-gi)"></i>GI</span>
+          <span><i style="background:var(--m-nogi)"></i>NO-GI</span>
+          <span><i style="background:var(--m-comp)"></i>Competición</span>
+          <span><i style="background:var(--m-strike)"></i>Striking</span>
+          <span><i style="background:var(--m-kids)"></i>Kids</span>
+          <span><i style="background:var(--m-open)"></i>Open Mat</span>
+          <span class="muted" style="margin-left:auto">Domingo sin clases</span>
+        </div>
+      </section>
+    </main>
+
+    <!-- ============ KIOSCO ============ -->
+    <main class="page" id="s-kiosco" hidden>
+      <div class="page-head">
+        <div class="titles">
+          <p class="eyebrow">Alliance · Gestión de academias</p>
+          <h1>Kiosco</h1>
+          <p class="sub">Tablet en la entrada de Escazú. El alumno marca con su PIN de 4 dígitos y nada más — no hay cuenta ni cierre de sesión.</p>
+        </div>
+        <div class="head-actions">
+          <button class="btn" type="button">Abrir en pantalla completa</button>
+        </div>
+      </div>
+
+      <div class="grid g-7-5" style="margin-bottom:16px">
+        <section class="card">
+          <div class="card-head">
+            <h2>Vista previa</h2>
+            <span class="note">Los dos estados de la pantalla</span>
+          </div>
+          <div class="card-body">
+            <div class="grid g-2">
+              <div class="kiosk">
+                <div class="k-lbl">Alliance Escazú</div>
+                <h3>Marcá tu asistencia</h3>
+                <div class="pinbox">
+                  <span class="pindot on"></span><span class="pindot on"></span><span class="pindot on"></span><span class="pindot"></span>
+                </div>
+                <div class="numpad">
+                  <button type="button">1</button><button type="button">2</button><button type="button">3</button>
+                  <button type="button">4</button><button type="button">5</button><button type="button">6</button>
+                  <button type="button">7</button><button type="button">8</button><button type="button">9</button>
+                  <button type="button" class="act">Borrar</button><button type="button">0</button><button type="button" class="act">Entrar</button>
+                </div>
+                <div class="k-foot">Viernes 11 de septiembre · 18:52</div>
+              </div>
+
+              <div class="kiosk">
+                <div class="k-check">
+                  <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m5 13 4.5 4.5L19 7"/></svg>
+                </div>
+                <h3>¡Listo, Fabiola!</h3>
+                <div class="belt-bar" style="width:104px;height:16px" aria-hidden="true">
+                  <span class="belt-main" style="background:var(--belt-blue)"></span>
+                  <span class="belt-tip" style="background:var(--belt-black)"><i class="belt-stripe"></i><i class="belt-stripe"></i><i class="belt-stripe"></i><i class="belt-stripe"></i></span>
+                </div>
+                <div class="k-prog">63 / 65 · faltan 2 para el examen</div>
+                <div class="k-class">
+                  <div class="k-lbl">Asistencia guardada en</div>
+                  <div class="cn">GI · Todos los niveles</div>
+                  <div class="ct">viernes 18:30 – 19:30</div>
+                </div>
+                <button class="k-link" type="button">¿No es esta clase?</button>
+                <div class="k-foot">Vuelve al teclado en 5 s</div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <div class="stack">
+          <section class="card">
+            <div class="card-head"><h2>Token del kiosco</h2><span class="note">Escazú</span></div>
+            <div class="card-body">
+              <div class="kv"><span>Código de la estación</span><b style="font-family:var(--f-mono)">ESC-4K7P-2210</b></div>
+              <div class="kv"><span>Creado</span><b class="muted">1 sep 2026</b></div>
+              <div class="kv"><span>Último uso</span><b class="muted">hoy 18:52</b></div>
+              <div style="display:flex;gap:8px;margin-top:14px">
+                <button class="btn btn-sm" type="button">Copiar enlace</button>
+                <button class="btn btn-sm" type="button">Regenerar</button>
+              </div>
+            </div>
+          </section>
+
+          <section class="card">
+            <div class="card-head"><h2>Cómo se asigna la clase</h2></div>
+            <div class="card-body">
+              <p class="empty-note" style="margin:0 0 12px">La asistencia se guarda en la clase del día cuya hora de inicio esté más cerca del momento en que el alumno marcó, siempre que marque entre 30 minutos antes de que empiece y 15 después de que termine.</p>
+              <div class="kv"><span>17:52 · lunes</span><b>18:00 GI Principiantes</b></div>
+              <div class="kv"><span>18:40 · lunes</span><b>19:00 GI Avanzados</b></div>
+              <div class="kv"><span>18:52 · viernes</span><b>18:30 GI Todos</b></div>
+              <div class="kv"><span>09:50 · sábado</span><b>10:00 Kids</b></div>
+              <div class="kv"><span>13:30 · lunes</span><b class="muted">Fuera de rango → elige</b></div>
+            </div>
+          </section>
+        </div>
+      </div>
+
+      <section class="card">
+        <div class="card-head">
+          <h2>Marcajes de hoy</h2>
+          <span class="note">Escazú · 11 sep</span>
+        </div>
+        <div class="table-wrap" style="margin-top:14px">
+          <table>
+            <thead><tr><th>Hora</th><th>Alumno</th><th>Clase asignada</th><th>Asignación</th><th></th></tr></thead>
+            <tbody>
+              <tr><td class="num" style="font-family:var(--f-mono)">18:52</td><td class="name">Fabiola Chaves</td><td>18:30 GI · Todos</td><td><span class="pill ok">Automática</span></td><td><button class="btn btn-sm btn-ghost" type="button">Cambiar</button></td></tr>
+              <tr><td class="num" style="font-family:var(--f-mono)">18:36</td><td class="name">Marcela Vargas</td><td>18:30 GI · Todos</td><td><span class="pill ok">Automática</span></td><td><button class="btn btn-sm btn-ghost" type="button">Cambiar</button></td></tr>
+              <tr><td class="num" style="font-family:var(--f-mono)">13:31</td><td class="name">Alexis Piedra</td><td>12:00 NO-GI</td><td><span class="pill warn">Elegida por el alumno</span></td><td><button class="btn btn-sm btn-ghost" type="button">Cambiar</button></td></tr>
+              <tr><td class="num" style="font-family:var(--f-mono)">12:05</td><td class="name">Natalia Jiménez</td><td>12:00 NO-GI</td><td><span class="pill ok">Automática</span></td><td><button class="btn btn-sm btn-ghost" type="button">Cambiar</button></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+  </div>
+</div>
+
+<script>
+(function(){
+  var titles = {panel:"Panel", alumnos:"Alumnos", resumen:"Resumen", pagos:"Pagos", horario:"Horario", kiosco:"Kiosco"};
+  var crumb = document.getElementById("crumb-screen");
+
+  function show(id){
+    ["panel","alumnos","resumen","pagos","horario","kiosco"].forEach(function(k){
+      var el = document.getElementById("s-"+k);
+      if(el) el.hidden = (k !== id);
+    });
+    document.querySelectorAll(".nav-item[data-go]").forEach(function(b){
+      if(b.dataset.go === id && titles[id] && b.textContent.trim().indexOf(titles[id]) === 0){
+        b.setAttribute("aria-current","page");
+      } else {
+        b.removeAttribute("aria-current");
+      }
+    });
+    if(crumb) crumb.textContent = titles[id] || "Panel";
+    window.scrollTo({top:0, behavior:"instant"});
+  }
+
+  document.querySelectorAll(".nav-item[data-go]").forEach(function(b){
+    b.addEventListener("click", function(){ show(b.dataset.go); });
+  });
+
+  // grupos de botones segmentados (rango en Resumen, vista en Horario)
+  ["[data-range]","[data-view]"].forEach(function(sel){
+    document.querySelectorAll(sel).forEach(function(b){
+      b.addEventListener("click", function(){
+        document.querySelectorAll(sel).forEach(function(o){ o.setAttribute("aria-pressed","false"); });
+        b.setAttribute("aria-pressed","true");
+      });
+    });
+  });
+
+  // marcar pagado
+  document.querySelectorAll("[data-pay]").forEach(function(b){
+    b.addEventListener("click", function(){
+      var row = b.closest("tr");
+      var pill = row.querySelector("[data-state]");
+      pill.className = "pill ok";
+      pill.textContent = "Pagado";
+      row.children[3].textContent = "₡ 45 000";
+      row.children[3].className = "num";
+      row.children[4].textContent = "SINPE Móvil";
+      row.children[4].className = "";
+      row.children[5].textContent = "11 sep · Alexis P.";
+      row.children[5].className = "";
+      b.outerHTML = '<button class="btn btn-sm btn-ghost" type="button">Ver recibo</button>';
+    });
+  });
+
+  // promoción personalizada
+  var plan = document.getElementById("p-plan");
+  var promoBox = document.getElementById("promo-box");
+  if(plan && promoBox){
+    plan.addEventListener("change", function(){
+      promoBox.hidden = plan.value.indexOf("Promoción") !== 0;
+    });
+  }
+
+  // tema
+  var root = document.documentElement;
+  document.getElementById("theme-toggle").addEventListener("click", function(){
+    var cur = root.getAttribute("data-theme");
+    if(!cur){
+      var dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+      root.setAttribute("data-theme", dark ? "light" : "dark");
+    } else {
+      root.setAttribute("data-theme", cur === "dark" ? "light" : "dark");
+    }
+  });
+})();
+</script>

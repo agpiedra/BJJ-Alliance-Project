@@ -45,9 +45,18 @@ function errorMessageKey(error: string): string {
 // require a confirm dialog here), but the extra guard against a stray click
 // costs nothing and keeps every dashboard action button behaving the same
 // way.
-export function ConfirmPromotionButton({ studentId }: { studentId: string }) {
+export function ConfirmPromotionButton({
+  organizationId,
+  studentId,
+}: {
+  organizationId: string;
+  studentId: string;
+}) {
   const t = useTranslations("dashboard.promotionQueue");
-  const [state, formAction, isPending] = useActionState(confirmPromotion, INITIAL_STATE);
+  const [state, formAction, isPending] = useActionState(
+    confirmPromotion.bind(null, organizationId),
+    INITIAL_STATE,
+  );
 
   return (
     <form

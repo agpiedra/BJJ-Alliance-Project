@@ -6,7 +6,7 @@ import { hashSecret } from "@/lib/crypto";
 import { generateStudentCode } from "@/lib/students/generate-code";
 import { notifyNewSignup } from "@/lib/notifications/notify-new-signup";
 import { fireAndForget } from "@/lib/notifications/fire-and-forget";
-import { Belt, Role, StudentStatus } from "@/generated/prisma/client";
+import { Role, StudentStatus } from "@/generated/prisma/client";
 
 const signupSchema = z
   .object({
@@ -19,7 +19,7 @@ const signupSchema = z
     phone: z.string().min(1),
     email: z.string().email(),
     homeAcademySlug: z.enum(["escazu", "escalante"]),
-    currentBelt: z.nativeEnum(Belt),
+    currentBelt: z.enum(["WHITE", "BLUE", "PURPLE", "BROWN", "BLACK"]),
     currentStripes: z.coerce.number().int().min(0).max(4),
     password: z.string().min(8),
     dateOfBirth: z.string().optional(),
@@ -92,7 +92,16 @@ export async function signup(_prevState: SignupState, formData: FormData): Promi
   }
 
   const homeAcademy = await prisma.academy.findUniqueOrThrow({ where: { slug: data.homeAcademySlug } });
-  const { code, codeHash } = await generateStudentCode();
+  const { code, codeHash } = await generateStudentCode(homeAcademy.organizationId);
+
+  // No authenticated tenant context exists yet at signup time (this is a
+  // public, unauthenticated endpoint), so this is a plain organizationId-
+  // scoped lookup rather than getScopedDb — matching every other query in
+  // this file.
+  const rank = await prisma.beltRank.findFirstOrThrow({
+    where: { organizationId: homeAcademy.organizationId, track: "ADULT", code: data.currentBelt },
+    select: { id: true },
+  });
 
   const studentId = await prisma.$transaction(async (tx) => {
     const user = await tx.user.create({
@@ -107,11 +116,12 @@ export async function signup(_prevState: SignupState, formData: FormData): Promi
       data: {
         userId: user.id,
         homeAcademyId: homeAcademy.id,
+        organizationId: homeAcademy.organizationId,
         firstName: data.firstName,
         lastName: data.lastName,
         phone: data.phone,
         email: data.email,
-        currentBelt: data.currentBelt,
+        currentRankId: rank.id,
         currentStripes: data.currentStripes,
         dateOfBirth: data.dateOfBirth ? new Date(data.dateOfBirth) : undefined,
         guardianName: data.guardianName,

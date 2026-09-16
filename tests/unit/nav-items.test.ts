@@ -16,17 +16,33 @@ describe("NAV_ITEMS visibility", () => {
     expect(visibleHrefs("ADMIN")).toEqual([
       "/dashboard",
       "/students",
+      "/payments",
       "/dashboard/analytics",
       "/admin/schedule",
       "/admin/kiosk-tokens",
     ]);
   });
 
-  it("DIRECTOR sees dashboard, students, and analytics — not the ADMIN-only admin links", () => {
-    expect(visibleHrefs("DIRECTOR")).toEqual(["/dashboard", "/students", "/dashboard/analytics"]);
+  // REDESIGN_BRIEF.md Phase 9 opened the Kiosco page to DIRECTOR for its new
+  // "Marcajes de hoy" table (the page's own gate is now
+  // requireStaffSession(["ADMIN", "DIRECTOR"])); /admin/schedule stays
+  // ADMIN-only.
+  it("DIRECTOR sees dashboard, students, payments, analytics and Kiosco — not the ADMIN-only schedule link", () => {
+    expect(visibleHrefs("DIRECTOR")).toEqual([
+      "/dashboard",
+      "/students",
+      "/payments",
+      "/dashboard/analytics",
+      "/admin/kiosk-tokens",
+    ]);
   });
 
-  it("INSTRUCTOR sees only dashboard and students", () => {
-    expect(visibleHrefs("INSTRUCTOR")).toEqual(["/dashboard", "/students"]);
+  // REDESIGN_BRIEF.md Phase 8: instructor gets a READ-ONLY Pagos view (the
+  // page itself hides the Registrar-pago card and every write action for a
+  // non-ADMIN/DIRECTOR session), not zero access — same "every staff role
+  // reaches this page" shape as dashboard/students, matching this file's own
+  // `visible` doc comment.
+  it("INSTRUCTOR sees dashboard, students, and payments (read-only) — not analytics or the admin links", () => {
+    expect(visibleHrefs("INSTRUCTOR")).toEqual(["/dashboard", "/students", "/payments"]);
   });
 });

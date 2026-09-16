@@ -1,8 +1,6 @@
 import "dotenv/config";
+import { getTestPrismaClient } from "../helpers/test-db";
 import { afterAll, describe, expect, it, vi } from "vitest";
-import { PrismaClient } from "../../src/generated/prisma/client";
-import { PrismaPg } from "@prisma/adapter-pg";
-import { requireEnv } from "../../src/lib/env";
 import { hashSecret } from "../../src/lib/crypto";
 
 // `login()` calls the real `signIn("credentials", ...)` from `@/auth`, which
@@ -18,8 +16,7 @@ vi.mock("@/auth", () => ({
 
 const { login } = await import("../../src/app/[locale]/login/actions");
 
-const adapter = new PrismaPg({ connectionString: requireEnv("DATABASE_URL") });
-const prisma = new PrismaClient({ adapter });
+const prisma = getTestPrismaClient();
 
 const cleanupUserIds: string[] = [];
 
@@ -58,6 +55,7 @@ async function redirectTargetOf(promise: Promise<unknown>): Promise<string> {
 describe("login() redirect destination", () => {
   afterAll(async () => {
     if (cleanupUserIds.length > 0) {
+      await prisma.notification.deleteMany({ where: { userId: { in: cleanupUserIds } } });
       await prisma.user.deleteMany({ where: { id: { in: cleanupUserIds } } });
     }
   });

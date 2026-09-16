@@ -2,7 +2,8 @@
 
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { requireStaffSession } from "@/lib/auth/session";
+import { resolveActionContext } from "@/lib/tenant/context";
+import { getScopedDb } from "@/lib/tenant/scoped-client";
 import { DayOfWeek, ClassType, Prisma } from "@/generated/prisma/client";
 import type { ActionState } from "@/lib/action-state";
 import { isUniqueConstraintError } from "@/lib/prisma-errors";
@@ -44,7 +45,7 @@ const classSessionIdSchema = z.object({ classSessionId: z.string().min(1) });
  * payments/promotions, not the schedule itself). Same global-academy-resource
  * shape as `admin/kiosk-tokens/actions.ts`'s `regenerateKioskToken`: this
  * manages a shared resource ADMIN can reach for either academy, not something
- * scoped to one DIRECTOR's own assignment — so there is no `isAcademyInScope`
+ * scoped to one DIRECTOR's own assignment — so there is no `isAcademyInTenantScope`
  * check here, only a fresh `findUniqueOrThrow` re-validating the
  * client-submitted `academyId` names a real row before anything is written.
  *
@@ -53,8 +54,14 @@ const classSessionIdSchema = z.object({ classSessionId: z.string().min(1) });
  * as Prisma error code P2002, caught below and turned into a friendly
  * `duplicateSlot` error rather than a 500.
  */
-export async function createClassSession(_prevState: ActionState, formData: FormData): Promise<ActionState> {
-  const session = await requireStaffSession(["ADMIN"]);
+export async function createClassSession(
+  organizationId: string,
+  _prevState: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const auth = await resolveActionContext(organizationId, ["ADMIN"]);
+  if (!auth.ok) return { error: "notFound" };
+  const context = auth.context;
 
   const parsed = createClassSessionSchema.safeParse(Object.fromEntries(formData.entries()));
   if (!parsed.success) {
@@ -63,11 +70,16 @@ export async function createClassSession(_prevState: ActionState, formData: Form
 
   const data = parsed.data;
 
-  let academy: { id: string };
+  // Never trust a client-submitted academy id, even from ADMIN — this
+  // manages a shared resource ADMIN can reach for any academy IN THEIR OWN
+  // ORGANIZATION, never another tenant's, just by knowing/guessing its id.
+  // `getScopedDb` enforces that structurally: a cross-organization id throws
+  // (caught below), never resolves.
+  let academy: { id: string; organizationId: string };
   try {
-    academy = await prisma.academy.findUniqueOrThrow({
+    academy = await getScopedDb(context).academy.findUniqueOrThrow({
       where: { id: data.academyId },
-      select: { id: true },
+      select: { id: true, organizationId: true },
     });
   } catch {
     return { error: "notFound" };
@@ -88,12 +100,12 @@ export async function createClassSession(_prevState: ActionState, formData: Form
     // row can never exist without the session it describes.
     await prisma.$transaction(async (tx) => {
       const created = await tx.classSession.create({
-        data: { academyId: academy.id, ...after },
+        data: { academyId: academy.id, organizationId: academy.organizationId, ...after },
       });
 
       await tx.auditLog.create({
         data: {
-          actorId: session.userId,
+          actorId: context.actorUserId,
           academyId: academy.id,
           action: "classSession.create",
           entityType: "ClassSession",
@@ -120,8 +132,14 @@ export async function createClassSession(_prevState: ActionState, formData: Form
  * freshly-read `academyId` (never a client-submitted one) is what both the
  * `AuditLog` row and the unique-constraint check below actually use.
  */
-export async function updateClassSession(_prevState: ActionState, formData: FormData): Promise<ActionState> {
-  const session = await requireStaffSession(["ADMIN"]);
+export async function updateClassSession(
+  organizationId: string,
+  _prevState: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const auth = await resolveActionContext(organizationId, ["ADMIN"]);
+  if (!auth.ok) return { error: "notFound" };
+  const context = auth.context;
 
   const parsed = updateClassSessionSchema.safeParse(Object.fromEntries(formData.entries()));
   if (!parsed.success) {
@@ -130,9 +148,14 @@ export async function updateClassSession(_prevState: ActionState, formData: Form
 
   const data = parsed.data;
 
+  // Never trust a client-submitted classSessionId, even from ADMIN — an
+  // ADMIN of one organization must not be able to edit another tenant's
+  // schedule just by knowing/guessing an id. `getScopedDb` enforces that
+  // structurally: a cross-organization id throws (caught below).
   let existing: {
     id: string;
     academyId: string;
+    organizationId: string;
     dayOfWeek: DayOfWeek;
     startTime: string;
     durationMinutes: number;
@@ -141,7 +164,7 @@ export async function updateClassSession(_prevState: ActionState, formData: Form
     countsTowardPromotion: boolean;
   };
   try {
-    existing = await prisma.classSession.findUniqueOrThrow({
+    existing = await getScopedDb(context).classSession.findUniqueOrThrow({
       where: { id: data.classSessionId },
     });
   } catch {
@@ -166,7 +189,7 @@ export async function updateClassSession(_prevState: ActionState, formData: Form
 
       await tx.auditLog.create({
         data: {
-          actorId: session.userId,
+          actorId: context.actorUserId,
           academyId: existing.academyId,
           action: "classSession.update",
           entityType: "ClassSession",
@@ -200,21 +223,28 @@ export async function updateClassSession(_prevState: ActionState, formData: Form
  * untouched, so a deactivated session's attendance history is unaffected.
  */
 export async function deactivateClassSession(
+  organizationId: string,
   _prevState: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
-  const session = await requireStaffSession(["ADMIN"]);
+  const auth = await resolveActionContext(organizationId, ["ADMIN"]);
+  if (!auth.ok) return { error: "notFound" };
+  const context = auth.context;
 
   const parsed = classSessionIdSchema.safeParse(Object.fromEntries(formData.entries()));
   if (!parsed.success) {
     return { error: "notFound" };
   }
 
-  let existing: { id: string; academyId: string; active: boolean };
+  // Never trust a client-submitted classSessionId, even from ADMIN — an
+  // ADMIN of one organization must not be able to deactivate another
+  // tenant's schedule just by knowing/guessing an id. `getScopedDb` enforces
+  // that structurally: a cross-organization id throws (caught below).
+  let existing: { id: string; academyId: string; organizationId: string; active: boolean };
   try {
-    existing = await prisma.classSession.findUniqueOrThrow({
+    existing = await getScopedDb(context).classSession.findUniqueOrThrow({
       where: { id: parsed.data.classSessionId },
-      select: { id: true, academyId: true, active: true },
+      select: { id: true, academyId: true, organizationId: true, active: true },
     });
   } catch {
     return { error: "notFound" };
@@ -228,7 +258,7 @@ export async function deactivateClassSession(
 
     await tx.auditLog.create({
       data: {
-        actorId: session.userId,
+        actorId: context.actorUserId,
         academyId: existing.academyId,
         action: "classSession.deactivate",
         entityType: "ClassSession",

@@ -1,26 +1,30 @@
 import "dotenv/config";
+import { getTestPrismaClient } from "../helpers/test-db";
 import { afterAll, describe, expect, it } from "vitest";
-import { PrismaClient } from "../../src/generated/prisma/client";
-import { PrismaPg } from "@prisma/adapter-pg";
-import { requireEnv } from "../../src/lib/env";
 import type { Recipient } from "../../src/lib/notifications/types";
 
 const { resolveStaffRecipients } = await import("../../src/lib/notifications/recipients");
 
-const adapter = new PrismaPg({ connectionString: requireEnv("DATABASE_URL") });
-const prisma = new PrismaClient({ adapter });
+const prisma = getTestPrismaClient();
 
 const cleanupUserIds: string[] = [];
 
 async function cleanup() {
   if (cleanupUserIds.length > 0) {
+    await prisma.organizationMembership.deleteMany({ where: { userId: { in: cleanupUserIds } } });
     await prisma.staffAssignment.deleteMany({ where: { userId: { in: cleanupUserIds } } });
+    await prisma.notification.deleteMany({ where: { userId: { in: cleanupUserIds } } });
     await prisma.user.deleteMany({ where: { id: { in: cleanupUserIds } } });
   }
 }
 
+// `resolveStaffRecipients` resolves ADMIN through OrganizationMembership
+// (scoped to the target academy's own organization), not `User.role` — every
+// test user needs a real membership row, matching whatever organization the
+// test's own academy belongs to.
 async function makeUser(overrides: {
   role: "ADMIN" | "DIRECTOR" | "INSTRUCTOR";
+  organizationId: string;
   active?: boolean;
   locale?: string;
 }) {
@@ -35,6 +39,9 @@ async function makeUser(overrides: {
     },
   });
   cleanupUserIds.push(user.id);
+  await prisma.organizationMembership.create({
+    data: { userId: user.id, organizationId: overrides.organizationId, role: overrides.role },
+  });
   return user;
 }
 
@@ -49,22 +56,39 @@ describe("resolveStaffRecipients", () => {
     const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
     const escalante = await prisma.academy.findUniqueOrThrow({ where: { slug: "escalante" } });
 
-    const admin = await makeUser({ role: "ADMIN", locale: "en" });
-    const escazuDirector = await makeUser({ role: "DIRECTOR" });
-    await prisma.staffAssignment.create({ data: { userId: escazuDirector.id, academyId: escazu.id, role: "DIRECTOR" } });
-
-    const escalanteInstructor = await makeUser({ role: "INSTRUCTOR" });
+    const admin = await makeUser({ role: "ADMIN", locale: "en", organizationId: escazu.organizationId });
+    const escazuDirector = await makeUser({ role: "DIRECTOR", organizationId: escazu.organizationId });
     await prisma.staffAssignment.create({
-      data: { userId: escalanteInstructor.id, academyId: escalante.id, role: "INSTRUCTOR" },
+      data: { userId: escazuDirector.id, academyId: escazu.id, organizationId: escazu.organizationId, role: "DIRECTOR" },
+    });
+
+    const escalanteInstructor = await makeUser({ role: "INSTRUCTOR", organizationId: escalante.organizationId });
+    await prisma.staffAssignment.create({
+      data: {
+        userId: escalanteInstructor.id,
+        academyId: escalante.id,
+        organizationId: escalante.organizationId,
+        role: "INSTRUCTOR",
+      },
     });
 
     const recipients = await resolveStaffRecipients(escazu.id);
 
     const adminRecipient = findRecipient(recipients, admin.id);
-    expect(adminRecipient).toEqual({ userId: admin.id, email: admin.email, locale: "en" });
+    expect(adminRecipient).toEqual({
+      userId: admin.id,
+      email: admin.email,
+      locale: "en",
+      organizationId: escazu.organizationId,
+    });
 
     const directorRecipient = findRecipient(recipients, escazuDirector.id);
-    expect(directorRecipient).toEqual({ userId: escazuDirector.id, email: escazuDirector.email, locale: "es" });
+    expect(directorRecipient).toEqual({
+      userId: escazuDirector.id,
+      email: escazuDirector.email,
+      locale: "es",
+      organizationId: escazu.organizationId,
+    });
 
     expect(findRecipient(recipients, escalanteInstructor.id)).toBeUndefined();
   });
@@ -72,10 +96,10 @@ describe("resolveStaffRecipients", () => {
   it("excludes an inactive user of any role, even an inactive ADMIN or an inactive assigned DIRECTOR", async () => {
     const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
 
-    const inactiveAdmin = await makeUser({ role: "ADMIN", active: false });
-    const inactiveDirector = await makeUser({ role: "DIRECTOR", active: false });
+    const inactiveAdmin = await makeUser({ role: "ADMIN", active: false, organizationId: escazu.organizationId });
+    const inactiveDirector = await makeUser({ role: "DIRECTOR", active: false, organizationId: escazu.organizationId });
     await prisma.staffAssignment.create({
-      data: { userId: inactiveDirector.id, academyId: escazu.id, role: "DIRECTOR" },
+      data: { userId: inactiveDirector.id, academyId: escazu.id, organizationId: escazu.organizationId, role: "DIRECTOR" },
     });
 
     const recipients = await resolveStaffRecipients(escazu.id);
@@ -92,9 +116,14 @@ describe("resolveStaffRecipients", () => {
     // appear via both the "every ADMIN" branch and the assignment branch.
     // Proves resolveStaffRecipients's Map-keyed dedupe handles that overlap.
     const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
-    const adminWithAssignment = await makeUser({ role: "ADMIN" });
+    const adminWithAssignment = await makeUser({ role: "ADMIN", organizationId: escazu.organizationId });
     await prisma.staffAssignment.create({
-      data: { userId: adminWithAssignment.id, academyId: escazu.id, role: "DIRECTOR" },
+      data: {
+        userId: adminWithAssignment.id,
+        academyId: escazu.id,
+        organizationId: escazu.organizationId,
+        role: "DIRECTOR",
+      },
     });
 
     const recipients = await resolveStaffRecipients(escazu.id);

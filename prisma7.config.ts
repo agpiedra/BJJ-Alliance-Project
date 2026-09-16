@@ -3,6 +3,13 @@
 import "dotenv/config";
 import { defineConfig } from "prisma/config";
 
+// SHADOW_DATABASE_URL: a dedicated, empty database Prisma uses internally to
+// compute "what does the migration history actually produce" — required for
+// `prisma migrate diff --from-migrations` (this project's new
+// `pnpm db:check-drift`) and for `prisma migrate dev` to detect drift when
+// generating a new migration. Never used by the app itself; safe to recreate
+// at any time (`DROP DATABASE alliance_bjj_shadow; CREATE DATABASE
+// alliance_bjj_shadow;` on the same Postgres server as DATABASE_URL).
 export default defineConfig({
   schema: "prisma/schema.prisma",
   migrations: {
@@ -11,5 +18,6 @@ export default defineConfig({
   },
   datasource: {
     url: process.env["DATABASE_URL"],
+    shadowDatabaseUrl: process.env["SHADOW_DATABASE_URL"],
   },
 });

@@ -1,22 +1,38 @@
 import "dotenv/config";
+import { getTestPrismaClient } from "../helpers/test-db";
 import { afterAll, describe, expect, it } from "vitest";
 import { DateTime } from "luxon";
-import { PrismaClient } from "../../src/generated/prisma/client";
-import { PrismaPg } from "@prisma/adapter-pg";
 import { requireEnv } from "../../src/lib/env";
 import { digestLookupSecret, hashSecret } from "../../src/lib/crypto";
 import { toAttendanceDate, ZONE } from "../../src/lib/scheduling/zone";
 import { currentCrDateParts } from "../../src/lib/payments/get-current-period";
-import type { StaffSession } from "../../src/lib/auth/session";
+import type { TenantContext, MembershipRole } from "../../src/lib/tenant/types";
 import type { AnalyticsFilters } from "../../src/lib/analytics/filters";
+import { adultRankId } from "../helpers/belt-ranks";
 
 const { getHeadlineTiles, previousEquivalentRange } = await import(
   "../../src/lib/analytics/headline-tiles"
 );
 
-const adapter = new PrismaPg({ connectionString: requireEnv("DATABASE_URL") });
-const prisma = new PrismaClient({ adapter });
+const prisma = getTestPrismaClient();
+
+let allianceOrgIdPromise: Promise<string> | null = null;
+function getAllianceOrganizationId() {
+  allianceOrgIdPromise ??= prisma.organization.findUniqueOrThrow({ where: { slug: "alliance-cr" } }).then((o) => o.id);
+  return allianceOrgIdPromise;
+}
 const pepper = requireEnv("CODE_PEPPER");
+
+function ctx(role: MembershipRole, academyIds: string[] | "ALL", organizationId: string): TenantContext {
+  return {
+    kind: "tenant",
+    actorUserId: "x",
+    organizationId,
+    organizationRole: role,
+    academyIds,
+    selfStudentId: null,
+  };
+}
 
 // A fixed range for every test in this file, entirely independent of the
 // real wall clock — `getHeadlineTiles` classifies active/new/lost against
@@ -46,6 +62,7 @@ async function cleanup() {
   }
   if (cleanupUserIds.length > 0) {
     await prisma.staffAssignment.deleteMany({ where: { userId: { in: cleanupUserIds } } });
+    await prisma.notification.deleteMany({ where: { userId: { in: cleanupUserIds } } });
     await prisma.user.deleteMany({ where: { id: { in: cleanupUserIds } } });
   }
 }
@@ -62,15 +79,16 @@ async function makeAcademy(label: string) {
       name: `${label} ${suffix}`,
       slug: `${label}-${suffix}`,
       kioskTokenHash: `${label}-hash-${suffix}`,
+      organizationId: await getAllianceOrganizationId(),
     },
   });
   cleanupAcademyIds.push(academy.id);
   return academy;
 }
 
-async function makePlan(academyId: string) {
+async function makePlan(academyId: string, organizationId: string) {
   const plan = await prisma.paymentPlan.create({
-    data: { academyId, name: `Headline Tiles Plan ${Date.now()}-${Math.floor(Math.random() * 1_000_000)}` },
+    data: { academyId, organizationId, name: `Headline Tiles Plan ${Date.now()}-${Math.floor(Math.random() * 1_000_000)}` },
   });
   cleanupPlanIds.push(plan.id);
   return plan;
@@ -89,15 +107,17 @@ async function makeRecorder() {
   return user;
 }
 
-async function makeStudent(academyId: string, joinedAt: Date) {
+async function makeStudent(academyId: string, organizationId: string, joinedAt: Date) {
   const suffix = `${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
   const student = await prisma.student.create({
     data: {
       homeAcademyId: academyId,
+      organizationId,
       firstName: "HeadlineTilesTest",
       lastName: `Student-${suffix}`,
       phone: "88880000",
       email: `headline-tiles-${suffix}@example.com`,
+      currentRankId: adultRankId("WHITE"),
       status: "ACTIVE",
       joinedAt,
       codeHash: digestLookupSecret(`headline-tiles-${suffix}`, pepper),
@@ -107,12 +127,13 @@ async function makeStudent(academyId: string, joinedAt: Date) {
   return student;
 }
 
-async function makeCheckin(studentId: string, academyId: string, occurredAt: DateTime) {
+async function makeCheckin(studentId: string, academyId: string, organizationId: string, occurredAt: DateTime) {
   const at = occurredAt.toJSDate();
   await prisma.attendanceRecord.create({
     data: {
       studentId,
       academyId,
+      organizationId,
       occurredAt: at,
       date: toAttendanceDate(at),
       type: "CHECKIN",
@@ -125,6 +146,7 @@ async function makeCheckin(studentId: string, academyId: string, occurredAt: Dat
 async function makePaymentPeriod(
   studentId: string,
   academyId: string,
+  organizationId: string,
   planId: string,
   recordedById: string,
   year: number,
@@ -132,7 +154,7 @@ async function makePaymentPeriod(
   status: "PAID" | "PENDING" | "PROMO" | "EXEMPT",
 ) {
   await prisma.paymentPeriod.create({
-    data: { studentId, academyId, planId, recordedById, year, month, status },
+    data: { studentId, academyId, organizationId, planId, recordedById, year, month, status },
   });
 }
 
@@ -141,35 +163,35 @@ describe("getHeadlineTiles", () => {
 
   it("computes enrolled/active/inactive/new/lost/attendance/payment-health for a scoped scenario", async () => {
     const academy = await makeAcademy("headline-scenario");
-    const plan = await makePlan(academy.id);
+    const plan = await makePlan(academy.id, academy.organizationId);
     const recorder = await makeRecorder();
 
     // sA: enrolled long ago, attended twice inside the current range —
     // active, and (paid this month) counts toward payment health.
-    const sA = await makeStudent(academy.id, LONG_AGO);
+    const sA = await makeStudent(academy.id, academy.organizationId, LONG_AGO);
     // sB: enrolled long ago, attended only in the PREVIOUS period — lost.
-    const sB = await makeStudent(academy.id, LONG_AGO);
+    const sB = await makeStudent(academy.id, academy.organizationId, LONG_AGO);
     // sC: joined INSIDE the range, never attended — new, inactive.
-    const sC = await makeStudent(academy.id, RANGE_FROM.plus({ days: 5 }).toJSDate());
+    const sC = await makeStudent(academy.id, academy.organizationId, RANGE_FROM.plus({ days: 5 }).toJSDate());
     // sD: attended in both the previous and current period — active, not
     // lost, and (PENDING this month) does not count toward payment health.
-    const sD = await makeStudent(academy.id, LONG_AGO);
+    const sD = await makeStudent(academy.id, academy.organizationId, LONG_AGO);
     // sE: enrolled long ago, never attended at all — inactive, not lost
     // (no previous-period attendance either), no payment period recorded.
-    const sE = await makeStudent(academy.id, LONG_AGO);
+    const sE = await makeStudent(academy.id, academy.organizationId, LONG_AGO);
 
-    await makeCheckin(sA.id, academy.id, RANGE_FROM.plus({ days: 2 }));
-    await makeCheckin(sA.id, academy.id, RANGE_FROM.plus({ days: 3 }));
-    await makeCheckin(sB.id, academy.id, PREVIOUS.from.plus({ days: 2 }));
-    await makeCheckin(sD.id, academy.id, PREVIOUS.from.plus({ days: 3 }));
-    await makeCheckin(sD.id, academy.id, RANGE_FROM.plus({ days: 4 }));
+    await makeCheckin(sA.id, academy.id, academy.organizationId, RANGE_FROM.plus({ days: 2 }));
+    await makeCheckin(sA.id, academy.id, academy.organizationId, RANGE_FROM.plus({ days: 3 }));
+    await makeCheckin(sB.id, academy.id, academy.organizationId, PREVIOUS.from.plus({ days: 2 }));
+    await makeCheckin(sD.id, academy.id, academy.organizationId, PREVIOUS.from.plus({ days: 3 }));
+    await makeCheckin(sD.id, academy.id, academy.organizationId, RANGE_FROM.plus({ days: 4 }));
 
     const { year, month } = currentCrDateParts();
-    await makePaymentPeriod(sA.id, academy.id, plan.id, recorder.id, year, month, "PAID");
-    await makePaymentPeriod(sD.id, academy.id, plan.id, recorder.id, year, month, "PENDING");
+    await makePaymentPeriod(sA.id, academy.id, academy.organizationId, plan.id, recorder.id, year, month, "PAID");
+    await makePaymentPeriod(sD.id, academy.id, academy.organizationId, plan.id, recorder.id, year, month, "PENDING");
     // sB, sC, sE: no current-month PaymentPeriod row at all.
 
-    const admin: StaffSession = { userId: "x", role: "ADMIN", academyIds: "ALL" };
+    const admin = ctx("ADMIN", "ALL", academy.organizationId);
     const filters: AnalyticsFilters = { from: RANGE_FROM, to: RANGE_TO, academyId: academy.id };
 
     const tiles = await getHeadlineTiles(admin, filters);
@@ -186,11 +208,12 @@ describe("getHeadlineTiles", () => {
 
   it("an ADJUSTMENT record never counts toward attendance-based tiles, only a real CHECKIN does", async () => {
     const academy = await makeAcademy("headline-adjustment");
-    const student = await makeStudent(academy.id, LONG_AGO);
+    const student = await makeStudent(academy.id, academy.organizationId, LONG_AGO);
     await prisma.attendanceRecord.create({
       data: {
         studentId: student.id,
         academyId: academy.id,
+        organizationId: academy.organizationId,
         occurredAt: RANGE_FROM.plus({ days: 2 }).toJSDate(),
         date: toAttendanceDate(RANGE_FROM.plus({ days: 2 }).toJSDate()),
         type: "ADJUSTMENT",
@@ -200,7 +223,7 @@ describe("getHeadlineTiles", () => {
       },
     });
 
-    const admin: StaffSession = { userId: "x", role: "ADMIN", academyIds: "ALL" };
+    const admin = ctx("ADMIN", "ALL", academy.organizationId);
     const filters: AnalyticsFilters = { from: RANGE_FROM, to: RANGE_TO, academyId: academy.id };
     const tiles = await getHeadlineTiles(admin, filters);
 
@@ -211,10 +234,10 @@ describe("getHeadlineTiles", () => {
   it("a DIRECTOR only ever sees their own academy, even if handed a filter naming another one", async () => {
     const academyOne = await makeAcademy("headline-scope-one");
     const academyTwo = await makeAcademy("headline-scope-two");
-    await makeStudent(academyOne.id, LONG_AGO);
-    await makeStudent(academyTwo.id, LONG_AGO);
+    await makeStudent(academyOne.id, academyOne.organizationId, LONG_AGO);
+    await makeStudent(academyTwo.id, academyTwo.organizationId, LONG_AGO);
 
-    const director: StaffSession = { userId: "x", role: "DIRECTOR", academyIds: [academyOne.id] };
+    const director = ctx("DIRECTOR", [academyOne.id], academyOne.organizationId);
 
     const ownScope = await getHeadlineTiles(director, {
       from: RANGE_FROM,
@@ -234,7 +257,7 @@ describe("getHeadlineTiles", () => {
     });
     expect(forgedScope.enrolled).toBe(0);
 
-    const admin: StaffSession = { userId: "x", role: "ADMIN", academyIds: "ALL" };
+    const admin = ctx("ADMIN", "ALL", academyOne.organizationId);
     const adminCombined = await getHeadlineTiles(admin, { from: RANGE_FROM, to: RANGE_TO, academyId: null });
     expect(adminCombined.enrolled).toBeGreaterThanOrEqual(2);
 
@@ -247,7 +270,7 @@ describe("getHeadlineTiles", () => {
   });
 
   it("an INSTRUCTOR session is rejected entirely (self-enforced role gate)", async () => {
-    const instructor: StaffSession = { userId: "x", role: "INSTRUCTOR", academyIds: [] };
+    const instructor = ctx("INSTRUCTOR", [], await getAllianceOrganizationId());
     const filters: AnalyticsFilters = { from: RANGE_FROM, to: RANGE_TO, academyId: null };
 
     await expect(getHeadlineTiles(instructor, filters)).rejects.toThrow("FORBIDDEN");

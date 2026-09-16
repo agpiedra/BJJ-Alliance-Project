@@ -1,10 +1,9 @@
 import "dotenv/config";
+import { getTestPrismaClient } from "../helpers/test-db";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { PrismaClient } from "../../src/generated/prisma/client";
-import { PrismaPg } from "@prisma/adapter-pg";
-import { requireEnv } from "../../src/lib/env";
 import { hashSecret } from "../../src/lib/crypto";
 import { generateStudentCode } from "../../src/lib/students/generate-code";
+import { adultRankId } from "../helpers/belt-ranks";
 
 // Same `auth()` mock as create-student-action.test.ts / student-detail-actions.test.ts
 // — see the long note there. `getStudentSession()` re-reads `role`/`active`
@@ -27,8 +26,7 @@ vi.mock("next-intl/server", () => ({
 
 const { getStudentSession, requireStudentSession } = await import("../../src/lib/auth/session");
 
-const adapter = new PrismaPg({ connectionString: requireEnv("DATABASE_URL") });
-const prisma = new PrismaClient({ adapter });
+const prisma = getTestPrismaClient();
 
 const cleanupUserIds: string[] = [];
 
@@ -53,16 +51,18 @@ async function makeStudentUser(
   let studentId: string | null = null;
   if (withStudentRow) {
     const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
-    const { codeHash } = await generateStudentCode();
+    const { codeHash } = await generateStudentCode(escazu.organizationId);
     const student = await prisma.student.create({
       data: {
         userId: user.id,
         homeAcademyId: escazu.id,
+        organizationId: escazu.organizationId,
         firstName: "SessionTest",
         lastName: label,
         phone: "88881234",
         email: `student-${label}-${suffix}@example.com`,
         codeHash,
+        currentRankId: adultRankId("WHITE"),
         status,
       },
     });
@@ -89,6 +89,7 @@ describe("getStudentSession / requireStudentSession", () => {
   afterAll(async () => {
     if (cleanupUserIds.length > 0) {
       await prisma.student.deleteMany({ where: { userId: { in: cleanupUserIds } } });
+      await prisma.notification.deleteMany({ where: { userId: { in: cleanupUserIds } } });
       await prisma.user.deleteMany({ where: { id: { in: cleanupUserIds } } });
     }
   });

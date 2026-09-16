@@ -1,21 +1,30 @@
 import type { Metadata, Viewport } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Archivo, IBM_Plex_Sans, IBM_Plex_Mono } from "next/font/google";
 import { hasLocale, NextIntlClientProvider } from "next-intl";
 import { getMessages, getTranslations, setRequestLocale } from "next-intl/server";
 import { notFound } from "next/navigation";
 import { routing } from "@/i18n/routing";
 import "../globals.css";
 
-// Populates the --font-sans / --font-geist-mono custom properties already
-// referenced by globals.css's @theme inline block (Task 1, brand redesign).
-const geistSans = Geist({
-  variable: "--font-sans",
+// Populates the --font-heading / --font-sans / --font-mono custom properties
+// referenced by globals.css's @theme inline block (REDESIGN_BRIEF.md Phase
+// 1.3 — replaces the brand redesign's original Geist/Geist Mono pair).
+const archivo = Archivo({
+  variable: "--font-heading",
   subsets: ["latin"],
+  weight: ["600", "700"],
 });
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
+const ibmPlexSans = IBM_Plex_Sans({
+  variable: "--font-sans",
   subsets: ["latin"],
+  weight: ["400", "500", "600"],
+});
+
+const ibmPlexMono = IBM_Plex_Mono({
+  variable: "--font-mono",
+  subsets: ["latin"],
+  weight: ["400", "500"],
 });
 
 export function generateStaticParams() {
@@ -56,8 +65,21 @@ export default async function LocaleLayout({
   const messages = await getMessages();
 
   return (
-    <html lang={locale} className={`${geistSans.variable} ${geistMono.variable}`}>
+    <html
+      lang={locale}
+      className={`${archivo.variable} ${ibmPlexSans.variable} ${ibmPlexMono.variable}`}
+      suppressHydrationWarning
+    >
       <body>
+        {/* Runs before hydration so the "dark" class is already correct on
+            first paint — suppressHydrationWarning above tells React not to
+            complain that this script's class mutation doesn't match the
+            server-rendered <html> (REDESIGN_BRIEF.md Phase 2 theme toggle). */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){try{var s=localStorage.getItem("theme");var d=s?s==="dark":matchMedia("(prefers-color-scheme: dark)").matches;document.documentElement.classList.toggle("dark",d);}catch(e){}})();`,
+          }}
+        />
         <NextIntlClientProvider locale={locale} messages={messages}>
           {children}
         </NextIntlClientProvider>

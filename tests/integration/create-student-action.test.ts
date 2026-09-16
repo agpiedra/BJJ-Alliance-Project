@@ -1,14 +1,15 @@
 import "dotenv/config";
+import { getTestPrismaClient } from "../helpers/test-db";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { PrismaClient } from "../../src/generated/prisma/client";
-import { PrismaPg } from "@prisma/adapter-pg";
 import { requireEnv } from "../../src/lib/env";
 import { digestLookupSecret, hashSecret } from "../../src/lib/crypto";
 
 // Same `auth()` mock as student-detail-actions.test.ts — see the long note
-// there. Every session must name a real, active `User` row now that
-// `getStaffSession()` re-validates role/active against the DB.
-let currentSession: { user: { id: string; role: string } } | null = null;
+// there. Every session must name a real, active `User` row AND a real
+// `OrganizationMembership` row now that `createStudent` calls
+// `requireTenantContext()`, which resolves role from membership, not
+// `User.role`, and needs `activeOrganizationId` to know which one.
+let currentSession: { user: { id: string; role: string } | null; activeOrganizationId?: string } | null = null;
 
 vi.mock("@/auth", () => ({
   auth: () => Promise.resolve(currentSession),
@@ -16,8 +17,7 @@ vi.mock("@/auth", () => ({
 
 const { createStudent } = await import("../../src/app/[locale]/(staff)/students/create-student-action");
 
-const adapter = new PrismaPg({ connectionString: requireEnv("DATABASE_URL") });
-const prisma = new PrismaClient({ adapter });
+const prisma = getTestPrismaClient();
 const pepper = requireEnv("CODE_PEPPER");
 
 /** A sha256 hex digest — the exact shape `Student.codeHash` takes. */
@@ -34,6 +34,12 @@ function formData(fields: Record<string, string>): FormData {
   return fd;
 }
 
+let allianceOrgIdPromise: Promise<string> | null = null;
+function getAllianceOrganizationId() {
+  allianceOrgIdPromise ??= prisma.organization.findUniqueOrThrow({ where: { slug: "alliance-cr" } }).then((o) => o.id);
+  return allianceOrgIdPromise;
+}
+
 async function makeStaffUser(
   role: "ADMIN" | "DIRECTOR" | "INSTRUCTOR",
   label: string,
@@ -48,12 +54,25 @@ async function makeStaffUser(
     },
   });
   cleanupUserIds.push(user.id);
+
+  const organizationId = academyId
+    ? (await prisma.academy.findUniqueOrThrow({ where: { id: academyId }, select: { organizationId: true } }))
+        .organizationId
+    : await getAllianceOrganizationId();
+
+  await prisma.organizationMembership.create({ data: { userId: user.id, organizationId, role } });
+
   if (academyId && role !== "ADMIN") {
     await prisma.staffAssignment.create({
-      data: { userId: user.id, academyId, role: role === "DIRECTOR" ? "DIRECTOR" : "INSTRUCTOR" },
+      data: {
+        userId: user.id,
+        academyId,
+        organizationId,
+        role: role === "DIRECTOR" ? "DIRECTOR" : "INSTRUCTOR",
+      },
     });
   }
-  return user;
+  return { ...user, organizationId };
 }
 
 function newStudentFields(academyId: string, label: string) {
@@ -85,7 +104,9 @@ describe("createStudent", () => {
       await prisma.student.deleteMany({ where: { id: { in: studentIds } } });
     }
     if (cleanupUserIds.length > 0) {
+      await prisma.organizationMembership.deleteMany({ where: { userId: { in: cleanupUserIds } } });
       await prisma.staffAssignment.deleteMany({ where: { userId: { in: cleanupUserIds } } });
+      await prisma.notification.deleteMany({ where: { userId: { in: cleanupUserIds } } });
       await prisma.user.deleteMany({ where: { id: { in: cleanupUserIds } } });
     }
   });
@@ -99,8 +120,8 @@ describe("createStudent", () => {
     const admin = await makeStaffUser("ADMIN", "create-test-admin");
     const fields = newStudentFields(escazu.id, "AdminCreated");
 
-    currentSession = { user: { id: admin.id, role: "ADMIN" } };
-    const result = await createStudent({}, formData(fields));
+    currentSession = { user: { id: admin.id, role: "ADMIN" }, activeOrganizationId: admin.organizationId };
+    const result = await createStudent(admin.organizationId, {}, formData(fields));
     expect(result.ok).toBe(true);
     expect(result.code).toMatch(/^\d{4}$/);
 
@@ -140,8 +161,8 @@ describe("createStudent", () => {
     const instructor = await makeStaffUser("INSTRUCTOR", "create-test-instructor", escazu.id);
     const fields = newStudentFields(escazu.id, "InstructorAttempt");
 
-    currentSession = { user: { id: instructor.id, role: "INSTRUCTOR" } };
-    await expect(createStudent({}, formData(fields))).rejects.toThrow("FORBIDDEN");
+    currentSession = { user: { id: instructor.id, role: "INSTRUCTOR" }, activeOrganizationId: instructor.organizationId };
+    await expect(createStudent(instructor.organizationId, {}, formData(fields))).rejects.toThrow("FORBIDDEN");
 
     expect(await prisma.student.findFirst({ where: { email: fields.email } })).toBeNull();
   });
@@ -160,8 +181,8 @@ describe("createStudent", () => {
 
     // Tampered payload: an Escalante-only DIRECTOR naming Escazú.
     const tampered = newStudentFields(escazu.id, "CrossAcademyAttempt");
-    currentSession = { user: { id: escalanteDirector.id, role: "DIRECTOR" } };
-    const rejected = await createStudent({}, formData(tampered));
+    currentSession = { user: { id: escalanteDirector.id, role: "DIRECTOR" }, activeOrganizationId: escalanteDirector.organizationId };
+    const rejected = await createStudent(escalanteDirector.organizationId, {}, formData(tampered));
     expect(rejected.error).toBe("forbiddenAcademy");
     expect(rejected.fieldErrors?.homeAcademyId).toEqual(["forbiddenAcademy"]);
     expect(await prisma.student.findFirst({ where: { email: tampered.email } })).toBeNull();
@@ -172,12 +193,38 @@ describe("createStudent", () => {
     // ...and the same DIRECTOR creating in their OWN academy still works,
     // so the rejection above is about scope, not about DIRECTORs.
     const allowed = newStudentFields(escalante.id, "OwnAcademy");
-    const accepted = await createStudent({}, formData(allowed));
+    const accepted = await createStudent(escalanteDirector.organizationId, {}, formData(allowed));
     expect(accepted.ok).toBe(true);
     const created = await prisma.student.findFirstOrThrow({ where: { email: allowed.email } });
     expect(created.homeAcademyId).toBe(escalante.id);
     expect(
       await prisma.auditLog.count({ where: { entityId: created.id, action: "student.create" } }),
     ).toBe(1);
+  });
+
+  it("1f-4: an ADMIN's real membership doesn't help against an organizationId their tab doesn't belong to — refused as forbiddenAcademy, writes nothing, and audits the attempt", async () => {
+    const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+    const admin = await makeStaffUser("ADMIN", "create-crossorg-admin");
+    const fields = newStudentFields(escazu.id, "CrossOrg");
+
+    const otherOrg = await prisma.organization.create({
+      data: { slug: `create-student-crossorg-${Date.now()}`, name: "Cross-Org Test Org", status: "ACTIVE" },
+    });
+
+    try {
+      currentSession = { user: { id: admin.id, role: "ADMIN" }, activeOrganizationId: admin.organizationId };
+
+      const result = await createStudent(otherOrg.id, {}, formData(fields));
+      expect(result.error).toBe("forbiddenAcademy");
+      expect(await prisma.student.findFirst({ where: { email: fields.email } })).toBeNull();
+
+      const refusalAudit = await prisma.auditLog.findFirst({
+        where: { actorId: admin.id, action: "organization.accessRefused", entityId: otherOrg.id },
+      });
+      expect(refusalAudit).not.toBeNull();
+    } finally {
+      await prisma.auditLog.deleteMany({ where: { organizationId: otherOrg.id } });
+      await prisma.organization.delete({ where: { id: otherOrg.id } });
+    }
   });
 });

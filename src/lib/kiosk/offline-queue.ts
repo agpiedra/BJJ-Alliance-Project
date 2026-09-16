@@ -196,14 +196,27 @@ async function replayEntry(entry: StoredCheckIn): Promise<ReplayResult> {
     // outcomes (a real, final verdict about the code itself) and are
     // intentionally NOT logged — logging them would be noise.
     //
-    // no_active_class during a REPLAY (as opposed to the original,
-    // real-time submission) means the class window ended before
-    // connectivity came back. Nothing further can make this succeed, so
-    // it's treated as definitive too, rather than retried forever. Unlike
-    // already_checked_in, this silently costs the student their
-    // attendance credit with no other record of the attempt, so it's
-    // logged for the front desk to be able to investigate a "I checked in
-    // and it says I didn't" report.
+    // no_active_class during a REPLAY should now be unreachable, and this
+    // branch is the backstop rather than the expected path.
+    //
+    // REDESIGN_BRIEF.md Phase 9 ruling (the brief's prose doesn't cover
+    // the replay case): every request below carries `queuedAt`, which the
+    // API route reads as "this is an unattended replay" and passes to
+    // `performCheckIn` as `unattended: true`. An unattended tap that
+    // matches no window is SAVED as `matchSource: UNMATCHED` and comes
+    // back 200, instead of returning the interactive picklist a
+    // fire-and-forget background flush has no UI to render and would
+    // therefore have to discard. Staff resolve it from the Kiosco page's
+    // "Marcajes de hoy" table. The alternative — surfacing a picker for a
+    // tap that already left the device — has nowhere to appear: this
+    // function reports only a COUNT of drops to the UI, not per-entry
+    // detail, and the student left hours ago.
+    //
+    // If a `no_active_class` somehow still arrives (a server older than
+    // this ruling, mid-deploy), nothing further can make it succeed —
+    // retrying sends the identical body — so it stays definitive rather
+    // than retried forever — and stays logged, since that silently costs
+    // the student their attendance credit.
     //
     // invalid_request (or an unrecognized/malformed failure body) would
     // mean our own request body was malformed — enqueueOfflineCheckIn only
@@ -234,6 +247,15 @@ async function replayEntry(entry: StoredCheckIn): Promise<ReplayResult> {
     // thing the front desk needs to be able to investigate later.
     console.warn("[kiosk-offline-queue] offline check-in dropped: invalid_token", { entry, reason });
     return { outcome: "definitive", dropped: true };
+  }
+
+  if (response.status === 403) {
+    // org_unavailable: the organization was suspended/pending/cancelled
+    // between queuing and replay. Not a verdict on the code at all, and
+    // reactivation restores access via the SAME kiosk token (no rotation) —
+    // so retry later rather than drop; the attempt is still recoverable
+    // once the organization is reactivated.
+    return { outcome: "retry", dropped: false };
   }
 
   if (response.status === 429) {

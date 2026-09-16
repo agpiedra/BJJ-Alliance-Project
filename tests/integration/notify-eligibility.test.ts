@@ -1,15 +1,13 @@
 import "dotenv/config";
+import { getTestPrismaClient } from "../helpers/test-db";
 import { afterAll, describe, expect, it } from "vitest";
-import { PrismaClient } from "../../src/generated/prisma/client";
-import { PrismaPg } from "@prisma/adapter-pg";
-import { requireEnv } from "../../src/lib/env";
 import { hashSecret } from "../../src/lib/crypto";
 import type { DeliveryResult, NotificationChannel, Recipient, RenderedMessage } from "../../src/lib/notifications/types";
+import { adultRankId } from "../helpers/belt-ranks";
 
 const { notifyEligibilityReached } = await import("../../src/lib/notifications/notify-eligibility");
 
-const adapter = new PrismaPg({ connectionString: requireEnv("DATABASE_URL") });
-const prisma = new PrismaClient({ adapter });
+const prisma = getTestPrismaClient();
 
 const cleanupUserIds: string[] = [];
 const cleanupStudentIds: string[] = [];
@@ -19,6 +17,7 @@ async function cleanup() {
     await prisma.student.deleteMany({ where: { id: { in: cleanupStudentIds } } });
   }
   if (cleanupUserIds.length > 0) {
+    await prisma.organizationMembership.deleteMany({ where: { userId: { in: cleanupUserIds } } });
     await prisma.staffAssignment.deleteMany({ where: { userId: { in: cleanupUserIds } } });
     await prisma.notification.deleteMany({ where: { userId: { in: cleanupUserIds } } });
     await prisma.user.deleteMany({ where: { id: { in: cleanupUserIds } } });
@@ -29,7 +28,16 @@ function suffix() {
   return `${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
 }
 
-async function makeStaff(role: "ADMIN" | "DIRECTOR" | "INSTRUCTOR", academyId?: string, locale: string = "es") {
+// `resolveStaffRecipients` resolves ADMIN through OrganizationMembership,
+// scoped to the target academy's own organization, not `User.role` globally
+// — every staff fixture needs a real membership row, not just DIRECTOR/
+// INSTRUCTOR's StaffAssignment.
+async function makeStaff(
+  role: "ADMIN" | "DIRECTOR" | "INSTRUCTOR",
+  organizationId: string,
+  academyId?: string,
+  locale: string = "es",
+) {
   const user = await prisma.user.create({
     data: {
       email: `notif-elig-${suffix()}@example.com`,
@@ -40,21 +48,25 @@ async function makeStaff(role: "ADMIN" | "DIRECTOR" | "INSTRUCTOR", academyId?: 
     },
   });
   cleanupUserIds.push(user.id);
+  await prisma.organizationMembership.create({ data: { userId: user.id, organizationId, role } });
   if (role !== "ADMIN" && academyId) {
-    await prisma.staffAssignment.create({ data: { userId: user.id, academyId, role } });
+    await prisma.staffAssignment.create({
+      data: { userId: user.id, academyId, organizationId, role },
+    });
   }
   return user;
 }
 
-async function makeStudent(homeAcademyId: string) {
+async function makeStudent(homeAcademyId: string, organizationId: string) {
   const student = await prisma.student.create({
     data: {
       homeAcademyId,
+      organizationId,
       firstName: "Ana",
       lastName: "Perez",
       phone: "8888-0000",
       email: `notif-elig-student-${suffix()}@example.com`,
-      currentBelt: "BLUE",
+      currentRankId: adultRankId("BLUE"),
       currentStripes: 4,
       codeHash: await hashSecret(`notif-elig-code-${suffix()}`),
       status: "ACTIVE",
@@ -81,11 +93,11 @@ describe("notifyEligibilityReached", () => {
     const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
     const escalante = await prisma.academy.findUniqueOrThrow({ where: { slug: "escalante" } });
 
-    const admin = await makeStaff("ADMIN");
-    const escazuDirector = await makeStaff("DIRECTOR", escazu.id);
-    const escalanteInstructor = await makeStaff("INSTRUCTOR", escalante.id);
+    const admin = await makeStaff("ADMIN", escazu.organizationId);
+    const escazuDirector = await makeStaff("DIRECTOR", escazu.organizationId, escazu.id);
+    const escalanteInstructor = await makeStaff("INSTRUCTOR", escalante.organizationId, escalante.id);
 
-    const student = await makeStudent(escazu.id);
+    const student = await makeStudent(escazu.id, escazu.organizationId);
     // Two fakes standing in for InAppChannel and EmailChannel respectively —
     // NOT a real InAppChannel: resolveStaffRecipients returns every active
     // ADMIN system-wide, including ones owned by other, concurrently
@@ -118,8 +130,8 @@ describe("notifyEligibilityReached", () => {
 
   it("EXAM_THRESHOLD uses different copy from STRIPE_THRESHOLD", async () => {
     const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
-    await makeStaff("ADMIN");
-    const student = await makeStudent(escazu.id);
+    await makeStaff("ADMIN", escazu.organizationId);
+    const student = await makeStudent(escazu.id, escazu.organizationId);
     const emailChannel = new RecordingChannel();
 
     await notifyEligibilityReached(student.id, "EXAM_THRESHOLD", [emailChannel]);
@@ -135,8 +147,8 @@ describe("notifyEligibilityReached", () => {
     // the OLD count — the stripe the student just became ELIGIBLE for is
     // currentStripes + 1.
     const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
-    await makeStaff("ADMIN");
-    const student = await makeStudent(escazu.id); // currentStripes: 4
+    await makeStaff("ADMIN", escazu.organizationId);
+    const student = await makeStudent(escazu.id, escazu.organizationId); // currentStripes: 4
     const emailChannel = new RecordingChannel();
 
     await notifyEligibilityReached(student.id, "STRIPE_THRESHOLD", [emailChannel]);
@@ -149,9 +161,9 @@ describe("notifyEligibilityReached", () => {
 
   it("sends each recipient content in THEIR OWN locale, not a single shared locale for everyone", async () => {
     const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
-    const enAdmin = await makeStaff("ADMIN", undefined, "en");
-    const esDirector = await makeStaff("DIRECTOR", escazu.id, "es");
-    const student = await makeStudent(escazu.id);
+    const enAdmin = await makeStaff("ADMIN", escazu.organizationId, undefined, "en");
+    const esDirector = await makeStaff("DIRECTOR", escazu.organizationId, escazu.id, "es");
+    const student = await makeStudent(escazu.id, escazu.organizationId);
     const channel = new RecordingChannel();
 
     await notifyEligibilityReached(student.id, "STRIPE_THRESHOLD", [channel]);

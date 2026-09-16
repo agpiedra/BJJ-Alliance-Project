@@ -3,8 +3,9 @@
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { generateStudentCode } from "@/lib/students/generate-code";
-import { isAcademyInScope, requireStaffSession } from "@/lib/auth/session";
-import { Belt, Prisma, StudentStatus } from "@/generated/prisma/client";
+import { isAcademyInTenantScope, resolveActionContext } from "@/lib/tenant/context";
+import { getScopedDb } from "@/lib/tenant/scoped-client";
+import { Prisma, StudentStatus } from "@/generated/prisma/client";
 import type { ActionState } from "@/lib/action-state";
 
 const createStudentSchema = z
@@ -14,7 +15,7 @@ const createStudentSchema = z
     phone: z.string().min(1),
     email: z.string().email(),
     homeAcademyId: z.string().min(1),
-    currentBelt: z.nativeEnum(Belt),
+    currentBelt: z.enum(["WHITE", "BLUE", "PURPLE", "BROWN", "BLACK"]),
     currentStripes: z.coerce.number().int().min(0).max(4),
     dateOfBirth: z.string().optional(),
     guardianName: z.string().optional(),
@@ -41,10 +42,13 @@ export type CreateStudentState = ActionState & { code?: string };
  * `Student.userId` being nullable for exactly this case.
  */
 export async function createStudent(
+  organizationId: string,
   _prevState: CreateStudentState,
   formData: FormData,
 ): Promise<CreateStudentState> {
-  const session = await requireStaffSession(["ADMIN", "DIRECTOR"]);
+  const auth = await resolveActionContext(organizationId, ["ADMIN", "DIRECTOR"]);
+  if (!auth.ok) return { error: "forbiddenAcademy", fieldErrors: { homeAcademyId: ["forbiddenAcademy"] } };
+  const context = auth.context;
 
   const raw = Object.fromEntries(formData.entries());
   const parsed = createStudentSchema.safeParse(raw);
@@ -55,17 +59,35 @@ export async function createStudent(
 
   const data = parsed.data;
 
+  const academy = await getScopedDb(context).academy.findUnique({
+    where: { id: data.homeAcademyId },
+    select: { organizationId: true },
+  });
   // Never trust a client-submitted academy id, even from an authenticated
   // DIRECTOR — a DIRECTOR assigned only to Escalante must not be able to
   // create a student at Escazú just because the form field said so (e.g.
   // devtools tampering with a hidden field for a single-academy director).
   // The UI only ever offers in-scope academies as options; this check is
-  // the actual, server-side gate.
-  if (!isAcademyInScope(session, data.homeAcademyId)) {
+  // the actual, server-side gate. `getScopedDb` returns `null` outright for
+  // an academy in another organization (structural, not a manual compare);
+  // `isAcademyInTenantScope` only checks branch-level scope on top of that
+  // and returns true unconditionally for ADMIN's "ALL", which says nothing
+  // about which organization the academy belongs to.
+  if (!academy || !isAcademyInTenantScope(context, data.homeAcademyId)) {
     return { error: "forbiddenAcademy", fieldErrors: { homeAcademyId: ["forbiddenAcademy"] } };
   }
 
-  const { code, codeHash } = await generateStudentCode();
+  const { code, codeHash } = await generateStudentCode(academy.organizationId);
+
+  // Resolve the submitted belt code to its real BeltRank id — a plain
+  // scoped read, not part of the write transaction below (which stays on
+  // the raw client because it must combine a tenant-scoped write with an
+  // AuditLog row atomically, and AuditLog is deliberately outside
+  // getScopedDb's reach; see that wrapper's own module doc comment for why).
+  const rank = await getScopedDb(context).beltRank.findFirstOrThrow({
+    where: { track: "ADULT", code: data.currentBelt },
+    select: { id: true },
+  });
 
   // The create and its audit row go in one interactive transaction, so an
   // audit row can never exist without the student it describes, nor a
@@ -77,11 +99,12 @@ export async function createStudent(
     const student = await tx.student.create({
       data: {
         homeAcademyId: data.homeAcademyId,
+        organizationId: academy.organizationId,
         firstName: data.firstName,
         lastName: data.lastName,
         phone: data.phone,
         email: data.email,
-        currentBelt: data.currentBelt,
+        currentRankId: rank.id,
         currentStripes: data.currentStripes,
         dateOfBirth: data.dateOfBirth ? new Date(data.dateOfBirth) : undefined,
         guardianName: data.guardianName,
@@ -95,7 +118,7 @@ export async function createStudent(
 
     await tx.auditLog.create({
       data: {
-        actorId: session.userId,
+        actorId: context.actorUserId,
         academyId: student.homeAcademyId,
         action: "student.create",
         entityType: "Student",
@@ -111,7 +134,7 @@ export async function createStudent(
           firstName: student.firstName,
           lastName: student.lastName,
           homeAcademyId: student.homeAcademyId,
-          currentBelt: student.currentBelt,
+          currentBelt: data.currentBelt,
           currentStripes: student.currentStripes,
           status: student.status,
         },

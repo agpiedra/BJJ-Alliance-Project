@@ -11,9 +11,18 @@ const INITIAL_STATE: ActionState = {};
 // Rendered only for an ADMIN session (page.tsx gate) — the real enforcement
 // is server-side in `deactivateClassSession` itself
 // (requireStaffSession(["ADMIN"])), never this UI check alone.
-export function DeactivateClassSessionButton({ classSessionId }: { classSessionId: string }) {
+export function DeactivateClassSessionButton({
+  organizationId,
+  classSessionId,
+}: {
+  organizationId: string;
+  classSessionId: string;
+}) {
   const t = useTranslations("adminSchedule.deactivate");
-  const [state, formAction, isPending] = useActionState(deactivateClassSession, INITIAL_STATE);
+  const [state, formAction, isPending] = useActionState(
+    deactivateClassSession.bind(null, organizationId),
+    INITIAL_STATE,
+  );
 
   return (
     <form
@@ -26,8 +35,8 @@ export function DeactivateClassSessionButton({ classSessionId }: { classSessionI
       className="flex flex-col items-start gap-1"
     >
       <input type="hidden" name="classSessionId" value={classSessionId} />
-      {state.ok && <p className="text-sm text-green-700">{t("success")}</p>}
-      {state.error && <p className="text-sm text-red-600">{t(state.error)}</p>}
+      {state.ok && <p className="text-sm text-ok">{t("success")}</p>}
+      {state.error && <p className="text-sm text-bad">{t(state.error)}</p>}
       <Button type="submit" variant="destructive" size="sm" disabled={isPending}>
         {t("button")}
       </Button>

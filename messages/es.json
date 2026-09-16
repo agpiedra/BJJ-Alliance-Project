@@ -83,6 +83,11 @@
       "submit": "Restablecer",
       "invalidToken": "Este enlace no es válido o ya expiró.",
       "success": "Tu contraseña fue restablecida. Ya puedes iniciar sesión."
+    },
+    "orgUnavailable": {
+      "heading": "Organización no disponible",
+      "body": "Tu organización no está disponible en este momento. Por favor contactá al administrador de tu organización.",
+      "signOut": "Cerrar sesión"
     }
   },
   "dashboard": {
@@ -96,19 +101,6 @@
     "promotionQueue": {
       "heading": "Cola de promociones",
       "empty": "Ningún estudiante es elegible actualmente para una promoción de grado o examen.",
-      "columns": {
-        "name": "Nombre",
-        "academy": "Academia",
-        "belt": "Cinturón",
-        "status": "Estado",
-        "atBeltCount": "Clases en este grado",
-        "actions": "Acciones"
-      },
-      "status": {
-        "stripe-eligible": "Elegible para grado",
-        "exam-eligible": "Elegible para examen",
-        "approaching": "Acercándose"
-      },
       "confirmButton": "Confirmar promoción",
       "confirm": "¿Confirmar esta promoción? Quedará registrada de forma permanente en el historial de promociones del estudiante.",
       "success": "Promoción confirmada.",
@@ -120,38 +112,97 @@
         "generic": "No se pudo confirmar esta promoción."
       }
     },
-    "approaching": {
-      "heading": "Próximos a promoción",
-      "empty": "Ningún estudiante se está acercando a su próximo grado o examen.",
-      "columns": {
-        "name": "Nombre",
-        "academy": "Academia",
-        "belt": "Cinturón",
-        "remainingToNextStripe": "Clases restantes"
-      }
-    },
     "overduePayments": {
       "heading": "Pagos atrasados",
-      "empty": "Ningún estudiante tiene un pago atrasado.",
-      "neverPaid": "Nunca ha pagado",
-      "columns": {
-        "name": "Nombre",
-        "academy": "Academia",
-        "lastPaidMonth": "Último mes pagado"
+      "empty": "Ningún estudiante tiene un pago atrasado."
+    },
+    "panel": {
+      "academyJoin": "y",
+      "sub": "{academy} · {attendance} asistencias esta semana, {promotions} alumnos listos para grado.",
+      "stats": {
+        "activeStudents": {
+          "label": "Alumnos activos"
+        },
+        "weeklyAttendance": {
+          "label": "Asistencias esta semana",
+          "deltaUp": "+{diff} vs. semana pasada",
+          "deltaDown": "−{diff} vs. semana pasada"
+        },
+        "readyToGrade": {
+          "label": "Listos para grado"
+        },
+        "overdue": {
+          "label": "Mensualidad atrasada"
+        }
+      },
+      "weeklyChart": {
+        "heading": "Asistencia semanal",
+        "caption": "Últimas {weeks} semanas",
+        "empty": "Aún no hay suficientes asistencias registradas para mostrar la tendencia.",
+        "countLabel": "Asistencias"
+      },
+      "beltDistribution": {
+        "heading": "Distribución de cinturones",
+        "caption": "Promedio de asistencias por grado: {white} blanca · {blue} azul · {purple} morada · {brown} café",
+        "empty": "No hay alumnos activos para mostrar la distribución de cinturones."
+      },
+      "franjaHeatmap": {
+        "heading": "Asistencia promedio por franja",
+        "caption": "Últimas {weeks} semanas",
+        "empty": "No hay clases programadas para mostrar el mapa de calor.",
+        "bands": {
+          "morning": "Mañana",
+          "midday": "Mediodía",
+          "afternoon": "Tarde",
+          "evening": "Noche"
+        }
+      },
+      "promotionQueue": {
+        "eligibleCount": "{count, plural, one {# elegible} other {# elegibles}}",
+        "stripeRow": "{current} / {target} · {ordinal}.ª franja {belt}",
+        "examRow": "{current} / {target} · examen de {belt}",
+        "upcomingHeading": "Próximos",
+        "upcomingRow": "{current} / {target} · faltan {remaining}"
+      },
+      "contact": {
+        "heading": "Alumnos por contactar",
+        "caption": "Sin asistir hace {days}+ días",
+        "empty": "Ningún alumno lleva más de {days} días sin asistir.",
+        "neverAttended": "Nunca ha asistido",
+        "table": {
+          "name": "Alumno",
+          "academy": "Academia",
+          "phone": "Teléfono",
+          "lastAttendance": "Última asistencia",
+          "daysAbsent": "Días sin asistir",
+          "payment": "Pago",
+          "actions": "Acciones"
+        },
+        "whatsappButton": "WhatsApp",
+        "whatsappUnavailable": "Sin WhatsApp",
+        "contactMessage": "Hola {name}, te extrañamos en el tatami. ¿Todo bien? Esperamos verte pronto en clase."
       }
     },
     "analytics": {
       "heading": "Analítica",
+      "eyebrow": "Alliance · Analítica",
+      "sub": "{active} activos · {attendances} asistencias en el período seleccionado.",
       "exportCsv": "Exportar CSV",
       "filters": {
         "from": "Desde",
         "to": "Hasta",
         "academy": "Academia",
         "bothAcademies": "Ambas",
-        "submit": "Filtrar"
+        "submit": "Aplicar",
+        "quickRange": {
+          "label": "Rango rápido",
+          "7d": "7 días",
+          "30d": "30 días",
+          "90d": "90 días",
+          "year": "Año"
+        }
       },
       "tiles": {
-        "heading": "Resumen general",
         "enrolled": "Inscritos",
         "active": "Activos",
         "inactive": "Inactivos",
@@ -160,33 +211,48 @@
         "totalAttendances": "Asistencias totales",
         "totalAttendancesCaption": "Asistencias totales cuenta por la academia de origen del estudiante, no por la sede donde se registró la entrada.",
         "avgAttendancesPerActive": "Asistencias promedio por activo",
-        "paymentHealthPercent": "Salud de pagos (mes actual)"
+        "paymentHealthPercent": "Salud de pagos (mes actual)",
+        "paymentHealthNote": "No aplica: siempre refleja el mes calendario en curso, no el rango seleccionado.",
+        "deltaVsPrevious": "{value} vs. período anterior"
       },
       "classPopularity": {
         "heading": "Popularidad de clases",
         "empty": "No hay sesiones de clase en el alcance para el período seleccionado.",
+        "noAttendances": "Ninguna clase registró asistencias en el período seleccionado.",
+        "trendNew": "Nuevo",
+        "showAll": "Ver las {count} clases",
+        "showLess": "Ver menos",
         "chart": {
           "attendances": "Asistencias"
         },
         "table": {
+          "heading": "Detalle por clase",
           "rank": "#",
           "class": "Clase",
+          "modality": "Modalidad",
           "attendances": "Asistencias",
           "previousAttendances": "Período anterior",
+          "sessionsAverage": "Promedio por sesión",
           "trend": "Tendencia"
         },
         "trend": {
-          "up": "En aumento",
-          "down": "En descenso",
           "flat": "Estable"
         },
-        "heatmap": {
-          "heading": "Mapa de calor por día × horario"
+        "growth": {
+          "heading": "Mayor crecimiento",
+          "empty": "Sin cambios significativos en el período."
+        },
+        "risk": {
+          "heading": "Clases en riesgo",
+          "caption": "Menos de {count} asistencias en el período.",
+          "empty": "Ninguna clase está en riesgo."
         },
         "csv": {
           "class": "Clase",
+          "modality": "Modalidad",
           "attendances": "Asistencias",
           "previousAttendances": "Período anterior",
+          "sessionsAverage": "Promedio por sesión",
           "trend": "Tendencia"
         }
       },
@@ -211,6 +277,7 @@
         },
         "beltDistribution": {
           "heading": "Distribución de cinturones",
+          "empty": "No hay estudiantes en el alcance para el período seleccionado.",
           "chart": {
             "count": "Estudiantes"
           },
@@ -286,6 +353,7 @@
         "trend": {
           "heading": "Tendencia semanal de asistencia",
           "caption": "Cuenta por sede de entrada (puede diferir de la academia de origen para estudiantes de entrenamiento cruzado).",
+          "empty": "Sin asistencias registradas en las últimas 8 semanas.",
           "chart": {
             "count": "Asistencias"
           }
@@ -294,11 +362,34 @@
     }
   },
   "staffSidebar": {
-    "dashboard": "Panel de control",
-    "students": "Estudiantes",
-    "analytics": "Analítica",
-    "adminSchedule": "Horario de clases",
-    "adminKioskTokens": "Tokens de kiosco"
+    "dashboard": "Panel",
+    "students": "Alumnos",
+    "payments": "Pagos",
+    "analytics": "Análisis",
+    "adminSchedule": "Horario",
+    "adminKioskTokens": "Kiosco",
+    "signOut": "Salir",
+    "groups": {
+      "operations": "Operación",
+      "analytics": "Análisis",
+      "academy": "Academia"
+    }
+  },
+  "staffShell": {
+    "breadcrumbPrefix": "Alliance Costa Rica",
+    "themeToggle": "Tema",
+    "academySwitcher": {
+      "bothLabel": "Ver ambas sedes",
+      "bothSelected": "Ambas sedes"
+    },
+    "userMenu": {
+      "role": {
+        "ADMIN": "Admin",
+        "DIRECTOR": "Director",
+        "INSTRUCTOR": "Instructor"
+      },
+      "signOut": "Cerrar sesión"
+    }
   },
   "signup": {
     "heading": "Crear cuenta de estudiante",
@@ -325,25 +416,38 @@
   },
   "students": {
     "heading": "Estudiantes",
+    "eyebrow": "Alliance · Gestión de alumnos",
+    "sub": "{active} activos · {inactive} inactivos.",
     "empty": "Ningún estudiante coincide con estos filtros.",
+    "beltStripes": "{count, plural, =0 {sin franjas} one {# franja} other {# franjas}}",
+    "staleAttendance": "· {days, plural, one {hace # día} other {hace # días}}",
+    "eligibility": {
+      "exam": "Examen",
+      "stripe": "Franja"
+    },
     "filters": {
       "search": "Buscar",
+      "searchPlaceholder": "Buscar por nombre, correo o teléfono…",
       "belt": "Cinturón",
       "status": "Estado",
+      "payment": "Pago",
       "academy": "Academia",
       "allBelts": "Todos los cinturones",
       "allStatuses": "Todos los estados",
+      "allPayments": "Todos los pagos",
       "bothAcademies": "Ambas",
       "submit": "Filtrar"
     },
     "columns": {
-      "name": "Nombre",
+      "name": "Alumno",
       "belt": "Cinturón",
+      "progress": "Progreso",
       "academy": "Academia",
       "status": "Estado",
       "atBeltCount": "Asistencias en este cinturón",
       "lastAttendance": "Última asistencia",
       "payment": "Pago",
+      "flags": "Marcas",
       "actions": "Acciones",
       "viewLink": "Ver"
     },
@@ -392,7 +496,11 @@
         "columnDate": "Fecha",
         "columnChange": "Cambio",
         "columnBy": "Otorgada por",
-        "columnNotes": "Notas"
+        "columnSource": "Origen",
+        "columnNotes": "Notas",
+        "sourceMANUAL": "Manual",
+        "sourceAUTO": "Automática",
+        "sourceCORRECTION": "Corrección"
       },
       "attendanceHistory": {
         "heading": "Historial de asistencia"
@@ -408,18 +516,37 @@
       },
       "recordPayment": {
         "toggle": "Registrar un pago",
-        "year": "Año",
-        "month": "Mes",
+        "student": "Alumno",
+        "studentPlaceholder": "Selecciona un alumno",
+        "period": "Período",
         "plan": "Plan",
         "planPlaceholder": "Selecciona un plan",
+        "method": "Método",
+        "methodPlaceholder": "Sin especificar",
         "status": "Estado",
-        "amount": "Monto (opcional)",
+        "amount": "Monto (₡)",
         "notes": "Notas (opcional)",
         "submit": "Guardar pago",
+        "cancel": "Cancelar",
         "success": "Pago registrado.",
         "invalid": "Por favor revisa el formulario.",
         "notFound": "No se pudo registrar este pago.",
-        "invalidPlan": "Ese plan no pertenece a la academia de este estudiante."
+        "invalidPlan": "Ese plan no pertenece a la academia de este estudiante.",
+        "periodTooFarInFuture": "El período no puede ser más de un mes en el futuro.",
+        "promoNameRequired": "El nombre de la promoción es obligatorio.",
+        "footerHint": "Marcar «Pagado» actualiza de inmediato el estado del alumno en el roster, el portal y los reportes.",
+        "promo": {
+          "heading": "Promoción personalizada",
+          "name": "Nombre de la promoción",
+          "namePlaceholder": "Ej.: Beca competidor, 2×1 hermanos",
+          "amount": "Monto acordado (₡)",
+          "amountPlaceholder": "0 para exonerar por completo",
+          "reason": "Motivo",
+          "reasonPlaceholder": "Ej.: compite por la academia en el Open de noviembre",
+          "recurring": "Repetir esta promoción todos los meses hasta que la quite",
+          "note": "Solo el director y el admin ven este bloque. Queda registrado quién la otorgó.",
+          "instructorHint": "Pedile al director que registre la promoción."
+        }
       },
       "comingLater": "Disponible en una fase posterior.",
       "edit": {
@@ -449,14 +576,54 @@
         "notFound": "No se pudo aprobar este estudiante.",
         "notPending": "Este estudiante ya no está pendiente de aprobación."
       },
-      "atBeltSummary": {
-        "heading": "Progreso en el cinturón actual",
+      "promociones": {
+        "heading": "Promociones",
         "atBeltCount": "Asistencias en este cinturón",
         "lifetimeCount": "Asistencias totales",
-        "remainingToNextStripe": "Faltan para el siguiente grado",
-        "examEligible": "Elegible para examen",
-        "yes": "Sí",
-        "no": "No"
+        "nextTargetSTRIPE": "Próximo: grado {ordinal}",
+        "nextTargetBELT": "Próximo: examen de cinturón",
+        "nextTargetNONE": "Sin más progresión automática",
+        "nextTargetMANUAL": "Próximo: a discreción del entrenador",
+        "progressAttendance": "{current} / {target} · faltan {remaining}",
+        "progressDueDate": "Próximo grado el {date}",
+        "progressManual": "La promoción queda a discreción del entrenador.",
+        "eligibleNow": "Elegible ahora.",
+        "readOnlyNote": "Solo administradores y directores pueden otorgar o corregir promociones.",
+        "award": {
+          "button": "Otorgar promoción",
+          "confirm": "¿Otorgar esta promoción?",
+          "success": "Promoción otorgada.",
+          "error": {
+            "notFound": "No se encontró este estudiante.",
+            "notActive": "Este estudiante no está activo.",
+            "notEligible": "Este estudiante no es elegible en este momento.",
+            "conflict": "Otra persona ya actualizó a este estudiante. Actualiza la página para ver el estado actual.",
+            "generic": "Ocurrió un error."
+          }
+        },
+        "correction": {
+          "toggle": "Promover / corregir manualmente",
+          "heading": "Promover / corregir manualmente",
+          "warning": "Esto omite la elegibilidad. Úsalo para promover antes de tiempo o corregir un registro equivocado.",
+          "rank": "Cinturón",
+          "stripes": "Grados",
+          "beltAwardedAt": "Ancla de cinturón (deja en blanco para no cambiarla)",
+          "timeAnchorAt": "Ancla de tiempo (deja en blanco para no cambiarla)",
+          "clearTimeAnchor": "Borrar ancla de tiempo",
+          "note": "Motivo (obligatorio)",
+          "submit": "Guardar corrección",
+          "cancel": "Cancelar",
+          "success": "Corrección guardada.",
+          "invalid": "Revisa el formulario, hay errores.",
+          "error": {
+            "notFound": "No se encontró este estudiante.",
+            "notActive": "Este estudiante no está activo.",
+            "invalidTarget": "Esa combinación de cinturón/grado no es válida.",
+            "noteRequired": "El motivo es obligatorio.",
+            "conflict": "Otra persona ya actualizó a este estudiante. Actualiza la página para ver el estado actual.",
+            "generic": "Ocurrió un error."
+          }
+        }
       },
       "adjustment": {
         "toggle": "Agregar ajuste",
@@ -473,8 +640,71 @@
       }
     }
   },
+  "payments": {
+    "eyebrow": "Alliance · Gestión de academias",
+    "heading": "Pagos",
+    "sub": "{month} · {academy} · registro manual, la app no procesa cobros.",
+    "academyJoin": "y",
+    "stats": {
+      "paid": { "label": "Al día", "note": "de {total} alumnos activos" },
+      "pending": { "label": "Pendiente" },
+      "overdue": { "label": "Atrasado" },
+      "promo": { "label": "Promoción o beca" }
+    },
+    "recordCard": {
+      "heading": "Registrar pago",
+      "note": "Queda en bitácora con tu nombre y la hora"
+    },
+    "statusCard": {
+      "heading": "Estado del mes",
+      "note": "{month} · {academy}"
+    },
+    "method": {
+      "SINPE": "SINPE Móvil",
+      "TRANSFERENCIA": "Transferencia",
+      "EFECTIVO": "Efectivo",
+      "TARJETA": "Tarjeta"
+    },
+    "table": {
+      "filters": {
+        "search": "Buscar alumno",
+        "searchPlaceholder": "Buscar alumno…",
+        "status": "Filtrar por estado",
+        "allStatuses": "Todos los estados",
+        "academy": "Filtrar por sede",
+        "bothAcademies": "Ambas sedes"
+      },
+      "promoOrExempt": "Promoción o exonerado",
+      "empty": "Ningún alumno coincide con estos filtros.",
+      "columns": {
+        "student": "Alumno",
+        "academy": "Academia",
+        "plan": "Plan",
+        "amount": "Monto",
+        "method": "Método",
+        "recorded": "Registrado",
+        "status": "Estado",
+        "actions": "Acciones"
+      },
+      "noPlan": "—",
+      "promoPrefix": "Promoción",
+      "viewReceipt": "Ver recibo",
+      "edit": "Editar",
+      "markPaid": "Marcar pagado",
+      "toast": {
+        "success": "Pago marcado como pagado.",
+        "error": "No se pudo marcar el pago. Intentá de nuevo."
+      },
+      "receipt": {
+        "promoName": "Promoción",
+        "notes": "Notas",
+        "recordedBy": "Registrado por"
+      }
+    }
+  },
   "portal": {
     "greeting": "¡Hola, {name}!",
+    "signOut": "Cerrar sesión",
     "statusNotice": {
       "PENDING": "Tu cuenta está pendiente de aprobación por tu academia. Tu progreso abajo está actualizado, pero algunas funciones pueden estar limitadas hasta que seas aprobado.",
       "INACTIVE": "Tu cuenta está marcada como inactiva. Contacta a tu academia si tienes preguntas.",
@@ -483,7 +713,6 @@
     "progress": {
       "heading": "Tu progreso",
       "atBeltCount": "{count, plural, one {# asistencia en este cinturón} other {# asistencias en este cinturón}}",
-      "towardNextStripe": "{current} de {target} asistencias hacia tu siguiente grado",
       "remainingToNextStripe": "{count, plural, =0 {Eres elegible para tu siguiente grado} one {Falta # asistencia para tu siguiente grado} other {Faltan # asistencias para tu siguiente grado}}",
       "examEligible": "¡Eres elegible para tu examen de cinturón!",
       "lifetimeCount": "{count, plural, one {# asistencia total} other {# asistencias totales}}"
@@ -522,16 +751,19 @@
         "notActive": "El registro de asistencia no está disponible para tu cuenta en este momento.",
         "generic": "Algo salió mal. Por favor intenta de nuevo."
       }
+    },
+    "schedule": {
+      "heading": "Horario de esta semana",
+      "description": "{academyName} · {count, plural, one {# clase esta semana} other {# clases esta semana}}"
     }
   },
   "kiosk": {
     "enterCode": "Ingresa tu código de 4 dígitos",
     "clear": "Borrar",
-    "backspace": "Borrar el último dígito",
+    "enter": "Entrar",
     "submitting": "Verificando...",
-    "successHeading": "¡Bienvenido!",
-    "earnedStripeHeading": "¡Nueva franja!",
-    "atBeltCount": "{count, plural, one {# asistencia en este cinturón} other {# asistencias en este cinturón}}",
+    "successHeading": "¡Listo, {name}!",
+    "earnedStripeHeading": "¡Nueva franja, {name}!",
     "remainingToNextStripe": "{count, plural, =0 {Ya puedes recibir tu próxima franja} one {Falta # asistencia para tu próxima franja} other {Faltan # asistencias para tu próxima franja}}",
     "examEligible": "¡Elegible para examen!",
     "visitorBadge": "Visitante de {academy}",
@@ -539,6 +771,7 @@
     "alreadyCheckedIn": "Ya marcaste asistencia hoy",
     "noActiveClass": "No hay clase activa",
     "invalidToken": "Este kiosco no está configurado correctamente. Contacta a un administrador.",
+    "orgUnavailable": "El registro de asistencia no está disponible temporalmente. Por favor contactá a tu academia.",
     "networkError": "No se pudo conectar. Intenta de nuevo.",
     "genericError": "Ocurrió un error. Intenta de nuevo.",
     "rateLimited": "Demasiados intentos. Espera un momento.",
@@ -546,7 +779,14 @@
     "queuedOffline": "¡Guardado! Estás sin conexión — esto se sincronizará automáticamente cuando vuelva la conexión.",
     "queueFailed": "No pudimos guardar tu check-in en este dispositivo. Por favor avisa en la recepción.",
     "syncDropped": "{count, plural, one {# check-in no se pudo sincronizar — por favor avisa en la recepción} other {# check-ins no se pudieron sincronizar — por favor avisa en la recepción}}",
-    "syncDroppedDismiss": "Descartar"
+    "syncDroppedDismiss": "Descartar",
+    "pickClassHeading": "¿A cuál clase entraste?",
+    "pickClassDescription": "No encontramos una clase activa a esta hora. Elegí la tuya para guardar tu asistencia.",
+    "savedIn": "Asistencia guardada en",
+    "notThisClass": "¿No es esta clase?",
+    "correctClassHeading": "Elegí la clase correcta",
+    "correctClassDescription": "Tu asistencia ya quedó guardada — solo la movemos a la clase que elijas.",
+    "correctClassFailed": "No pudimos cambiar la clase. Avisá en la recepción."
   },
   "adminKioskTokens": {
     "heading": "Tokens de dispositivo del kiosco",
@@ -554,14 +794,55 @@
     "button": "Regenerar token",
     "confirm": "¿Regenerar el enlace del kiosco de esta academia? El enlace anterior dejará de funcionar de inmediato.",
     "successTokenWarning": "Este es el nuevo enlace de marcado del kiosco. Cópialo en la tablet ahora — no se mostrará de nuevo:",
-    "notFound": "No se pudo regenerar el token del kiosco de esta academia."
+    "notFound": "No se pudo regenerar el token del kiosco de esta academia.",
+    "matchSource": {
+      "AUTO": "Automática",
+      "STUDENT_PICKED": "Elegida por el alumno",
+      "STAFF_CORRECTED": "Corregida",
+      "UNMATCHED": "Sin asignar"
+    },
+    "checkIns": {
+      "heading": "Marcajes de hoy",
+      "empty": "Todavía no hay marcajes hoy.",
+      "time": "Hora",
+      "student": "Alumno",
+      "class": "Clase asignada",
+      "source": "Origen",
+      "actions": "Acciones",
+      "noClass": "Sin clase asignada",
+      "change": "Cambiar",
+      "changeLabel": "Clase a la que se moverá el marcaje",
+      "changeSubmit": "Guardar cambio",
+      "changeSuccess": "Marcaje movido.",
+      "noReassignOptions": "No hay clases activas este día.",
+      "notFound": "No se encontró este marcaje.",
+      "invalidRecord": "Solo se pueden reasignar marcajes de asistencia.",
+      "invalidClass": "Esa clase no corresponde a esta academia o a este día.",
+      "alreadyRecorded": "El alumno ya tiene asistencia en esa clase."
+    }
   },
   "adminSchedule": {
+    "eyebrow": "Alliance · Horario",
     "heading": "Horario de clases",
-    "description": "Administra las sesiones de clase de cada academia — día, hora, duración y tipo. Desactivar una sesión no borra su historial de asistencia.",
+    "description": "{academyName} · {count, plural, one {# clase por semana} other {# clases por semana}}. Tocá una clase para ver el detalle o editarla.",
     "academySelector": "Academia",
     "selectorSubmit": "Ver horario",
     "empty": "Esta academia no tiene sesiones de clase todavía.",
+    "calendar": {
+      "viewLabel": "Vista",
+      "week": "Semana",
+      "day": "Día",
+      "list": "Lista",
+      "today": "Hoy",
+      "prevWeek": "Semana anterior",
+      "nextWeek": "Semana siguiente",
+      "prevDay": "Día anterior",
+      "nextDay": "Día siguiente",
+      "newClass": "Nueva clase",
+      "newClassDescription": "Crea una nueva sesión de clase para esta academia.",
+      "sundayNote": "Domingo sin clases",
+      "minutesUnit": "min"
+    },
     "table": {
       "day": "Día",
       "startTime": "Hora",
@@ -577,7 +858,6 @@
       "no": "No"
     },
     "create": {
-      "toggle": "Crear sesión",
       "dayOfWeek": "Día",
       "startTime": "Hora de inicio",
       "durationMinutes": "Duración (minutos)",

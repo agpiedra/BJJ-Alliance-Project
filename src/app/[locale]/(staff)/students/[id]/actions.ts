@@ -3,7 +3,8 @@
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { generateStudentCode } from "@/lib/students/generate-code";
-import { isAcademyInScope, requireStaffSession } from "@/lib/auth/session";
+import { isAcademyInTenantScope, resolveActionContext } from "@/lib/tenant/context";
+import { getScopedDb } from "@/lib/tenant/scoped-client";
 import { Prisma, StudentStatus } from "@/generated/prisma/client";
 import type { ActionState } from "@/lib/action-state";
 
@@ -67,7 +68,7 @@ class StudentWriteMissError extends Error {
  * schema comment above).
  *
  * Every write in this file independently re-fetches the target row and
- * re-checks `isAcademyInScope` against its *real*, freshly-read
+ * re-checks `isAcademyInTenantScope` against its *real*, freshly-read
  * `homeAcademyId` — never a hidden form field, and never the session's
  * cached scope alone (a DIRECTOR's assignments can't change mid-request, but
  * the row's academy is the thing that actually determines ownership). The
@@ -83,8 +84,14 @@ class StudentWriteMissError extends Error {
  * transaction too and rolls it back by throwing, rather than committing an
  * audit row for a write that affected nothing.
  */
-export async function updateStudent(_prevState: ActionState, formData: FormData): Promise<ActionState> {
-  const session = await requireStaffSession(["ADMIN", "DIRECTOR"]);
+export async function updateStudent(
+  organizationId: string,
+  _prevState: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const auth = await resolveActionContext(organizationId, ["ADMIN", "DIRECTOR"]);
+  if (!auth.ok) return { error: "notFound" };
+  const context = auth.context;
 
   const raw = Object.fromEntries(formData.entries());
   const parsed = updateStudentSchema.safeParse(raw);
@@ -97,11 +104,12 @@ export async function updateStudent(_prevState: ActionState, formData: FormData)
 
   // The same read that gates scope doubles as the `before` snapshot — only
   // the fields this form can actually change, and never `codeHash`.
-  const student = await prisma.student.findUnique({
+  const student = await getScopedDb(context).student.findUnique({
     where: { id: data.studentId },
     select: {
       id: true,
       homeAcademyId: true,
+      organizationId: true,
       firstName: true,
       lastName: true,
       phone: true,
@@ -114,7 +122,11 @@ export async function updateStudent(_prevState: ActionState, formData: FormData)
     },
   });
 
-  if (!student || !isAcademyInScope(session, student.homeAcademyId)) {
+  // Organization scope is enforced structurally by `getScopedDb` above.
+  // `isAcademyInTenantScope` only checks branch-level scope on top of that,
+  // and returns true unconditionally for ADMIN's "ALL", which says nothing
+  // about which organization the student belongs to.
+  if (!student || !isAcademyInTenantScope(context, student.homeAcademyId)) {
     return { error: "notFound" };
   }
 
@@ -143,7 +155,7 @@ export async function updateStudent(_prevState: ActionState, formData: FormData)
 
       await tx.auditLog.create({
         data: {
-          actorId: session.userId,
+          actorId: context.actorUserId,
           academyId: student.homeAcademyId,
           action: "student.update",
           entityType: "Student",
@@ -180,20 +192,26 @@ const studentIdSchema = z.object({ studentId: z.string().min(1) });
  * Same independent re-fetch-and-check-scope discipline as `updateStudent`,
  * and the same transaction-wrapped audit row.
  */
-export async function archiveStudent(_prevState: ActionState, formData: FormData): Promise<ActionState> {
-  const session = await requireStaffSession(["ADMIN", "DIRECTOR"]);
+export async function archiveStudent(
+  organizationId: string,
+  _prevState: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const auth = await resolveActionContext(organizationId, ["ADMIN", "DIRECTOR"]);
+  if (!auth.ok) return { error: "notFound" };
+  const context = auth.context;
 
   const parsed = studentIdSchema.safeParse(Object.fromEntries(formData.entries()));
   if (!parsed.success) {
     return { error: "notFound" };
   }
 
-  const student = await prisma.student.findUnique({
+  const student = await getScopedDb(context).student.findUnique({
     where: { id: parsed.data.studentId },
-    select: { id: true, homeAcademyId: true, status: true },
+    select: { id: true, homeAcademyId: true, organizationId: true, status: true },
   });
 
-  if (!student || !isAcademyInScope(session, student.homeAcademyId)) {
+  if (!student || !isAcademyInTenantScope(context, student.homeAcademyId)) {
     return { error: "notFound" };
   }
 
@@ -210,7 +228,7 @@ export async function archiveStudent(_prevState: ActionState, formData: FormData
 
       await tx.auditLog.create({
         data: {
-          actorId: session.userId,
+          actorId: context.actorUserId,
           academyId: student.homeAcademyId,
           action: "student.archive",
           entityType: "Student",
@@ -242,20 +260,26 @@ export async function archiveStudent(_prevState: ActionState, formData: FormData
  * in the `updateMany`'s own WHERE clause, not just checked beforehand, so two
  * concurrent approvals can't both count as having done the transition.
  */
-export async function approveStudent(_prevState: ActionState, formData: FormData): Promise<ActionState> {
-  const session = await requireStaffSession(["ADMIN", "DIRECTOR"]);
+export async function approveStudent(
+  organizationId: string,
+  _prevState: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const auth = await resolveActionContext(organizationId, ["ADMIN", "DIRECTOR"]);
+  if (!auth.ok) return { error: "notFound" };
+  const context = auth.context;
 
   const parsed = studentIdSchema.safeParse(Object.fromEntries(formData.entries()));
   if (!parsed.success) {
     return { error: "notFound" };
   }
 
-  const student = await prisma.student.findUnique({
+  const student = await getScopedDb(context).student.findUnique({
     where: { id: parsed.data.studentId },
-    select: { id: true, homeAcademyId: true, status: true },
+    select: { id: true, homeAcademyId: true, organizationId: true, status: true },
   });
 
-  if (!student || !isAcademyInScope(session, student.homeAcademyId)) {
+  if (!student || !isAcademyInTenantScope(context, student.homeAcademyId)) {
     return { error: "notFound" };
   }
 
@@ -280,7 +304,7 @@ export async function approveStudent(_prevState: ActionState, formData: FormData
 
       await tx.auditLog.create({
         data: {
-          actorId: session.userId,
+          actorId: context.actorUserId,
           academyId: student.homeAcademyId,
           action: "student.approve",
           entityType: "Student",
@@ -319,26 +343,29 @@ export type RegenerateCodeState = ActionState & { code?: string };
  * could leak from and defeat the point of treating it as sensitive.
  */
 export async function regenerateStudentCode(
+  organizationId: string,
   _prevState: RegenerateCodeState,
   formData: FormData,
 ): Promise<RegenerateCodeState> {
-  const session = await requireStaffSession();
+  const auth = await resolveActionContext(organizationId);
+  if (!auth.ok) return { error: "notFound" };
+  const context = auth.context;
 
   const parsed = studentIdSchema.safeParse(Object.fromEntries(formData.entries()));
   if (!parsed.success) {
     return { error: "notFound" };
   }
 
-  const student = await prisma.student.findUnique({
+  const student = await getScopedDb(context).student.findUnique({
     where: { id: parsed.data.studentId },
-    select: { id: true, homeAcademyId: true },
+    select: { id: true, homeAcademyId: true, organizationId: true },
   });
 
-  if (!student || !isAcademyInScope(session, student.homeAcademyId)) {
+  if (!student || !isAcademyInTenantScope(context, student.homeAcademyId)) {
     return { error: "notFound" };
   }
 
-  const { code, codeHash } = await generateStudentCode();
+  const { code, codeHash } = await generateStudentCode(student.organizationId);
 
   try {
     await prisma.$transaction(async (tx) => {
@@ -353,7 +380,7 @@ export async function regenerateStudentCode(
 
       await tx.auditLog.create({
         data: {
-          actorId: session.userId,
+          actorId: context.actorUserId,
           academyId: student.homeAcademyId,
           action: "student.regenerateCode",
           entityType: "Student",

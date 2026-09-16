@@ -7,6 +7,10 @@ export interface Recipient {
   userId: string;
   email: string;
   locale: string;
+  /** MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 1: Notification.organizationId is
+   * required now — the org the notification is about, not necessarily the
+   * recipient's only membership. */
+  organizationId: string;
 }
 
 /** The rendered title/body for one notification, in the recipient's locale. */

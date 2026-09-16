@@ -83,16 +83,6 @@ export async function requireStaffSession(allowedRoles?: StaffRoleName[]): Promi
   return session;
 }
 
-/** Do not spread this with another literal academyId key — the literal silently wins over the { in: [...] } fragment. Compose with an AND array instead. */
-export function academyScopeWhere(session: StaffSession): { academyId?: { in: string[] } } {
-  if (session.academyIds === "ALL") return {};
-  return { academyId: { in: session.academyIds } };
-}
-
-export function isAcademyInScope(session: StaffSession, academyId: string): boolean {
-  return session.academyIds === "ALL" || session.academyIds.includes(academyId);
-}
-
 export interface StudentSession {
   userId: string;
   studentId: string;

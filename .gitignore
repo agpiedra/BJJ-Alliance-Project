@@ -44,8 +44,29 @@ next-env.d.ts
 # Prisma
 /prisma/dev.db
 
+# Real Alliance parity baselines (scripts/alliance-baseline.ts) — contain
+# student names and code hashes, never committed. The CI seed<->migration
+# parity check's synthetic snapshot lives under ci/seed-snapshots/ instead,
+# a deliberately separate, committable path so the two can never be confused.
+/baselines/
+
 # Claude Code tooling
 .claude/
 .claude-flow/
+
+# Auto-installed skill tooling (same category as .claude/ above) — not
+# project source.
+.agents/
+skills-lock.json
+
+# Playwright MCP's own scratch screenshot/trace output from manual
+# in-session checks — never project deliverables.
+.playwright-mcp/
+
+# ci-parity-check.ts's own before/after snapshots — regenerated on every
+# run (scripts/ci-parity-check.ts), uploaded as a CI artifact, never a
+# stored baseline. Contrast with /baselines/ above, which holds real data
+# and is excluded for a different reason.
+/ci/seed-snapshots/
 
 /src/generated/

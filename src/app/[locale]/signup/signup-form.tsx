@@ -4,9 +4,13 @@ import { useActionState } from "react";
 import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { signup, type SignupState } from "./actions";
-import { Belt } from "@/generated/prisma/browser";
 
-const BELT_OPTIONS = Object.values(Belt);
+// MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 2: the old `Belt` enum is gone
+// (replaced by BeltRank, which is data now) — every existing student still
+// starts on one of these 5 adult ranks, so this stays a plain local literal
+// list, same as STRIPE_OPTIONS below, rather than a DB round trip for a
+// fixed 5-option dropdown.
+const BELT_OPTIONS = ["WHITE", "BLUE", "PURPLE", "BROWN", "BLACK"] as const;
 const STRIPE_OPTIONS = [0, 1, 2, 3, 4];
 
 const INITIAL_STATE: SignupState = {};
@@ -63,7 +67,7 @@ export function SignupForm({ academies }: { academies: Academy[] }) {
         </label>
         <label className="flex flex-col gap-1">
           <span>{t("currentBelt")}</span>
-          <select name="currentBelt" required defaultValue={Belt.WHITE} className="rounded border px-3 py-2">
+          <select name="currentBelt" required defaultValue="WHITE" className="rounded border px-3 py-2">
             {BELT_OPTIONS.map((belt) => (
               <option key={belt} value={belt}>
                 {tBelt(belt)}

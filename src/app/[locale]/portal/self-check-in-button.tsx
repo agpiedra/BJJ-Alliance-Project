@@ -17,9 +17,9 @@ const INITIAL_STATE: SelfCheckInState = {};
 // performCheckIn's own generic `invalid_code`, since the portal (unlike an
 // anonymous kiosk) already shows this student their real account status.
 // `invalid_code` itself is realistically unreachable via this path now (it
-// would mean requireStudentSession resolved a session whose linked Student
-// row is somehow gone — see self-check-in-action.ts) but still gets a
-// message rather than falling through silently.
+// would mean requireTenantContext resolved a STUDENT context whose linked
+// Student row is somehow gone — see self-check-in-action.ts) but still gets
+// a message rather than falling through silently.
 const KNOWN_ERRORS = ["no_active_class", "already_checked_in", "invalid_code", "notActive"] as const;
 
 function errorMessageKey(error: string): string {
@@ -35,10 +35,13 @@ function errorMessageKey(error: string): string {
 // student's OWN homeAcademyId as the academyId, so performCheckIn's
 // isVisitor (homeAcademyId !== input.academyId) can never be true on this
 // path — there is no cross-academy self-check-in to indicate.
-export function SelfCheckInButton() {
+export function SelfCheckInButton({ organizationId }: { organizationId: string }) {
   const t = useTranslations("portal.selfCheckIn");
   const router = useRouter();
-  const [state, formAction, isPending] = useActionState(selfCheckIn, INITIAL_STATE);
+  const [state, formAction, isPending] = useActionState(
+    selfCheckIn.bind(null, organizationId),
+    INITIAL_STATE,
+  );
 
   // The action's own revalidatePath(`/${locale}/portal`) is the load-bearing
   // half of this refresh: calling it during the Server Action is what makes
@@ -73,15 +76,15 @@ export function SelfCheckInButton() {
               {t("atBeltCount", { count: state.summary.atBeltCount })}
             </p>
 
-            {state.summary.remainingToNextStripe !== null && (
+            {state.summary.remainingAttendance !== null && (
               <p className="text-muted-foreground">
-                {t("remainingToNextStripe", { count: state.summary.remainingToNextStripe })}
+                {t("remainingToNextStripe", { count: state.summary.remainingAttendance })}
               </p>
             )}
 
-            {state.summary.remainingToNextStripe === null && state.summary.examEligible && (
-              <p className="font-medium">{t("examEligible")}</p>
-            )}
+            {state.summary.remainingAttendance === null &&
+              state.summary.nextTarget === "BELT" &&
+              state.summary.isEligible && <p className="font-medium">{t("examEligible")}</p>}
           </div>
         )}
 

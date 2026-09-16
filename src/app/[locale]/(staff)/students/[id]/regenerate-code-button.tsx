@@ -9,9 +9,18 @@ const INITIAL_STATE: RegenerateCodeState = {};
 
 // Available to any staff role (spec §4.1) — no page.tsx gate, unlike edit/
 // archive. Server-side `regenerateStudentCode` is the real (non-)gate too.
-export function RegenerateCodeButton({ studentId }: { studentId: string }) {
+export function RegenerateCodeButton({
+  organizationId,
+  studentId,
+}: {
+  organizationId: string;
+  studentId: string;
+}) {
   const t = useTranslations("students.detail.regenerateCode");
-  const [state, formAction, isPending] = useActionState(regenerateStudentCode, INITIAL_STATE);
+  const [state, formAction, isPending] = useActionState(
+    regenerateStudentCode.bind(null, organizationId),
+    INITIAL_STATE,
+  );
 
   return (
     <form

@@ -1,0 +1,1393 @@
+# Spec — Multi-Organization (SaaS) + Kids Belt System
+
+**For:** Claude Code, working in the BJJ Alliance Project repo
+**Owner:** Alexis (platform admin / product owner)
+**Status:** approved for implementation, build in phases
+**Revision:** 21 — repository-reviewed. Phases 1 and 2 supersede the first draft entirely; suspended-organization policy and platform billing (manual invoices, snapshotted grace, episode-scoped review) fully specified; branding moved to a first-login onboarding wizard; realistic belt rendering, student-page promotions, full sidebar palette, the attendance-by-class chart added; Phase 0 rebuilt around a clean dev database plus a deterministic seed, and the Phase 1 review decisions settled in Appendix C.
+
+---
+
+## What changed in revision 21
+
+Three corrections from Alexis after seeing the rendered belts. The first two were spec errors, not implementation errors.
+
+- **Tape colours: the third band is YELLOW on every kids belt**, not the belt's own colour. The source says "4 white, 4 red and 3 yellow"; the draft generalised that to "colour-match" and every 11-degree row inherited the mistake. Yellow, universally.
+- **Split belts are a CENTRE STRIPE, not two halves.** A grey-white belt is a grey belt with a white band down the middle third — not 50% grey over 50% white. Modelled as `centerStripeColor`, not `isSplit` + `splitColor`.
+- **Adult tapes are white.** Seeded black, which renders black-on-black and hides every adult student's degrees.
+- **Kids → adult goes to BLUE at 16**, not white. `green_black` is the last kids rank; the transition's default destination is adult blue.
+
+## What changed in revision 20
+
+- **Phase 3 kids catalog table** renumbered to `order` 1–13. It still showed 0–12, contradicting revision 18's own ruling that order is 1-based and contiguous, and `validateTrackConfig` enforces the 1-based rule — so the table as written would have failed validation. Spec error, corrected.
+
+## What changed in revision 19
+
+- **Phase 2 — as built** (new section before Phase 3): sub-phases 2a–2d and the decisions that must not be quietly undone — the belt sequence coming from the catalog rather than a hardcoded array, the `writeAward` split, `AuditLog.actorId` nullability, and the automation job's shape.
+- **Phase 3 verification:** the repo has no component-test harness, which is why one Phase 2 criterion closed by code reading. Phase 3 is far more visual — add `@testing-library/react` before starting, and split verification into machine-checked structure versus human-checked appearance.
+
+## What changed in revision 18
+
+Catch-up after Phase 1 shipped and Phase 2a began. The spec and the code had drifted apart; this closes the gap.
+
+- **Phase 1 — as built** (new section before Phase 2): the 1a–1f sub-phases, the 1f audit finding that the enforcement layer was built but unused, and the resulting architecture. The wrapper is authoritative anywhere this document still implies manual per-call checks.
+- **Global rules:** never generate a migration from a live database; the shadow database and the two-way `db:check-drift` are standing infrastructure; the pending-callers registry.
+- **Phase 2:** `BeltRank`/`PromotionConfig` are strictly organization-owned (no per-branch override); mode values are preserved across mode switches; rank `order` is 1-based, aligning the spec to the implementation; superseding `eligibility.ts` requires a characterization test.
+- **Appendix B question 1 closed** and moved to Appendix C: no branch overrides exist, and per-branch thresholds are semantically undefined under cross-branch attendance.
+
+## What changed in revision 17
+
+- **Global rules:** "disclose to members, never to non-members" — one rule covering every error-shape question. Cross-organization access returns `notFound`, never a distinct `forbidden`; a member of a suspended organization still gets its specific page. Refused attempts are logged and audited even though nothing is disclosed to the caller.
+
+## What changed in revision 16
+
+- **Global rules:** a guard is not done until the real request path goes through it. Three instances in this project of a mechanism that existed, passed its own tests, and was bypassed by the code that runs. Enforcement now requires a test driving the real route/action, and CI must fail on an exported guard with zero production call sites.
+
+## What changed in revision 15
+
+- **Appendix C decision 3** settled: `Notification.organizationId` is `NOT NULL`, and the reasoning for why it differs from `AuditLog`'s nullable column is recorded so the two are not "harmonized" later.
+
+## What changed in revision 14
+
+- **Phase 0 seed** is also the demo data — the director will test against it during development, so it uses plausible names and the academy's real schedule rather than obvious placeholders. Determinism unchanged.
+
+## What changed in revision 13
+
+- **Global rules** corrected — a stale line still claimed Alliance was live, contradicting the pre-launch rule two lines above it. Replaced with the real sequencing: Alliance is client #1 and receives nothing until the full feature set is done. Consequences made explicit: pre-launch, schema may be changed directly (reset and reseed rather than carry a compromised schema through eight phases); migrations get squashed into one initial migration before the first production deploy; the parity check is a regression net, not data protection; full migration discipline resumes at go-live.
+- **Appendix A** records the launch sequencing and that the Phase 1 backfill will never run against real data.
+
+## What changed in revision 12
+
+- **Appendix C, decision 4** now carries an eight-point checklist the session/JWT/middleware proposal must answer before implementation — selector vs. authority, two tabs/two organizations, the kiosk on a browser with a live session, middleware not being the gate, platform admins without synthetic memberships, fail-closed on absence, revocation taking effect next request, and in-flight sessions.
+- **Global rules:** phase numbers must be qualified with the document name (this repo holds two phased specs), and completion claims must cite evidence rather than assert.
+
+## What changed in revision 11
+
+- **Global rules** corrected: nothing is in production, development runs on local docker-compose Postgres, and the production database provider is **not chosen yet** — so no provider-specific code. The "must fit a free tier" constraint is replaced with "one person can operate it".
+- **Phase 0** gains the dev-database cleanup (inventory first, reset on approval, stray databases/volumes listed not deleted), full test-database isolation requirements, the rule that QA logins live in the seed rather than being carried through a reset, a **seed safety guard** refusing any non-local target, and its own acceptance criteria.
+- **Phase 4** logo storage reworded: the adapter exists to keep the provider choice reversible, not to fit a free tier.
+
+## What changed in revision 9
+
+1. **Phase 0 rewritten** — there is no production database yet. The baseline becomes a deterministic seed plus a repeatable seed → snapshot → migrate → snapshot → diff check in CI. Includes the corrected read-only enforcement (`SET TRANSACTION READ ONLY`, then verify) and the `.gitignore` requirement.
+2. **Phase 3** — new *"Estado inicial"* section: students are entered manually at go-live, so the form must carry a prior-progress credit.
+3. **Phase 8** — onboarding credits excluded from attendance analytics.
+4. **Appendix C (new)** — the six architecture decisions from the Phase 1 discovery review, settled.
+5. **Appendix A** — records that per-academy deployments were considered and rejected.
+
+## What changed in revision 8
+
+Four additions, placed in the phase that owns the work rather than appended at the end. If you reviewed revision 7, these are the only new sections:
+
+1. **Phase 2** — a new *"Awarding from the student detail page"* subsection. The promotion queue stays; the student page becomes a second entry point to the same award functions.
+2. **Phase 3** — *"Belt rendering"* now specifies a realistic woven-belt SVG. The tape derivation logic is unchanged; only the visual is replaced.
+3. **Phase 4** — sidebar theming expanded from one color to a full, independently chosen sidebar palette.
+4. **Phase 8 (new)** — attendance-by-class bar chart on the dashboard.
+
+---
+
+## 0. How to use this file
+
+This document is the source of truth for a large feature set. **Do not implement it all in one pass.**
+
+Work phase by phase. For each phase:
+
+1. Re-read the phase section and the "Global rules" below.
+2. Explore the existing code first (`prisma/schema.prisma`, migrations, seeds, auth/session helpers, kiosk handlers, attendance summaries, promotion actions) and write a short implementation plan before editing.
+3. Implement, then run the verification commands.
+4. Verify the phase's **Acceptance criteria** literally, one by one.
+5. Stop and report. Do not start the next phase unless told to.
+
+Suggested invocation: `Read docs/MULTI_ACADEMY_AND_KIDS_BELTS.md and implement Phase 1 only.`
+
+### Phase order (each depends on the previous)
+
+| Phase | Title |
+|---|---|
+| 0 | Capture the Alliance parity baseline (**before any migration**) |
+| 1 | Tenant organizations above existing academy branches |
+| 2 | Configurable promotion engine with Alliance compatibility |
+| 3 | Kids belt catalog, track UI, and belt rendering |
+| 4 | Per-organization branding (name, logo, theme colors) |
+| 5 | Public organization registration + approval and invitations |
+| 6 | Platform admin panel, audit, and authorization |
+| 7 | Consolidated i18n, tests, and parity verification |
+| 8 | Dashboard analytics — attendance by class |
+
+---
+
+## 1. Global rules (apply to every phase)
+
+### Terminology — read this first
+
+The existing `Academy` model represents a **physical branch**. Alliance Escazú and Alliance Escalante are separate `Academy` rows. Do not overwrite these rows or repurpose their existing `academyId` relationships as tenant identifiers.
+
+| Term | Meaning | Scope |
+|---|---|---|
+| `Organization` | the SaaS tenant / business | tenant isolation boundary (`organizationId`) |
+| `Academy` (existing) | a branch / sede within an organization | branch relationships (`academyId`, `homeAcademyId`) |
+
+The UI may call an Organization an "Academia" and an Academy a "Sede". **Keep database terminology explicit** to avoid mixing tenant and branch scope.
+
+Branding, signup, approval and SaaS administration operate on **Organization**. Kiosk tokens, class schedules and staff branch assignments stay on **Academy**. Anywhere the earlier draft said "Academy" meaning a tenant, read "Organization".
+
+### Engineering constraints
+
+- **Stack is fixed:** Next.js 15 App Router, TypeScript, Prisma 7 + Postgres, next-auth v5, next-intl, Tailwind v4 + shadcn/ui, luxon, recharts, vitest, pnpm. Do not introduce a new ORM, styling system, state library or auth provider.
+- **Nothing is in production.** Everything in this repo is pre-launch. Development runs against a **local docker-compose Postgres** (`localhost:5432`); there is no cloud database, no deployment, and no real user data anywhere yet. Treat "production" in this document as a future state, not a running system.
+- **The production database provider is not chosen yet.** Do not write provider-specific code, extensions or SQL. Plain Postgres that Prisma can talk to, so the choice stays open. Object storage, connection pooling and backups are deployment concerns to be decided when a provider is picked — not assumptions to bake in now.
+- **Stay lean, but don't cargo-cult a free tier.** Keep infrastructure requirements modest: no separate worker service, no message queue, no third service to operate. Note for planning only: a commercial launch will need paid hosting regardless (Vercel's Hobby plan prohibits commercial use), so "must fit a free tier" is not a design constraint — "one person can operate it" is.
+- **Alliance is client #1, not a pilot.** Nothing is handed to the academy until the full feature set is finished. There is no live deployment to protect, no irreplaceable data, and no user whose Monday morning a bad migration would ruin. Alliance Jiu-Jitsu Costa Rica (Escazú + Escalante) exists in this repo only as seeded fixture data.
+- **Pre-launch, schema changes may be made directly.** The expand → backfill → constrain ceremony exists to migrate live data without downtime. There is no live data. Before go-live, if a later phase reveals that an earlier phase's schema was wrong, **change it** — drop the column, rename the model, restructure the relation — and reset and reseed. That is a two-minute operation, and it is cheaper and safer than carrying a compromised schema through eight phases because changing it felt irreversible. Do not invent backwards-compatibility constraints that no data requires.
+- **Migration discipline still applies to the migration files themselves.** They must produce the correct final schema and run cleanly from empty. Plan to **squash all pre-launch migrations into a single initial migration immediately before the first production deploy**, so the production history starts clean rather than replaying the whole development archaeology.
+- **The parity check is a regression net, not data protection.** Seed → snapshot → migrate → snapshot → diff proves a migration doesn't corrupt data. It is valuable for exactly that and should keep running after every phase. It is not guarding anything irreplaceable, and it must not be used to argue against a schema change that is otherwise correct.
+- **Full migration discipline resumes at go-live.** From the first real academy onward, every rule that this section relaxes comes back: no destructive changes, expand/backfill/constrain, parity against a real production baseline taken beforehand.
+- **No hardcoded tenant assumptions.** After Phase 4, any literal "Alliance", brand color or logo path in `src/**` is a bug.
+- **Spanish + English.** Every new user-facing string goes through next-intl with both `es` and `en` messages.
+- **Timezone:** all date math through luxon in the organization's timezone (default `America/Costa_Rica`). Never approximate a month as 30 days.
+- **Qualify phase numbers with the document name.** This repo holds more than one phased spec (`docs/REDESIGN_BRIEF.md` has its own phases 0–9). Always write "MULTI_ACADEMY Phase 3" or "REDESIGN_BRIEF Phase 9", never a bare phase number, in code comments, commit messages and reports.
+- **Disclose to members, never to non-members.** This single rule settles every "what error should this return" question in the project. A user who belongs to the organization is entitled to know its state — which is why a suspended organization's own director gets a specific localized page rather than a generic auth error. A user who does **not** belong to it is entitled to nothing, including the knowledge that a row exists: cross-organization access returns the same `notFound` a genuinely missing row returns, with no separate "forbidden" class and no new strings. Reads and writes must agree on this, or the disagreement between them is itself the disclosure channel. The unauthenticated kiosk is always treated as a non-member.
+
+  Opaque to the caller, precise in the logs: every refused cross-organization attempt is logged server-side with actor, target organization and resource, and writes an `AuditLog` row. Declining to disclose something to a caller is not a reason to fail to record it.
+- **A guard is not done until the path that actually runs goes through it.** Building a security mechanism and testing the mechanism proves nothing if the application bypasses it. This has now happened three times in this project: the read-only transaction guard was correct in `db-inventory.ts` and broken in `alliance-baseline.ts`; the Prisma tenant extension lives inside `getScopedDb()`, which has zero callers, so the isolation suite tested a path production never executes; and `requireOrganizationAccess()` — built to close the two-tab hole — has zero callers while every action reads the ambient cookie instead.
+
+  Therefore: every enforcement mechanism needs a test that **drives the real route or server action** and observes the guard firing — not a test that calls the helper directly. And CI must fail on an exported guard with zero production call sites; a security helper that only its own test imports is dead code wearing a safety label. When reporting a guard complete, cite the call sites, not the helper.
+- **Claims need evidence, not assertions.** When reporting a phase complete, cite the test or file that proves each criterion. A guard described in prose is not a guard — the read-only transaction check in Phase 0 was wrong in one script and right in another for exactly as long as nobody demanded a test that attempts a write.
+
+### Verification commands
+
+Add to `package.json`:
+
+```json
+"typecheck": "tsc --noEmit"
+```
+
+Run per phase: `pnpm typecheck`, `pnpm lint`, `pnpm test`, `pnpm build`.
+
+Integration tests must use an **explicitly configured test database**. Never reset or seed the live database as part of verification. Verification scripts must require an explicit database target and must not connect to production or reset a database implicitly.
+
+Create migrations in development with `prisma migrate dev`. Apply reviewed migrations to deployed environments with `prisma migrate deploy`. **Never** run `db push`, a database reset, or development migration commands against the live database.
+
+**Never generate a migration from a live database.** The migration history plus `schema.prisma` is the source of truth; a database is a consequence of it. Generating from `--from-config-datasource` (or any live-URL diff) bakes whatever that database has drifted into straight into a committed migration, where it replays forever. A shadow database is configured (`SHADOW_DATABASE_URL`) precisely so `prisma migrate dev` can do this correctly — its earlier absence is what made the wrong method reachable.
+
+`pnpm db:check-drift` gates CI and runs **two** comparisons independently:
+
+| Comparison | Catches |
+|---|---|
+| `schema.prisma` ↔ migration history | a schema edited with no corresponding migration — silent until something replays from zero |
+| migration history ↔ live database | a database modified outside the migration history |
+
+The third pairing, schema ↔ live database, is the one that must never be used to *generate* anything.
+
+**Pending callers.** A function built ahead of the phase that will call it goes in the pending-callers registry: symbol, the phase that wires it, one line of why. CI prints the list every run so it stays visible. This exists because "built it, never wired it" has happened repeatedly here; a tracked deferral with a named owner is a decision, an untracked one is an orphan discovered two phases later. Anything still listed when its phase closes is a finding, not a footnote.
+
+---
+
+## Phase 0 — Repeatable parity baseline
+
+### There is no production database yet
+
+The academy still runs on GymDesk. The app has no live deployment and no real student data; the only database is a local dev one containing test-fixture noise. So Phase 0 is **not** a production snapshot. Its purpose is to prove that every later migration is non-destructive, repeatably, in CI.
+
+### Clean up the dev database first — and stop it refilling
+
+The dev database currently holds roughly 9 academies and 845 users of test-fixture noise. Wiping it once only resets the clock; the cause has to be fixed in the same pass.
+
+1. **Inventory before deleting.** Report row counts per model, and specifically what those academies and users are — creation dates, naming patterns, which look like generated fixtures versus anything entered by hand through the forms. Delete nothing until Alexis confirms. A few of those rows may be real test students he typed in himself.
+2. **Reset on his go-ahead**, targeting the dev database **explicitly by URL**. Never an implicit `DATABASE_URL`, and never a command that could reach another database.
+3. **Check for storage that isn't rows:** logo or image bytes written to the database during testing, orphaned notification rows, audit rows, stale kiosk attempts. These grow faster than student records and are easy to miss.
+4. **Check for stray databases or volumes** left over from testing — extra docker volumes locally, and, once a cloud provider exists, any branches or projects created during testing. List them rather than deleting; Alexis removes cloud resources himself.
+5. **Fix the root cause.** The integration tests import the app's Prisma singleton, which reads the same `DATABASE_URL` the dev server uses, so every run writes into the dev database. Fix it properly:
+   - a separate `TEST_DATABASE_URL`, and a separate docker-compose Postgres service (or at minimum a distinct database name), so tests never share a database with the dev app;
+   - the test setup resolves the target and **fails loudly** if it matches the dev URL or anything non-test — compare host **and** database name, not string equality, so a trailing slash or an extra query param cannot slip past;
+   - tests do not reach the app's Prisma singleton implicitly; the test client is explicit;
+   - tests clean up after themselves. One suite leaving 16,000+ notification rows behind makes every future inventory unreadable;
+   - **a test for the guard itself**: point the setup at a fake dev-looking URL and assert it refuses to run.
+
+### Deterministic seed
+
+Write a seed with **fixed IDs and fixed dates — no randomness**, mirroring Alliance's *shape* rather than its data: two branches (Escazú, Escalante), a realistic student count, a realistic belt distribution (many white, few purple, one or two brown), and roughly a year of attendance.
+
+It must deliberately contain the cases that break tenancy and promotion migrations:
+
+- students who train at both branches;
+- a student at max stripes awaiting a belt;
+- a negative-delta manual adjustment;
+- attendance on a class with `countsTowardPromotion: false`;
+- a student with zero attendance;
+- at least one student at every belt in the adult track;
+- once Phase 3 lands, the same coverage for the kids track, plus a student carrying an onboarding credit.
+
+**The seed is also demo data — make it presentable.** The director will be shown the app and will test with it during development, long before launch, running against this seed. So it must not read as a test fixture: use plausible Costa Rican names rather than "Estudiante Prueba" or `seed-student-001` as display text (stable internal IDs are fine and still required), the academy's real class schedule (Mon 6am GI / 12pm NO-GI / 6pm GI principiantes / 7pm GI avanzados; Tue 12pm GI / 6pm NO-GI / 7pm GI; Wed 6am GI / 12pm NO-GI / 6:30pm competición; Thu 12pm GI / 6pm NO-GI / 7pm GI; Fri 12pm NO-GI / 6:30pm GI; Sat 9am striking / 10am kids / 11am open mat), and belt and attendance distributions that look like a real academy. Determinism is unchanged — fixed IDs, fixed dates, no randomness. This costs nothing and makes every demo land better than a screen full of obvious placeholders.
+
+**The QA accounts belong in the seed, not carried through the reset.** The hand-made demo logins (admin, director, instructor, student, qa-director, plus the linked student record) are recreated in the seed with fixed IDs and known dev credentials, so they survive every reset and are part of the reproducible fixture. Preserving rows around a reset would break determinism — they would not be in the seed, so the next reset would lose them and the snapshot diff would go red for reasons unrelated to any migration.
+
+**Safety guard — the seed must refuse to run anywhere but local or test.** It creates accounts with known passwords. Resolve the target and abort loudly unless it is explicitly a local or test database. A seed like this reaching a real deployment is not a mess, it is a backdoor administrator account. Same class of guard as the test-database check above, and it gets its own test.
+
+Reset the dev database to this seed. The existing fixture pollution is noise, not a baseline.
+
+### Baseline script
+
+`scripts/alliance-baseline.ts`, run with an explicitly passed target (`--database-url=` or a dedicated env var — never an implicit `DATABASE_URL`). It captures:
+
+- row IDs and counts per model;
+- branch ownership and relationships;
+- each student's belt, degree count, and belt anchor;
+- attendance delta totals per student (`SUM(AttendanceRecord.delta)`), promotion-relevant and total, replicating the existing attendance-summary filter rather than reimplementing the rule;
+- payment amounts and statuses;
+- staff branch access;
+- dashboard totals as rendered;
+- kiosk token hashes and student code hashes.
+
+**Read-only enforcement:** issue `SET TRANSACTION READ ONLY` as the first statement of the transaction, **before any data query** — `SET LOCAL default_transaction_read_only` sets the default for *subsequent* transactions and does nothing to the one already open, so it is not a guard. Then verify by querying `SHOW transaction_read_only` and abort loudly if it is not `on`. Never proceed unverified.
+
+**Never commit a real baseline.** `baselines/` goes in `.gitignore`; a snapshot contains student names and code hashes. Verify no baseline file is already tracked in git before proceeding — if one was ever committed, report it rather than quietly deleting it. The *synthetic* seed snapshot is committable, but it lives under a clearly separate path so the two can never be confused.
+
+### The check that actually runs
+
+Wire it as CI: **seed → snapshot → migrate → snapshot → diff.** Any unexpected difference fails the build. Run it after every phase — Phase 7 consolidates verification, it is not the first time these checks run.
+
+### The production baseline still happens
+
+Keep the script and its explicit-target interface. The real snapshot is taken **immediately before the first migration after go-live**, against production data, once there is any.
+
+### Acceptance criteria
+
+- [ ] A dev-database inventory was reported and approved before anything was deleted.
+- [ ] The dev database contains only the deterministic seed — no leftover fixture academies, users, logo bytes, notifications, audit rows or kiosk attempts.
+- [ ] Stray databases/volumes from testing are listed for Alexis, not deleted by the agent.
+- [ ] Integration tests target their own configured database, and the test setup fails loudly if the target resolves to the dev URL or anything non-test — asserted by a test that points it at a fake dev-looking URL.
+- [ ] The integration suite leaves no residue: running it twice in a row produces the same row counts.
+- [ ] The seed refuses to run against a target that is not explicitly local or test — asserted by a test.
+- [ ] The QA/demo logins exist in the seed with fixed IDs and survive a reset; their credentials are documented in the repo as dev-only.
+- [ ] Re-running the seed twice produces byte-identical snapshots (it is deterministic: fixed IDs, fixed dates, no randomness).
+- [ ] The seed contains every listed edge case, verified by assertions rather than by eye.
+- [ ] The baseline script issues `SET TRANSACTION READ ONLY` before any data query and aborts if `SHOW transaction_read_only` is not `on` — proven by a test that attempts a write inside the transaction and expects it to fail.
+- [ ] The script refuses to run without an explicitly passed target; it never reads `DATABASE_URL` implicitly.
+- [ ] `baselines/` is in `.gitignore`, and `git log` confirms no baseline file was ever committed.
+- [ ] CI runs seed → snapshot → migrate → snapshot → diff and fails on any unexpected difference.
+
+---
+
+## Phase 1 — Tenant organizations above existing academy branches
+
+### Goal
+
+Introduce isolated SaaS tenants while preserving Alliance's existing branches, student records, attendance, payments, staff assignments, kiosk tokens, and dashboard totals.
+
+### Repository discovery
+
+Before editing:
+
+1. Read `prisma/schema.prisma`, migrations, seed data, authentication/session helpers, kiosk handlers, attendance summaries, and promotion actions.
+2. Inventory every model and classify it as:
+   - organization-owned;
+   - branch-owned, also organization-scoped;
+   - global identity/authentication;
+   - platform-level operational data.
+3. Inventory routes, server actions, jobs, caches, and public handlers that access those models.
+4. Produce a migration mapping from existing fields to the proposed schema.
+5. Capture an Alliance baseline before applying any migration (Phase 0).
+
+Do not connect verification scripts to production or reset a database implicitly. Require an explicit database target.
+
+### Organization model
+
+Add an `Organization` model with:
+
+- id;
+- unique slug;
+- name and optional shortName;
+- status: `PENDING | ACTIVE | SUSPENDED | CANCELLED`;
+- timezone and default locale;
+- contact details;
+- internal notes;
+- createdAt, updatedAt, approvedAt, approvedById.
+
+Add `organizationId` to existing `Academy` rows.
+
+Seed one ACTIVE Organization:
+
+- slug: `alliance-cr`
+- name: Alliance Jiu-Jitsu Costa Rica
+- timezone: `America/Costa_Rica`
+- locale: `es`
+
+Attach both existing Alliance branches to this organization while preserving their IDs, names, slugs, kiosk token hashes, and existing relationships.
+
+### Tenant-owned data
+
+Add `organizationId` to tenant-owned domain models, including `Student`, `ClassSession`, `AttendanceRecord`, `Promotion`, `PaymentPlan`, `PaymentPeriod`, `KioskAttempt`, and `StaffAssignment`.
+
+Preserve existing branch fields:
+
+- `Student.homeAcademyId`;
+- `ClassSession.academyId`;
+- `AttendanceRecord.academyId`;
+- and other existing branch relationships.
+
+Database constraints must prevent relationships across organizations:
+
+- a student's home branch belongs to the same organization;
+- attendance references a student and branch in the same organization;
+- a referenced class session belongs to the attendance branch;
+- payment plans and student payments belong to the same organization;
+- promotions reference students and ranks in the same organization.
+
+Use composite foreign keys or equivalent database constraints where needed. Document which constraints are enforced by the database and which require application authorization.
+
+Cross-branch attendance within the same organization remains supported. **Do not require an attendance branch to equal a student's home branch.**
+
+### Users and permissions
+
+Keep `User` as the global login identity with globally unique email. Do not add a mandatory tenant identifier to every authentication model.
+
+Introduce organization membership so one user can hold access to more than one organization without duplicate login identities.
+
+Use organization membership for ADMIN/DIRECTOR/INSTRUCTOR/STUDENT access. Preserve existing branch assignments for location restrictions.
+
+`SUPER_ADMIN` is an explicitly granted platform role. It must not be inferred from a client-submitted email, registration form, or editable profile field.
+
+Existing ADMIN access to all Alliance branches becomes organization-wide Alliance access. **Do not automatically promote every existing ADMIN to SUPER_ADMIN.**
+
+Explicitly provision Alexis's platform access through a controlled, documented bootstrap operation.
+
+Preserve existing promotion authorization:
+
+- ADMIN and DIRECTOR may award promotions.
+- INSTRUCTOR may view eligible students within their assigned scope.
+- Instructor awarding is out of scope unless separately approved.
+
+### Tenant context and data access
+
+Create a server-only tenant context containing:
+
+- actorUserId;
+- organizationId;
+- organization role;
+- permitted branch IDs, or organization-wide branch access;
+- impersonation state, if applicable.
+
+An authenticated request must validate organization membership and current organization status. **A selected organization ID from a cookie, URL, or form is a selector, not proof of authorization.**
+
+Missing tenant context must **fail closed** for tenant-owned data access.
+
+Implement a centralized, enforced data-access boundary. Do not assume a Prisma extension automatically protects every query shape. Explicitly cover or reject:
+
+- reads, including `findUniqueOrThrow` and `findFirstOrThrow`;
+- aggregates and `groupBy`;
+- create/update/delete and their bulk variants;
+- `upsert`;
+- nested writes and relation `connect` operations;
+- transactions;
+- raw SQL.
+
+Tenant predicates must not be overridable by caller input.
+
+Keep a narrowly controlled platform/global data-access module for:
+
+- authentication and membership resolution;
+- platform administration;
+- public organization registration;
+- organization discovery for public pages and kiosk tokens;
+- migrations and seeds;
+- authorized cross-organization job dispatch.
+
+Public discovery must return only the fields needed for that public surface. Public registration access must not become a general unscoped query path.
+
+Add import restrictions and tests around this boundary.
+
+Tenant isolation does not replace branch permissions or student self-access.
+
+### Kiosk
+
+Preserve the existing hashed branch kiosk tokens and hashed student codes.
+
+Resolve the branch from its verified kiosk token, then derive its organization. Resolve student codes within that organization.
+
+Replace global student code-hash uniqueness with organization-scoped uniqueness, preserving the current hashing mechanism.
+
+Do not store plaintext student codes.
+
+Preserve existing class matching and kiosk lockout behavior.
+
+#### Suspended organization policy (decided)
+
+When an organization is `SUSPENDED`, kiosk requests must **reject check-ins server-side** and display a localized message:
+
+> **es:** "El registro de asistencia no está disponible temporalmente. Por favor contactá a tu academia."
+> **en:** "Check-in is temporarily unavailable. Please contact your academy."
+
+Rules:
+
+- Rejection is enforced in the kiosk handler on the server, before student-code resolution. A hidden button or a client-side check is not enforcement.
+- The message is generic on purpose: it must not disclose billing state, the organization's status value, or whether a submitted code was valid.
+- Existing attendance remains intact. Nothing is deleted, hidden, or recalculated on suspension.
+- Reactivation restores access using the **existing kiosk tokens**. Do not rotate or reissue branch tokens on suspend/reactivate.
+- The same rule applies to `PENDING` and `CANCELLED` organizations.
+- **Payment grace periods do not change organization status to `SUSPENDED`** — see "Organization billing status and grace period" in Phase 6. An organization inside its grace window is still `ACTIVE` and its kiosk works normally.
+
+### Migration and verification
+
+Use an expand/backfill/constrain migration sequence:
+
+1. Add the Organization model and nullable organization references.
+2. Create the Alliance organization.
+3. Assign existing branches to Alliance.
+4. Derive each domain row's organization from its existing relationships.
+5. Fail on missing or inconsistent ownership; do not guess.
+6. Verify the backfill.
+7. Add non-null constraints where applicable, indexes, and relationship constraints.
+8. Replace only the uniqueness constraints that need tenant scoping.
+
+Global identities and platform-level records are explicit exceptions to the non-null organization requirement.
+
+Verification must compare the Phase 0 baseline with post-migration data:
+
+- existing row IDs and counts;
+- branch ownership and relationships;
+- student belts and stripes;
+- attendance delta totals;
+- payment amounts and statuses;
+- staff branch access;
+- dashboard totals;
+- kiosk token hashes and student code hashes.
+
+### Acceptance criteria
+
+- [ ] Existing Alliance branch IDs and relationships are preserved.
+- [ ] All tenant-owned rows have valid organization ownership.
+- [ ] Existing Alliance pages show the same data and totals.
+- [ ] Organization A cannot read or mutate Organization B through any exposed route, action, export, or job.
+- [ ] Cross-organization relation connections are rejected.
+- [ ] Instructor branch restrictions and student self-access are preserved.
+- [ ] Identical student PINs may exist in different organizations without cross-matching.
+- [ ] Existing Alliance kiosk tokens continue to resolve their original branches.
+- [ ] A kiosk check-in against a SUSPENDED organization is rejected server-side with the localized generic message, in both locales, and reveals nothing about billing state or code validity.
+- [ ] Reactivating that organization restores kiosk check-in with the same unrotated branch token, and its prior attendance rows are unchanged.
+- [ ] Missing tenant context fails closed.
+- [ ] Typecheck, lint, relevant tests, and build pass.
+
+---
+
+### Phase 1 — as built
+
+Phase 1 was executed in sub-phases that this document did not originally name. Recorded so the spec and the code do not describe different architectures:
+
+| Sub-phase | What shipped |
+|---|---|
+| 1a | Expand: `Organization`, nullable `organizationId` everywhere, backfill script (proven on a simulated pre-migration state; it will never run against real data — see Appendix A) |
+| 1b | Constrain: non-null, composite FKs, organization-scoped `codeHash` uniqueness |
+| 1c | Tenant context, `getScopedDb` wrapper, Prisma extension, per-operation-shape isolation suite |
+| 1d | Call-site migration off `academyScopeWhere` |
+| 1e | Kiosk organization resolution, suspended-organization behavior, cross-tenant isolation suite |
+| 1f | **Remediation**, added after an audit found the enforcement layer was built but unused |
+
+**The 1f finding is the important part of this record.** After 1a–1e reported complete, an audit found that `getScopedDb` had zero callers: the extension sat off the request path, every call site did its own manual `organizationId` check, and the isolation suite exercised an abstraction production never executed. `requireOrganizationAccess` — built to close the two-tab hole — was likewise uncalled, with actions reading the ambient cookie instead.
+
+1f fixed both and added the structural defense: **`check:guard-usage`**, a CI check that fails on an exported enforcement helper with zero production call sites. It immediately found and removed two more dead guards. Scope is deliberately limited to enforcement helpers (`src/lib/tenant/**`, `src/lib/auth/**`, plus `require*`/`assert*`/`ensure*`/`is*Allowed`) — a dead guard gives false safety, a dead feature is merely untidy, and conflating the two produces arguments rather than safety.
+
+**The enforcement architecture as built:** the typed wrapper is the access path, the Prisma extension is the runtime backstop beneath it, raw SQL is confined to the platform module, and `check:guard-usage` proves the layers are actually reachable. Anywhere this document still implies manual per-call checks, the wrapper is authoritative.
+
+---
+
+## Phase 2 — Configurable promotion engine with Alliance compatibility
+
+### Goal
+
+Support `ATTENDANCE`, `TIME`, `HYBRID`, and `MANUAL` promotion modes while preserving Alliance's existing cumulative attendance behavior.
+
+Extend the existing:
+
+- `BeltRequirement` configuration;
+- attendance-summary and eligibility logic;
+- `Promotion` history;
+- `AuditLog`;
+- promotion queue;
+- transactional promotion action.
+
+**Do not create a second independent promotion-history system.**
+
+### Existing behavior that must remain unchanged
+
+Alliance counts promotion-relevant attendance since `Student.beltAwardedAt`.
+
+The attendance total is `SUM(AttendanceRecord.delta)`, **not a row count**.
+
+Manual adjustments count. Attendance linked to a class with `countsTowardPromotion: false` does not count toward promotion progress.
+
+**Stripe awards do not reset the attendance anchor.**
+
+For a student with S awarded stripes and a per-stripe requirement R:
+
+- next stripe threshold = `(S + 1) × R`;
+- belt threshold = `maxStripes × R + extra belt requirement`.
+
+Example: a white-belt student has 47 eligible attendances and receives their first stripe. They retain 17 attendances of progress toward stripe two. **Resetting progress to zero at that award would be a regression.**
+
+Belt awards reset the belt attendance anchor, as the current app does.
+
+### Configuration and ranks
+
+`PromotionConfig` and `BeltRank` belong to Organization.
+
+Seed Alliance adult requirements:
+
+- white: 30 per stripe, 4 stripes, 30 extra for belt;
+- blue: 65 per stripe, 4 stripes, 65 extra for belt;
+- purple: 75 per stripe, 4 stripes, 75 extra for belt;
+- brown: 85 per stripe, 4 stripes, 85 extra for belt;
+- black: terminal, 0 stripes, no automatic progression.
+
+**`BeltRank` and `PromotionConfig` are strictly organization-owned — no per-branch override column.** Settled during the Phase 2a review, and the reason is coherence rather than cost: students train at either branch and their attendance pools into a single progression, so a per-branch threshold has no defined meaning for anyone training at both, which is the normal case. The old `BeltRequirement.academyId` fallback was never written to — no UI, no action, no row, ever — and it is dropped rather than carried forward. If a real customer ever asks for per-branch rules, design it then, against an actual requirement.
+
+**Mode values are preserved across mode switches.** A rank carries both the attendance thresholds and the month thresholds. Validation requires the *active* mode's fields to be present and positive; it must never require or encourage clearing the other mode's values. A director who tries `TIME` for a month and reverts gets their attendance numbers back rather than a blank form — nullable means "never configured", not "not currently in use".
+
+**Rank `order` is 1-based and contiguous.** (The first draft said 0-based; the implementation chose 1-based and the spec is aligned to it.)
+
+Migrate `currentBelt` enum values to organization-owned rank references using an explicit mapping. Preserve every student's belt and degree count.
+
+Introduce `Student.track` **in this phase**, with existing students set to `ADULT`. Phase 3 adds the kids UI and catalog.
+
+Validate configuration:
+
+- integer `maxStripes >= 0`;
+- positive integer attendance requirements when applicable;
+- positive integer calendar-month requirements when applicable;
+- `stripeColors` length equals `maxStripes`;
+- `visibleStripeSlots` is a positive integer;
+- unique rank order and code within organization and track;
+- explicit terminal-rank behavior.
+
+Terminal ranks may award remaining degrees if configured to do so. After their final degree, `nextTarget` is `NONE`.
+
+### Engine
+
+Keep the calculation core pure and unit-testable.
+
+Supply enough information to determine:
+
+- the active rule mode;
+- the student's current rank and degree count;
+- whether a next rank exists;
+- cumulative promotion-relevant attendance since the belt anchor;
+- the applicable time anchor and evaluation date;
+- the effective configuration.
+
+Return:
+
+- `nextTarget`: `STRIPE | BELT | NONE`;
+- required and current progress values;
+- remaining attendance and/or due date;
+- `percent`, clamped to 0..100;
+- `isEligible`.
+
+**ATTENDANCE** — use cumulative belt attendance and the thresholds above.
+
+**TIME** — calculate the due date using Luxon calendar-month addition in the organization timezone. Do not approximate a month as 30 days.
+
+**HYBRID** — both attendance and time requirements must be satisfied.
+
+**MANUAL** — report the next target for display but never mark automatic eligibility.
+
+**Superseding `eligibility.ts` must be proven, not asserted.** Before deleting it, write a characterization test running the old module and the new engine against the same input matrix — every belt, stripe counts 0..max, attendance around each threshold boundary, negative deltas, non-promotion classes — asserting identical output. Keep the old module until that test is green. "Preserved the semantics" is exactly the class of claim that has been wrong repeatedly in this project; running both implementations against the same inputs is the only version of it that can be checked.
+
+Invalid configuration must produce an explicit configuration error. **Do not silently turn invalid requirements into automatic eligibility.**
+
+Negative attendance totals can result from adjustments. Preserve the ledger, show zero percent progress, and calculate eligibility from the actual total.
+
+### Time-mode semantics
+
+The first time-based interval starts at the student's configured belt/time anchor. Each awarded promotion begins a new time interval at its award time.
+
+A delayed time-based award does not automatically award several degrees.
+
+Keep time anchors separate from cumulative attendance accounting. Adding TIME support must not reset Alliance attendance progress.
+
+When switching modes, require the settings UI to state and confirm the time anchor used for students who do not already have one.
+
+### Awarding
+
+Eligibility calculation never changes a student's rank or degrees.
+
+All awards go through centralized server-side award functions that:
+
+1. Verify current actor permissions and organization/branch scope.
+2. Verify the student and organization are active.
+3. Revalidate current student state and applicable eligibility.
+4. Update the student, append `Promotion` history, and append `AuditLog` within one transaction.
+5. Reject conflicting or duplicate requests without partial writes.
+
+Preserve the existing concurrent-award protection and strengthen it as needed for the new configuration and automatic jobs.
+
+Use idempotency protection for retries and automatic job execution.
+
+Attendance corrections and configuration changes racing an award must not allow an award based on an inconsistent snapshot.
+
+Stripe awards retain cumulative attendance since the belt anchor. Belt awards reset the belt anchor. Attendance rows are never deleted or decremented by promotion operations.
+
+### Approval and automation
+
+When `requiresCoachApproval` is true:
+
+- eligibility appears in the existing promotion queue;
+- only ADMIN/DIRECTOR may confirm awards.
+
+When false:
+
+- authenticated scheduled jobs may award eligible stripes;
+- belt awards still require ADMIN/DIRECTOR confirmation;
+- each job processes bounded batches;
+- retries are idempotent;
+- each student receives at most one automatic stripe per scheduled daily run.
+
+Use a trusted job credential and derive tenant context for each organization. Skip non-active organizations.
+
+Record automatic awards with an explicit system actor/source. **Do not invent a human `awardedBy` user.**
+
+### Awarding from the student detail page
+
+The promotion queue ("Cola de promociones") stays exactly as it is — it answers *"who is ready right now?"*. But the other natural moment to promote someone is while looking at that student, so the student detail page gets a **Promociones** card as a second entry point to the same logic.
+
+**It is an entry point, not a second system.** The card calls the same centralized award functions defined above. No parallel award path, no client-side eligibility treated as authoritative, no duplicated threshold math. The server revalidates permissions, organization/branch scope, student state and eligibility on every call, exactly as it does for the queue.
+
+The card shows:
+
+- the belt graphic at card size, with the true degree count beside it;
+- the next target (`STRIPE` / `BELT` / `NONE`) and progress toward it — for `ATTENDANCE`, the cumulative count and the threshold with what remains ("47 / 50 · faltan 3"); for `TIME`, the due date; for `HYBRID`, both, with the binding one marked; for `MANUAL`, a plain statement that promotion is at the coach's discretion;
+- **why** the student is not eligible, when they aren't. Never a disabled button with no explanation — "faltan 3 asistencias" or "próximo grado el 15 de octubre" is the whole point of the card;
+- the promotion history for this student: date, rank, degrees, awarded by, `AUTO`/`MANUAL` source, and note.
+
+Actions, strictly following the existing authorization rules — **this card must not widen them**:
+
+| Role | Sees the card | Award / correct |
+|---|---|---|
+| ADMIN, DIRECTOR | yes | yes, within their organization |
+| INSTRUCTOR | yes, read-only, within their assigned branch scope | no — no action buttons rendered, and the server rejects the call regardless |
+| STUDENT | their own progress only, read-only | no |
+
+Interaction rules:
+
+- The award button is enabled only when the student is eligible, **except** the manual promote/correct actions from the section below, which are always available to ADMIN/DIRECTOR with a required note.
+- **No optimistic UI for awards.** Show a pending state, wait for the server, re-render from server state. A double-click, a slow network retry, or an award raced against the queue must produce exactly one promotion — the idempotency and concurrency protection above is what guarantees it, and the card must not bypass it.
+- After a successful award the card re-renders from the server: new degree count, updated belt graphic, new history row, recomputed next target.
+- If the award is rejected because state changed underneath (someone awarded from the queue a second earlier), show what happened and the current state — never a generic error, and never silently retry.
+
+### Manual corrections
+
+ADMIN/DIRECTOR may manually promote or correct a mistaken promotion with a required note.
+
+Preserve the original history. Append a correction event with before/after rank, track, degrees, and anchor values.
+
+Correction workflows must explicitly determine the resulting anchors. Do not infer them silently.
+
+### Rule changes
+
+For v1, editing thresholds immediately recalculates eligibility using existing attendance and anchors. It does not directly alter awarded belts or degrees.
+
+Use this warning:
+
+> "Changing these rules recalculates current progress and may change who is eligible. Existing belts and degrees remain unchanged. Automatic stripe awards, if enabled, may occur on the next scheduled run."
+
+Audit configuration changes with before/after values.
+
+Reject reductions of `maxStripes` below any affected student's current degree count. Require an explicit migration/correction workflow for such changes.
+
+### Acceptance criteria
+
+- [ ] Every existing Alliance student's belt, stripes, attendance progress, and eligibility match the Phase 0 snapshot.
+- [ ] A first stripe awarded at 47 white-belt attendances leaves 17 attendances toward stripe two.
+- [ ] Signed attendance adjustments and non-promotion classes behave exactly as before.
+- [ ] Black remains terminal with zero seeded stripes.
+- [ ] Cross-branch Alliance attendance retains its existing behavior.
+- [ ] Tests cover all modes, terminal ranks, invalid configuration, negative attendance, month-end boundaries, and delayed awards.
+- [ ] Concurrent and retried awards produce one successful transition and one corresponding history event.
+- [ ] Unauthorized instructors cannot award promotions.
+- [ ] Every successful award and correction has transactional history and audit records.
+- [ ] The student-page Promociones card and the promotion queue call the same award function — a single implementation, asserted by there being one award path in the codebase.
+- [ ] An instructor opening a student in their branch sees the card with progress and no action buttons, and a direct server-action call from that account is rejected.
+- [ ] An ineligible student's card states the specific reason (remaining attendances, due date, or manual mode) rather than only disabling the button.
+- [ ] Awarding the same student from the queue and the card at the same moment produces exactly one promotion and one history row; the loser sees the current state, not a generic error.
+- [ ] Double-clicking the award button produces one promotion.
+
+---
+
+### Phase 2 — as built
+
+Executed as 2a–2d. Recorded so the spec and the code don't drift apart.
+
+| Sub-phase | What shipped |
+|---|---|
+| 2a | `BeltRank` + `PromotionConfig` schema, `currentBelt` enum → rank references, `Promotion.awardedById` nullable + `source` discriminator, config validation and `updateTrackConfig` |
+| 2b | The pure engine (`evaluatePromotion`), all four modes, plus a 103-case characterization test against the old module |
+| 2c-i | Calculation core migrated onto the engine; `PromotionConfig` resolved once per batch, not per student |
+| 2c-ii | `awardPromotion` centralized; `eligibility.ts`, its test, the characterization test and the legacy vocabulary all deleted in one commit |
+| 2c-iii | The automatic stripe-award cron job |
+| 2d | The student-detail Promociones card and manual corrections |
+
+**Decisions that must not be quietly undone:**
+
+- **The belt sequence comes from data.** `resolveNextRank` queries the catalog for `order + 1` within the organization and track. The old hardcoded `BELT_ORDER` array (white→blue→purple→brown→black) was only ever correct for Alliance's catalog and is flatly wrong for the 13-rank kids track. If a next rank is missing at a `BELT` target, `awardPromotion` throws `InvalidPromotionConfigError` naming the rank and order — `isTerminal` and "a rank exists at order+1" are different facts, and only validation keeps them aligned, so the guard stays.
+- **One write, two callers.** `writeAward` holds the transactional write (Promotion + scoped Student updateMany + AuditLog); `awardPromotion` (manual, real `awardedById`) and the automation path (`AUTO`, `awardedById: null`) each keep their own read/validate shape. Both use the same `updateMany` scoped by id + status + exact from-rank + from-stripes; a zero-row match is a clean skip, never an error or a same-run retry.
+- **`AuditLog.actorId` is nullable** so a system actor can be recorded honestly. It exists because "never invent a human `awardedBy`" collided with a required FK — the fix was the schema, not a fabricated user.
+- **Automation never awards a belt.** Only `STRIPE` targets, and only when `requiresCoachApproval` is false. Belt-eligible students still appear in the promotion queue regardless of that setting — otherwise turning approval off would make belts silently never happen.
+- **Job shape:** `CRON_SECRET` bearer check before anything else; idempotency is persistence-backed (no `AUTO` promotion for that student since start-of-day **in the organization's own timezone**, not the app-wide constant); candidates ordered by oldest `beltAwardedAt` so bounded batches drain instead of starving the tail; `batchSize` a parameter so the drain is testable at n=3; per-organization error isolation.
+- Alliance runs `requiresCoachApproval: true`, so the automation is a no-op against the only real academy in the seed. A scratch approval-off organization in the test suite is its only coverage — keep it.
+
+**Known limitations live in `scripts/pending-callers.ts`**, printed by CI every run: the hardcoded `APPROACHING_THRESHOLD` of 5, `progression.ts`'s ATTENDANCE-only projection, the log-only skipped-student count, and the HYBRID progress line concatenating both dimensions rather than naming the binding one. Each names the phase that should resolve it.
+
+**One acceptance criterion closed by code reading rather than a test:** that an ineligible student's card states the specific reason. There is no component-test harness in this repo — see the note in Phase 3's verification section, which needs one.
+
+---
+
+## Phase 3 — Kids belt catalog, track UI, and belt rendering
+
+### Student fields
+
+`Student.track` already exists from Phase 2 — **do not add it twice**.
+
+Reuse the existing `Student.dateOfBirth` rather than adding a `birthDate` field. Preserve `guardianName`, `guardianPhone`, and `emergencyContact`.
+
+In the **Add student** and **Edit student** forms, add a required track control using the existing shadcn components:
+
+> **Tipo de estudiante / Student type** → `Adulto (Adult)` | `Niño (Kid)`
+
+Behavior:
+
+- Selecting the track filters the rank dropdown to that track's ranks for the student's organization.
+- Changing an existing student's track requires **explicit selection of the destination rank, degree count, and anchor policy**. Record the transition in the existing `Promotion` history and `AuditLog`. Never infer anchors silently.
+- Default on create: first rank of the chosen track, 0 degrees, belt anchor = join date.
+- Student lists, filters and the director dashboard gain a kids/adults filter; the dashboard counts kids and adults separately.
+
+### Estado inicial — entering students who already have a rank
+
+Students are entered **manually** at go-live; there is no GymDesk importer. That moves a real problem into the add-student form.
+
+A student typed in as "blue belt, 2 stripes" has no attendance history in the app. In `ATTENDANCE` mode progress is the sum of deltas since the belt anchor, so the anchor date rescues nothing — their count is zero whatever date is set, and a brown belt who was 80 attendances into his fourth stripe opens the app at 0/85. That is the first thing the director will notice.
+
+Add an optional **"Estado inicial"** section to the add-student form, shown when the student is not starting from scratch:
+
+- current rank and degrees (already present via the track selector);
+- date of last promotion → `beltAwardedAt`;
+- **asistencias acumuladas hacia el próximo grado** — an integer credit, **defaulting to 0**.
+
+On save, create the student at that rank and write **one** manual attendance adjustment carrying the credit, with a distinct reason (`onboarding_credit`) and a note naming who entered it.
+
+**The credit counts toward promotion but is excluded from attendance analytics.** Nobody walked through a door. It must pass the promotion-relevant filter that the engine sums, and it must be excluded from the weekly trend and the attendance-by-class chart (Phase 8) — otherwise the dashboard opens with a phantom spike on go-live day and a class breakdown that never reconciles again. This needs its own flag; do not infer it from the adjustment reason string at query time.
+
+The credit stays visible and correctable: it appears in the student's attendance history as "crédito inicial", not buried in the ledger, and a director can edit it when the coach says the number was wrong.
+
+Defaulting to 0 is deliberate — crediting prior progress is the director's decision, per student, and a clean slate ("el conteo empieza hoy") is a legitimate choice.
+
+Optional, worth offering if the roster exceeds ~50 students: a bulk-add screen accepting pasted rows (name, belt, degrees, credit) with a review step before committing.
+
+### Kids belt catalog — Alliance preset
+
+This table is the **selected Alliance kids preset**. Do not claim its exact degree counts are mandatory official IBJJF rules without verifying the current official source. Record the verification source and date before publishing that claim anywhere user-facing or in sales material.
+
+Seed as `BeltRank` rows with `track: KIDS`, owned by the organization.
+
+| order | code | label (es / en) | belt | centre stripe | maxStripes | tape colors (degree 1→n) | age hint |
+|---|---|---|---|---|---|---|---|
+| 1 | `white` | Blanco / White | white | — | 5 | 4× white, 1× red | 4–15 |
+| 2 | `grey_white` | Gris y Blanco / Grey-White | grey | white | 5 | 4× white, 1× red | 4–6 |
+| 3 | `grey` | Gris / Grey | grey | — | 11 | 4× white, 4× red, 3× yellow | 4–6 |
+| 4 | `grey_black` | Gris y Negro / Grey-Black | grey | black | 11 | 4× white, 4× red, 3× yellow | 4–6 |
+| 5 | `yellow_white` | Amarillo y Blanco / Yellow-White | yellow | white | 11 | 4× white, 4× red, 3× yellow | 7–9 |
+| 6 | `yellow` | Amarillo / Yellow | yellow | — | 11 | 4× white, 4× red, 3× yellow | 7–9 |
+| 7 | `yellow_black` | Amarillo y Negro / Yellow-Black | yellow | black | 11 | 4× white, 4× red, 3× yellow | 7–9 |
+| 8 | `orange_white` | Naranja y Blanco / Orange-White | orange | white | 11 | 4× white, 4× red, 3× yellow | 10–12 |
+| 9 | `orange` | Naranja / Orange | orange | — | 11 | 4× white, 4× red, 3× yellow | 10–12 |
+| 10 | `orange_black` | Naranja y Negro / Orange-Black | orange | black | 11 | 4× white, 4× red, 3× yellow | 10–12 |
+| 11 | `green_white` | Verde y Blanco / Green-White | green | white | 11 | 4× white, 4× red, 3× yellow | 13–15 |
+| 12 | `green` | Verde / Green | green | — | 11 | 4× white, 4× red, 3× yellow | 13–15 |
+| 13 | `green_black` | Verde y Negro / Green-Black | green | black | 11 | 4× white, 4× red, 3× yellow | 13–15 |
+
+All kids ranks seed `visibleStripeSlots: 4`. `maxStripes` is the **degree counter**, not the number of tapes drawn — see "Belt rendering".
+
+**Alliance kids rule:** `attendancePerStripe = 10` on every kids rank, `extra belt requirement = 10`. Thresholds are cumulative since the belt anchor, exactly as for adults: degree *n* at `n × 10` attendances; the belt at `maxStripes × 10 + 10`. For solid grey that is degree 11 at 110 and grey-black at 120.
+
+Adult catalog is unchanged from Phase 2: white, blue, purple, brown, black.
+
+Age hints are **advisory only**. If `dateOfBirth` is set and the student's age falls outside the rank's hint range, show a subtle badge on the profile. Never block a save, never auto-change a rank — coach criteria wins. **Kids → adult transition.** The kids track ends at `green_black`; from there a student moves to the **adult blue belt**, not white. Sixteen is the age at which a kid moves to the adult track — surface a "Transición a adulto" action then, running the explicit track-change flow above with adult blue as the default destination rank. The director can still choose otherwise; the default just shouldn't be wrong.
+
+### Belt rendering — degrees counted vs. tapes shown
+
+A kids belt can hold **11 degrees**, but the physical bar only ever shows **4 tapes**. New tapes replace older ones: degree 5 (the first red) takes the place of a white tape, so the belt still shows 4 tapes while the counter reads 5.
+
+Two separate concepts:
+
+- **degree count** (`currentStripes` / the existing degree field) — 0..`maxStripes`, drives promotion logic, progress bars and "grado 7 de 11" text;
+- **drawn tapes** — at most `visibleStripeSlots` (4), derived from the counter, never stored.
+
+#### Shared derivation
+
+**Extend the existing `BeltGraphic` and `BeltBar` components around one shared visible-tapes derivation function.** Preserve existing display sizes through wrappers if needed. Do not maintain separate tape-counting implementations.
+
+```ts
+// src/lib/belt-display.ts
+export function visibleTapes(rank: BeltRank, degrees: number): string[] {
+  if (!Number.isInteger(degrees) || degrees <= 0) return []
+  const slots = Number.isInteger(rank.visibleStripeSlots) && rank.visibleStripeSlots > 0
+    ? rank.visibleStripeSlots
+    : 4
+  const earned = rank.stripeColors.slice(0, Math.min(degrees, rank.maxStripes))
+  return earned.slice(-slots)   // rolling window: keep the newest N
+}
+```
+
+Validate `degrees` and `visibleStripeSlots` **before** calling slice. Negative or non-integer degrees must not produce unexpected tapes.
+
+Render left → right, oldest visible tape first, so a new award visually pushes the row along.
+
+Worked examples, kids **Grey** (`maxStripes: 11`, tapes `[W,W,W,W,R,R,R,R,G,G,G]`, 4 slots):
+
+| Degrees | Tapes drawn | Reads as |
+|---|---|---|
+| 3 | W W W | 3 white |
+| 4 | W W W W | bar full |
+| 5 | W W W **R** | one white replaced by red, counter says 5 |
+| 6 | W W R R | |
+| 8 | R R R R | all four red |
+| 9 | R R R **G** | grey tape starts replacing red |
+| 11 | R G G G | last degree before the next belt |
+
+The same function handles the 5-degree ranks: degrees 1–4 white, degree 5 replaces the first white with red — matching the real belt, where the 5th is a red tape wrapped over a white one.
+
+#### Visual design — a real belt, not two rectangles
+
+The current graphic is a colored rectangle butted against a black rectangle. It reads as a progress bar, not a belt. Replace the **visual** with a realistic woven belt. The derivation above is unchanged — this is a rendering change only.
+
+Build it as **one inline SVG component**. No raster images, no external assets, no canvas: it must scale, theme, print and work offline, and it appears in every list row.
+
+Anatomy, back to front:
+
+1. **Belt body** — a long horizontal strip, aspect ratio about **8:1**, with a small corner radius (fabric, not a pill). Ends are squared.
+2. **Weave texture** — an SVG `<pattern>` of fine vertical lines at very low opacity (≈4–6%) over the body, giving woven cotton rather than flat fill. Slightly darker at the top and bottom edges.
+3. **Longitudinal stitching** — **this is the single strongest realism cue**. Three to five evenly spaced dashed lines running the length of the belt, in a darker shade of the belt color (not black, not a fixed gray — derive it from the belt color so it works on white and on black belts). Dash pattern short and even, like machine stitching.
+4. **Rank bar (barra)** — the black bar, set in **from the tip so a short tail of belt color remains beyond it** (roughly 8–10% of the length). A bar flush to the end is exactly what makes the current version look like a chart. The bar gets its own stitch line along each edge where it is sewn on. Its color comes from `BeltRank.barColor` — **never hardcode black**: a black belt's bar is red, and coral belts differ again.
+5. **Tapes (franjas)** — rectangles across the bar, evenly spaced within `visibleStripeSlots` positions, each with a 1px darker edge and a subtle inner shadow at the wrap so they sit *on* the bar rather than inside it. Colors come from `visibleTapes()`.
+6. **Depth** — a soft inner shadow along the belt's top and bottom edges, and a small drop shadow beneath the whole belt. Subtle: this is a list row, not a hero illustration.
+
+**Split belts are a CENTRE STRIPE, not two halves.** A grey-white belt is a grey belt with a white band running lengthwise through the middle — roughly the middle third of the belt's height — not a belt that is 50% grey and 50% white. Same for every `_white` and `_black` rank: the belt keeps its own colour, and a contrasting band runs down the centre. The stitching rows sit above and below the band rather than crossing it.
+
+Model this as `centerStripeColor` (nullable) on the rank, not as `isSplit` + `splitColor` — the naming should say what it draws.
+
+#### Rendering rules
+
+- **Size variants with graceful degradation.** `xs` (list rows), `sm` (cards), `lg` (student profile). At `xs`, drop the weave pattern and reduce stitching to two lines — sub-pixel detail turns into mud and costs render time. Detail is added going up, never removed going down.
+- **Unique ids per instance.** Gradients, patterns and filters need ids; fifty list rows sharing hardcoded ids is a real bug that makes every belt inherit the first row's fill. Use React's `useId()` (or a single shared `<defs>` sprite rendered once), and test a page with at least 20 belts of different colors.
+- **Deterministic.** No randomized tape rotation, no jitter, no animation on first paint. Screenshots must be stable for tests. A short transition when a tape changes after an award is fine.
+- **Self-contained on any surface.** The belt paints its own background and edges, so a white belt on a white card and a black belt on a dark sidebar both stay visible. Give the body a thin border derived from its own color rather than relying on the page.
+- **Performance.** Keep `xs` under ~20 SVG nodes. It renders once per student row.
+- Unfilled tape positions are simply empty bar, never placeholder outlines.
+- No compact/overflow variant is needed — the bar is fixed at `visibleStripeSlots`. Show the numeric degree beside it where space allows (`7/11`) and always in the tooltip.
+- Accessible: `role="img"` with `aria-label` like "Cinturón gris, grado 7 de 11".
+
+#### Label column
+
+The current student list truncates the belt label ("Azul · sin fra…"). Fix it in the same pass: give the belt cell enough width for the graphic plus a non-truncating label, or drop the text to a second line under the belt at narrow widths. A rank the director can't read is worse than no label.
+
+#### Verification
+
+**This phase needs component-test tooling that the repo does not have.** Phase 2 closed one acceptance criterion by code reading because there is no way to assert against rendered output. Phase 3's criteria are far more visual than that, and several of them — no more than `visibleStripeSlots` tapes drawn for any rank or degree, split belts rendering as lengthwise halves, unique SVG ids across many instances, the label not truncating — are *structural facts about the DOM*, not aesthetic judgements. Those should be machine-checked.
+
+Add `@testing-library/react` to the existing vitest setup before starting this phase, and split verification accordingly:
+
+- **Machine-checked:** tape counts per rank and degree, split-belt band structure, distinct ids across 20+ rendered belts, the `aria-label` text, the degree number appearing beside the graphic, the reason text appearing on an ineligible card (retroactively closing Phase 2's open criterion).
+- **Human-checked:** whether it actually looks like a belt. No test can answer that.
+
+Build a dev-only page at `/dev/belts` rendering **every rank in both tracks at all three sizes, with every degree from 0 to `maxStripes`**, on light and dark surfaces. It is the fastest way to catch id collisions, invisible white tape, split-belt errors and the black-belt red bar. Screenshot it and look at it before calling the phase done — a validator cannot tell you the belt looks wrong.
+
+#### Do not
+
+- Do not store the drawn tapes. They are always derived.
+- Do not cap the degree counter at 4, and do not reset it when tapes get replaced.
+- Do not let promotion logic read the drawn tapes. The engine sees degrees only.
+
+### Acceptance criteria
+
+- [ ] Add/edit student requires a track and shows only that track's ranks for the student's organization.
+- [ ] Seeding `alliance-cr` produces 13 kids ranks with the exact `maxStripes` and tape colors above, `visibleStripeSlots: 4`, 10 attendances per degree and 10 extra for the belt.
+- [ ] A kids white belt with 47 promotion-relevant attendances since the belt anchor, and four explicitly awarded degrees, shows degree 4 and 7/10 progress toward degree 5. **Attendance alone does not grant degrees.**
+- [ ] A kids grey belt at degree 11 shows `nextTarget = BELT` and needs cumulative 120 attendances since the belt anchor.
+- [ ] `visibleTapes()` unit tests match the worked-examples table exactly, plus: degree 0, negative degrees, non-integer degrees, degrees above `maxStripes`, and a malformed `visibleStripeSlots`.
+- [ ] No component draws more than `visibleStripeSlots` tapes for any rank or degree, while the UI still displays the true degree count.
+- [ ] `/dev/belts` renders every rank in both tracks, every degree 0..`maxStripes`, at all three sizes, on light and dark surfaces — reviewed by screenshot, not assumed.
+- [ ] A page with 20+ belts of different colors renders each with its own fill — no SVG id collision.
+- [ ] The rank bar is set in from the tip with a visible tail of belt color, and its color comes from `barColor` (a black belt renders a red bar, not a black one).
+- [ ] A white belt is fully visible on a white card and a black belt on a dark surface.
+- [ ] `_white`/`_black` kids belts render a centre stripe through the middle third of the belt's height, not two colored halves and not two end-to-end blocks.
+- [ ] The belt label in the student list is not truncated at any supported width.
+- [ ] Awarding degree 5 on a kids grey belt changes the drawn tapes from 4 white to 3 white + 1 red and increments the counter to 5 — the bar does not grow.
+- [ ] Existing adult students are untouched: same track, rank, degrees and anchors as the Phase 0 baseline.
+- [ ] Creating a student with an initial credit writes exactly one `onboarding_credit` adjustment; the credit counts toward that student's promotion progress.
+- [ ] The same credit does **not** appear in the weekly attendance trend or the attendance-by-class chart, and the two reconcile with each other after a credited student is added.
+- [ ] The credit is visible in the student's attendance history as "crédito inicial" and is editable by a DIRECTOR, with the correction audited.
+- [ ] The credit field defaults to 0 and a student created without touching it has no adjustment row at all.
+
+---
+
+## Phase 4 — Per-organization branding
+
+### Data model
+
+`OrganizationBranding`, one row per Organization:
+
+- `displayName`;
+- logo (mime type, bytes, updatedAt);
+- `primaryColor` (default Alliance yellow `#FACC15`), `accentColor`, `surfaceStyle`;
+- **sidebar palette** — `sidebarBackground` (default `#111827`), `sidebarForeground`, `sidebarActiveBackground`, `sidebarActiveForeground`, `sidebarBorder`.
+
+Branches inherit their organization's branding. A per-branch logo is out of scope for v1.
+
+**Logo storage:** the production provider is not chosen yet, so keep the decision reversible. Store the image in Postgres behind a **storage adapter interface** (`DbLogoStorage` as the default implementation), so that if the eventual host offers object storage, swapping to it is a new adapter rather than a migration of the feature. Constraints: PNG/JPEG/WebP/SVG only, ≤ 512 KB, max 1024×1024, validated and re-encoded server-side; SVG sanitized or rejected. Serve from a cached route with `Cache-Control: public, max-age=300, stale-while-revalidate` and an ETag derived from `logoUpdatedAt`. Fallback: organization initials on the primary color.
+
+### Theming
+
+Tailwind v4 + shadcn already uses CSS custom properties. Do **not** generate per-organization Tailwind builds.
+
+- In the authenticated root layout (server component), load branding from the tenant context and emit overrides for the theme tokens: `--primary`, `--primary-foreground`, `--accent`, `--ring`, `--sidebar`, `--sidebar-foreground`, plus existing custom tokens.
+- Derive foreground/hover/muted variants programmatically (convert to OKLCH, adjust lightness) in `src/lib/theme.ts`, with unit tests.
+- **Contrast guard:** the settings color picker computes WCAG contrast against the surface and warns when the chosen primary would be unreadable, offering an auto-corrected suggestion.
+- Ship 6 presets (Alliance yellow/dark among them) so a non-technical director can pick rather than fiddle with hex.
+
+#### Sidebar palette — a full set of colors, chosen independently
+
+The sidebar is not limited to black, white or the brand accent. A director picks its color freely, independently of `primaryColor`: a yellow-accent academy may run a navy sidebar, and a red-accent academy a near-black one.
+
+- **Ship a palette of at least 12 sidebar presets**, each a complete, pre-validated set of the five sidebar tokens — not just a background color. Suggested range, dark through light: near-black, slate, navy, blue, teal, forest, olive, burgundy, brown, deep purple, warm gray, and a light/white sidebar.
+- **Custom color** is also available. When a director picks a custom background, derive `sidebarForeground`, `sidebarActiveBackground`, `sidebarActiveForeground` and `sidebarBorder` from it through the same OKLCH helpers in `src/lib/theme.ts` — light backgrounds get dark text and a visible border, dark backgrounds get light text and no border. Each derived token stays individually overridable for a director who wants exact control.
+- **Contrast is enforced here, not merely warned.** The sidebar is the app's primary navigation: nav label against sidebar background must meet **WCAG AA (4.5:1)**, and the active-item pair must meet it too. If a chosen combination fails, show the failure plainly and offer a one-click corrected version. Do not ship a palette that renders navigation unreadable, and do not let a preset ship failing its own check — validate the 12 presets in a unit test, both states.
+- The logo sits on the sidebar, so the logo preview in settings and in the onboarding wizard must render **against the chosen sidebar color**, not against white. A director picking a dark sidebar with a dark logo needs to see that immediately.
+- Live preview shows a real sidebar with nav items in default, hover and active states — not a color swatch.
+
+### Settings UI
+
+Build the logo uploader and the theme picker as **standalone reusable components**, not page-local markup — Phase 5's onboarding wizard renders the same two controls, and duplicating them there is a bug.
+
+New page **Configuración → Academia** (org ADMIN/DIRECTOR only):
+
+1. Organization name, display name, slug (slug editable by SUPER_ADMIN only once active).
+2. Logo upload with live preview (sidebar + kiosk).
+3. Theme presets + custom pickers with a live preview panel.
+4. Default locale and timezone.
+5. Promotion rules from Phase 2: mode per track, coach-approval toggle, editable rank table, and the branch-override surface if overrides exist.
+
+### Acceptance criteria
+
+- [ ] No literal "Alliance", brand hex or logo path remains in `src/**`.
+- [ ] A second seeded organization with a blue theme and its own logo renders blue sidebar/buttons/kiosk with its own logo; Alliance still renders yellow.
+- [ ] Kiosk, login page and student portal all show the organization's branding, resolved from the branch's organization.
+- [ ] A 3 MB file or an `.exe` renamed to `.png` is rejected with a clear localized error.
+- [ ] Contrast guard warns on unreadable choices.
+- [ ] `src/lib/theme.ts` has tests for derived variants and contrast math.
+- [ ] At least 12 sidebar presets exist, each a complete five-token set; a unit test asserts every preset passes WCAG AA for both the normal and the active nav pair.
+- [ ] A custom sidebar color derives readable foreground, active and border tokens automatically, and each remains individually overridable.
+- [ ] A failing custom combination is blocked from saving with a one-click corrected alternative offered — not merely warned.
+- [ ] Sidebar color is independent of `primaryColor`: a yellow-accent organization with a navy sidebar renders correctly in both places.
+- [ ] The logo preview renders against the selected sidebar color in both the settings page and the onboarding wizard.
+
+---
+
+## Phase 5 — Public organization registration + approval and invitations
+
+### Public page
+
+Unauthenticated route `/[locale]/registro-academia` (en: `/register-academy`), linked from the login page footer. The public UI may call this "your academy"; the record created is an Organization.
+
+Fields: organization name, country, city, contact name, contact email, contact phone, student-count band, referral source, preferred locale, terms acceptance.  Desired slug auto-suggested from the name with a live availability check.
+
+**Persist all submitted registration fields**, including student-count band, referral source, terms version, and `acceptedAt`.
+
+On submit:
+
+- Create the pending organization and its configuration **atomically**: `Organization` (status `PENDING`), branding defaults, `PromotionConfig`, and both seeded rank catalogs in one transaction.
+- Do not create a usable login yet, and do not send credentials.
+- Send email **after** the transaction; email failure does not roll back signup.
+- Rate-limit by IP and email (DB-backed counter is fine). Honeypot field. Duplicate emails/slugs handled gracefully, no 500.
+- Success screen explains the request is under review.
+
+### Invitations and approval
+
+Reuse or extend the **existing password-reset token infrastructure** for invitations. Tokens must be hashed, expiring, single-use, and invalidated appropriately on resend.
+
+If the director email already belongs to a `User`, invite that identity to the organization **without overwriting its password or existing memberships** — this is exactly the multi-organization membership case from Phase 1.
+
+On approve:
+
+1. `status → ACTIVE`, `approvedAt`, `approvedById`.
+2. Create or reuse the director identity and grant organization membership with the DIRECTOR role.
+3. Create a default branch (`Academy`) named after the city so the organization can start adding classes.
+4. Issue the invitation token; if email is not configured, the admin panel shows the link for manual sending.
+
+**Approval must be idempotent:** retries must not create duplicate branches, memberships, or invitations.
+
+On reject: `status → CANCELLED` with an internal reason note. Never hard-delete.
+
+Users of a `PENDING`, `SUSPENDED` or `CANCELLED` organization cannot sign in and see a clear localized message, not a generic auth error.
+
+### First-login onboarding wizard
+
+Branding is **not** collected on the public form. The public registration endpoint is unauthenticated, so accepting file uploads there would mean storing arbitrary bytes from anyone who fills in the form, before any approval — and a rejected request would leave an orphaned image. Instead the director sets up branding on first login, when they are authenticated and the organization is real.
+
+Add `Organization.onboardingCompletedAt DateTime?`.
+
+**Trigger:** after the director accepts the invitation and sets their password, if `onboardingCompletedAt` is null and the user holds an ADMIN/DIRECTOR membership for that organization, route them to `/[locale]/onboarding` instead of the dashboard. Any other role — INSTRUCTOR, STUDENT — never sees the wizard and is never redirected. The kiosk is never affected.
+
+**Steps** (3, with a visible progress indicator):
+
+1. **Academy name** — confirm or edit `name` and `displayName`; slug shown read-only with a note that support can change it.
+2. **Logo** — upload with live preview in the sidebar and kiosk mock. Skippable; the initials-on-primary-color fallback is shown as the alternative so skipping looks like a choice, not a gap.
+3. **Theme** — the 6 presets plus custom pickers, with the same live preview panel and contrast guard as the settings page.
+
+**Rules:**
+
+- **Reuse the Phase 4 components as-is.** The wizard is a guided wrapper around the existing settings controls — same upload validation (PNG/JPEG/WebP/SVG, ≤ 512 KB, max 1024×1024, server-side validation, SVG sanitized or rejected), same theme derivation, same contrast guard. Do not write a second logo uploader or color picker; if a control needs to work in both places, lift it into a shared component rather than copying it.
+- **Each step saves as it completes**, so closing the browser mid-wizard keeps the logo that was already uploaded. Re-entering resumes at the first incomplete step.
+- **Fully skippable.** A "Lo haré después / I'll do this later" action sets `onboardingCompletedAt` and lands on the dashboard with defaults intact. A dismissible card on the dashboard then links to Configuración → Academia. Never trap the director in the wizard, and never block them from the app over branding.
+- **Idempotent and non-reentrant.** Once `onboardingCompletedAt` is set, `/onboarding` redirects to the settings page. Nothing is lost or reset by visiting it again.
+- Completion and each branding change are audited per Phase 6.
+- Both locales, like everything else.
+
+### Acceptance criteria
+
+- [ ] Submitting the public form creates a PENDING organization with seeded ranks, branding and config in one transaction, and no active login.
+- [ ] All submitted fields, including terms version and `acceptedAt`, are persisted.
+- [ ] A simulated email failure leaves the signup committed.
+- [ ] Slug collisions, duplicate contact emails, and a filled honeypot are handled without a 500.
+- [ ] Rate limit blocks repeated submissions from the same IP within the window.
+- [ ] Approving twice produces exactly one branch, one membership and one valid invitation.
+- [ ] An existing user invited as director keeps their password and prior memberships and can switch organizations.
+- [ ] Invitation tokens are hashed, single-use, and expire; resend invalidates the prior token.
+- [ ] Users of non-ACTIVE organizations get the explicit localized message.
+- [ ] The public form accepts no file upload and no color input; a request that posts one is rejected.
+- [ ] A director completing invitation setup lands on `/onboarding`; an instructor or student of the same organization never does and is never redirected there.
+- [ ] Uploading a logo in step 2, closing the browser, and signing in again resumes at step 3 with the logo still set.
+- [ ] Skipping sets `onboardingCompletedAt`, lands on the dashboard with default branding, and shows the dismissible reminder card linking to settings.
+- [ ] Revisiting `/onboarding` after completion redirects to Configuración → Academia and changes nothing.
+- [ ] The wizard and the settings page share one logo-upload component and one theme picker — asserted by there being a single implementation of each in the codebase, with identical validation behavior in both places (same oversize file rejected, same contrast warning raised).
+
+---
+
+## Phase 6 — Platform admin panel, audit, and authorization
+
+Route group `/[locale]/admin/**`, restricted to `SUPER_ADMIN` via a server-side check in the layout **and** in every server action — not middleware alone. This is the only place the platform/global data-access module is used outside the paths listed in Phase 1.
+
+### Pages
+
+**`/admin/organizations`** — list: logo, name, slug, status, country/city, branch count, student count, active students, attendance in the last 30 days, created/approved dates, last activity. Filters by status and country; search by name/slug/contact. Row actions: view, approve, reject, suspend, reactivate, open as.
+
+**`/admin/organizations/pending`** — approval queue with the full submitted form and Approve / Reject with a note, reachable from a badge counter in the admin sidebar.
+
+**`/admin/organizations/new`** — manual registration: same fields as the public form, plus direct ACTIVE status, director email, optional branding, and a promotion preset (Alliance attendance / time-based / manual). Creates organization, branding, config, rank catalogs, first branch and the director invitation in one transaction, reusing the same idempotent approval path.
+
+**`/admin/organizations/[id]`** — detail: overview and internal notes, branding, promotion rules, branches, members (resend invite, reset link, deactivate), audit trail, danger zone (suspend, cancel — never hard delete).
+
+**`/admin`** — overview: organizations by status, total students across organizations, new organizations this month, attendance trend (recharts, same visual language as the director dashboard), pending-requests callout.
+
+### Organization billing status and grace period
+
+**This is platform billing — the organization paying Alexis for the app. It is a different concept from the existing Pagos section, which tracks students paying their academy. Do not merge the two models, pages, or terminology.** Nothing here processes money; it records state that Alexis sets manually, exactly like the student payment flow.
+
+#### Data model
+
+Add to `Organization`:
+
+- `graceDays Int @default(5)` — the platform default applied to **newly issued** invoices for this organization;
+- `billingNote String?` — internal.
+
+Add `OrganizationInvoice` (a distinct model — do not reuse `PaymentPlan` / `PaymentPeriod`, which are student-facing):
+
+- `organizationId`;
+- `periodStart`, `periodEnd`;
+- `dueOn` — a **calendar date**, not an instant;
+- `graceDaysApplied Int` — **snapshot of `Organization.graceDays` at issue time**;
+- `graceExtensionDays Int @default(0)` — explicit per-invoice extension;
+- `paidAt DateTime?`, `paidNote String?`, `recordedByUserId String?`;
+- `voidedAt DateTime?`, `voidReason String?`;
+- `createdAt`, `updatedAt`.
+
+#### Invoice creation (v1)
+
+**Platform invoices are created manually by `SUPER_ADMIN` in v1.** Creation snapshots the organization's `graceDays` into `graceDaysApplied`. **No scheduled job creates invoices.** Deadline evaluation still updates billing visibility automatically as time passes, without marking invoices paid or suspending organizations.
+
+This deliberately avoids recurrence, proration and duplicate-job handling until they are actually needed. Do not add a billing cron, a "next invoice" scheduler, or a recurring-plan model in this phase.
+
+The create form lives in the admin panel on the organization detail page: period start/end, due date, and an optional note. It shows the `graceDays` value being snapshotted and the resulting deadline before saving, so the number is never a surprise after the fact. Creation is audited.
+
+#### Deadline calculation (exact)
+
+All of it derived, never stored:
+
+```
+effectiveGraceDays = graceDaysApplied + graceExtensionDays
+graceEndsOn        = dueOn.plus({ days: effectiveGraceDays })        // Luxon calendar days
+flaggedFrom        = graceEndsOn.plus({ days: 1 }).startOf('day')    // in Organization.timezone
+```
+
+- The due date and both derived dates are **calendar dates resolved in the organization's timezone**, never in UTC and never in the server's local zone. Compare against `DateTime.now().setZone(org.timezone)`.
+- The grace window is **inclusive** of `graceEndsOn`: an invoice due Jan 28 with 5 grace days is inside grace through **Feb 2**, and becomes flagged at `00:00` org-time on **Feb 3**.
+- Use Luxon calendar-day addition. Never add `n * 86400000` milliseconds, and never approximate.
+- `graceDays` and `graceExtensionDays` must be non-negative integers. `0` is valid and means the deadline is the due date itself.
+
+| State | Condition | Effect |
+|---|---|---|
+| `CURRENT` | no open invoice, or `paidAt` set | nothing |
+| `DUE` | `now > endOf(dueOn)` and `now < flaggedFrom` | organization stays **ACTIVE**, app fully functional, kiosk normal |
+| `GRACE_EXPIRED` | `now >= flaggedFrom`, unpaid | **flagged for review** in the admin queue; still ACTIVE |
+
+`now` is always `DateTime.now().setZone(org.timezone)`. The `>=` on `flaggedFrom` is deliberate — see the precision rules below.
+
+#### Who may change grace, and what it affects
+
+- `Organization.graceDays` is editable by **`SUPER_ADMIN` only**, and `graceExtensionDays` on a specific invoice likewise, with a required note.
+- **"Not visible to directors" means omitted from the data, not hidden in the UI.** `graceDays`, `graceDaysApplied`, `graceExtensionDays` and the review fields must be absent from every director-facing payload: route-handler JSON, server-action return values, and server-component props — RSC props are serialized into the page payload and are readable by anyone who opens devtools. Select explicit field lists for organization reads on director surfaces; never `include: { organization: true }` or a bare `findUnique` whose whole row is handed to a component. Route these through a director-facing DTO/serializer and assert the omission in tests against the actual serialized payload, not against the rendered DOM.
+- A director sees only the invoice's due date and its current deadline date. The grace number itself is never sent.
+- **Changing `Organization.graceDays` affects only invoices issued after the change. Outstanding invoices keep the `graceDaysApplied` they were issued with.** This is why the value is snapshotted: a deadline a customer has already been told must never move silently, in either direction — and shortening the default retroactively could flag several accounts overnight.
+- To move an outstanding invoice's deadline, use the explicit per-invoice extension. If the extension pushes `flaggedFrom` into the future, the invoice returns from `GRACE_EXPIRED` to `DUE` and the review flag clears; that transition is audited like any other.
+- Both changes write `AuditLog` rows with before/after values, the actor, and the note: `organization.graceDays.changed` and `organizationInvoice.graceExtended`.
+- The settings UI states the rule in plain language next to the field: *"Applies to invoices issued from now on. Outstanding invoices keep their current deadline — extend those individually."*
+
+#### Manual enforcement
+
+- **Billing state never changes `Organization.status`.** No job, action or cron may set `SUSPENDED` from billing state. Exceeding grace **flags the account for review**; a human decides what happens next.
+- The review flag is workable state, not just a badge: `reviewAcknowledgedAt`, `reviewAcknowledgedById` and `reviewNote` on the invoice let Alexis record "spoke to the director, transfer coming Friday" and take it out of the unreviewed queue without paying or suspending anything.
+
+**Acknowledgment is not resolution.** An acknowledged invoice is still `GRACE_EXPIRED` and still unpaid. It leaves the *unreviewed* queue only. It stays in the outstanding-invoices view, still counts as overdue everywhere overdue is reported, and the director's escalated banner does not change. Only `paidAt` (or voiding) resolves an invoice. Never let acknowledgment flip a derived state, clear the banner, or remove the invoice from outstanding totals.
+
+**Acknowledgment is scoped to one expiration episode.** Store `reviewAcknowledgedForFlaggedOn` (a date) alongside the acknowledgment fields, set to the `flaggedFrom` date that was current when it was acknowledged. The invoice is *unreviewed* whenever:
+
+```ts
+const now = DateTime.now().setZone(org.timezone)
+
+const isExpired   = now >= flaggedFrom                       // inclusive: expiration starts exactly at midnight
+const ackKey      = invoice.reviewAcknowledgedForFlaggedOn   // stored as a date
+const isUnreviewed = isExpired && toKey(ackKey) !== toKey(flaggedFrom)
+```
+
+Two precision rules:
+
+- Use `now >= flaggedFrom`, **not** "`flaggedFrom` is in the past". `flaggedFrom` is already `startOf('day')`, so `>=` makes expiration begin exactly at `00:00:00.000` org-time. A strict `>` would leave the first millisecond of the day unexpired.
+- Compare acknowledgment keys by their **canonical date value**, never by object identity. `dateA !== dateB` on two JavaScript `Date` objects is reference comparison and is always true even for the same instant — the classic version of this bug silently makes every acknowledgment look stale (or, with a sloppy fix, never stale). Normalize both sides through one helper before comparing, e.g. `toKey = (d) => DateTime.fromJSDate(d).setZone(org.timezone).toISODate()`, and compare the resulting `YYYY-MM-DD` strings. The same applies anywhere else two dates are compared for equality in billing code.
+
+So if an extension pushes the deadline out and the invoice later expires again, `flaggedFrom` is a new date, the stale acknowledgment no longer matches, and a **fresh review item appears** — an old `reviewAcknowledgedAt` can never suppress it indefinitely. Each acknowledgment writes its own `AuditLog` row, so the sequence of episodes stays auditable without a second model.
+- During `DUE`, show a non-blocking banner to that organization's ADMIN/DIRECTOR only — never to instructors, students, or the kiosk. It names the due date and the deadline, fully localized, and never exposes `graceDays` as a number the director can act on.
+- During `GRACE_EXPIRED` the banner escalates in tone but still blocks nothing.
+- Recording payment sets `paidAt` and clears the banner and flag immediately, audited with before/after values.
+- The admin list gains a billing column and filters for `DUE` / `GRACE_EXPIRED` / acknowledged, so the overdue set is one click away.
+
+### Authorization and status enforcement
+
+Enforce organization status on protected requests and mutations, **including existing sessions** — a director whose organization is suspended mid-session loses access on their next request, not at their next login.
+
+Enforce impersonation permissions, read-only mode, and expiration **on the server**. A banner or a disabled button is not an authorization control. Impersonation writes an audit row at start and stop, is read-only unless edits are explicitly enabled (logged again), and expires after 60 minutes.
+
+### Audit
+
+**Extend the existing `AuditLog`; do not introduce a duplicate model.** Write entries for: organization approve/reject/suspend/reactivate, impersonation start/stop, manual promotions and corrections, promotion-rule and configuration changes with before/after values, membership changes, and branding changes. Surface the trail on the organization detail page.
+
+### Acceptance criteria
+
+- [ ] A director hitting any `/admin` route or server action gets 403/404 — verified by test for both the page and the actions.
+- [ ] Counts on the list match direct queries for a seeded fixture of three organizations.
+- [ ] Manual creation produces a fully working organization (ranks seeded, director can accept the invitation, kiosk works) with no manual SQL, and is idempotent on retry.
+- [ ] Suspending an organization blocks its users on their next request with an existing session open, without deleting data; reactivating restores access.
+- [ ] Impersonation is server-enforced: read-only by default, expires, and both start and stop are audited.
+- [ ] Every admin mutation writes an `AuditLog` row with before/after values where applicable.
+- [ ] An organization one day past `dueOn` is `DUE`, remains ACTIVE, and its kiosk and every page work normally; only its ADMIN/DIRECTOR see the banner.
+- [ ] An invoice due Jan 28 with 5 grace days is `DUE` through Feb 2 inclusive and `GRACE_EXPIRED` from 00:00 org-time on Feb 3 — asserted at each boundary date, evaluated in the organization's timezone, with a test that fails if UTC or server-local time is used.
+- [ ] `graceDays: 0` makes the deadline the due date itself; negative or non-integer values are rejected at validation.
+- [ ] A `GRACE_EXPIRED` organization is still ACTIVE and fully functional, and appears in the admin review queue.
+- [ ] No job, action or code path sets `status = SUSPENDED` from billing state — verified by test.
+- [ ] Changing `Organization.graceDays` leaves every outstanding invoice's deadline unchanged, and applies to the next invoice issued — asserted with an invoice open at the time of the change.
+- [ ] Extending an outstanding invoice moves its deadline, and an extension past today returns it from `GRACE_EXPIRED` to `DUE` and clears the review flag.
+- [ ] A DIRECTOR cannot read or write `graceDays` or `graceExtensionDays` through any route or server action; both are SUPER_ADMIN-only and audited with before/after values and the actor.
+- [ ] `graceDays`, `graceDaysApplied`, `graceExtensionDays` and the review fields appear nowhere in a director-facing **serialized payload** — asserted against route-handler JSON and the RSC payload/server-action return values, not against the rendered DOM.
+- [ ] Acknowledging a flagged invoice with a note removes it from the unreviewed queue while leaving it `GRACE_EXPIRED`, unpaid, present in the outstanding-invoices view and in overdue totals, with the director's banner unchanged.
+- [ ] Acknowledge → extend (invoice returns to `DUE`) → let the new deadline pass: the invoice reappears as a **fresh unreviewed item**, because `reviewAcknowledgedForFlaggedOn` no longer matches the new `flaggedFrom`.
+- [ ] Expiration begins exactly at midnight: at `23:59:59.999` org-time on `graceEndsOn` the invoice is `DUE`, and at `00:00:00.000` on the next day it is `GRACE_EXPIRED`. Both instants asserted.
+- [ ] Acknowledgment-key equality is compared by canonical date value: a test that acknowledges and then re-reads with a freshly constructed equivalent date still shows the invoice as reviewed (this fails if `Date` object identity or reference comparison is used anywhere in the path).
+- [ ] Invoices are only ever created by a SUPER_ADMIN action; no job or cron creates one — verified by test. Creation snapshots `graceDays` into `graceDaysApplied` and is audited.
+- [ ] With no code running in between, an unpaid invoice's state still moves `CURRENT → DUE → GRACE_EXPIRED` purely as dates pass (evaluated on read), and no invoice is marked paid and no organization suspended as a result.
+- [ ] Recording a payment clears the banner and flag and writes an audit row.
+- [ ] Platform billing fields and UI are entirely separate from the student Pagos section; no shared model or route.
+
+---
+
+## Phase 7 — Consolidated i18n, tests, and parity verification
+
+Phase 7 consolidates verification. It is **not** the first time these checks run — tenancy and Alliance parity verification run after every relevant phase, against the Phase 0 baseline.
+
+- [ ] Every new string exists in both `messages/es.json` and `messages/en.json`; a test asserts key parity and that no new component contains a hardcoded user-facing literal.
+- [ ] Rank labels come from the rank rows (`labelEs` / `labelEn`), not from translation files — they are per-organization data.
+- [ ] Vitest coverage for: tenant isolation across all query shapes, promotion engine (all modes, cumulative attendance, terminal ranks, invalid config, negative totals, month boundaries), belt display derivation, theme/contrast, logo validation, registration + idempotent approval, invitation tokens, admin authorization, impersonation expiry.
+- [ ] Tenancy verification and Alliance parity verification both pass against the Phase 0 baseline, with an explicitly configured database target.
+- [ ] `docs/REDESIGN_BRIEF.md` updated with the new pages; `docs/MULTI_ACADEMY_OPERATIONS.md` written for Alexis: onboarding an organization, changing promotion rules, branch overrides, correcting a mistaken promotion, and what to do when a director asks for a custom belt system.
+- [ ] README updated with new env vars (mail provider optional, job credential, platform bootstrap procedure).
+
+---
+
+## Phase 8 — Dashboard analytics: attendance by class
+
+### Goal
+
+The weekly attendance trend answers *"is the academy growing?"*. It does not answer *"which classes actually fill up?"* — the question that decides whether the 6am GI stays on the schedule. Add a companion **bar chart of attendance by class**, in the same visual language as the existing trend line.
+
+### Data
+
+- **Reuse the existing attendance aggregation.** Do not write a second counting function: the numbers in this chart must reconcile exactly with the weekly trend and with the student counts. If the trend counts by summing `AttendanceRecord.delta`, so does this.
+- **Exclude onboarding credits** (Phase 3). They are promotion-relevant but nobody attended a class, so they belong to no class and no week. Both this chart and the weekly trend exclude them, via the flag rather than a string match on the reason.
+- Group by class (the schedule entry — "Lunes 6:00 GI principiantes"), not by individual session.
+- Range selector shared with the trend chart where they sit on the same dashboard: last 7 / 30 / 90 days. One control, both charts.
+- Organization-scoped, branch-filtered by the viewer's permitted branches. Carry the same cross-branch caption the trend chart uses ("cuenta por sede de entrada…"), since a student training at both locations appears under the class they attended.
+- Sorted by count descending. Show the top 10 with a "ver todas" expansion; do not render 30 bars by default.
+
+### Chart form
+
+**Horizontal bars.** Class names are long ("Miércoles 6:30 competición") and vertical bars force rotated labels, which are slow to read and collide at narrow widths. Horizontal bars give every label a full readable line.
+
+Specifics:
+
+- **One measure across categories = one color.** A single series takes a single color — do not assign a different hue per class. Rainbow bars imply a categorical encoding that isn't there, and they break the moment the filter changes which classes survive.
+- No legend for a single series; the chart title names the measure.
+- 4px rounded ends on the data end only, anchored flat to the baseline. Thin bars with a 2px gap between them.
+- Recessive axes and gridlines — light, thin, behind the data. Value labels at the end of each bar; no axis clutter duplicating them.
+- Hover tooltip per bar: class name, count, and the count's share of the range total.
+- **Dark mode is chosen, not flipped.** Pick the dark-surface bar color deliberately and check it against the dark background; do not auto-invert the light one.
+- Empty state ("sin asistencias en este rango") and a loading skeleton — not a collapsed axis or a spinner over a blank box.
+- Accessibility: a table view of the same data reachable from the chart, and an accessible name per bar. Identity must never rest on color alone.
+
+### Placement
+
+On the director dashboard, directly below the weekly trend, full width. Both charts share the range control. The instructor dashboard shows the same chart scoped to their branch.
+
+### Acceptance criteria
+
+- [ ] Totals in the bar chart reconcile exactly with the weekly trend over the same range and branch filter — asserted by a test using the shared aggregation, not by two independent queries.
+- [ ] Changing the range control updates both charts.
+- [ ] An instructor sees only their branch's classes; a director sees all branches in their organization; no class from another organization ever appears.
+- [ ] A single color is used for all bars; no per-class hue assignment exists in the code.
+- [ ] Filtering to fewer classes does not repaint the survivors a different color.
+- [ ] Long class names render fully, unrotated and untruncated, at 1280px and at phone width.
+- [ ] Hover tooltip shows class, count and share; a keyboard user can reach the same information.
+- [ ] Dark mode uses its own selected bar and surface colors, verified by screenshot on the dark dashboard.
+- [ ] Empty and loading states render correctly with a new organization that has no attendance yet.
+
+---
+
+## Appendix A — Decisions already made (do not re-litigate)
+
+- `Organization` is the tenant; the existing `Academy` stays a physical branch. Never conflate them in the database.
+- **One multi-tenant deployment, not an app per academy.** Considered and rejected: per-academy deployments multiply every migration, deploy and monitoring task by N for a solo maintainer, multiply infra cost per customer, and break the self-serve signup funnel. The decisive reason is reversibility — multi-tenant → a dedicated instance for one customer is an afternoon; single-tenant → multi-tenant is this entire project repeated with N academies' data.
+- Students are entered manually at go-live. There is no GymDesk importer, and none should be built.
+- **Launch sequencing: the full feature set ships before Alliance gets it.** No early pilot on a partial build. Consequently the Phase 1 backfill script will never run against real data — it is proven, kept, and effectively ceremony unless that decision changes. Do not let it constrain later schema decisions.
+- The promotion **rule engine is built now**: attendance, time, hybrid and manual — but Alliance's cumulative attendance semantics are the reference behavior and must not regress.
+- Attendance progress is cumulative since the belt anchor and survives stripe awards. Only belt awards reset the anchor.
+- Kids belts use the Alliance preset above (5 degrees on white and grey-white, 11 on the rest), stored as data. Official-IBJJF claims require verification first.
+- The belt bar always draws at most 4 tapes; degrees past 4 replace older tapes while the counter climbs to `maxStripes`.
+- The belt is drawn as a realistic woven belt in inline SVG — weave, longitudinal stitching, an inset rank bar with a tail, tapes with depth — not two rectangles. The bar color comes from data, so a black belt shows a red bar.
+- Promotions can be awarded from the student detail page as well as the queue, through the same award functions and the same authorization rules. Instructors get a read-only view there.
+- The sidebar has its own full palette chosen independently of the brand accent, with at least 12 presets, derived-but-overridable tokens, and WCAG AA enforced rather than warned.
+- Attendance by class is a single-color horizontal bar chart sharing the trend chart's aggregation and range control.
+- Organization signup is a **public form creating a PENDING record**, approved by the platform admin. No instant self-serve activation.
+- Branding (logo, theme) is collected in a **skippable first-login onboarding wizard** after approval, not on the public form — the public endpoint is unauthenticated and must not accept uploads. The wizard reuses the Phase 4 settings components rather than duplicating them.
+- `SUPER_ADMIN` is explicitly granted through a documented bootstrap, never inferred from a form or profile field.
+- Instructor awarding stays out of scope. ADMIN/DIRECTOR award; instructors view within their branch scope.
+- Payment processing stays out of scope: manual paid/promo status with custom promotions.
+- The kiosk stays session-less — hashed branch token plus hashed student code, existing class matching and lockout behavior preserved.
+- A SUSPENDED organization's kiosk rejects check-ins server-side with a generic localized message; attendance is preserved and reactivation reuses the existing tokens.
+- Unpaid organizations get a **5-day grace period** (per-organization `graceDays`) during which they stay ACTIVE and fully functional. Grace never auto-suspends; exceeding it flags the account for review and a human decides.
+- `graceDays` is SUPER_ADMIN-only, snapshotted onto each invoice at issue time, and therefore applies to **future invoices only**; an outstanding invoice's deadline moves only through an explicit, audited per-invoice extension.
+- All billing deadline math is calendar-day arithmetic in the organization's timezone, with the grace window inclusive of its last day.
+- Platform invoices are created **manually by SUPER_ADMIN in v1** — no scheduled job, no recurrence, no proration. Billing state still evolves automatically as dates pass, evaluated on read.
+- Acknowledging a review flag is not resolution: the invoice stays `GRACE_EXPIRED`, unpaid and outstanding, and a later expiration raises a fresh review item.
+- Platform billing (organizations paying Alexis) is separate from the student Pagos section (students paying their academy). Same manual, no-processing approach; different models and pages.
+
+## Appendix B — Open questions (ask Alexis, do not guess)
+
+1. Should Alexis get a notification (email or admin badge) the day an invoice's grace runs out, or is the admin review queue enough?
+2. Per-organization student limits / plan tiers — needed now, or does the manual billing-status field cover the first customers?
+3. Should organizations be able to define **custom rank tracks** (a masters track, or a non-IBJJF kids system), or is editing thresholds on the two seeded tracks enough for v1?
+4. Per-organization data export (CSV of students + attendance) — needed for the sales pitch, or later?
+
+---
+
+## Appendix C — Decisions from the Phase 1 discovery review
+
+Answers to the questions raised after the first repository sweep. These are settled; do not re-open them in a later phase.
+
+**1. `BeltRequirement` gets `organizationId` in Phase 1.** Phase 1's promise is that no query can cross tenants; leaving one tenant-owned table unscoped for a whole phase is a hole. It costs one column that Phase 2 drops with the table, and it makes Phase 2's branch-override inventory easier.
+
+**2. `AuditLog` gets `organizationId`, nullable.** Deriving it through `academyId` cannot work: organization-level actions (approve, suspend, grace change, invoice) have no academy at all, so the join yields null for exactly the rows Phase 6 needs. Nullable covers genuine platform-level entries.
+
+**3. `Notification` gets `organizationId`, and it is `NOT NULL`.** In scope, minimally — Phase 1 makes multi-organization membership real, so a notification must say which organization it belongs to. The weekly-digest cron matters most: it iterates and sends, so it derives tenant context per organization and skips non-ACTIVE ones. No new UI.
+
+**Why this differs from `AuditLog`'s nullable column — the test is who reads the row.** `AuditLog` is read only by the platform admin, so "null organization = a platform-level entry, never visible to a tenant" has exactly one reader and one meaning; it is legible and enforceable. `Notification` is read by tenant users, so a null has no defined audience: the enforcement wrapper would have to invent a rule, and the natural fallback — show it to the recipient regardless of active organization — is a cross-tenant visibility decision made by omission. It breaks concretely for a user who belongs to two organizations, where a null-org notification appears under both or under neither and nobody decided which.
+
+Every notification the app produces is derived from an academy, so there is nothing to backfill. Do not "harmonize" the two models into matching nullability later; they differ for this reason.
+
+If a genuine account-level in-app notification is ever needed (password changed, welcome), give it its own model or an explicit discriminator with a stated visibility rule. Do not let nulls into the tenant-scoped table.
+
+**4. `User.role` is removed; membership is the only authorization source.** Sequence it safely rather than in one step:
+
+1. create the membership model and backfill it from the current `User.role`;
+2. switch every authorization read to membership;
+3. verify coverage — demonstrate that no code path still reads `User.role`;
+4. then drop the column.
+
+A temporary migration field is acceptable during steps 1–3 **provided nothing branches on it once step 2 lands** — it must never be a competing authorization source.
+
+The role does **not** go in the JWT. The token carries `userId` + `activeOrganizationId`; membership and role are re-validated against the database per request, as the app already does, so revoking a membership takes effect immediately rather than at token expiry.
+
+### Before implementing: the session/JWT/middleware proposal
+
+**Propose the design and get approval before writing any of it.** Every authorization check in every later phase inherits this shape, so it is far cheaper to argue about on paper than in a migration.
+
+The proposal must show how organization membership and existing academy (branch) assignments compose — org scope and branch scope are two levels of filter, not one — and must answer each of the following explicitly. A proposal that leaves any of these implicit is incomplete; send it back rather than starting from it.
+
+**1. Where `activeOrganizationId` comes from, and that it is treated as a selector.**
+A cookie, URL segment or form field says which organization the user *wants*. Membership is what says they *may*. If the design reads the selector as authority anywhere, it is wrong.
+
+**2. Two tabs, two organizations.**
+A user who belongs to more than one organization will eventually have one open in each tab. If the active organization lives in mutable ambient state (a cookie), a server action fired from the first tab can execute against the organization selected in the second. Actions and mutations must carry the organization explicitly and re-derive authorization from it, not read ambient state at execution time. Show how this is prevented, not merely that it is unlikely.
+
+**3. The kiosk on a browser that already has a session.**
+Realistically the kiosk device is somebody's laptop, with a director's session sitting in the cookie jar. The kiosk path resolves its organization **only** from the verified branch token and must never inherit tenant context from a session that happens to be present. Show the kiosk request path deriving nothing from cookies.
+
+**4. Middleware is not the gate.**
+`src/middleware.ts` excludes `/api/**` from its matcher — which is exactly where the kiosk and cron routes live. Enforcement belongs in handlers and server actions; middleware is convenience and redirects, never the security boundary. The proposal must not rely on it for isolation.
+
+**5. Platform administrators are not members.**
+Acting on an organization they do not belong to needs its own explicit path — never a synthetic membership row, which is how `SUPER_ADMIN` leaks back into the per-organization role enum that decision 5 deliberately keeps it out of. Show how platform scope and impersonation (Phase 6) establish tenant context without inventing a membership.
+
+**6. Fail-closed on absence.**
+No tenant context must mean deny. Never "unscoped", never "all organizations", never a silent fallback to the user's first membership.
+
+**7. Revocation and suspension take effect on the next request.**
+A membership revoked or an organization suspended mid-session must deny the user's very next request, not at token expiry. This is why the role is re-validated against the database per request rather than carried in the JWT.
+
+**8. Sessions in flight when the shape changes.**
+Existing JWTs will carry the old shape. Say what happens to them. Pre-launch the answer is simply to invalidate all sessions — but state it, rather than leaving old tokens half-working and half-trusted.
+
+**5. `SUPER_ADMIN` is a separate field on `User`, never a value in the per-organization membership role enum.** If it were representable as a membership role, "member of org X with role SUPER_ADMIN" becomes a valid row and something will eventually read it as global. Granted only by the documented bootstrap; never settable through any form, API or profile field.
+
+**Question 1 (branch overrides) — CLOSED.** Verified against both `prisma/seed.ts` and the live dev table: all `BeltRequirement` rows carry `academyId = NULL`. No per-branch override has ever existed, and no code path outside the seed has ever written one. Beyond that, per-branch thresholds are *semantically undefined* under cross-branch attendance pooling, so the mechanism is dropped rather than carried into `BeltRank`/`PromotionConfig`. The spec's instruction to preserve overrides was explicitly conditional on overrides existing; it does not apply.
+
+**6. Enforcement is layered: a typed wrapper as the only access path, with the Prisma extension underneath as a runtime backstop** so mistakes fail closed. Raw SQL is confined to the platform module.
+
+Be precise about what enforces what. ESLint `no-restricted-imports` is a lint/CI restriction, **not** a TypeScript guarantee — it fails a build, it does not make the unsafe call untypeable. Design the wrapper so the types themselves make unscoped access hard: raw delegates unexported, tenant context required as an argument. Lint is the secondary net.
+
+Neither layer proves isolation by existing. Demonstrated coverage is required: a test per operation shape — reads including `findUniqueOrThrow`/`findFirstOrThrow`, aggregates, `groupBy`, create/update/delete and bulk variants, `upsert`, nested writes and relation `connect`, transactions, raw SQL — each showing a cross-tenant attempt failing.
+
+**This is not a mechanical replacement.** Swapping `academyScopeWhere` call sites is the easy part; preserving instructor branch restrictions, handling nested writes, and scoping the kiosk and the cron job each need individual review and their own tests. Estimate accordingly.
+
+Separately, audit the call sites. The `academyScopeWhere` comment ("do not spread this with another literal `academyId` key — the literal silently wins") documents a hazard; it is not evidence that anyone hit it. Check whether any current call site actually has that bug and report the finding either way.
+
+---
+
+## Sources consulted for the kids belt preset
+
+- https://juberajj.com/kids-ibjjf-belt-system/
+- https://eastonbjj.com/brazilian-jiu-jitsu/the-ibjjf-belt-system-for-kids/
+
+These are secondary sources. Verify degree counts against the current official IBJJF graduation rulebook, and record the source and verification date, before describing the preset as official anywhere user-facing.

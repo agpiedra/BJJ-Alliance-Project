@@ -10,11 +10,19 @@ const INITIAL_STATE: ActionState = {};
 
 // Rendered only for ADMIN/DIRECTOR sessions (page.tsx gate) — the real
 // enforcement is server-side in `archiveStudent` itself
-// (requireStaffSession + isAcademyInScope re-checked against a fresh read),
+// (requireTenantContext + isAcademyInTenantScope re-checked against a fresh read),
 // never this UI check alone.
-export function ArchiveStudentButton({ studentId, disabled }: { studentId: string; disabled?: boolean }) {
+export function ArchiveStudentButton({
+  organizationId,
+  studentId,
+  disabled,
+}: {
+  organizationId: string;
+  studentId: string;
+  disabled?: boolean;
+}) {
   const t = useTranslations("students.detail.archive");
-  const [state, formAction, isPending] = useActionState(archiveStudent, INITIAL_STATE);
+  const [state, formAction, isPending] = useActionState(archiveStudent.bind(null, organizationId), INITIAL_STATE);
 
   return (
     <form

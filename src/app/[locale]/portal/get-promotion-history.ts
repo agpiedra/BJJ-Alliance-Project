@@ -1,11 +1,14 @@
 import { prisma } from "@/lib/prisma";
-import type { Belt } from "@/generated/prisma/client";
 
 export type PromotionHistoryEntry = {
   id: string;
-  fromBelt: Belt;
+  fromBelt: string;
+  fromBeltLabelEs: string;
+  fromBeltLabelEn: string;
   fromStripes: number;
-  toBelt: Belt;
+  toBelt: string;
+  toBeltLabelEs: string;
+  toBeltLabelEn: string;
   toStripes: number;
   awardedAt: Date;
   notes: string | null;
@@ -50,9 +53,9 @@ export async function getOwnPromotionHistory(studentId: string): Promise<Promoti
     orderBy: { awardedAt: "desc" },
     select: {
       id: true,
-      fromBelt: true,
+      fromRank: { select: { code: true, labelEs: true, labelEn: true } },
       fromStripes: true,
-      toBelt: true,
+      toRank: { select: { code: true, labelEs: true, labelEn: true } },
       toStripes: true,
       awardedAt: true,
       notes: true,
@@ -61,9 +64,13 @@ export async function getOwnPromotionHistory(studentId: string): Promise<Promoti
 
   return promotions.map((promotion) => ({
     id: promotion.id,
-    fromBelt: promotion.fromBelt,
+    fromBelt: promotion.fromRank.code,
+    fromBeltLabelEs: promotion.fromRank.labelEs,
+    fromBeltLabelEn: promotion.fromRank.labelEn,
     fromStripes: promotion.fromStripes,
-    toBelt: promotion.toBelt,
+    toBelt: promotion.toRank.code,
+    toBeltLabelEs: promotion.toRank.labelEs,
+    toBeltLabelEn: promotion.toRank.labelEn,
     toStripes: promotion.toStripes,
     awardedAt: promotion.awardedAt,
     notes: promotion.notes,

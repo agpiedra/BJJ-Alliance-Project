@@ -1,6 +1,6 @@
 import { DateTime } from "luxon";
 import { ZONE } from "@/lib/scheduling/zone";
-import type { StaffSession } from "@/lib/auth/session";
+import type { TenantContext } from "@/lib/tenant/types";
 
 /**
  * The default headline-metrics window (spec's own words: "active-window
@@ -18,7 +18,7 @@ export interface AnalyticsFilters {
    * non-ADMIN (DIRECTOR/INSTRUCTOR) session, regardless of how many
    * academies they're assigned to. A non-ADMIN session is never widened by
    * this: every panel's query function independently ANDs in
-   * `academyScopeWhere(session)` regardless of `academyId`, so `null` here
+   * `branchScopeWhere(context)` regardless of `academyId`, so `null` here
    * simply defers entirely to that session-level scope rather than
    * redundantly (and, for a multi-academy DIRECTOR, incorrectly) re-pinning
    * to a single academy.
@@ -67,13 +67,13 @@ function parseDateParam(value: string | undefined): DateTime | null {
  * taken one step further here: rather than re-pinning to `academyIds[0]`
  * (which would silently drop any additional `StaffAssignment` a DIRECTOR
  * with more than one academy has), `academyId: null` lets their full
- * session-level scope apply via `academyScopeWhere(session)`, the same
+ * session-level scope apply via `branchScopeWhere(context)`, the same
  * `{ in: [...] }` fragment `listStudents` itself relies on. `academy=ambas`,
  * or its absence, resolves ADMIN to `academyId: null` the same way —
  * "every academy in scope".
  */
 export function resolveAnalyticsFilters(
-  session: StaffSession,
+  context: TenantContext,
   searchParams: AnalyticsSearchParams,
   today: DateTime = DateTime.now().setZone(ZONE),
 ): AnalyticsFilters {
@@ -85,18 +85,50 @@ export function resolveAnalyticsFilters(
   const from = (bothValid ? parsedFrom : to.minus({ days: DEFAULT_RANGE_DAYS })).startOf("day");
 
   let academyId: string | null;
-  if (session.role === "ADMIN") {
+  if (context.organizationRole === "ADMIN") {
     const requested = searchParams.academy;
     academyId = !requested || requested === "ambas" ? null : requested;
   } else {
     // DIRECTOR/INSTRUCTOR: never gets the picker (spec's "Locations
     // (admin only)" line), so whatever `academy` they pass is ignored —
     // `null` here defers entirely to the session's own scope
-    // (`academyScopeWhere(session)`, applied independently by every panel's
+    // (`branchScopeWhere(context)`, applied independently by every panel's
     // query function), rather than pinning to just their FIRST assignment
     // and silently dropping any others.
     academyId = null;
   }
 
   return { from, to, academyId };
+}
+
+/** REDESIGN_BRIEF.md §4.3 filter card: "7 días / 30 días / 90 días / Año". */
+export type QuickRangeKey = "7d" | "30d" | "90d" | "year";
+
+export const QUICK_RANGE_KEYS: QuickRangeKey[] = ["7d", "30d", "90d", "year"];
+
+const QUICK_RANGE_DAYS: Record<Exclude<QuickRangeKey, "year">, number> = {
+  "7d": 7,
+  "30d": DEFAULT_RANGE_DAYS,
+  "90d": 90,
+};
+
+/**
+ * The from/to ISO date strings for one quick-range preset button, anchored
+ * on `today`. "year" is a calendar-year-to-date window (since Jan 1), not a
+ * rolling 365 days — matching how a segmented "Año" control reads. Pure,
+ * same production/test split as `resolveAnalyticsFilters` itself: production
+ * callers omit `today` and get the real CR-zoned instant, tests inject a
+ * fixed one. The page compares its own resolved `filters.from`/`to` against
+ * this to decide which preset (if any) is the active one — no client-side
+ * state needed for that either.
+ */
+export function computeQuickRange(
+  key: QuickRangeKey,
+  today: DateTime = DateTime.now().setZone(ZONE),
+): { from: string; to: string } {
+  const to = today.toISODate()!;
+  if (key === "year") {
+    return { from: today.startOf("year").toISODate()!, to };
+  }
+  return { from: today.minus({ days: QUICK_RANGE_DAYS[key] }).toISODate()!, to };
 }
