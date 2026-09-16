@@ -254,6 +254,15 @@ export default async function StudentsPage({
           select: { id: true, name: true },
         });
 
+  // MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 3c-i: the create-student form's
+  // track selector filters this SAME list client-side rather than making a
+  // round trip per track change — both tracks' ranks are cheap (18 rows
+  // total) and org-scoped once here.
+  const createStudentRankOptions = await getScopedDb(context).beltRank.findMany({
+    orderBy: [{ track: "asc" }, { order: "asc" }],
+    select: { id: true, code: true, track: true, order: true, maxStripes: true, labelEs: true, labelEn: true },
+  });
+
   // Page-header sub line numbers (Rule 5: "numbers get context") — scoped
   // the same way listStudents itself scopes a non-ADMIN session, so a
   // DIRECTOR/INSTRUCTOR only ever sees counts for their own academy/academies.
@@ -285,7 +294,13 @@ export default async function StudentsPage({
       {/* Server-side gate is the real enforcement (createStudent itself
           re-checks the role) — this only avoids showing the control to a
           role that would just be rejected, as defense in depth. */}
-      {canCreate && <CreateStudentForm organizationId={context.organizationId} academies={academies} />}
+      {canCreate && (
+        <CreateStudentForm
+          organizationId={context.organizationId}
+          academies={academies}
+          rankOptions={createStudentRankOptions}
+        />
+      )}
 
       <Card>
         <form method="get">

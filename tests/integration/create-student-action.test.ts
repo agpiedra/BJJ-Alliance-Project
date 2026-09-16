@@ -3,6 +3,7 @@ import { getTestPrismaClient } from "../helpers/test-db";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { requireEnv } from "../../src/lib/env";
 import { digestLookupSecret, hashSecret } from "../../src/lib/crypto";
+import { adultRankId, kidsRankId } from "../helpers/belt-ranks";
 
 // Same `auth()` mock as student-detail-actions.test.ts — see the long note
 // there. Every session must name a real, active `User` row AND a real
@@ -85,7 +86,8 @@ function newStudentFields(academyId: string, label: string) {
     phone: "88881234",
     email,
     homeAcademyId: academyId,
-    currentBelt: "BLUE",
+    track: "ADULT",
+    currentRankId: adultRankId("BLUE"),
     currentStripes: "2",
   };
 }
@@ -142,6 +144,7 @@ describe("createStudent", () => {
       firstName: "CreateTest",
       lastName: "AdminCreated",
       homeAcademyId: escazu.id,
+      track: "ADULT",
       currentBelt: "BLUE",
       currentStripes: 2,
       status: "ACTIVE",
@@ -200,6 +203,53 @@ describe("createStudent", () => {
     expect(
       await prisma.auditLog.count({ where: { entityId: created.id, action: "student.create" } }),
     ).toBe(1);
+  });
+
+  // MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 3c-i: the track selector actually
+  // reaches the write — a KIDS student lands on a KIDS rank, not silently
+  // defaulted to ADULT.
+  it("an ADMIN creates a KIDS-track student on a kids rank", async () => {
+    const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+    const admin = await makeStaffUser("ADMIN", "create-test-kids-admin");
+    const fields = {
+      ...newStudentFields(escazu.id, "KidsCreated"),
+      track: "KIDS",
+      currentRankId: kidsRankId("grey"),
+      currentStripes: "5",
+    };
+
+    currentSession = { user: { id: admin.id, role: "ADMIN" }, activeOrganizationId: admin.organizationId };
+    const result = await createStudent(admin.organizationId, {}, formData(fields));
+    expect(result.ok).toBe(true);
+
+    const student = await prisma.student.findFirstOrThrow({
+      where: { email: fields.email },
+      include: { currentRank: { select: { code: true, track: true } } },
+    });
+    expect(student.track).toBe("KIDS");
+    expect(student.currentRank.code).toBe("grey");
+    expect(student.currentRank.track).toBe("KIDS");
+    expect(student.currentStripes).toBe(5);
+  });
+
+  // A track/rank mismatch can only reach the server via a tampered
+  // request — the UI's own dropdown only ever offers ranks for the
+  // currently-selected track. Proves the server-side check (not just the
+  // client filter) is what actually holds.
+  it("rejects a submitted rank that doesn't belong to the submitted track, writing nothing", async () => {
+    const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+    const admin = await makeStaffUser("ADMIN", "create-test-mismatch-admin");
+    const fields = {
+      ...newStudentFields(escazu.id, "TrackMismatch"),
+      track: "ADULT",
+      currentRankId: kidsRankId("grey"),
+    };
+
+    currentSession = { user: { id: admin.id, role: "ADMIN" }, activeOrganizationId: admin.organizationId };
+    const result = await createStudent(admin.organizationId, {}, formData(fields));
+    expect(result.error).toBe("invalid");
+    expect(result.fieldErrors?.currentRankId).toEqual(["invalid"]);
+    expect(await prisma.student.findFirst({ where: { email: fields.email } })).toBeNull();
   });
 
   it("1f-4: an ADMIN's real membership doesn't help against an organizationId their tab doesn't belong to — refused as forbiddenAcademy, writes nothing, and audits the attempt", async () => {
