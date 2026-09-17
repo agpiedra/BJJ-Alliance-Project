@@ -151,21 +151,22 @@ model Organization {
   approvedAt    DateTime?
   approvedById  String?
 
-  approvedBy        User?                    @relation("OrganizationApprovedBy", fields: [approvedById], references: [id])
-  memberships       OrganizationMembership[]
-  academies         Academy[]
-  students          Student[]
-  classSessions     ClassSession[]
-  attendanceRecords AttendanceRecord[]
-  promotions        Promotion[]
-  beltRanks         BeltRank[]
-  promotionConfigs  PromotionConfig[]
-  paymentPlans      PaymentPlan[]
-  paymentPeriods    PaymentPeriod[]
-  kioskAttempts     KioskAttempt[]
-  staffAssignments  StaffAssignment[]
-  auditLogs         AuditLog[]
-  notifications     Notification[]
+  approvedBy          User?                    @relation("OrganizationApprovedBy", fields: [approvedById], references: [id])
+  memberships         OrganizationMembership[]
+  academies           Academy[]
+  students            Student[]
+  classSessions       ClassSession[]
+  attendanceRecords   AttendanceRecord[]
+  promotions          Promotion[]
+  beltRanks           BeltRank[]
+  promotionConfigs    PromotionConfig[]
+  paymentPlans        PaymentPlan[]
+  paymentPeriods      PaymentPeriod[]
+  kioskAttempts       KioskAttempt[]
+  staffAssignments    StaffAssignment[]
+  auditLogs           AuditLog[]
+  notifications       Notification[]
+  usersLastActiveHere User[]                   @relation("UserLastActiveOrganization")
 }
 
 /// The only authorization source for ADMIN/DIRECTOR/INSTRUCTOR/STUDENT access
@@ -234,6 +235,15 @@ model User {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
+  /// Persisted "last chosen organization" for a user with more than one
+  /// active membership — read at sign-in ONLY as a fast-path candidate
+  /// (src/lib/tenant/active-organization.ts re-validates it's still a real,
+  /// active membership before trusting it; a stale/revoked value falls
+  /// through to the explicit picker, never silently trusted). Never read
+  /// for a user with zero or exactly one membership — those cases don't
+  /// need it.
+  lastActiveOrganizationId String?
+
   staffAssignments        StaffAssignment[]
   student                 Student?
   auditLogs               AuditLog[]
@@ -242,6 +252,7 @@ model User {
   notifications           Notification[]
   organizationMemberships OrganizationMembership[]
   organizationsApproved   Organization[]           @relation("OrganizationApprovedBy")
+  lastActiveOrganization  Organization?            @relation("UserLastActiveOrganization", fields: [lastActiveOrganizationId], references: [id])
 
   attendanceRecordsCreated   AttendanceRecord[]   @relation("AttendanceCreatedBy")
   attendanceRecordsCorrected AttendanceRecord[]   @relation("AttendanceCorrectedBy")

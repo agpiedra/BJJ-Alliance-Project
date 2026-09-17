@@ -1,34 +1,33 @@
 import { NextResponse } from "next/server";
 import { timingSafeEqual } from "node:crypto";
 import { encode } from "next-auth/jwt";
-import authConfig from "@/auth.config";
 import { prisma } from "@/lib/prisma";
 import { requireEnv } from "@/lib/env";
+import { signInJwtCallback, type JwtCallbackParams } from "@/lib/auth/sign-in-jwt-callback";
 
 /**
  * Dev-only session-minting backdoor for Playwright/manual screenshot
- * verification — NOT a login mechanism, and not a fix for either real bug
- * tracked in KNOWN_LIMITATIONS (scripts/pending-callers.ts): real login's
- * `signIn()` cookie failure, and requireTenantContext()'s redirect to
- * `/login` for any session whose `activeOrganizationId` is still null (true
- * of every fresh sign-in — nothing yet sets it to a real value outside a
- * not-yet-built org switcher). Real login must still work end-to-end before
- * anything built here is shown to Alliance.
+ * verification — NOT a login mechanism. Real login must still work
+ * end-to-end before anything built here is shown to Alliance (see
+ * KNOWN_LIMITATIONS in scripts/pending-callers.ts for the closed finding
+ * this route was built to work around while it was still broken).
  *
  * Every gate below runs, in order, before any other statement — a missing
  * `E2E_AUTH_BYPASS_SECRET`, a non-local `Host`, or a wrong secret all
  * produce the exact same 404 a nonexistent route would, with nothing to
  * distinguish which gate failed. This mints a session for an existing,
  * active, caller-chosen user id by running the app's own `jwt` callback
- * (the same authorization-shaping logic a real login uses) twice — once as
- * a sign-in, once as an org-selecting update, exactly the two real steps a
- * working login-then-switch-org flow would take — and encoding the result
- * the way Auth.js encodes a real session token. It replaces
- * *authentication*, never *authorization*: the organization it selects must
- * already be a real `OrganizationMembership` row for that exact user, and
- * every later request still re-validates that membership from the database
- * on its own, so this cannot grant access to an organization the target
- * user doesn't belong to.
+ * (the same id/role-shaping logic a real login uses) and then resolving
+ * `activeOrganizationId` via the EXACT SAME `resolveActiveOrganizationForSignIn`
+ * function `src/auth.ts`'s real sign-in path calls — deliberately not a
+ * second, independently-written membership lookup, so this route's
+ * resolution can never silently drift from what real login would produce
+ * for the same user (see tests/integration/e2e-auth-bypass-equals-real-login.test.ts,
+ * which asserts the two are structurally identical, not just "both work").
+ * A caller-supplied `organizationId` is only ever used if it names a real,
+ * active membership for this exact user — otherwise it's ignored in favor
+ * of that same resolution, never trusted as an override into somewhere the
+ * user doesn't belong.
  */
 
 const SESSION_COOKIE_NAME = "authjs.session-token";
@@ -78,37 +77,35 @@ export async function POST(request: Request): Promise<NextResponse> {
     return notFound();
   }
 
-  // Real membership, always re-checked here — a caller-supplied
-  // `organizationId` is only ever used if it matches a row that actually
-  // exists for this exact user. No membership at all just leaves the
-  // session's org selector null, same as an unfixed real login today.
-  const membership = await prisma.organizationMembership.findFirst({
-    where: requestedOrganizationId ? { userId: user.id, organizationId: requestedOrganizationId } : { userId: user.id },
-    orderBy: { createdAt: "asc" },
-    select: { organizationId: true },
-  });
-  if (requestedOrganizationId && !membership) {
-    return notFound();
-  }
-
-  const jwtCallback = authConfig.callbacks?.jwt;
-  if (!jwtCallback) {
-    return notFound();
-  }
-  const signInParams = {
+  // Step 1: sign in — LITERALLY the same call src/auth.ts's real signIn()
+  // flow makes to this same function. This alone already resolves
+  // activeOrganizationId exactly as real login would (auto for one active
+  // membership, null for zero or an unresolved 2+).
+  let token = await signInJwtCallback({
     token: { sub: user.id, email: user.email, name: user.email },
     user: { id: user.id, email: user.email, role: user.role, name: user.email },
     trigger: "signIn",
-  } as Parameters<typeof jwtCallback>[0];
-  let token = await jwtCallback(signInParams);
+  } as JwtCallbackParams);
 
-  if (membership) {
-    const updateParams = {
+  // Step 2, optional: a caller-supplied organizationId is handled as an
+  // explicit post-sign-in switch — the same shape a real
+  // unstable_update({activeOrganizationId}) call takes (see
+  // select-organization/actions.ts), and re-validated the same way: it
+  // must name a real, ACTIVE membership for this exact user, never trusted
+  // as a bare override.
+  if (requestedOrganizationId) {
+    const membership = await prisma.organizationMembership.findFirst({
+      where: { userId: user.id, organizationId: requestedOrganizationId, organization: { status: "ACTIVE" } },
+      select: { organizationId: true },
+    });
+    if (!membership) {
+      return notFound();
+    }
+    token = await signInJwtCallback({
       token,
       trigger: "update",
       session: { activeOrganizationId: membership.organizationId },
-    } as Parameters<typeof jwtCallback>[0];
-    token = await jwtCallback(updateParams);
+    } as JwtCallbackParams);
   }
 
   const sessionToken = await encode({

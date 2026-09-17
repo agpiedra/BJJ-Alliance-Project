@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { getLocale } from "next-intl/server";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
+import { resolveActiveOrganizationForSignIn } from "@/lib/tenant/active-organization";
 import type { AccessContext, MembershipRole, SystemJobContext, TenantContext, TenantContextResult } from "./types";
 
 async function resolveAcademyIds(
@@ -39,7 +40,10 @@ async function resolveSelfStudentId(
   return student.id;
 }
 
-async function resolveContext(userId: string, organizationId: string): Promise<TenantContextResult> {
+/** `resolveContext` only ever produces these three shapes by construction — narrower than the full `TenantContextResult` union so `TenantAccessError`'s callers don't have to account for statuses this function can never actually return. */
+type ResolveContextResult = Extract<TenantContextResult, { status: "OK" | "NO_MEMBERSHIP" | "ORG_NOT_ACTIVE" }>;
+
+async function resolveContext(userId: string, organizationId: string): Promise<ResolveContextResult> {
   const [membership, organization] = await Promise.all([
     prisma.organizationMembership.findUnique({
       where: { userId_organizationId: { userId, organizationId } },
@@ -85,10 +89,28 @@ async function resolveContext(userId: string, organizationId: string): Promise<T
 export const getTenantContext = cache(async (): Promise<TenantContextResult> => {
   const session = await auth();
   const userId = session?.user?.id;
-  const organizationId = session?.activeOrganizationId;
-  if (!userId || !organizationId) {
-    return { status: "NO_MEMBERSHIP" };
+  if (!userId) {
+    return { status: "UNAUTHENTICATED" };
   }
+
+  const organizationId = session?.activeOrganizationId;
+  if (!organizationId) {
+    // A real, signed-in user with no resolved selector — either a session
+    // issued before sign-in resolved one, or (rarer) a request that reached
+    // here without going through the picker flow. Re-run the SAME
+    // resolution sign-in uses rather than assuming "no membership": this is
+    // what makes an already-issued session self-heal on its very next
+    // request instead of needing a fresh login.
+    const resolution = await resolveActiveOrganizationForSignIn(userId);
+    if (resolution.kind === "none") {
+      return { status: "NO_MEMBERSHIP" };
+    }
+    if (resolution.kind === "needsSelection") {
+      return { status: "NEEDS_ORGANIZATION_SELECTION" };
+    }
+    return resolveContext(userId, resolution.organizationId);
+  }
+
   return resolveContext(userId, organizationId);
 });
 
@@ -263,26 +285,43 @@ export function isAcademyInTenantScope(context: TenantContext, academyId: string
  * The 1d replacement for `requireStaffSession` — resolves and enforces the
  * current request's tenant context.
  *
- * `NO_MEMBERSHIP` redirects to `/login` (not signed in, or no membership in
- * any organization at all). `ORG_NOT_ACTIVE` redirects to the dedicated
- * `/organization-unavailable` page instead (1e: "suspended-organization
- * behavior") — the user IS authenticated, so dumping them back at the login
- * form with no explanation would fail spec's "a clear localized message, not
- * a generic auth error." Both fail closed (decision 6); only the redirect
- * target differs.
+ * Four non-OK statuses, four different redirects — this is the fix for the
+ * bug where "not authenticated" and "authenticated but no usable
+ * organization" were both sent to /login and were therefore
+ * indistinguishable from the outside (see KNOWN_LIMITATIONS in
+ * scripts/pending-callers.ts for how long that stayed invisible and why):
+ *
+ * - `UNAUTHENTICATED` -> /login (the only case that actually means that).
+ * - `NO_MEMBERSHIP` -> /no-organization-access (signed in, zero active
+ *   memberships — a real, expected state: a deactivated member, or an
+ *   account mid-onboarding).
+ * - `NEEDS_ORGANIZATION_SELECTION` -> /select-organization (signed in, 2+
+ *   active memberships, nothing resolved yet — should be rare post-sign-in
+ *   now that the jwt callback resolves this, but a request can still reach
+ *   here before the picker is completed).
+ * - `ORG_NOT_ACTIVE` -> /organization-unavailable (unchanged from before).
+ *
+ * All four fail closed (decision 6); only the destination differs, and each
+ * destination's copy is honest about which of these four it is.
  */
 export async function requireTenantContext(allowedRoles?: MembershipRole[]): Promise<TenantContext> {
   const result = await getTenantContext();
-  if (result.status === "ORG_NOT_ACTIVE") {
-    const locale = await getLocale();
-    redirect(`/${locale}/organization-unavailable`);
+  if (result.status === "OK") {
+    if (allowedRoles && !allowedRoles.includes(result.context.organizationRole)) {
+      throw new Error("FORBIDDEN");
+    }
+    return result.context;
   }
-  if (result.status !== "OK") {
-    const locale = await getLocale();
-    redirect(`/${locale}/login`);
+
+  const locale = await getLocale();
+  switch (result.status) {
+    case "UNAUTHENTICATED":
+      redirect(`/${locale}/login`);
+    case "NO_MEMBERSHIP":
+      redirect(`/${locale}/no-organization-access`);
+    case "NEEDS_ORGANIZATION_SELECTION":
+      redirect(`/${locale}/select-organization`);
+    case "ORG_NOT_ACTIVE":
+      redirect(`/${locale}/organization-unavailable`);
   }
-  if (allowedRoles && !allowedRoles.includes(result.context.organizationRole)) {
-    throw new Error("FORBIDDEN");
-  }
-  return result.context;
 }

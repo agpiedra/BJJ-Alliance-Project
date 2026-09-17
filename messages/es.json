@@ -88,6 +88,16 @@
       "heading": "Organización no disponible",
       "body": "Tu organización no está disponible en este momento. Por favor contactá al administrador de tu organización.",
       "signOut": "Cerrar sesión"
+    },
+    "noOrganizationAccess": {
+      "heading": "Sin acceso a una organización",
+      "body": "Tu cuenta no está vinculada a ninguna organización en este momento. Contactá a tu director de academia para que te agreguen.",
+      "signOut": "Cerrar sesión"
+    },
+    "selectOrganization": {
+      "heading": "Elegí una organización",
+      "body": "Tu cuenta pertenece a más de una organización. Elegí cuál usar para esta sesión.",
+      "signOut": "Cerrar sesión"
     }
   },
   "dashboard": {
@@ -636,12 +646,14 @@
           "rankPlaceholder": "Elige un cinturón",
           "stripes": "Grados",
           "note": "Nota (opcional)",
+          "noteRequired": "Nota (obligatoria — ¿por qué este destino?)",
           "submit": "Cambiar de track",
           "success": "Track cambiado.",
           "error": {
             "notFound": "No se encontró este estudiante.",
             "notActive": "Este estudiante no está activo.",
             "invalidTarget": "Esa combinación de cinturón/grado no es válida.",
+            "noteRequired": "Se requiere una nota cuando el destino no es el estándar.",
             "conflict": "Otra persona ya actualizó a este estudiante. Actualiza la página para ver el estado actual.",
             "generic": "Ocurrió un error."
           }

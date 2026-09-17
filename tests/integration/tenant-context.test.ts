@@ -66,20 +66,56 @@ afterEach(() => {
 });
 
 describe("getTenantContext", () => {
-  it("fails closed to NO_MEMBERSHIP when there is no session at all", async () => {
+  it("fails closed to UNAUTHENTICATED (not NO_MEMBERSHIP) when there is no session at all — the two are different facts and must not be conflated", async () => {
     currentSession = null;
-    expect(await getTenantContext()).toEqual({ status: "NO_MEMBERSHIP" });
+    expect(await getTenantContext()).toEqual({ status: "UNAUTHENTICATED" });
   });
 
-  it("fails closed to NO_MEMBERSHIP when the session has no activeOrganizationId selector", async () => {
+  it("self-heals to OK by auto-resolving the sole active membership when a signed-in session has no activeOrganizationId selector", async () => {
+    // DIRECTOR_USER_ID has exactly one active membership (the seeded
+    // Alliance org) throughout this file — unlike ADMIN_USER_ID, which this
+    // file's beforeAll deliberately gives a second membership to exercise
+    // the 2+ case below. This proves a session issued before sign-in
+    // resolved a selector (or any other request that reaches here with a
+    // null one) recovers on its very next call, per Appendix C decision 4
+    // point 6: the exactly-one-membership case is not "picking arbitrarily."
+    const orgId = await getAllianceOrganizationId();
+    currentSession = { user: { id: DIRECTOR_USER_ID }, activeOrganizationId: null };
+    const result = await getTenantContext();
+    expect(result).toEqual({
+      status: "OK",
+      context: expect.objectContaining({ actorUserId: DIRECTOR_USER_ID, organizationId: orgId }),
+    });
+  });
+
+  it("returns NEEDS_ORGANIZATION_SELECTION (never an arbitrary pick) when a signed-in session has no selector and the user has 2+ active memberships with no valid persisted choice", async () => {
+    // ADMIN_USER_ID has two active memberships in this file (Alliance +
+    // SCRATCH_ORG_ID, added in beforeAll) and no lastActiveOrganizationId
+    // set — the picker case, not NO_MEMBERSHIP and not a silent default.
     currentSession = { user: { id: ADMIN_USER_ID }, activeOrganizationId: null };
-    expect(await getTenantContext()).toEqual({ status: "NO_MEMBERSHIP" });
+    expect(await getTenantContext()).toEqual({ status: "NEEDS_ORGANIZATION_SELECTION" });
   });
 
   it("fails closed to NO_MEMBERSHIP for a user with no membership in the selected organization", async () => {
     const orgId = await getAllianceOrganizationId();
     currentSession = { user: { id: "not-a-real-user" }, activeOrganizationId: orgId };
     expect(await getTenantContext()).toEqual({ status: "NO_MEMBERSHIP" });
+  });
+
+  it("returns NO_MEMBERSHIP for a genuinely signed-in user with zero active memberships anywhere — a real state, never rendered as unauthenticated", async () => {
+    const orphanUser = await prisma.user.create({
+      data: {
+        email: `tenant-context-orphan-${Date.now()}@example.com`,
+        passwordHash: "irrelevant",
+        role: "STUDENT",
+      },
+    });
+    try {
+      currentSession = { user: { id: orphanUser.id }, activeOrganizationId: null };
+      expect(await getTenantContext()).toEqual({ status: "NO_MEMBERSHIP" });
+    } finally {
+      await prisma.user.delete({ where: { id: orphanUser.id } });
+    }
   });
 
   it("resolves ADMIN with academyIds: ALL and no selfStudentId", async () => {

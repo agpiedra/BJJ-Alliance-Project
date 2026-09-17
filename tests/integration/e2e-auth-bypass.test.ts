@@ -39,7 +39,7 @@ async function makeUser(role: "ADMIN" | "STUDENT", label: string, active = true)
 async function makeOrganizationMembership(userId: string, role: "ADMIN" | "STUDENT") {
   const suffix = `${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
   const organization = await prisma.organization.create({
-    data: { slug: `bypass-org-${suffix}`, name: `Bypass Test Org ${suffix}` },
+    data: { slug: `bypass-org-${suffix}`, name: `Bypass Test Org ${suffix}`, status: "ACTIVE" },
   });
   cleanupOrganizationIds.push(organization.id);
   await prisma.organizationMembership.create({
