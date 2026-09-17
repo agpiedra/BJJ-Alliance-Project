@@ -122,6 +122,12 @@
         "activeStudents": {
           "label": "Alumnos activos"
         },
+        "activeKids": {
+          "label": "Niños activos"
+        },
+        "activeAdults": {
+          "label": "Adultos activos"
+        },
         "weeklyAttendance": {
           "label": "Asistencias esta semana",
           "deltaUp": "+{diff} vs. semana pasada",
@@ -431,9 +437,13 @@
       "status": "Estado",
       "payment": "Pago",
       "academy": "Academia",
+      "track": "Tipo",
       "allBelts": "Todos los cinturones",
       "allStatuses": "Todos los estados",
       "allPayments": "Todos los pagos",
+      "allTracks": "Todos",
+      "trackKids": "Niños",
+      "trackAdults": "Adultos",
       "bothAcademies": "Ambas",
       "submit": "Filtrar"
     },

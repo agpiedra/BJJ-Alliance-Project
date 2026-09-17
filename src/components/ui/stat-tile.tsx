@@ -40,8 +40,10 @@ export function StatTile({ label, value, note, delta, flag, className }: StatTil
 export interface StatRowProps {
   children: ReactNode;
   /** Grid columns at the `sm` breakpoint and up — defaults to one column per
-   * child up to 4, matching Panel's 4-tile row. Resumen's 4x2 layout passes 4. */
-  columns?: 2 | 3 | 4;
+   * child up to 4, matching Panel's 4-tile row. Resumen's 4x2 layout passes 4.
+   * 5/6 added for Phase 3c-iii's kids/adults breakdown alongside the
+   * existing stat tiles. */
+  columns?: 2 | 3 | 4 | 5 | 6;
   className?: string;
 }
 
@@ -49,6 +51,8 @@ const COLUMN_CLASS: Record<NonNullable<StatRowProps["columns"]>, string> = {
   2: "sm:grid-cols-2",
   3: "sm:grid-cols-3",
   4: "sm:grid-cols-2 lg:grid-cols-4",
+  5: "sm:grid-cols-2 lg:grid-cols-5",
+  6: "sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6",
 };
 
 /**

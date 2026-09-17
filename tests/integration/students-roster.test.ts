@@ -3,7 +3,7 @@ import { getTestPrismaClient } from "../helpers/test-db";
 import { afterAll, describe, expect, it } from "vitest";
 import { requireEnv } from "../../src/lib/env";
 import { digestLookupSecret } from "../../src/lib/crypto";
-import { adultRankId } from "../helpers/belt-ranks";
+import { adultRankId, kidsRankId } from "../helpers/belt-ranks";
 import { listStudents } from "../../src/app/[locale]/(staff)/students/actions";
 import type { TenantContext, MembershipRole } from "../../src/lib/tenant/types";
 
@@ -140,5 +140,95 @@ describe("student roster — cross-academy isolation (feature-level, on top of T
     });
     expect(ignoredFilterView.some((s) => s.id === escazuStudent.id)).toBe(false);
     expect(ignoredFilterView.some((s) => s.id === escalanteStudent.id)).toBe(true);
+  });
+});
+
+describe("student roster — Phase 3c-iii track filter (query-level, per getScopedDb)", () => {
+  const pepper = requireEnv("CODE_PEPPER");
+  const createdStudentIds: string[] = [];
+
+  afterAll(async () => {
+    if (createdStudentIds.length > 0) {
+      await prisma.student.deleteMany({ where: { id: { in: createdStudentIds } } });
+    }
+  });
+
+  it("REQUIRED: filters on track in the query — a KIDS-track student never appears under an ADULT filter and vice versa", async () => {
+    const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+    const uniqueSuffix = `${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
+
+    const kidsStudent = await prisma.student.create({
+      data: {
+        homeAcademyId: escazu.id,
+        organizationId: escazu.organizationId,
+        track: "KIDS",
+        firstName: "TrackFilterTest",
+        lastName: "KidsStudent",
+        phone: "88880010",
+        email: `track-filter-kids-${uniqueSuffix}@example.com`,
+        currentRankId: kidsRankId("white"),
+        codeHash: digestLookupSecret(`track-filter-kids-${uniqueSuffix}`, pepper),
+      },
+    });
+    createdStudentIds.push(kidsStudent.id);
+
+    const adultStudent = await prisma.student.create({
+      data: {
+        homeAcademyId: escazu.id,
+        organizationId: escazu.organizationId,
+        track: "ADULT",
+        firstName: "TrackFilterTest",
+        lastName: "AdultStudent",
+        phone: "88880011",
+        email: `track-filter-adult-${uniqueSuffix}@example.com`,
+        currentRankId: adultRankId("WHITE"),
+        codeHash: digestLookupSecret(`track-filter-adult-${uniqueSuffix}`, pepper),
+      },
+    });
+    createdStudentIds.push(adultStudent.id);
+
+    const admin = ctx("ADMIN", "ALL", escazu.organizationId);
+    const search = "TrackFilterTest";
+
+    const kidsView = await listStudents(admin, { search, track: "KIDS" });
+    expect(kidsView.some((s) => s.id === kidsStudent.id)).toBe(true);
+    expect(kidsView.some((s) => s.id === adultStudent.id)).toBe(false);
+    expect(kidsView.every((s) => s.track === "KIDS")).toBe(true);
+
+    const adultsView = await listStudents(admin, { search, track: "ADULT" });
+    expect(adultsView.some((s) => s.id === adultStudent.id)).toBe(true);
+    expect(adultsView.some((s) => s.id === kidsStudent.id)).toBe(false);
+    expect(adultsView.every((s) => s.track === "ADULT")).toBe(true);
+
+    // Todos (no track filter): both appear.
+    const allView = await listStudents(admin, { search });
+    expect(allView.some((s) => s.id === kidsStudent.id)).toBe(true);
+    expect(allView.some((s) => s.id === adultStudent.id)).toBe(true);
+  });
+
+  it("REQUIRED: a zero-match track filter renders as an empty list, not an error or a silently-ignored filter", async () => {
+    const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+    const uniqueSuffix = `${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
+
+    // Exactly one ADULT student under this unique search term — no KIDS
+    // student exists for it at all.
+    const adultOnly = await prisma.student.create({
+      data: {
+        homeAcademyId: escazu.id,
+        organizationId: escazu.organizationId,
+        track: "ADULT",
+        firstName: "TrackZeroStateTest",
+        lastName: "OnlyAdult",
+        phone: "88880012",
+        email: `track-zero-state-${uniqueSuffix}@example.com`,
+        currentRankId: adultRankId("WHITE"),
+        codeHash: digestLookupSecret(`track-zero-state-${uniqueSuffix}`, pepper),
+      },
+    });
+    createdStudentIds.push(adultOnly.id);
+
+    const admin = ctx("ADMIN", "ALL", escazu.organizationId);
+    const kidsView = await listStudents(admin, { search: "TrackZeroStateTest", track: "KIDS" });
+    expect(kidsView).toEqual([]);
   });
 });

@@ -21,7 +21,7 @@ import { BeltBar } from "@/components/belt-graphic/belt-bar";
 import { ProgressToNextGrade } from "@/components/belt-graphic/progress-to-next-grade";
 import { listStudents } from "./actions";
 import { CreateStudentForm } from "./create-student-form";
-import { StudentStatus } from "@/generated/prisma/client";
+import { StudentStatus, Track } from "@/generated/prisma/client";
 import { getAtBeltSummary } from "@/lib/students/attendance-summary";
 import { resolvePromotionConfigMap } from "@/lib/promotion/config";
 import type { NextTarget } from "@/lib/promotion/engine";
@@ -30,6 +30,7 @@ import { formatTimestampInAcademyZone } from "@/lib/format-date";
 import { currentCrDateParts, getCurrentPaymentPeriod } from "@/lib/payments/get-current-period";
 import { isOverdue } from "@/lib/payments/overdue";
 import type { ContactPaymentStatus } from "@/lib/students/contact-list";
+import { parseTrack } from "@/lib/students/parse-track";
 import { ZONE } from "@/lib/scheduling/zone";
 
 // Staff data an admin/director could change without a redeploy (students,
@@ -66,6 +67,7 @@ function parseStatus(value: string | undefined): StudentStatus | undefined {
   if (value === STATUS_ALL) return undefined;
   return (STATUS_OPTIONS as string[]).includes(value) ? (value as StudentStatus) : StudentStatus.ACTIVE;
 }
+
 
 function parsePaymentStatus(value: string | undefined): ContactPaymentStatus | undefined {
   return value && (PAYMENT_STATUS_OPTIONS as string[]).includes(value) ? (value as ContactPaymentStatus) : undefined;
@@ -132,6 +134,7 @@ type StudentsSearchParams = {
   status?: string;
   payment?: string;
   academyId?: string;
+  track?: string;
 };
 
 export default async function StudentsPage({
@@ -147,6 +150,7 @@ export default async function StudentsPage({
     belt: parseBelt(params.belt),
     status: parseStatus(params.status),
     academyId: params.academyId,
+    track: parseTrack(params.track),
   });
 
   // Per-row lookups, batched via Promise.all across the fetched student
@@ -326,6 +330,15 @@ export default async function StudentsPage({
                   {tBelt(belt)}
                 </option>
               ))}
+            </FilterBarSelect>
+
+            <label htmlFor="students-track" className="sr-only">
+              {t("filters.track")}
+            </label>
+            <FilterBarSelect id="students-track" name="track" defaultValue={parseTrack(params.track) ?? ""}>
+              <option value="">{t("filters.allTracks")}</option>
+              <option value={Track.KIDS}>{t("filters.trackKids")}</option>
+              <option value={Track.ADULT}>{t("filters.trackAdults")}</option>
             </FilterBarSelect>
 
             <label htmlFor="students-status" className="sr-only">
