@@ -119,8 +119,7 @@ export default async function StudentPortalPage({
   // selfStudentId is non-null whenever organizationRole is STUDENT and a
   // linked Student row genuinely exists for this user in this organization
   // (see resolveSelfStudentId's own doc comment) — this "shouldn't happen"
-  // given signup's atomic User+Student transaction, same as
-  // requireStudentSession's old equivalent check, but fails closed rather
+  // given signup's atomic User+Student transaction, but fails closed rather
   // than crash on a null assertion if it ever does.
   if (!context.selfStudentId) {
     redirect(`/${locale}/login`);
@@ -223,10 +222,10 @@ export default async function StudentPortalPage({
       <main className="mx-auto flex w-full max-w-md flex-col gap-6 p-4">
         <h1 className="text-2xl font-bold">{t("greeting", { name: student.firstName })}</h1>
 
-        {/* Login itself is not gated on Student.status (see
-            requireStudentSession's doc comment) — a PENDING or ARCHIVED
-            student still sees their full portal, just with an honest notice
-            up top rather than any of the sections below being hidden. */}
+        {/* Login itself is not gated on Student.status — a PENDING or
+            ARCHIVED student still sees their full portal, just with an
+            honest notice up top rather than any of the sections below
+            being hidden. */}
         {student.status !== "ACTIVE" && (
           <div
             role="status"
