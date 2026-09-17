@@ -1,7 +1,7 @@
 import { DateTime } from "luxon";
 import { Resend } from "resend";
 import { prisma } from "@/lib/prisma";
-import { unscopedPrisma } from "@/lib/prisma/unscoped";
+import { resolveAcademyByIdOrThrow } from "@/lib/tenant/platform-lookups";
 import { requireEnv } from "@/lib/env";
 import { ZONE, attendanceDateFromZoned } from "@/lib/scheduling/zone";
 import { resolveSystemJobContext } from "@/lib/tenant/context";
@@ -40,10 +40,9 @@ export async function sendWeeklyDigestForAcademy(
   academyId: string,
   resendClient: ResendClient = new Resend(requireEnv("RESEND_API_KEY")),
 ): Promise<void> {
-  // Explicit escape hatch (revision 23): this is the org-identity resolution
-  // itself — no organizationId is known yet at this line, so it can't scope
-  // the lookup that discovers it.
-  const academy = await unscopedPrisma.academy.findUniqueOrThrow({ where: { id: academyId } });
+  // See platform-lookups.ts's resolveAcademyByIdOrThrow for why this
+  // org-identity resolution can't itself be organization-scoped.
+  const academy = await resolveAcademyByIdOrThrow(academyId);
   const jobContext = await resolveSystemJobContext(academy.organizationId, "weekly-digest");
   // The organization was suspended/cancelled between the cron route's own
   // dispatch loop and this call — skip, per spec: "Skip non-active

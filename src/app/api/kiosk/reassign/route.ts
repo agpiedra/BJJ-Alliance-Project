@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { unscopedPrisma } from "@/lib/prisma/unscoped";
+import { resolveAcademyBySlug } from "@/lib/tenant/platform-lookups";
 import { digestLookupSecret } from "@/lib/crypto";
 import { requireEnv } from "@/lib/env";
 import { reassignAttendance } from "@/lib/kiosk/reassign-attendance";
@@ -55,8 +55,8 @@ export async function POST(request: Request) {
 
   // Same academy lookup + token verification, in the same order and with the
   // same deliberately indistinguishable failure shape, as the check-in route
-  // — an explicit escape hatch, same reasoning as there (revision 23).
-  const academy = await unscopedPrisma.academy.findUnique({ where: { slug: academySlug } });
+  // — see platform-lookups.ts for why this can't be organization-scoped.
+  const academy = await resolveAcademyBySlug(academySlug);
   if (!academy) {
     return NextResponse.json({ ok: false, error: "invalid_token" }, { status: 404 });
   }

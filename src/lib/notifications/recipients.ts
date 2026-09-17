@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import { unscopedPrisma } from "@/lib/prisma/unscoped";
+import { resolveAcademyByIdOrThrow } from "@/lib/tenant/platform-lookups";
 import type { Recipient } from "@/lib/notifications/types";
 
 /**
@@ -23,16 +23,10 @@ import type { Recipient } from "@/lib/notifications/types";
 export async function resolveStaffRecipients(academyId: string): Promise<Recipient[]> {
   // MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 1: Notification.organizationId is
   // required — the org this notification is about (this academy's), not
-  // necessarily every recipient's only membership.
-  //
-  // Explicit escape hatch (revision 23): this is the org-identity resolution
-  // itself — the organizationId isn't known yet at this line, so it can't be
-  // the thing scoping the lookup that discovers it. Same reasoning as the
-  // kiosk's slug-to-organization resolution.
-  const academy = await unscopedPrisma.academy.findUniqueOrThrow({
-    where: { id: academyId },
-    select: { organizationId: true },
-  });
+  // necessarily every recipient's only membership. See platform-lookups.ts's
+  // resolveAcademyByIdOrThrow for why this org-identity resolution can't
+  // itself be organization-scoped.
+  const academy = await resolveAcademyByIdOrThrow(academyId);
 
   // ADMINs are resolved through OrganizationMembership, scoped to this
   // academy's own organization — never `User.role` globally, which would
