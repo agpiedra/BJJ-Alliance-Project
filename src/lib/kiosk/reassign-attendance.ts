@@ -108,7 +108,7 @@ export async function reassignAttendance(
   try {
     await prisma.$transaction(async (tx) => {
       await tx.attendanceRecord.update({
-        where: { id: record.id },
+        where: { id: record.id, organizationId: opts.context.organizationId },
         data: {
           ...after,
           // Only the staff variant ever writes these two. Left `undefined`
