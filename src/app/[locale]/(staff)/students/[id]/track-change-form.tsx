@@ -33,7 +33,11 @@ function stripeRange(maxStripes: number): number[] {
  * default) — every other kids rank gets `null`, which this form renders as
  * a blank, unselected first option, forcing the operator to actually choose
  * rather than silently landing on whatever the destination track's own
- * first rank happens to be.
+ * first rank happens to be. The SAME `defaultRankId` signal also gates the
+ * note field: optional on the standard green_black path, required on any
+ * other — an operator who had to pick a destination themselves should say
+ * why (changeTrack() enforces this server-side too; this is UX, not the
+ * real gate).
  *
  * `isTransition` swaps the toggle's copy to "Transición a adulto" when the
  * student is old enough (spec: "surface a 'Transición a adulto' action" at
@@ -116,8 +120,8 @@ export function TrackChangeForm({
         </label>
 
         <label className="flex flex-col gap-1 text-sm">
-          {t("note")}
-          <textarea name="note" className="rounded border px-2 py-1" rows={2} />
+          {defaultRankId ? t("note") : t("noteRequired")}
+          <textarea name="note" required={!defaultRankId} className="rounded border px-2 py-1" rows={2} />
         </label>
 
         {state.ok && <p className="text-sm text-green-700">{t("success")}</p>}

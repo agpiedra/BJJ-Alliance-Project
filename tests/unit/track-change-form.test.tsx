@@ -77,4 +77,14 @@ describe("TrackChangeForm", () => {
     fireEvent.change(rankSelect, { target: { value: "adult-white" } });
     expect(stripesSelect).toHaveValue("0");
   });
+
+  it("the note is optional on the standard path (a real defaultRankId)", () => {
+    renderForm({ defaultRankId: "adult-blue" });
+    expect(screen.getByLabelText("Note (optional)")).not.toBeRequired();
+  });
+
+  it("the note is required on any non-standard path (no defaultRankId)", () => {
+    renderForm({ defaultRankId: null });
+    expect(screen.getByLabelText("Note (required — why this destination?)")).toBeRequired();
+  });
 });

@@ -272,7 +272,7 @@ describe("changeTrack", () => {
     expect(await promotionsFor(student.id)).toHaveLength(0);
   });
 
-  it("allows a null note (unlike correctPromotion — a track change is a normal lifecycle event, not a fixed mistake)", async () => {
+  it("allows a null note on the standard green_black -> adult blue path (unlike correctPromotion — a track change is a normal lifecycle event, not a fixed mistake)", async () => {
     const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
     const admin = await makeStaffUser("ADMIN", "trackchange-nonote-admin");
     const student = await makeKidsStudent(escazu.id, escazu.organizationId, {
@@ -289,6 +289,55 @@ describe("changeTrack", () => {
     });
     expect(result).toEqual({ ok: true });
     expect((await promotionsFor(student.id))[0].notes).toBeNull();
+  });
+
+  it("rejects a null/blank note with noteRequired for any non-standard path (a KIDS student at orange leaving early), mutating nothing", async () => {
+    const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+    const admin = await makeStaffUser("ADMIN", "trackchange-orange-nonote-admin");
+    const student = await makeKidsStudent(escazu.id, escazu.organizationId, {
+      currentRankId: kidsRankId("orange"),
+      currentStripes: 2,
+      beltAwardedAt: new Date("2026-01-08T12:00:00Z"),
+    });
+
+    const withNull = await changeTrack(adminContext(admin), {
+      studentId: student.id,
+      toRankId: adultRankId("WHITE"),
+      toStripes: 0,
+      note: null,
+    });
+    expect(withNull).toEqual({ ok: false, error: "noteRequired" });
+
+    const withBlank = await changeTrack(adminContext(admin), {
+      studentId: student.id,
+      toRankId: adultRankId("WHITE"),
+      toStripes: 0,
+      note: "   ",
+    });
+    expect(withBlank).toEqual({ ok: false, error: "noteRequired" });
+
+    expect(await promotionsFor(student.id)).toHaveLength(0);
+  });
+
+  it("succeeds for a non-standard path (KIDS at orange) once a real note is given", async () => {
+    const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+    const admin = await makeStaffUser("ADMIN", "trackchange-orange-withnote-admin");
+    const student = await makeKidsStudent(escazu.id, escazu.organizationId, {
+      currentRankId: kidsRankId("orange"),
+      currentStripes: 2,
+      beltAwardedAt: new Date("2026-01-09T12:00:00Z"),
+    });
+
+    const result = await changeTrack(adminContext(admin), {
+      studentId: student.id,
+      toRankId: adultRankId("WHITE"),
+      toStripes: 0,
+      note: "family relocating, requesting early transition to adult classes",
+    });
+    expect(result).toEqual({ ok: true });
+    expect((await promotionsFor(student.id))[0].notes).toBe(
+      "family relocating, requesting early transition to adult classes",
+    );
   });
 });
 

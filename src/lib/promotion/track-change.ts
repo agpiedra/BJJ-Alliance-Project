@@ -8,17 +8,28 @@ export interface TrackChangeInput {
   studentId: string;
   toRankId: string;
   toStripes: number;
-  /** Optional, unlike correctPromotion's note — a track change is a normal
-   * lifecycle event (like a regular award), not a mistake being fixed. */
+  /**
+   * Required exactly when there's no preselected destination (the same
+   * condition `resolveDefaultTrackChangeRankId` gates on) — optional only
+   * on the standard green_black -> adult blue path. If the operator had to
+   * pick a destination themselves, they should say why: someone reading
+   * this student's history in two years will want to know why a kid left
+   * the kids track from yellow, not just that they did.
+   */
   note: string | null;
 }
 
 export type TrackChangeResult =
   | { ok: true }
-  | { ok: false; error: "notFound" | "notActive" | "invalidTarget" | "conflict" };
+  | { ok: false; error: "notFound" | "notActive" | "invalidTarget" | "noteRequired" | "conflict" };
 
 function otherTrack(track: Track): Track {
   return track === "ADULT" ? "KIDS" : "ADULT";
+}
+
+/** Same condition `resolveDefaultTrackChangeRankId` gates its preselection on — kept as one predicate so the note rule and the preselection rule can never drift apart. */
+function isStandardTrackChangePath(currentTrack: Track, currentRankCode: string): boolean {
+  return currentTrack === "KIDS" && currentRankCode === "green_black";
 }
 
 /**
@@ -34,7 +45,7 @@ export function resolveDefaultTrackChangeRankId(
   currentRankCode: string,
   destinationRankOptions: { id: string; code: string }[],
 ): string | null {
-  if (currentTrack !== "KIDS" || currentRankCode !== "green_black") return null;
+  if (!isStandardTrackChangePath(currentTrack, currentRankCode)) return null;
   return destinationRankOptions.find((rank) => rank.code === "BLUE")?.id ?? null;
 }
 
@@ -83,6 +94,13 @@ export async function changeTrack(context: TenantContext, input: TrackChangeInpu
   }
   if (student.status !== StudentStatus.ACTIVE) {
     return { ok: false, error: "notActive" };
+  }
+
+  // Same principle as the preselection rule: the happy path (green_black ->
+  // adult blue) is frictionless, the off-path case is documented. An
+  // operator who had to pick a destination themselves should say why.
+  if (!isStandardTrackChangePath(student.track, student.currentRank.code) && !input.note?.trim()) {
+    return { ok: false, error: "noteRequired" };
   }
 
   const toTrack = otherTrack(student.track);
