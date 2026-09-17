@@ -1,4 +1,6 @@
+import { redirect } from "next/navigation";
 import { getTranslations } from "next-intl/server";
+import { auth } from "@/auth";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { BrandBanner } from "@/components/brand/brand-banner";
@@ -14,6 +16,15 @@ import { signOutStaff } from "@/lib/auth/sign-out-actions";
  * isn't available" copy would be actively wrong — there is no "your
  * organization" to refer to. Same shell, same sign-out action, distinct
  * copy under its own `auth.noOrganizationAccess` i18n namespace.
+ *
+ * Deliberately checks `auth()` directly, never `requireTenantContext()` —
+ * this page IS one of that function's own redirect targets, so routing it
+ * through the same gate would loop. Middleware's matcher does not exclude
+ * this path from public reach (only /api, /trpc, /_next, /_vercel, and
+ * files are excluded — see src/middleware.ts), so the page's own auth
+ * check is the only thing standing between this route and an
+ * unauthenticated visitor; skipping it here left the page (and its
+ * sign-out action) reachable by anyone.
  */
 export default async function NoOrganizationAccessPage({
   params,
@@ -21,6 +32,10 @@ export default async function NoOrganizationAccessPage({
   params: Promise<{ locale: string }>;
 }) {
   const { locale } = await params;
+  const session = await auth();
+  if (!session?.user?.id) {
+    redirect(`/${locale}/login`);
+  }
   const t = await getTranslations("auth.noOrganizationAccess");
 
   return (

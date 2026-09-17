@@ -18,6 +18,14 @@ import { selectOrganization } from "./actions";
  * the underlying selection-and-persistence mechanism (this page's action,
  * `unstable_update` + `User.lastActiveOrganizationId`) is what that
  * switcher will reuse, not replace.
+ *
+ * Checks `auth()` directly below, never `requireTenantContext()` — this
+ * page IS one of that function's own redirect targets, so routing it
+ * through the same gate would loop a user with no resolved org straight
+ * back here. Middleware does not exclude this path from public reach
+ * (only /api, /trpc, /_next, /_vercel, and files are — see
+ * src/middleware.ts), so this in-page check is the only thing standing
+ * between the route and an unauthenticated visitor.
  */
 export default async function SelectOrganizationPage({
   params,
