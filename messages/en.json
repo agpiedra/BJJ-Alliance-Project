@@ -503,7 +503,8 @@
         "columnNotes": "Notes",
         "sourceMANUAL": "Manual",
         "sourceAUTO": "Automatic",
-        "sourceCORRECTION": "Correction"
+        "sourceCORRECTION": "Correction",
+        "sourceTRACK_CHANGE": "Track change"
       },
       "attendanceHistory": {
         "heading": "Attendance history"
@@ -623,6 +624,24 @@
             "notActive": "This student is not active.",
             "invalidTarget": "That rank/degree combination isn't valid.",
             "noteRequired": "A reason is required.",
+            "conflict": "Someone else already updated this student. Refresh to see the current state.",
+            "generic": "Something went wrong."
+          }
+        },
+        "trackChange": {
+          "toggle": "Change track",
+          "transitionToggle": "Transition to adult",
+          "warning": "This moves the student to the other track's belt system. Pick the destination rank and degree count explicitly — nothing is inferred.",
+          "rank": "Destination rank",
+          "rankPlaceholder": "Choose a rank",
+          "stripes": "Degrees",
+          "note": "Note (optional)",
+          "submit": "Change track",
+          "success": "Track changed.",
+          "error": {
+            "notFound": "Could not find this student.",
+            "notActive": "This student is not active.",
+            "invalidTarget": "That rank/degree combination isn't valid.",
             "conflict": "Someone else already updated this student. Refresh to see the current state.",
             "generic": "Something went wrong."
           }

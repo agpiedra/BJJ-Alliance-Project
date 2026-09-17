@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import { StudentStatus, type PromotionSource, type Prisma } from "@/generated/prisma/client";
+import { StudentStatus, type PromotionSource, type Track, type Prisma } from "@/generated/prisma/client";
 import { isAcademyInTenantScope } from "@/lib/tenant/context";
 import { getScopedDb } from "@/lib/tenant/scoped-client";
 import { getAtBeltSummary } from "@/lib/students/attendance-summary";
@@ -42,13 +42,15 @@ export interface WriteAwardParams {
    * award passes `{}`; a manual correction passes whatever anchors the
    * staff member explicitly chose.
    */
-  studentUpdate?: { beltAwardedAt?: Date; timeAnchorAt?: Date | null };
+  studentUpdate?: { beltAwardedAt?: Date; timeAnchorAt?: Date | null; track?: Track };
   /** Caller-supplied audit snapshots — open-ended so a correction can record anchors alongside belt/stripes, without forcing every caller into that richer shape. */
   before: Prisma.InputJsonValue;
   after: Prisma.InputJsonValue;
   source: PromotionSource;
   awardedById: string | null;
   notes: string | null;
+  /** Phase 3c-ii: changeTrack() passes "student.trackChange" so a track change is distinguishable in the audit log from a regular promotion — every other caller relies on the default. */
+  auditAction?: string;
 }
 
 /**
@@ -116,7 +118,7 @@ export async function writeAward(params: WriteAwardParams): Promise<{ ok: true }
         data: {
           actorId: params.awardedById,
           academyId: params.homeAcademyId,
-          action: "student.promote",
+          action: params.auditAction ?? "student.promote",
           entityType: "Student",
           entityId: params.studentId,
           before: params.before,

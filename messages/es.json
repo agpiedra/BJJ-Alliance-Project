@@ -503,7 +503,8 @@
         "columnNotes": "Notas",
         "sourceMANUAL": "Manual",
         "sourceAUTO": "Automática",
-        "sourceCORRECTION": "Corrección"
+        "sourceCORRECTION": "Corrección",
+        "sourceTRACK_CHANGE": "Cambio de track"
       },
       "attendanceHistory": {
         "heading": "Historial de asistencia"
@@ -623,6 +624,24 @@
             "notActive": "Este estudiante no está activo.",
             "invalidTarget": "Esa combinación de cinturón/grado no es válida.",
             "noteRequired": "El motivo es obligatorio.",
+            "conflict": "Otra persona ya actualizó a este estudiante. Actualiza la página para ver el estado actual.",
+            "generic": "Ocurrió un error."
+          }
+        },
+        "trackChange": {
+          "toggle": "Cambiar de track",
+          "transitionToggle": "Transición a adulto",
+          "warning": "Esto mueve al estudiante al sistema de cinturones del otro track. Elige el cinturón y los grados de destino explícitamente — nada se infiere.",
+          "rank": "Cinturón de destino",
+          "rankPlaceholder": "Elige un cinturón",
+          "stripes": "Grados",
+          "note": "Nota (opcional)",
+          "submit": "Cambiar de track",
+          "success": "Track cambiado.",
+          "error": {
+            "notFound": "No se encontró este estudiante.",
+            "notActive": "Este estudiante no está activo.",
+            "invalidTarget": "Esa combinación de cinturón/grado no es válida.",
             "conflict": "Otra persona ya actualizó a este estudiante. Actualiza la página para ver el estado actual.",
             "generic": "Ocurrió un error."
           }

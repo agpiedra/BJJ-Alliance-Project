@@ -64,6 +64,7 @@ enum PromotionSource {
   MANUAL
   AUTO
   CORRECTION
+  TRACK_CHANGE
 }
 
 enum StudentStatus {
