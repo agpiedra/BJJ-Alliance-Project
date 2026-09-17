@@ -48,6 +48,44 @@ export function classifyRetentionBucket(daysSinceLastAttendance: number | null):
   return "90";
 }
 
+/**
+ * MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 3d follow-up: a student onboarded
+ * with a PromotionCredit and zero real attendance is NOT the same signal as
+ * a student with zero attendance FOREVER (the `null` -> bucket "90" case
+ * above, which stays exactly as-is for everyone else) — they simply haven't
+ * had a chance to attend yet. Bulk-onboarding Alliance's existing roster
+ * would otherwise trip every one of those students into the worst bucket on
+ * day one.
+ *
+ * The fix reuses `classifyRetentionBucket`'s own 30/60/90 thresholds rather
+ * than inventing a separate "grace period" constant: for a CREDITED student
+ * with no real attendance, the "since" clock starts at `joinedAt` instead of
+ * never starting at all. Fewer than 30 days since joining is `null` — not a
+ * concern, exactly like a recently-active student — and 30+ escalates
+ * through the same buckets a genuine lapse would, rather than jumping
+ * straight to "90" the instant the grace period ends. `joinedAt` (not
+ * `beltAwardedAt`, which a director can backdate arbitrarily) is the anchor:
+ * it is specifically "when this student joined THIS academy," the actual
+ * date a genuine opportunity to attend began.
+ *
+ * An uncredited student's true "never attended" is untouched: this only
+ * changes the never-attended case for students Phase 3d actually affects.
+ */
+export function resolveRetentionDaysSince(
+  lastAttendanceAt: Date | null,
+  hasOnboardingCredit: boolean,
+  joinedAt: Date,
+  asOf: DateTime,
+): number | null {
+  if (lastAttendanceAt !== null) {
+    return Math.floor(asOf.diff(DateTime.fromJSDate(lastAttendanceAt, { zone: ZONE }), "days").days);
+  }
+  if (hasOnboardingCredit) {
+    return Math.floor(asOf.diff(DateTime.fromJSDate(joinedAt, { zone: ZONE }), "days").days);
+  }
+  return null;
+}
+
 export interface RetentionEntry {
   studentId: string;
   name: string;
@@ -104,30 +142,46 @@ export async function getRetentionList(
 
   const students = await getScopedDb(context).student.findMany({
     where: { AND: conditions },
-    select: { id: true, firstName: true, lastName: true, phone: true },
+    select: { id: true, firstName: true, lastName: true, phone: true, joinedAt: true },
   });
   if (students.length === 0) return [];
 
   const studentIds = students.map((student) => student.id);
-  const lastAttendances = await prisma.attendanceRecord.groupBy({
-    by: ["studentId"],
-    where: {
-      studentId: { in: studentIds },
-      organizationId: context.organizationId,
-      type: "CHECKIN",
-      occurredAt: { lte: filters.to.toJSDate() },
-    },
-    _max: { occurredAt: true },
-  });
+  const [lastAttendances, credits] = await Promise.all([
+    prisma.attendanceRecord.groupBy({
+      by: ["studentId"],
+      where: {
+        studentId: { in: studentIds },
+        organizationId: context.organizationId,
+        type: "CHECKIN",
+        occurredAt: { lte: filters.to.toJSDate() },
+      },
+      _max: { occurredAt: true },
+    }),
+    // Existence only (Phase 3d follow-up) — presence of ANY PromotionCredit
+    // row, regardless of its net sign or which belt period it anchors to, is
+    // what marks this as a bulk/historical-onboarded student rather than a
+    // pure walk-in beginner. See resolveRetentionDaysSince's own doc comment
+    // for why that's the right bar, not "still counts toward the current
+    // belt."
+    prisma.promotionCredit.findMany({
+      where: { studentId: { in: studentIds }, organizationId: context.organizationId },
+      select: { studentId: true },
+      distinct: ["studentId"],
+    }),
+  ]);
   const lastSeenByStudentId = new Map(lastAttendances.map((a) => [a.studentId, a._max.occurredAt]));
+  const creditedStudentIds = new Set(credits.map((c) => c.studentId));
 
   const entries: RetentionEntry[] = [];
   for (const student of students) {
     const lastSeenAt = lastSeenByStudentId.get(student.id) ?? null;
-    const daysSince =
-      lastSeenAt === null
-        ? null
-        : Math.floor(filters.to.diff(DateTime.fromJSDate(lastSeenAt, { zone: ZONE }), "days").days);
+    const daysSince = resolveRetentionDaysSince(
+      lastSeenAt,
+      creditedStudentIds.has(student.id),
+      student.joinedAt,
+      filters.to,
+    );
     const bucket = classifyRetentionBucket(daysSince);
     if (bucket === null) continue;
 

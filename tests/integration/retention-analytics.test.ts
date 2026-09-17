@@ -48,6 +48,9 @@ const cleanupAcademyIds: string[] = [];
 
 async function cleanup() {
   if (cleanupStudentIds.length > 0) {
+    // PromotionCredit (Phase 3d) references Student with ON DELETE RESTRICT
+    // — must go first, or student.deleteMany below fails outright.
+    await prisma.promotionCredit.deleteMany({ where: { studentId: { in: cleanupStudentIds } } });
     await prisma.attendanceRecord.deleteMany({ where: { studentId: { in: cleanupStudentIds } } });
     await prisma.student.deleteMany({ where: { id: { in: cleanupStudentIds } } });
   }
@@ -263,6 +266,86 @@ describe("getRetentionList", () => {
     const filters: AnalyticsFilters = { from: RANGE_FROM, to: RANGE_TO, academyId: null };
 
     await expect(getRetentionList(instructor, filters)).rejects.toThrow("FORBIDDEN");
+  });
+
+  // MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 3d follow-up: a credited student
+  // with zero real attendance should not be flagged until they've had a
+  // genuine opportunity to attend (grace window anchored at joinedAt).
+  describe("Phase 3d follow-up: onboarding-credit grace window", () => {
+    it("a freshly onboarded credited student (joined recently, zero real attendance) does not appear at all", async () => {
+      const academy = await makeAcademy("retention-credit-grace-fresh");
+      const student = await makeStudent(academy.id, academy.organizationId, { firstName: "FreshCredited" });
+      // Override the fixture's default 1-year-old joinedAt: this student
+      // joined 10 days before the report's "as of" date.
+      await prisma.student.update({
+        where: { id: student.id },
+        data: { joinedAt: RANGE_TO.minus({ days: 10 }).toJSDate() },
+      });
+      await prisma.promotionCredit.create({
+        data: {
+          studentId: student.id,
+          academyId: academy.id,
+          organizationId: academy.organizationId,
+          beltAwardedAtAnchor: student.beltAwardedAt,
+          classesGranted: 20,
+          reason: "Onboarding estimate.",
+        },
+      });
+
+      const admin = ctx("ADMIN", "ALL", academy.organizationId);
+      const filters: AnalyticsFilters = { from: RANGE_FROM, to: RANGE_TO, academyId: null };
+
+      const entries = await getRetentionList(admin, filters);
+      expect(entries.find((e) => e.studentId === student.id)).toBeUndefined();
+    });
+
+    it("the same shape of student DOES appear once 30+ days have passed since joining with still no real attendance", async () => {
+      const academy = await makeAcademy("retention-credit-grace-expired");
+      const student = await makeStudent(academy.id, academy.organizationId, { firstName: "ExpiredGraceCredited" });
+      await prisma.student.update({
+        where: { id: student.id },
+        data: { joinedAt: RANGE_TO.minus({ days: 40 }).toJSDate() },
+      });
+      await prisma.promotionCredit.create({
+        data: {
+          studentId: student.id,
+          academyId: academy.id,
+          organizationId: academy.organizationId,
+          beltAwardedAtAnchor: student.beltAwardedAt,
+          classesGranted: 20,
+          reason: "Onboarding estimate.",
+        },
+      });
+
+      const admin = ctx("ADMIN", "ALL", academy.organizationId);
+      const filters: AnalyticsFilters = { from: RANGE_FROM, to: RANGE_TO, academyId: null };
+
+      const entries = await getRetentionList(admin, filters);
+      const entry = entries.find((e) => e.studentId === student.id);
+      expect(entry).toBeDefined();
+      // 40 days since joining lands in bucket 30 (escalates gradually), not
+      // straight to 90 the instant the grace period ends.
+      expect(entry!.bucket).toBe("30");
+      expect(entry!.lastSeenAt).toBeNull();
+    });
+
+    it("an UNCREDITED student with zero attendance is unaffected by this change — still bucket 90 immediately, joined recently or not", async () => {
+      const academy = await makeAcademy("retention-credit-grace-uncredited");
+      const student = await makeStudent(academy.id, academy.organizationId, { firstName: "FreshUncredited" });
+      await prisma.student.update({
+        where: { id: student.id },
+        data: { joinedAt: RANGE_TO.minus({ days: 2 }).toJSDate() },
+      });
+      // Deliberately no PromotionCredit row.
+
+      const admin = ctx("ADMIN", "ALL", academy.organizationId);
+      const filters: AnalyticsFilters = { from: RANGE_FROM, to: RANGE_TO, academyId: null };
+
+      const entries = await getRetentionList(admin, filters);
+      const entry = entries.find((e) => e.studentId === student.id);
+      expect(entry).toBeDefined();
+      expect(entry!.bucket).toBe("90");
+    });
   });
 });
 
