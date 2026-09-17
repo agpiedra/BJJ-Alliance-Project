@@ -187,14 +187,14 @@ describe("Kids belt catalog — the math is genuinely base-10, not adult-shaped"
 
     const notYet = await makeKidsStudent("grey", 10, beltAwardedAt);
     await addAttendances(notYet.id, 109, new Date(beltAwardedAt.getTime() + DAY_MS));
-    const notYetSummary = await getAtBeltSummary(notYet.id, configByTrack);
+    const notYetSummary = await getAtBeltSummary(notYet.id, notYet.organizationId, configByTrack);
     expect(notYetSummary.nextTarget).toBe("STRIPE");
     expect(notYetSummary.isEligible).toBe(false);
     expect(notYetSummary.remainingAttendance).toBe(1);
 
     const exactly = await makeKidsStudent("grey", 10, beltAwardedAt);
     await addAttendances(exactly.id, 110, new Date(beltAwardedAt.getTime() + DAY_MS));
-    const exactlySummary = await getAtBeltSummary(exactly.id, configByTrack);
+    const exactlySummary = await getAtBeltSummary(exactly.id, exactly.organizationId, configByTrack);
     expect(exactlySummary.nextTarget).toBe("STRIPE");
     expect(exactlySummary.isEligible).toBe(true);
     expect(exactlySummary.remainingAttendance).toBe(0);
@@ -207,14 +207,14 @@ describe("Kids belt catalog — the math is genuinely base-10, not adult-shaped"
 
     const notYet = await makeKidsStudent("grey", 11, beltAwardedAt);
     await addAttendances(notYet.id, 119, new Date(beltAwardedAt.getTime() + DAY_MS));
-    const notYetSummary = await getAtBeltSummary(notYet.id, configByTrack);
+    const notYetSummary = await getAtBeltSummary(notYet.id, notYet.organizationId, configByTrack);
     expect(notYetSummary.nextTarget).toBe("BELT");
     expect(notYetSummary.isEligible).toBe(false);
     expect(notYetSummary.remainingAttendance).toBe(1);
 
     const exactly = await makeKidsStudent("grey", 11, beltAwardedAt);
     await addAttendances(exactly.id, 120, new Date(beltAwardedAt.getTime() + DAY_MS));
-    const exactlySummary = await getAtBeltSummary(exactly.id, configByTrack);
+    const exactlySummary = await getAtBeltSummary(exactly.id, exactly.organizationId, configByTrack);
     expect(exactlySummary.nextTarget).toBe("BELT");
     expect(exactlySummary.isEligible).toBe(true);
     // null, not 0 — an exam-eligible candidate has nothing left to project
@@ -229,7 +229,7 @@ describe("Kids belt catalog — the math is genuinely base-10, not adult-shaped"
 
     const student = await makeKidsStudent("green_black", 11, beltAwardedAt);
     await addAttendances(student.id, 120, new Date(beltAwardedAt.getTime() + DAY_MS));
-    const summary = await getAtBeltSummary(student.id, configByTrack);
+    const summary = await getAtBeltSummary(student.id, student.organizationId, configByTrack);
     expect(summary.nextTarget).toBe("NONE");
   });
 });

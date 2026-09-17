@@ -99,6 +99,7 @@ export async function writeAward(params: WriteAwardParams): Promise<{ ok: true }
       const result = await tx.student.updateMany({
         where: {
           id: params.studentId,
+          organizationId: params.organizationId,
           status: StudentStatus.ACTIVE,
           currentRankId: params.fromRankId,
           currentStripes: params.fromStripes,
@@ -181,7 +182,7 @@ export async function awardPromotion(
   // map here (rather than once per batch, like promotion-queue.ts) costs
   // exactly one query either way.
   const configByTrack = await resolvePromotionConfigMap(context.organizationId);
-  const summary = await getAtBeltSummary(student.id, configByTrack);
+  const summary = await getAtBeltSummary(student.id, context.organizationId, configByTrack);
 
   if (summary.nextTarget === "NONE" || !summary.isEligible) {
     return { ok: false, error: "notEligible" };

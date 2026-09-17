@@ -18,47 +18,35 @@ const DAY_ORDER: Record<DayOfWeek, number> = {
  * Plain function — NOT a "use server" action, and deliberately kept out of
  * this directory's `actions.ts` (which carries a file-level "use server"
  * directive for `createClassSession`/`updateClassSession`/
- * `deactivateClassSession`). Two independent reasons, matching
- * `students/actions.ts`'s doc comment on `listStudents`:
+ * `deactivateClassSession`): a "use server" directive makes every export of
+ * that file independently invocable by its action id from any browser,
+ * session or not — folding this into `actions.ts` would turn an
+ * unauthenticated request into a working way to read any academy's full
+ * class schedule.
  *
- * 1. Security: this function takes a bare `academyId` string with no
- *    session parameter at all — no scoping logic is needed, but NOT because
- *    of who calls it. There are now two callers: the ADMIN-gated
- *    `admin/schedule/page.tsx` (a Server Component that calls
- *    `requireStaffSession(["ADMIN"])` first) AND the fully unauthenticated
- *    `src/app/[locale]/home-data.ts`, which feeds the public home page. This
- *    is safe today only because `ClassSession` (see `prisma/schema.prisma`)
- *    carries no sensitive fields — just schedule metadata (day/time,
- *    duration, class name/type, active flag) — nothing per-person, no PII,
- *    no financial data, no internal-only column. The safety argument lives
- *    in the DATA, not the caller: if anyone adds a sensitive field to
- *    `ClassSession` in the future (an instructor's private note, an internal
- *    cost figure, etc.), do NOT assume the ADMIN gate protects it — the
- *    public caller reaches this same function unfiltered. At that point
- *    split this into two functions: a full version for staff and a
- *    restricted-`select` version for public use.
- *    Separately, a "use server" directive makes every export of that file
- *    independently invocable by its action id from any browser, session or
- *    not — folding this into `actions.ts` would turn an unauthenticated
- *    request into a working way to read any academy's full class schedule
- *    (not just the one public preview `home-data.ts` already exposes on
- *    purpose).
- * 2. Build correctness: this module imports Prisma (Node-only). The write
- *    actions in `actions.ts` are imported by several Client Components
- *    (the create form, the per-row edit form, the deactivate button). If
- *    this function lived in that same "use server" file, every one of those
- *    Client Components would pull Prisma's runtime into the browser bundle
- *    — the exact Turbopack/webpack leak Phase 2 hit and fixed by splitting
- *    `students/actions.ts` (plain) from `students/create-student-action.ts`
- *    ("use server").
+ * Its one caller, `admin/schedule/page.tsx`, already resolved a
+ * `TenantContext` via `requireTenantContext(["ADMIN"])` before calling this,
+ * so `organizationId` here is a real tenant filter, not a formality — this
+ * function used to also feed the public, unauthenticated home page
+ * (`home-data.ts`, removed in revision 23) via a bare `academyId` filter,
+ * which is exactly the shape the base-client tenant guard now rejects.
+ *
+ * Build-correctness note (still applies): this module imports Prisma
+ * (Node-only). The write actions in `actions.ts` are imported by several
+ * Client Components (the create form, the per-row edit form, the deactivate
+ * button). If this function lived in that same "use server" file, every one
+ * of those Client Components would pull Prisma's runtime into the browser
+ * bundle — the exact Turbopack/webpack leak Phase 2 hit and fixed by
+ * splitting `students/actions.ts` (plain) from
+ * `students/create-student-action.ts` ("use server").
  *
  * Returns every session for the academy, active and inactive alike — the
  * admin table intentionally shows both (visually distinguished), so
  * deactivated sessions stay reviewable/reactivatable-by-edit rather than
  * disappearing.
  */
-export async function listClassSessions(academyId: string) {
-  const sessions = await prisma.classSession.findMany({ where: { academyId } });
+export async function listClassSessions(organizationId: string, academyId: string) {
+  const sessions = await prisma.classSession.findMany({ where: { organizationId, academyId } });
 
   return sessions.sort((a, b) => {
     const dayDiff = DAY_ORDER[a.dayOfWeek] - DAY_ORDER[b.dayOfWeek];

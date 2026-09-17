@@ -77,6 +77,7 @@ export async function listCurrentPaymentStatus(
 
   const periodsByStudentId = await getCurrentPaymentPeriodsForStudents(
     students.map((s) => s.id),
+    context.organizationId,
     today,
   );
 

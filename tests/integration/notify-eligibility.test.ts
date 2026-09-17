@@ -112,7 +112,7 @@ describe("notifyEligibilityReached", () => {
     const inAppChannel = new RecordingChannel();
     const emailChannel = new RecordingChannel();
 
-    await notifyEligibilityReached(student.id, "STRIPE_THRESHOLD", [inAppChannel, emailChannel]);
+    await notifyEligibilityReached(student.id, escazu.organizationId, "STRIPE_THRESHOLD", [inAppChannel, emailChannel]);
 
     for (const channel of [inAppChannel, emailChannel]) {
       // Presence, not exact-list equality: the shared local dev DB can carry
@@ -134,7 +134,7 @@ describe("notifyEligibilityReached", () => {
     const student = await makeStudent(escazu.id, escazu.organizationId);
     const emailChannel = new RecordingChannel();
 
-    await notifyEligibilityReached(student.id, "EXAM_THRESHOLD", [emailChannel]);
+    await notifyEligibilityReached(student.id, escazu.organizationId, "EXAM_THRESHOLD", [emailChannel]);
 
     expect(emailChannel.calls.length).toBeGreaterThan(0);
     expect(emailChannel.calls[0].message.type).toBe("EXAM_THRESHOLD");
@@ -151,7 +151,7 @@ describe("notifyEligibilityReached", () => {
     const student = await makeStudent(escazu.id, escazu.organizationId); // currentStripes: 4
     const emailChannel = new RecordingChannel();
 
-    await notifyEligibilityReached(student.id, "STRIPE_THRESHOLD", [emailChannel]);
+    await notifyEligibilityReached(student.id, escazu.organizationId, "STRIPE_THRESHOLD", [emailChannel]);
 
     expect(emailChannel.calls.length).toBeGreaterThan(0);
     const { body } = emailChannel.calls[0].message;
@@ -166,7 +166,7 @@ describe("notifyEligibilityReached", () => {
     const student = await makeStudent(escazu.id, escazu.organizationId);
     const channel = new RecordingChannel();
 
-    await notifyEligibilityReached(student.id, "STRIPE_THRESHOLD", [channel]);
+    await notifyEligibilityReached(student.id, escazu.organizationId, "STRIPE_THRESHOLD", [channel]);
 
     const toEnAdmin = channel.calls.find((c) => c.to.userId === enAdmin.id);
     const toEsDirector = channel.calls.find((c) => c.to.userId === esDirector.id);
@@ -186,7 +186,7 @@ describe("notifyEligibilityReached", () => {
   it("never throws for a studentId that doesn't exist", async () => {
     const emailChannel = new RecordingChannel();
     await expect(
-      notifyEligibilityReached("does-not-exist-id", "STRIPE_THRESHOLD", [emailChannel]),
+      notifyEligibilityReached("does-not-exist-id", "does-not-exist-org", "STRIPE_THRESHOLD", [emailChannel]),
     ).resolves.toBeUndefined();
     expect(emailChannel.calls).toHaveLength(0);
   });

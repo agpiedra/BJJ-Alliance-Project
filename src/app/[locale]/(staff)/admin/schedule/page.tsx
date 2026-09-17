@@ -88,7 +88,9 @@ export default async function AdminSchedulePage({
       : academies[0]?.id;
   const selectedAcademy = academies.find((academy) => academy.id === selectedAcademyId);
 
-  const sessions = selectedAcademyId ? await listClassSessions(selectedAcademyId) : [];
+  const sessions = selectedAcademyId
+    ? await listClassSessions(context.organizationId, selectedAcademyId)
+    : [];
 
   const t = await getTranslations("adminSchedule");
   const tCal = await getTranslations("adminSchedule.calendar");

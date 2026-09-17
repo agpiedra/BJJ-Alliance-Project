@@ -288,7 +288,7 @@ describe("POST /api/kiosk/check-in", () => {
 
     expect(status).toBe(200);
     expect(json.earnedStripe).toBe(true);
-    expect(notifyEligibilityState.spy).toHaveBeenCalledWith(student.id, "STRIPE_THRESHOLD");
+    expect(notifyEligibilityState.spy).toHaveBeenCalledWith(student.id, academy.organizationId, "STRIPE_THRESHOLD");
   });
 
   it("checks a student in and returns the documented 200 shape", async () => {

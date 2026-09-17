@@ -43,9 +43,12 @@ export type PromotionHistoryEntry = {
  * by email; there's no separate display-name concept for them, unlike
  * `Student.firstName`/`lastName`).
  */
-export async function getPromotionHistory(studentId: string): Promise<PromotionHistoryEntry[]> {
+export async function getPromotionHistory(
+  studentId: string,
+  organizationId: string,
+): Promise<PromotionHistoryEntry[]> {
   const promotions = await prisma.promotion.findMany({
-    where: { studentId },
+    where: { studentId, organizationId },
     orderBy: { awardedAt: "desc" },
     select: {
       id: true,

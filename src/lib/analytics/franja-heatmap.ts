@@ -105,6 +105,7 @@ export async function getFranjaHeatmap(
       : await prisma.attendanceRecord.findMany({
           where: {
             classSessionId: { in: sessionIds },
+            organizationId: context.organizationId,
             type: "CHECKIN",
             occurredAt: { gte: windowStart.toJSDate(), lte: now.toJSDate() },
           },

@@ -104,7 +104,7 @@ export async function runAutomaticStripeAwardsForOrganization(
 
     let summary;
     try {
-      summary = await getAtBeltSummary(student.id, configByTrack);
+      summary = await getAtBeltSummary(student.id, organizationId, configByTrack);
     } catch (error) {
       if (error instanceof MissingTimeAnchorError) continue; // per-student data gap, not a batch failure.
       result.errors.push({ studentId: student.id, error: error instanceof Error ? error.message : String(error) });

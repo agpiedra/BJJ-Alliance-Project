@@ -94,7 +94,7 @@ export async function recordPayment(
   }
 
   const plan = await prisma.paymentPlan.findUnique({
-    where: { id: data.planId },
+    where: { id: data.planId, organizationId: student.organizationId },
     select: { id: true, academyId: true, name: true },
   });
 
@@ -113,7 +113,10 @@ export async function recordPayment(
 
   const result = await prisma.$transaction(async (tx) => {
     const existing = await tx.paymentPeriod.findUnique({
-      where: { studentId_year_month: { studentId: student.id, year: data.year, month: data.month } },
+      where: {
+        studentId_year_month: { studentId: student.id, year: data.year, month: data.month },
+        organizationId: student.organizationId,
+      },
       select: {
         status: true,
         planId: true,
@@ -270,7 +273,10 @@ export async function markPaymentPaid(
   }
 
   const existing = await prisma.paymentPeriod.findUnique({
-    where: { studentId_year_month: { studentId, year, month } },
+    where: {
+      studentId_year_month: { studentId, year, month },
+      organizationId: student.organizationId,
+    },
     select: {
       planId: true,
       amount: true,
@@ -285,14 +291,19 @@ export async function markPaymentPaid(
   let planId = existing?.planId ?? null;
   if (!planId) {
     const mensualidad = await prisma.paymentPlan.findFirst({
-      where: { academyId: student.homeAcademyId, name: "Mensualidad", active: true },
+      where: { organizationId: student.organizationId, academyId: student.homeAcademyId, name: "Mensualidad", active: true },
       select: { id: true },
     });
     planId =
       mensualidad?.id ??
       (
         await prisma.paymentPlan.findFirst({
-          where: { academyId: student.homeAcademyId, active: true, NOT: { name: CUSTOM_PROMO_PLAN_NAME } },
+          where: {
+            organizationId: student.organizationId,
+            academyId: student.homeAcademyId,
+            active: true,
+            NOT: { name: CUSTOM_PROMO_PLAN_NAME },
+          },
           orderBy: { name: "asc" },
           select: { id: true },
         })

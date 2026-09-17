@@ -129,6 +129,7 @@ export async function getClassPopularity(
       : await prisma.attendanceRecord.findMany({
           where: {
             classSessionId: { in: classSessionIds },
+            organizationId: context.organizationId,
             type: "CHECKIN",
             occurredAt: { gte: previous.from.toJSDate(), lte: range.to.toJSDate() },
           },

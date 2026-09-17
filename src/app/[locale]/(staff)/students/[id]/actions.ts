@@ -145,7 +145,7 @@ export async function updateStudent(
   try {
     await prisma.$transaction(async (tx) => {
       const result = await tx.student.updateMany({
-        where: { id: student.id, homeAcademyId: student.homeAcademyId },
+        where: { id: student.id, organizationId: student.organizationId, homeAcademyId: student.homeAcademyId },
         data: after,
       });
 
@@ -218,7 +218,7 @@ export async function archiveStudent(
   try {
     await prisma.$transaction(async (tx) => {
       const result = await tx.student.updateMany({
-        where: { id: student.id, homeAcademyId: student.homeAcademyId },
+        where: { id: student.id, organizationId: student.organizationId, homeAcademyId: student.homeAcademyId },
         data: { status: StudentStatus.ARCHIVED },
       });
 
@@ -292,6 +292,7 @@ export async function approveStudent(
       const result = await tx.student.updateMany({
         where: {
           id: student.id,
+          organizationId: student.organizationId,
           homeAcademyId: student.homeAcademyId,
           status: StudentStatus.PENDING,
         },
@@ -370,7 +371,7 @@ export async function regenerateStudentCode(
   try {
     await prisma.$transaction(async (tx) => {
       const result = await tx.student.updateMany({
-        where: { id: student.id, homeAcademyId: student.homeAcademyId },
+        where: { id: student.id, organizationId: student.organizationId, homeAcademyId: student.homeAcademyId },
         data: { codeHash },
       });
 

@@ -33,10 +33,11 @@ const DEFAULT_LIMIT = 50;
  */
 export async function getAttendanceHistory(
   studentId: string,
+  organizationId: string,
   limit = DEFAULT_LIMIT,
 ): Promise<AttendanceHistoryEntry[]> {
   const records = await prisma.attendanceRecord.findMany({
-    where: { studentId },
+    where: { studentId, organizationId },
     orderBy: { occurredAt: "desc" },
     take: limit,
     select: {

@@ -516,7 +516,7 @@ describe("recordPayment", () => {
 
   it("a custom-promotion plan without a `promoName` is rejected with promoNameRequired, writing no row", async () => {
     const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
-    const promoPlan = await ensureCustomPromoPlan(escazu.id);
+    const promoPlan = await ensureCustomPromoPlan(escazu.organizationId, escazu.id);
     const admin = await makeStaffUser("ADMIN", "record-promo-noname-admin");
     const student = await makeStudent(escazu.id, escazu.organizationId);
 
@@ -534,7 +534,7 @@ describe("recordPayment", () => {
 
   it("a custom promotion WITH a promoName records the promo fields, including a recurring flag", async () => {
     const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
-    const promoPlan = await ensureCustomPromoPlan(escazu.id);
+    const promoPlan = await ensureCustomPromoPlan(escazu.organizationId, escazu.id);
     expect(promoPlan.name).toBe(CUSTOM_PROMO_PLAN_NAME);
     const admin = await makeStaffUser("ADMIN", "record-promo-admin");
     const student = await makeStudent(escazu.id, escazu.organizationId);
@@ -672,8 +672,8 @@ describe("ensureCustomPromoPlan", () => {
   it("is idempotent: calling it twice for the same academy returns the SAME row, not a duplicate", async () => {
     const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
 
-    const first = await ensureCustomPromoPlan(escazu.id);
-    const second = await ensureCustomPromoPlan(escazu.id);
+    const first = await ensureCustomPromoPlan(escazu.organizationId, escazu.id);
+    const second = await ensureCustomPromoPlan(escazu.organizationId, escazu.id);
     expect(second.id).toBe(first.id);
 
     const count = await prisma.paymentPlan.count({
@@ -686,8 +686,8 @@ describe("ensureCustomPromoPlan", () => {
     const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
     const escalante = await prisma.academy.findUniqueOrThrow({ where: { slug: "escalante" } });
 
-    const escazuPlan = await ensureCustomPromoPlan(escazu.id);
-    const escalantePlan = await ensureCustomPromoPlan(escalante.id);
+    const escazuPlan = await ensureCustomPromoPlan(escazu.organizationId, escazu.id);
+    const escalantePlan = await ensureCustomPromoPlan(escalante.organizationId, escalante.id);
     expect(escazuPlan.id).not.toBe(escalantePlan.id);
     expect(escazuPlan.name).toBe(CUSTOM_PROMO_PLAN_NAME);
     expect(escalantePlan.name).toBe(CUSTOM_PROMO_PLAN_NAME);
@@ -771,7 +771,7 @@ describe("markPaymentPaid", () => {
   // silently failed `recordPayment`'s own "promo name required" guard.
   it("flips an existing PENDING custom-promo row to PAID, forwarding its promo fields so recordPayment's promo-name guard doesn't reject it", async () => {
     const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
-    const promoPlan = await ensureCustomPromoPlan(escazu.id);
+    const promoPlan = await ensureCustomPromoPlan(escazu.organizationId, escazu.id);
     const admin = await makeStaffUser("ADMIN", "markpaid-promo-admin");
     const student = await makeStudent(escazu.id, escazu.organizationId);
     await prisma.paymentPeriod.create({

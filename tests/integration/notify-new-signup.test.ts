@@ -107,7 +107,7 @@ describe("notifyNewSignup", () => {
     const inAppChannel = new RecordingChannel();
     const emailChannel = new RecordingChannel();
 
-    await notifyNewSignup(student.id, [inAppChannel, emailChannel]);
+    await notifyNewSignup(student.id, student.organizationId, [inAppChannel, emailChannel]);
 
     for (const channel of [inAppChannel, emailChannel]) {
       // Presence, not exact-list equality — leftover ADMIN fixture rows can
@@ -128,7 +128,7 @@ describe("notifyNewSignup", () => {
     const student = await makeStudent(escazu.id, escazu.organizationId);
     const channel = new RecordingChannel();
 
-    await notifyNewSignup(student.id, [channel]);
+    await notifyNewSignup(student.id, student.organizationId, [channel]);
 
     const toEnAdmin = channel.calls.find((c) => c.to.userId === enAdmin.id);
     const toEsDirector = channel.calls.find((c) => c.to.userId === esDirector.id);
@@ -144,7 +144,9 @@ describe("notifyNewSignup", () => {
 
   it("never throws for a missing/invalid studentId", async () => {
     const recording = new RecordingChannel();
-    await expect(notifyNewSignup("does-not-exist-id", [recording])).resolves.toBeUndefined();
+    await expect(
+      notifyNewSignup("does-not-exist-id", "does-not-exist-org", [recording]),
+    ).resolves.toBeUndefined();
     expect(recording.calls).toHaveLength(0);
   });
 });

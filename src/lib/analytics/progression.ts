@@ -79,6 +79,7 @@ export interface ProgressionPlanningRow {
  * than, a per-student query with its own date bound.
  */
 async function computeRecentAttendanceRates(
+  organizationId: string,
   candidateIds: string[],
   beltAwardedAtByStudentId: Map<string, Date>,
   today: DateTime,
@@ -91,6 +92,7 @@ async function computeRecentAttendanceRates(
       : await prisma.attendanceRecord.findMany({
           where: {
             studentId: { in: candidateIds },
+            organizationId,
             type: "CHECKIN",
             occurredAt: { gte: windowFloor.toJSDate(), lte: today.toJSDate() },
           },
@@ -167,6 +169,7 @@ export async function getProgressionPlanningList(
   const beltAwardedAtByStudentId = new Map(students.map((s) => [s.id, s.beltAwardedAt]));
 
   const rateByStudentId = await computeRecentAttendanceRates(
+    context.organizationId,
     candidates.map((c) => c.studentId),
     beltAwardedAtByStudentId,
     today,

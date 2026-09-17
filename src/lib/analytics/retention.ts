@@ -113,6 +113,7 @@ export async function getRetentionList(
     by: ["studentId"],
     where: {
       studentId: { in: studentIds },
+      organizationId: context.organizationId,
       type: "CHECKIN",
       occurredAt: { lte: filters.to.toJSDate() },
     },

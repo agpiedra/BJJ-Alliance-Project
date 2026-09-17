@@ -308,7 +308,7 @@ describe("confirmPromotion", () => {
     const student = await makeStudent(escazu.id, escazu.organizationId, { currentBelt: "WHITE", currentStripes: 4, beltAwardedAt });
     await addAttendances(student.id, escazu.id, escazu.organizationId, 150, new Date(beltAwardedAt.getTime() + DAY_MS));
 
-    const before = await getAtBeltSummary(student.id, ALLIANCE_ATTENDANCE_CONFIG);
+    const before = await getAtBeltSummary(student.id, student.organizationId, ALLIANCE_ATTENDANCE_CONFIG);
     expect(before.nextTarget).toBe("BELT");
     expect(before.isEligible).toBe(true);
 
@@ -353,13 +353,13 @@ describe("confirmPromotion", () => {
 
     // Genuinely eligible at first: exactly 30 attendances.
     await addAttendances(student.id, escazu.id, escazu.organizationId, 30, new Date(beltAwardedAt.getTime() + DAY_MS));
-    const eligibleSummary = await getAtBeltSummary(student.id, ALLIANCE_ATTENDANCE_CONFIG);
+    const eligibleSummary = await getAtBeltSummary(student.id, student.organizationId, ALLIANCE_ATTENDANCE_CONFIG);
     expect(eligibleSummary.remainingAttendance).toBe(0);
 
     // A correction lands before the confirm click reaches the server —
     // drops the student back below the threshold it had just crossed.
     await addAdjustment(student.id, escazu.id, escazu.organizationId, -5, new Date(beltAwardedAt.getTime() + 31 * DAY_MS));
-    const staleSummary = await getAtBeltSummary(student.id, ALLIANCE_ATTENDANCE_CONFIG);
+    const staleSummary = await getAtBeltSummary(student.id, student.organizationId, ALLIANCE_ATTENDANCE_CONFIG);
     expect(staleSummary.remainingAttendance).toBe(5);
 
     currentSession = { user: { id: admin.id, role: "ADMIN" }, activeOrganizationId: admin.organizationId };

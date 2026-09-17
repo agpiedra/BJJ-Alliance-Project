@@ -47,9 +47,12 @@ export type PromotionHistoryEntry = {
  * Component imports from so Prisma's Node-only runtime never gets pulled
  * into the browser bundle.
  */
-export async function getOwnPromotionHistory(studentId: string): Promise<PromotionHistoryEntry[]> {
+export async function getOwnPromotionHistory(
+  studentId: string,
+  organizationId: string,
+): Promise<PromotionHistoryEntry[]> {
   const promotions = await prisma.promotion.findMany({
-    where: { studentId },
+    where: { studentId, organizationId },
     orderBy: { awardedAt: "desc" },
     select: {
       id: true,

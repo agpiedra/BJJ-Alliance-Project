@@ -28,9 +28,9 @@ export function crToday(now: Date = new Date()): Date {
  * made at 23:50 CR for a class that straddles midnight stays on its class's
  * day here too, instead of jumping a row into tomorrow's table.
  */
-export async function listTodaysCheckIns(academyId: string, today: Date = crToday()) {
+export async function listTodaysCheckIns(organizationId: string, academyId: string, today: Date = crToday()) {
   return prisma.attendanceRecord.findMany({
-    where: { academyId, type: AttendanceType.CHECKIN, date: today },
+    where: { organizationId, academyId, type: AttendanceType.CHECKIN, date: today },
     orderBy: { occurredAt: "desc" },
     select: {
       id: true,
@@ -45,9 +45,9 @@ export async function listTodaysCheckIns(academyId: string, today: Date = crToda
 
 /** That academy's active classes on the weekday `date` falls on — the options
  * a `Cambiar` action may move a check-in to. */
-export async function listReassignableSessions(academyId: string, date: Date) {
+export async function listReassignableSessions(organizationId: string, academyId: string, date: Date) {
   return prisma.classSession.findMany({
-    where: { academyId, active: true, dayOfWeek: attendanceDateDayOfWeek(date) },
+    where: { organizationId, academyId, active: true, dayOfWeek: attendanceDateDayOfWeek(date) },
     orderBy: { startTime: "asc" },
     select: { id: true, name: true, startTime: true },
   });

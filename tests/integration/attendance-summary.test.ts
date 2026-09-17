@@ -89,7 +89,7 @@ describe("getAtBeltSummary", () => {
     const student = await makeStudent(escazu.id, escazu.organizationId, { currentStripes: 0, beltAwardedAt });
 
     // 0 attendances since beltAwardedAt.
-    let summary = await getAtBeltSummary(student.id, ALLIANCE_ATTENDANCE_CONFIG);
+    let summary = await getAtBeltSummary(student.id, student.organizationId, ALLIANCE_ATTENDANCE_CONFIG);
     expect(summary.currentBelt).toBe("WHITE");
     expect(summary.currentStripes).toBe(0);
     expect(summary.atBeltCount).toBe(0);
@@ -102,7 +102,7 @@ describe("getAtBeltSummary", () => {
 
     // 29 attendances since beltAwardedAt.
     await addCheckins(student.id, escazu.id, escazu.organizationId, 29, new Date(beltAwardedAt.getTime() + DAY_MS));
-    summary = await getAtBeltSummary(student.id, ALLIANCE_ATTENDANCE_CONFIG);
+    summary = await getAtBeltSummary(student.id, student.organizationId, ALLIANCE_ATTENDANCE_CONFIG);
     expect(summary.atBeltCount).toBe(29);
     expect(summary.nextTarget).toBe("STRIPE");
     expect(summary.remainingAttendance).toBe(1);
@@ -110,7 +110,7 @@ describe("getAtBeltSummary", () => {
 
     // The 30th attendance reaches (but does not itself flip) the threshold.
     await addCheckins(student.id, escazu.id, escazu.organizationId, 1, new Date(beltAwardedAt.getTime() + 30 * DAY_MS));
-    summary = await getAtBeltSummary(student.id, ALLIANCE_ATTENDANCE_CONFIG);
+    summary = await getAtBeltSummary(student.id, student.organizationId, ALLIANCE_ATTENDANCE_CONFIG);
     expect(summary.atBeltCount).toBe(30);
     expect(summary.remainingAttendance).toBe(0);
     // Reaching the threshold is reported, not applied — currentStripes is
@@ -132,7 +132,7 @@ describe("getAtBeltSummary", () => {
         source: "STAFF",
       },
     });
-    summary = await getAtBeltSummary(student.id, ALLIANCE_ATTENDANCE_CONFIG);
+    summary = await getAtBeltSummary(student.id, student.organizationId, ALLIANCE_ATTENDANCE_CONFIG);
     expect(summary.atBeltCount).toBe(25);
     expect(summary.remainingAttendance).toBe(5);
     expect(summary.lifetimeCount).toBe(25);
@@ -152,7 +152,7 @@ describe("getAtBeltSummary", () => {
         source: "STAFF",
       },
     });
-    summary = await getAtBeltSummary(student.id, ALLIANCE_ATTENDANCE_CONFIG);
+    summary = await getAtBeltSummary(student.id, student.organizationId, ALLIANCE_ATTENDANCE_CONFIG);
     expect(summary.atBeltCount).toBe(25);
     expect(summary.lifetimeCount).toBe(26);
   });
@@ -165,7 +165,7 @@ describe("getAtBeltSummary", () => {
     const student = await makeStudent(escazu.id, escazu.organizationId, { currentStripes: 4, beltAwardedAt });
 
     await addCheckins(student.id, escazu.id, escazu.organizationId, 149, new Date(beltAwardedAt.getTime() + DAY_MS));
-    let summary = await getAtBeltSummary(student.id, ALLIANCE_ATTENDANCE_CONFIG);
+    let summary = await getAtBeltSummary(student.id, student.organizationId, ALLIANCE_ATTENDANCE_CONFIG);
     expect(summary.currentStripes).toBe(4);
     expect(summary.maxStripes).toBe(4);
     expect(summary.atBeltCount).toBe(149);
@@ -176,7 +176,7 @@ describe("getAtBeltSummary", () => {
     // One more attendance (30 more past the 4th stripe) crosses the exam
     // threshold.
     await addCheckins(student.id, escazu.id, escazu.organizationId, 1, new Date(beltAwardedAt.getTime() + 150 * DAY_MS));
-    summary = await getAtBeltSummary(student.id, ALLIANCE_ATTENDANCE_CONFIG);
+    summary = await getAtBeltSummary(student.id, student.organizationId, ALLIANCE_ATTENDANCE_CONFIG);
     expect(summary.atBeltCount).toBe(150);
     expect(summary.nextTarget).toBe("BELT");
     expect(summary.isEligible).toBe(true);
@@ -261,7 +261,7 @@ describe("getAtBeltSummary", () => {
       },
     });
 
-    const summary = await getAtBeltSummary(student.id, ALLIANCE_ATTENDANCE_CONFIG);
+    const summary = await getAtBeltSummary(student.id, student.organizationId, ALLIANCE_ATTENDANCE_CONFIG);
     // 3 counting + 2 adjustment; the 4 Striking check-ins are excluded.
     expect(summary.atBeltCount).toBe(5);
     // lifetimeCount is deliberately NOT filtered: it is the plain

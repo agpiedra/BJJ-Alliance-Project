@@ -133,9 +133,13 @@ function beforeMonth(today: { year: number; month: number }) {
  * chain — searching further back for the last `promoRecurring: true` row
  * instead would perversely revive a promo the director just turned off.
  */
-async function findCarryForwardCandidate(studentId: string, today: { year: number; month: number }) {
+async function findCarryForwardCandidate(
+  studentId: string,
+  organizationId: string,
+  today: { year: number; month: number },
+) {
   return prisma.paymentPeriod.findFirst({
-    where: { studentId, ...beforeMonth(today) },
+    where: { studentId, organizationId, ...beforeMonth(today) },
     orderBy: [{ year: "desc" }, { month: "desc" }],
     select: CURRENT_PERIOD_SELECT,
   });
@@ -232,7 +236,10 @@ async function materializeCarryForward(
   } catch (error) {
     if (!isUniqueConstraintError(error)) throw error;
     return prisma.paymentPeriod.findUnique({
-      where: { studentId_year_month: { studentId, year: today.year, month: today.month } },
+      where: {
+        studentId_year_month: { studentId, year: today.year, month: today.month },
+        organizationId: candidate.organizationId,
+      },
       select: CURRENT_PERIOD_SELECT,
     });
   }
@@ -300,18 +307,19 @@ export function currentCrDateParts(): { year: number; month: number; day: number
  */
 export async function getCurrentPaymentPeriod(
   studentId: string,
+  organizationId: string,
   today: { year: number; month: number } = currentCrDateParts(),
 ): Promise<CurrentPaymentPeriod> {
   const { year, month } = today;
 
   const period = await prisma.paymentPeriod.findUnique({
-    where: { studentId_year_month: { studentId, year, month } },
+    where: { studentId_year_month: { studentId, year, month }, organizationId },
     select: CURRENT_PERIOD_SELECT,
   });
 
   if (period) return toCurrentPeriod(period);
 
-  const candidate = await findCarryForwardCandidate(studentId, today);
+  const candidate = await findCarryForwardCandidate(studentId, organizationId, today);
   if (!qualifiesForCarryForward(candidate)) return null;
 
   const materialized = await materializeCarryForward(studentId, today, candidate as RawPeriod);
@@ -350,6 +358,7 @@ export async function getCurrentPaymentPeriod(
  */
 export async function getCurrentPaymentPeriodsForStudents(
   studentIds: string[],
+  organizationId: string,
   today: { year: number; month: number } = currentCrDateParts(),
 ): Promise<Map<string, CurrentPaymentPeriod>> {
   const result = new Map<string, CurrentPaymentPeriod>();
@@ -357,7 +366,7 @@ export async function getCurrentPaymentPeriodsForStudents(
   const { year, month } = today;
 
   const currentRows = await prisma.paymentPeriod.findMany({
-    where: { studentId: { in: studentIds }, year, month },
+    where: { studentId: { in: studentIds }, organizationId, year, month },
     select: { studentId: true, ...CURRENT_PERIOD_SELECT },
   });
   for (const row of currentRows) {
@@ -368,7 +377,7 @@ export async function getCurrentPaymentPeriodsForStudents(
   if (missingIds.length === 0) return result;
 
   const candidates = await prisma.paymentPeriod.findMany({
-    where: { studentId: { in: missingIds }, ...beforeMonth(today) },
+    where: { studentId: { in: missingIds }, organizationId, ...beforeMonth(today) },
     orderBy: [{ studentId: "asc" }, { year: "desc" }, { month: "desc" }],
     distinct: ["studentId"],
     select: { studentId: true, ...CURRENT_PERIOD_SELECT },

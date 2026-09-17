@@ -67,8 +67,8 @@ export default async function KioskTokensPage() {
   const perAcademy = await Promise.all(
     academies.map(async (academy) => ({
       academy,
-      checkIns: await listTodaysCheckIns(academy.id, today),
-      reassignOptions: await listReassignableSessions(academy.id, today),
+      checkIns: await listTodaysCheckIns(context.organizationId, academy.id, today),
+      reassignOptions: await listReassignableSessions(context.organizationId, academy.id, today),
     })),
   );
 

@@ -161,13 +161,13 @@ export default async function StudentsPage({
   const rosterExtras = await Promise.all(
     students.map(async (student) => {
       const [summary, lastAttendance, currentPeriod] = await Promise.all([
-        getAtBeltSummary(student.id, configByTrack),
+        getAtBeltSummary(student.id, context.organizationId, configByTrack),
         prisma.attendanceRecord.findFirst({
-          where: { studentId: student.id },
+          where: { studentId: student.id, organizationId: context.organizationId },
           orderBy: { occurredAt: "desc" },
           select: { occurredAt: true },
         }),
-        getCurrentPaymentPeriod(student.id, today),
+        getCurrentPaymentPeriod(student.id, context.organizationId, today),
       ]);
 
       // Mechanical migration off eligibility.ts's classifyEligibility (Phase
