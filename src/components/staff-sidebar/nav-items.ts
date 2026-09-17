@@ -1,6 +1,10 @@
 import { BarChart3, CalendarClock, KeyRound, LayoutDashboard, Users, Wallet } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import type { StaffSession } from "@/lib/auth/session";
+import type { MembershipRole, TenantContext } from "@/lib/tenant/types";
+
+/** A `TenantContext` whose role is never STUDENT — the set `(staff)/layout.tsx` treats as staff. */
+export type StaffRole = Exclude<MembershipRole, "STUDENT">;
+export type StaffTenantContext = TenantContext & { organizationRole: StaffRole };
 
 export type StaffNavGroup = "operations" | "analytics" | "academy";
 
@@ -10,7 +14,7 @@ export interface StaffNavItem {
   /** Key inside the "staffSidebar" message namespace. */
   labelKey: string;
   icon: LucideIcon;
-  visible: (session: StaffSession) => boolean;
+  visible: (context: StaffTenantContext) => boolean;
   /** Section this item renders under (REDESIGN_BRIEF.md Phase 2) — label text
    * comes from "staffSidebar.groups.<group>". */
   group: StaffNavGroup;
@@ -64,21 +68,21 @@ export const NAV_ITEMS: StaffNavItem[] = [
     href: "/dashboard/analytics",
     labelKey: "analytics",
     icon: BarChart3,
-    visible: (session) => session.role === "ADMIN" || session.role === "DIRECTOR",
+    visible: (context) => context.organizationRole === "ADMIN" || context.organizationRole === "DIRECTOR",
     group: "analytics",
   },
   {
     href: "/admin/schedule",
     labelKey: "adminSchedule",
     icon: CalendarClock,
-    visible: (session) => session.role === "ADMIN",
+    visible: (context) => context.organizationRole === "ADMIN",
     group: "academy",
   },
   {
     href: "/admin/kiosk-tokens",
     labelKey: "adminKioskTokens",
     icon: KeyRound,
-    visible: (session) => session.role === "ADMIN" || session.role === "DIRECTOR",
+    visible: (context) => context.organizationRole === "ADMIN" || context.organizationRole === "DIRECTOR",
     group: "academy",
   },
 ];

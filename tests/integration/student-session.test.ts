@@ -9,7 +9,7 @@ import { adultRankId } from "../helpers/belt-ranks";
 // — see the long note there. `getStudentSession()` re-reads `role`/`active`
 // from the DB on every call, exactly like `getStaffSession()`, so every
 // session below must name a real, existing `User` row.
-let currentSession: { user: { id: string; role: string } } | null = null;
+let currentSession: { user: { id: string; role: string }; activeOrganizationId?: string } | null = null;
 
 vi.mock("@/auth", () => ({
   auth: () => Promise.resolve(currentSession),
@@ -49,8 +49,8 @@ async function makeStudentUser(
   cleanupUserIds.push(user.id);
 
   let studentId: string | null = null;
+  const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
   if (withStudentRow) {
-    const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
     const { codeHash } = await generateStudentCode(escazu.organizationId);
     const student = await prisma.student.create({
       data: {
@@ -69,7 +69,7 @@ async function makeStudentUser(
     studentId = student.id;
   }
 
-  return { user, studentId };
+  return { user, studentId, organizationId: escazu.organizationId };
 }
 
 async function makeStaffUser(role: "ADMIN" | "DIRECTOR" | "INSTRUCTOR", label: string) {
@@ -99,24 +99,24 @@ describe("getStudentSession / requireStudentSession", () => {
   });
 
   it("resolves a STUDENT session with an ACTIVE linked Student row", async () => {
-    const { user, studentId } = await makeStudentUser("ACTIVE", "active");
-    currentSession = { user: { id: user.id, role: "STUDENT" } };
+    const { user, studentId, organizationId } = await makeStudentUser("ACTIVE", "active");
+    currentSession = { user: { id: user.id, role: "STUDENT" }, activeOrganizationId: organizationId };
 
     const session = await getStudentSession();
     expect(session).toEqual({ userId: user.id, studentId, status: "ACTIVE" });
   });
 
   it("resolves a STUDENT session whose linked Student row is PENDING — login isn't gated on status", async () => {
-    const { user, studentId } = await makeStudentUser("PENDING", "pending");
-    currentSession = { user: { id: user.id, role: "STUDENT" } };
+    const { user, studentId, organizationId } = await makeStudentUser("PENDING", "pending");
+    currentSession = { user: { id: user.id, role: "STUDENT" }, activeOrganizationId: organizationId };
 
     const session = await getStudentSession();
     expect(session).toEqual({ userId: user.id, studentId, status: "PENDING" });
   });
 
   it("resolves a STUDENT session whose linked Student row is ARCHIVED — login isn't gated on status", async () => {
-    const { user, studentId } = await makeStudentUser("ARCHIVED", "archived");
-    currentSession = { user: { id: user.id, role: "STUDENT" } };
+    const { user, studentId, organizationId } = await makeStudentUser("ARCHIVED", "archived");
+    currentSession = { user: { id: user.id, role: "STUDENT" }, activeOrganizationId: organizationId };
 
     const session = await getStudentSession();
     expect(session).toEqual({ userId: user.id, studentId, status: "ARCHIVED" });
@@ -139,8 +139,8 @@ describe("getStudentSession / requireStudentSession", () => {
   });
 
   it("fails closed (rather than throwing) when a STUDENT user has no linked Student row", async () => {
-    const { user } = await makeStudentUser("ACTIVE", "orphaned", { withStudentRow: false });
-    currentSession = { user: { id: user.id, role: "STUDENT" } };
+    const { user, organizationId } = await makeStudentUser("ACTIVE", "orphaned", { withStudentRow: false });
+    currentSession = { user: { id: user.id, role: "STUDENT" }, activeOrganizationId: organizationId };
 
     expect(await getStudentSession()).toBeNull();
   });

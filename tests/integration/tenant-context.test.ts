@@ -205,6 +205,24 @@ describe("getTenantContext", () => {
       await prisma.organization.update({ where: { id: SCRATCH_ORG_ID }, data: { status: "ACTIVE" } });
     }
   });
+
+  it("REQUIRED REGRESSION: returns NO_MEMBERSHIP (not OK) for a deactivated user, even with a real membership row and an unexpired JWT session — revision 23, resolveContext() must check User.active on every call, same as the deleted getStaffSession() used to", async () => {
+    const orgId = await getAllianceOrganizationId();
+    currentSession = { user: { id: DIRECTOR_USER_ID }, activeOrganizationId: orgId };
+    expect(await getTenantContext()).toEqual({
+      status: "OK",
+      context: expect.objectContaining({ actorUserId: DIRECTOR_USER_ID, organizationId: orgId }),
+    });
+
+    // Deactivated after "login" — the JWT is unchanged and the membership
+    // row is untouched, but the very next call must fail closed.
+    await prisma.user.update({ where: { id: DIRECTOR_USER_ID }, data: { active: false } });
+    try {
+      expect(await getTenantContext()).toEqual({ status: "NO_MEMBERSHIP" });
+    } finally {
+      await prisma.user.update({ where: { id: DIRECTOR_USER_ID }, data: { active: true } });
+    }
+  });
 });
 
 describe("requireOrganizationAccess", () => {

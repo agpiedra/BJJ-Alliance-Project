@@ -1,12 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { NAV_ITEMS } from "@/components/staff-sidebar/nav-items";
-import type { StaffSession } from "@/lib/auth/session";
+import { NAV_ITEMS, type StaffRole, type StaffTenantContext } from "@/components/staff-sidebar/nav-items";
 
-function session(role: StaffSession["role"]): StaffSession {
-  return { userId: "u1", role, academyIds: role === "ADMIN" ? "ALL" : [] };
+function session(role: StaffRole): StaffTenantContext {
+  return {
+    kind: "tenant",
+    actorUserId: "u1",
+    organizationId: "org1",
+    organizationRole: role,
+    academyIds: role === "ADMIN" ? "ALL" : [],
+    selfStudentId: null,
+  };
 }
 
-function visibleHrefs(role: StaffSession["role"]): string[] {
+function visibleHrefs(role: StaffRole): string[] {
   const s = session(role);
   return NAV_ITEMS.filter((item) => item.visible(s)).map((item) => item.href);
 }
