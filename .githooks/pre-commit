@@ -1,0 +1,26 @@
+#!/bin/sh
+# Blocks any commit made directly on main. Same principle as the
+# no-restricted-imports ESLint rule added earlier in this project: the wrong
+# thing must be loud, not merely discouraged — a git-hygiene mistake here
+# already happened once with no warning at all (see PR history).
+#
+# Installed automatically by `pnpm install` (package.json's `prepare`
+# script sets `core.hooksPath` to this directory) — no manual setup step.
+#
+# Bypass is intentionally still possible via `git commit --no-verify`,
+# matching git's own standard override mechanism (the same way an ESLint
+# rule can be silenced with an explicit disable comment) — this hook exists
+# to catch the mistake of forgetting a feature branch, not to make main
+# literally unwritable.
+branch=$(git symbolic-ref --short HEAD 2>/dev/null)
+
+if [ "$branch" = "main" ]; then
+  echo "" >&2
+  echo "BLOCKED: direct commits to 'main' are not allowed." >&2
+  echo "Create a feature branch first:" >&2
+  echo "  git switch -c <branch-name>" >&2
+  echo "" >&2
+  exit 1
+fi
+
+exit 0
