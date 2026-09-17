@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation";
-import { unscopedPrisma } from "@/lib/prisma/unscoped";
+import { resolveAcademyBySlug } from "@/lib/tenant/platform-lookups";
 import { BrandBanner } from "@/components/brand/brand-banner";
 import { KioskClient } from "./kiosk-client";
 
@@ -24,14 +24,11 @@ export default async function KioskPage({
   const { academySlug } = await params;
   const { token } = await searchParams;
 
-  // Explicit escape hatch: resolving the organization FROM its academy's
-  // slug is the one thing that can never itself be organization-scoped
-  // (Appendix C decision 4, point 3 — this is the kiosk's own tenant
-  // resolution, not a read that already has a tenant to scope by).
-  const academy = await unscopedPrisma.academy.findUnique({
-    where: { slug: academySlug },
-    select: { id: true, name: true, slug: true, active: true },
-  });
+  // Resolving the organization FROM its academy's slug is the one thing
+  // that can never itself be organization-scoped (Appendix C decision 4,
+  // point 3 — this is the kiosk's own tenant resolution, not a read that
+  // already has a tenant to scope by) — see platform-lookups.ts.
+  const academy = await resolveAcademyBySlug(academySlug);
 
   // A missing academy AND a deactivated one 404 identically — neither should
   // leak to a caller which of the two applies.

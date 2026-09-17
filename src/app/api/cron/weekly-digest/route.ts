@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { unscopedPrisma } from "@/lib/prisma/unscoped";
+import { listActiveAcademyIdsForDigest } from "@/lib/tenant/platform-lookups";
 import { requireEnv } from "@/lib/env";
 import { sendWeeklyDigestForAcademy } from "@/lib/notifications/weekly-digest";
 
@@ -24,18 +24,18 @@ export async function GET(request: Request) {
     return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
   }
 
-  // Explicit escape hatch: this job iterates every organization on the
-  // platform by design (revision 23, docs/MULTI_ACADEMY_AND_KIDS_BELTS.md).
-  const academies = await unscopedPrisma.academy.findMany({ where: { active: true }, select: { id: true } });
+  // This job iterates every organization on the platform by design — see
+  // platform-lookups.ts's listActiveAcademyIdsForDigest.
+  const academyIds = await listActiveAcademyIdsForDigest();
 
   const errors: Array<{ academyId: string; error: string }> = [];
   let processed = 0;
-  for (const academy of academies) {
+  for (const academyId of academyIds) {
     try {
-      await sendWeeklyDigestForAcademy(academy.id);
+      await sendWeeklyDigestForAcademy(academyId);
       processed++;
     } catch (err) {
-      errors.push({ academyId: academy.id, error: err instanceof Error ? err.message : String(err) });
+      errors.push({ academyId, error: err instanceof Error ? err.message : String(err) });
     }
   }
 

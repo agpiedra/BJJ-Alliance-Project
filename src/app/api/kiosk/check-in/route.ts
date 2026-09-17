@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { unscopedPrisma } from "@/lib/prisma/unscoped";
+import { resolveAcademyBySlug } from "@/lib/tenant/platform-lookups";
 import { digestLookupSecret } from "@/lib/crypto";
 import { requireEnv } from "@/lib/env";
 import { finalizeKioskAttempt, reserveKioskAttempt } from "@/lib/kiosk/rate-limit";
@@ -50,11 +50,11 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false, error: "invalid_request" }, { status: 400 });
   }
 
-  // Step 1: look up the academy by slug — the one lookup that can never be
-  // scoped by the organization it exists to discover (explicit escape hatch,
-  // revision 23). Not found is reported with the same generic shape as a bad
-  // token below, so a caller can't tell which one failed.
-  const academy = await unscopedPrisma.academy.findUnique({ where: { slug: academySlug } });
+  // Step 1: look up the academy by slug — see platform-lookups.ts for why
+  // this can never be scoped by the organization it exists to discover.
+  // Not found is reported with the same generic shape as a bad token below,
+  // so a caller can't tell which one failed.
+  const academy = await resolveAcademyBySlug(academySlug);
   if (!academy) {
     return NextResponse.json({ ok: false, error: "invalid_token" }, { status: 404 });
   }

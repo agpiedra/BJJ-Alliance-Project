@@ -2,7 +2,7 @@
 
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { unscopedPrisma } from "@/lib/prisma/unscoped";
+import { resolveAcademyBySlug } from "@/lib/tenant/platform-lookups";
 import { hashSecret } from "@/lib/crypto";
 import { generateStudentCode } from "@/lib/students/generate-code";
 import { notifyNewSignup } from "@/lib/notifications/notify-new-signup";
@@ -80,12 +80,18 @@ export async function signup(_prevState: SignupState, formData: FormData): Promi
   // verification (a verified email, or a staff-mediated flow) and is Phase 8
   // territory; "refuse and send them to their academy" is the safe answer
   // here, and it still fixes the duplicate-row bug outright.
-  // Explicit escape hatch (revision 23): this is the org-identity resolution
-  // itself — no organizationId is known yet at this line, so it can't scope
-  // the lookup that discovers it. Resolved BEFORE the email-existence check
-  // below so that check can be scoped by organizationId instead of searching
-  // every organization on the platform for the email.
-  const homeAcademy = await unscopedPrisma.academy.findUniqueOrThrow({ where: { slug: data.homeAcademySlug } });
+  // Resolved BEFORE the email-existence check below so that check can be
+  // scoped by organizationId instead of searching every organization on the
+  // platform for the email — see platform-lookups.ts for why this lookup
+  // itself can't be organization-scoped. `homeAcademySlug` is already
+  // constrained to a real academy by the zod enum above, so a miss here
+  // means the schema and seed data have drifted, not a real user input.
+  const homeAcademy = await resolveAcademyBySlug(data.homeAcademySlug);
+  if (!homeAcademy) {
+    throw new Error(
+      `signup: homeAcademySlug "${data.homeAcademySlug}" does not name a real academy — schema enum and seed data have drifted.`,
+    );
+  }
 
   const existingStudentWithoutAccount = await prisma.student.findFirst({
     where: { email: data.email, organizationId: homeAcademy.organizationId, userId: null },
