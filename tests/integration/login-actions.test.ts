@@ -6,12 +6,20 @@ import { hashSecret } from "../../src/lib/crypto";
 // `login()` calls the real `signIn("credentials", ...)` from `@/auth`, which
 // eventually needs to set a cookie on a real HTTP response — unavailable in
 // a plain integration test (same reason every other actions.ts test in this
-// repo mocks `@/auth`). This task's own logic under test is the POST-signIn
-// redirect destination (role-aware default vs. an explicit callbackUrl), not
-// credential verification itself, so the mock simply resolves — as if
-// `signIn` succeeded — every time it's called.
+// repo mocks `@/auth`). This task's own logic under test is the PRE-signIn
+// redirect target computation (role-aware default vs. an explicit
+// callbackUrl), not credential verification itself. `login()` now passes
+// that target to `signIn` as `redirectTo` and relies on signIn's own
+// internal redirect (never `redirect: false` — that's what silently dropped
+// the session cookie) to actually navigate, so the mock simulates a
+// successful sign-in by throwing the same `NEXT_REDIRECT` digest Next.js's
+// real `redirect()` throws, carrying the `redirectTo` value through.
 vi.mock("@/auth", () => ({
-  signIn: vi.fn(() => Promise.resolve(undefined)),
+  signIn: vi.fn((_provider: string, options: { redirectTo: string }) => {
+    const error = new Error("NEXT_REDIRECT");
+    (error as { digest?: string }).digest = `NEXT_REDIRECT;push;${options.redirectTo};307;`;
+    throw error;
+  }),
 }));
 
 const { login } = await import("../../src/app/[locale]/login/actions");

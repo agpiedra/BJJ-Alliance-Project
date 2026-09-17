@@ -80,15 +80,28 @@ async function redirectTargetOf(promise: Promise<unknown>): Promise<string> {
 describe("requireTenantContext", () => {
   afterAll(cleanup);
 
-  it("redirects to /login when there is no session at all", async () => {
+  it("redirects to /login when there is no session at all (the genuinely UNAUTHENTICATED case)", async () => {
     currentSession = null;
     expect(await redirectTargetOf(requireTenantContext())).toBe("/en/login");
   });
 
-  it("redirects to /login when the session's active organization has no membership row", async () => {
+  it("redirects to /select-organization when a signed-in user has 2+ active memberships and no resolved selector", async () => {
+    const { user } = await makeOrgAndAdmin("ACTIVE");
+    const s = suffix();
+    const orgB = await prisma.organization.create({
+      data: { slug: `require-ctx-org-b-${s}`, name: `Require Ctx Org B ${s}`, status: "ACTIVE" },
+    });
+    cleanupOrganizationIds.push(orgB.id);
+    await prisma.organizationMembership.create({ data: { userId: user.id, organizationId: orgB.id, role: "ADMIN" } });
+
+    currentSession = { user: { id: user.id, role: "ADMIN" }, activeOrganizationId: undefined };
+    expect(await redirectTargetOf(requireTenantContext())).toBe("/en/select-organization");
+  });
+
+  it("redirects to /no-organization-access (NOT /login) when the session's active organization has no membership row — the user IS authenticated, this is a different failure", async () => {
     const { user } = await makeOrgAndAdmin("ACTIVE");
     currentSession = { user: { id: user.id, role: "ADMIN" }, activeOrganizationId: "no-such-organization-id" };
-    expect(await redirectTargetOf(requireTenantContext())).toBe("/en/login");
+    expect(await redirectTargetOf(requireTenantContext())).toBe("/en/no-organization-access");
   });
 
   // 1e: the exact fix — ORG_NOT_ACTIVE must NOT fall into the same /login

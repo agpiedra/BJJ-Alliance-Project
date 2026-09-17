@@ -88,6 +88,16 @@
       "heading": "Organization unavailable",
       "body": "Your organization isn't available right now. Please contact your organization's administrator.",
       "signOut": "Sign out"
+    },
+    "noOrganizationAccess": {
+      "heading": "No organization access",
+      "body": "Your account isn't linked to any organization right now. Contact your academy director to be added.",
+      "signOut": "Sign out"
+    },
+    "selectOrganization": {
+      "heading": "Choose an organization",
+      "body": "Your account belongs to more than one organization. Choose which one to use for this session.",
+      "signOut": "Sign out"
     }
   },
   "dashboard": {
@@ -472,6 +482,9 @@
       "phone": "Phone",
       "email": "Email",
       "homeAcademy": "Academy",
+      "trackLabel": "Student type",
+      "trackAdult": "Adult",
+      "trackKids": "Kid",
       "currentBelt": "Current belt",
       "currentStripes": "Current stripes",
       "dateOfBirth": "Date of birth (optional)",
@@ -500,7 +513,8 @@
         "columnNotes": "Notes",
         "sourceMANUAL": "Manual",
         "sourceAUTO": "Automatic",
-        "sourceCORRECTION": "Correction"
+        "sourceCORRECTION": "Correction",
+        "sourceTRACK_CHANGE": "Track change"
       },
       "attendanceHistory": {
         "heading": "Attendance history"
@@ -620,6 +634,26 @@
             "notActive": "This student is not active.",
             "invalidTarget": "That rank/degree combination isn't valid.",
             "noteRequired": "A reason is required.",
+            "conflict": "Someone else already updated this student. Refresh to see the current state.",
+            "generic": "Something went wrong."
+          }
+        },
+        "trackChange": {
+          "toggle": "Change track",
+          "transitionToggle": "Transition to adult",
+          "warning": "This moves the student to the other track's belt system. Pick the destination rank and degree count explicitly — nothing is inferred.",
+          "rank": "Destination rank",
+          "rankPlaceholder": "Choose a rank",
+          "stripes": "Degrees",
+          "note": "Note (optional)",
+          "noteRequired": "Note (required — why this destination?)",
+          "submit": "Change track",
+          "success": "Track changed.",
+          "error": {
+            "notFound": "Could not find this student.",
+            "notActive": "This student is not active.",
+            "invalidTarget": "That rank/degree combination isn't valid.",
+            "noteRequired": "A note is required when the destination isn't the standard one.",
             "conflict": "Someone else already updated this student. Refresh to see the current state.",
             "generic": "Something went wrong."
           }

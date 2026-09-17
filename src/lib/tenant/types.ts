@@ -52,7 +52,21 @@ export interface KioskContext {
 
 export type AccessContext = TenantContext | SystemJobContext | KioskContext;
 
+/**
+ * Four distinct failure shapes, deliberately never collapsed into each
+ * other (the bug this type closes): `UNAUTHENTICATED` (no session at all)
+ * and `NO_MEMBERSHIP` (a real, signed-in user with zero active
+ * memberships) look identical from the outside if conflated — both used to
+ * redirect to /login — but they are different facts about the world and
+ * `requireTenantContext` now sends them to different pages.
+ * `NEEDS_ORGANIZATION_SELECTION` is likewise its own state: an
+ * authenticated user with 2+ active memberships and no resolved selector
+ * yet, never silently defaulted to one of them (Appendix C decision 4,
+ * point 6).
+ */
 export type TenantContextResult =
   | { status: "OK"; context: TenantContext }
+  | { status: "UNAUTHENTICATED" }
   | { status: "NO_MEMBERSHIP" }
+  | { status: "NEEDS_ORGANIZATION_SELECTION" }
   | { status: "ORG_NOT_ACTIVE"; organizationStatus: OrganizationStatus };

@@ -1,6 +1,5 @@
 "use server";
 
-import { redirect } from "next/navigation";
 import { AuthError } from "next-auth";
 import { z } from "zod";
 import { signIn } from "@/auth";
@@ -30,11 +29,27 @@ export async function login(
     return { error: "invalidCredentials", fieldErrors: parsed.error.flatten().fieldErrors };
   }
 
+  // signIn() must carry out its own redirect (never `redirect: false`) —
+  // that internal redirect is what actually attaches the session cookie to
+  // the response. `redirect: false` leaves the cookie unset, which is why
+  // logins were completing but never sticking. So the landing target has to
+  // be known BEFORE calling signIn, not decided from its result afterward.
+  // Querying by the submitted email only decides where a successful login
+  // lands — it never decides whether it succeeds.
+  let redirectTarget = safeCallbackUrl;
+  if (!redirectTarget) {
+    const user = await prisma.user.findUnique({
+      where: { email: parsed.data.email },
+      select: { role: true },
+    });
+    redirectTarget = `/${locale}/${user?.role === "STUDENT" ? "portal" : "dashboard"}`;
+  }
+
   try {
     await signIn("credentials", {
       email: parsed.data.email,
       password: parsed.data.password,
-      redirect: false,
+      redirectTo: redirectTarget,
     });
   } catch (error) {
     if (error instanceof AuthError) {
@@ -43,19 +58,5 @@ export async function login(
     throw error;
   }
 
-  if (safeCallbackUrl) {
-    redirect(safeCallbackUrl);
-  }
-
-  // No explicit callbackUrl: pick a role-appropriate default landing page.
-  // `signIn(..., { redirect: false })` doesn't hand the role back directly,
-  // and we deliberately don't trust anything client-submitted for this —
-  // query by the email that JUST successfully authenticated above (not a
-  // client-submitted role) to decide where it lands.
-  const user = await prisma.user.findUnique({
-    where: { email: parsed.data.email },
-    select: { role: true },
-  });
-
-  redirect(user?.role === "STUDENT" ? `/${locale}/portal` : `/${locale}/dashboard`);
+  return {};
 }

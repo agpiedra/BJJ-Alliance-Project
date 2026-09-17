@@ -19,6 +19,9 @@ vi.mock("../../src/app/[locale]/(staff)/students/[id]/promotion-actions", () => 
   awardFromStudentPage: vi.fn(),
   correctPromotionAction: vi.fn(),
 }));
+vi.mock("../../src/app/[locale]/(staff)/students/[id]/track-change-actions", () => ({
+  changeTrackAction: vi.fn(),
+}));
 
 const { PromocionesCard } = await import("../../src/app/[locale]/(staff)/students/[id]/promociones-card");
 
@@ -49,6 +52,7 @@ const BASE_PROPS: React.ComponentProps<typeof PromocionesCard> = {
   history: [],
   canAct: true,
   rankOptions: [],
+  trackChange: null,
 };
 
 function renderCard(overrides: Partial<React.ComponentProps<typeof PromocionesCard>> = {}) {

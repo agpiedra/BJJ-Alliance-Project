@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { awardFromStudentPage } from "./promotion-actions";
 import { PromotionCorrectionForm, type RankOption } from "./promotion-correction-form";
+import { TrackChangeForm, type TrackChangeRankOption } from "./track-change-form";
 import type { ActionState } from "@/lib/action-state";
 
 const INITIAL_STATE: ActionState = {};
@@ -23,7 +24,7 @@ export interface PromocionesHistoryRow {
   toStripes: number;
   awardedAtFormatted: string;
   awardedByName: string;
-  source: "MANUAL" | "AUTO" | "CORRECTION";
+  source: "MANUAL" | "AUTO" | "CORRECTION" | "TRACK_CHANGE";
   notes: string | null;
 }
 
@@ -48,6 +49,14 @@ export interface PromocionesCardProps {
   /** ADMIN/DIRECTOR — INSTRUCTOR/STUDENT get `false` and see everything above read-only, no buttons rendered at all (server rejects the call regardless). */
   canAct: boolean;
   rankOptions: RankOption[];
+  /** Phase 3c-ii — scoped to the student's OTHER track (not their current
+   * one); `null` for both when the org's catalog has no ranks configured
+   * for that track at all. */
+  trackChange: {
+    rankOptions: TrackChangeRankOption[];
+    defaultRankId: string | null;
+    isTransition: boolean;
+  } | null;
 }
 
 /**
@@ -160,6 +169,16 @@ export function PromocionesCard(props: PromocionesCardProps) {
             organizationId={props.organizationId}
             studentId={props.studentId}
             rankOptions={props.rankOptions}
+          />
+        )}
+
+        {props.canAct && props.trackChange && (
+          <TrackChangeForm
+            organizationId={props.organizationId}
+            studentId={props.studentId}
+            rankOptions={props.trackChange.rankOptions}
+            defaultRankId={props.trackChange.defaultRankId}
+            isTransition={props.trackChange.isTransition}
           />
         )}
 

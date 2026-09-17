@@ -20,6 +20,7 @@ import { RegenerateCodeButton } from "./regenerate-code-button";
 import { AddAdjustmentForm } from "./add-adjustment-form";
 import { RecordPaymentForm } from "@/components/payments/record-payment-form";
 import { PromocionesCard, type PromocionesHistoryRow } from "./promociones-card";
+import { resolveDefaultTrackChangeRankId } from "@/lib/promotion/track-change";
 
 // Staff data an admin/director/instructor could change without a redeploy —
 // never frozen at build time, same reasoning as the roster page.
@@ -95,6 +96,28 @@ export default async function StudentDetailPage({
         select: { id: true, code: true, order: true },
       })
     : [];
+
+  // Phase 3c-ii: the track-change flow's destination is always the OTHER
+  // track from the student's current one — fetched separately from
+  // `rankOptions` above (which is scoped to the CURRENT track, for the
+  // same-track correction form).
+  const otherTrack = student.track === "ADULT" ? "KIDS" : "ADULT";
+  const trackChangeRankOptions = canEdit
+    ? await prisma.beltRank.findMany({
+        where: { organizationId: context.organizationId, track: otherTrack },
+        orderBy: { order: "asc" },
+        select: { id: true, code: true, order: true, maxStripes: true, labelEs: true, labelEn: true },
+      })
+    : [];
+  const defaultTrackChangeRankId = resolveDefaultTrackChangeRankId(
+    student.track,
+    student.currentRank.code,
+    trackChangeRankOptions,
+  );
+  const studentAge = student.dateOfBirth
+    ? Math.floor((Date.now() - student.dateOfBirth.getTime()) / (365.25 * 24 * 60 * 60 * 1000))
+    : null;
+  const isTrackTransitionAge = student.track === "KIDS" && studentAge !== null && studentAge >= 16;
 
   // `recordPayment` re-checks ADMIN/DIRECTOR + plan-academy scope itself —
   // this fetch just avoids the extra query/render when the form won't be
@@ -186,6 +209,15 @@ export default async function StudentDetailPage({
         history={promocionesHistory}
         canAct={canEdit}
         rankOptions={rankOptions}
+        trackChange={
+          canEdit
+            ? {
+                rankOptions: trackChangeRankOptions,
+                defaultRankId: defaultTrackChangeRankId,
+                isTransition: isTrackTransitionAge,
+              }
+            : null
+        }
       />
 
       <Card>

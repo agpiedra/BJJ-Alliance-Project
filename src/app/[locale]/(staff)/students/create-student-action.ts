@@ -15,8 +15,16 @@ const createStudentSchema = z
     phone: z.string().min(1),
     email: z.string().email(),
     homeAcademyId: z.string().min(1),
-    currentBelt: z.enum(["WHITE", "BLUE", "PURPLE", "BROWN", "BLACK"]),
-    currentStripes: z.coerce.number().int().min(0).max(4),
+    // MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 3c-i: "add a required track
+    // control... selecting the track filters the rank dropdown to that
+    // track's ranks." The client already has the real BeltRank id from the
+    // rankOptions it was given (the same rows the dropdown was built from),
+    // so it submits that id directly rather than a belt code the server
+    // re-resolves — currentRankId is still re-validated below against
+    // `track` and the org's own scoped rank table, never trusted bare.
+    track: z.enum(["ADULT", "KIDS"]),
+    currentRankId: z.string().min(1),
+    currentStripes: z.coerce.number().int().min(0),
     dateOfBirth: z.string().optional(),
     guardianName: z.string().optional(),
     guardianPhone: z.string().optional(),
@@ -79,15 +87,24 @@ export async function createStudent(
 
   const { code, codeHash } = await generateStudentCode(academy.organizationId);
 
-  // Resolve the submitted belt code to its real BeltRank id — a plain
-  // scoped read, not part of the write transaction below (which stays on
-  // the raw client because it must combine a tenant-scoped write with an
-  // AuditLog row atomically, and AuditLog is deliberately outside
-  // getScopedDb's reach; see that wrapper's own module doc comment for why).
-  const rank = await getScopedDb(context).beltRank.findFirstOrThrow({
-    where: { track: "ADULT", code: data.currentBelt },
-    select: { id: true },
+  // Re-validate the submitted rank against the submitted track and this
+  // org's own scoped catalog — never trust a client-submitted id bare, even
+  // though the UI only ever offers ids it fetched itself (the same
+  // reasoning as homeAcademyId above). A plain scoped read, not part of the
+  // write transaction below (which stays on the raw client because it must
+  // combine a tenant-scoped write with an AuditLog row atomically, and
+  // AuditLog is deliberately outside getScopedDb's reach; see that
+  // wrapper's own module doc comment for why).
+  const rank = await getScopedDb(context).beltRank.findFirst({
+    where: { id: data.currentRankId, track: data.track },
+    select: { id: true, code: true, maxStripes: true },
   });
+  if (!rank) {
+    return { error: "invalid", fieldErrors: { currentRankId: ["invalid"] } };
+  }
+  if (data.currentStripes > rank.maxStripes) {
+    return { error: "invalid", fieldErrors: { currentStripes: ["invalid"] } };
+  }
 
   // The create and its audit row go in one interactive transaction, so an
   // audit row can never exist without the student it describes, nor a
@@ -100,6 +117,7 @@ export async function createStudent(
       data: {
         homeAcademyId: data.homeAcademyId,
         organizationId: academy.organizationId,
+        track: data.track,
         firstName: data.firstName,
         lastName: data.lastName,
         phone: data.phone,
@@ -134,7 +152,8 @@ export async function createStudent(
           firstName: student.firstName,
           lastName: student.lastName,
           homeAcademyId: student.homeAcademyId,
-          currentBelt: data.currentBelt,
+          track: student.track,
+          currentBelt: rank.code,
           currentStripes: student.currentStripes,
           status: student.status,
         },

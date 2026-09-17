@@ -45,9 +45,7 @@ next-env.d.ts
 /prisma/dev.db
 
 # Real Alliance parity baselines (scripts/alliance-baseline.ts) — contain
-# student names and code hashes, never committed. The CI seed<->migration
-# parity check's synthetic snapshot lives under ci/seed-snapshots/ instead,
-# a deliberately separate, committable path so the two can never be confused.
+# student names and code hashes, never committed.
 /baselines/
 
 # Claude Code tooling
