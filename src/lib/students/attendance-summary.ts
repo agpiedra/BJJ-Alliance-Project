@@ -3,6 +3,7 @@ import { AttendanceMatchSource, type Prisma, type PromotionMode, type Track } fr
 import { DateTime } from "luxon";
 import { ZONE } from "@/lib/scheduling/zone";
 import { evaluatePromotion, InvalidPromotionConfigError, type NextTarget } from "@/lib/promotion/engine";
+import { sumPromotionCredits } from "@/lib/promotion/credit";
 import type { ResolvedTrackConfig } from "@/lib/promotion/config";
 import type { BeltVisualData } from "@/components/belt-graphic/belt-graphic";
 
@@ -15,7 +16,21 @@ export interface AtBeltSummary {
   /** Phase 3b: the real per-rank color data for BeltGraphic/BeltBar. */
   currentBeltVisual: BeltVisualData;
   currentStripes: number;
+  /** Real attendance since beltAwardedAt PLUS any PromotionCredit granted for
+   * this same belt period (Phase 3d) — "the one number belt math reads," per
+   * this field's own long-standing framing below; every progress-bar
+   * reconstruction across the app (`current: atBeltCount, target: atBeltCount
+   * + remainingAttendance`) already treats it this way, so folding the
+   * credit in here (rather than a separate field) needs no changes anywhere
+   * else. `creditedClasses` below is the same number broken out on its own,
+   * purely for explicit display — never silently blended into copy that
+   * says "attendances." */
   atBeltCount: number;
+  /** The portion of `atBeltCount` above that came from a PromotionCredit
+   * grant for the CURRENT belt period, not a real check-in. Zero for an
+   * uncredited student — structurally identical to "no credit," since no
+   * PromotionCredit row exists to sum in that case. */
+  creditedClasses: number;
   lifetimeCount: number;
   attendancesPerStripe: number;
   maxStripes: number;
@@ -145,20 +160,31 @@ export async function getAtBeltSummary(
     throw new InvalidPromotionConfigError(`No PromotionConfig found for organization/track ${student.track}.`);
   }
 
-  const [atBeltAgg, lifetimeAgg] = await Promise.all([
+  const [atBeltAgg, lifetimeAgg, creditedClasses] = await Promise.all([
     prisma.attendanceRecord.aggregate({
       where: { studentId, organizationId, occurredAt: { gte: student.beltAwardedAt }, ...PROMOTION_RELEVANT },
       _sum: { delta: true },
     }),
     // Unfiltered on purpose: every physical attendance ever, promotion-relevant
-    // or not (see PROMOTION_RELEVANT's comment).
+    // or not (see PROMOTION_RELEVANT's comment). Deliberately never touches
+    // PromotionCredit — a real, physical-attendance total, per this field's
+    // own doc comment; folding a director's onboarding estimate in here
+    // would make it wrong, not just incomplete.
     prisma.attendanceRecord.aggregate({
       where: { studentId, organizationId },
       _sum: { delta: true },
     }),
+    // MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 3d: scoped to the CURRENT belt
+    // period only — see PromotionCredit's own schema doc comment for why a
+    // credit from a since-superseded belt period is excluded by this query
+    // alone, with no separate "consumed" step needed.
+    sumPromotionCredits(studentId, organizationId, student.beltAwardedAt),
   ]);
 
-  const atBeltCount = atBeltAgg._sum.delta ?? 0;
+  // atBeltCount folds the credit in — see this field's own doc comment for
+  // why every existing progress-bar consumer already treats it as "the
+  // number belt math reads," not a strict physical-attendance count.
+  const atBeltCount = (atBeltAgg._sum.delta ?? 0) + creditedClasses;
   const lifetimeCount = lifetimeAgg._sum.delta ?? 0;
 
   // attendancesPerStripe/attendancesForExam are nullable on BeltRank (null
@@ -201,6 +227,7 @@ export async function getAtBeltSummary(
     },
     currentStripes: student.currentStripes,
     atBeltCount,
+    creditedClasses,
     lifetimeCount,
     attendancesPerStripe,
     maxStripes: student.currentRank.maxStripes,

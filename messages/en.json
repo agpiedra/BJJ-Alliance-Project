@@ -486,6 +486,12 @@
       "trackKids": "Kid",
       "currentBelt": "Current belt",
       "currentStripes": "Current stripes",
+      "beltAwardedAt": "Belt awarded on (optional)",
+      "beltAwardedAtHint": "Roughly when this belt was earned. Leave blank for a student starting today.",
+      "classesCredited": "Classes credited toward next promotion",
+      "classesCreditedHint": "An estimate of classes attended since the belt above was awarded. 0 for a genuine beginner.",
+      "creditReason": "Why this estimate?",
+      "creditReasonRequired": "A reason is required for a nonzero credit.",
       "dateOfBirth": "Date of birth (optional)",
       "guardianName": "Guardian name (required if under 18)",
       "guardianPhone": "Guardian phone",
@@ -592,6 +598,7 @@
       "promociones": {
         "heading": "Promotions",
         "atBeltCount": "Attendances at this belt",
+        "creditedClasses": "Of which, onboarding credit",
         "lifetimeCount": "Lifetime attendances",
         "nextTargetSTRIPE": "Next: stripe {ordinal}",
         "nextTargetBELT": "Next: belt exam",
@@ -670,6 +677,29 @@
         "invalid": "Please check the form for errors.",
         "notFound": "Could not add this adjustment.",
         "archived": "This student is archived — attendance can't be adjusted."
+      },
+      "creditAdjustment": {
+        "toggle": "Correct onboarding credit",
+        "delta": "Adjustment",
+        "deltaHint": "A positive number adds credited classes, a negative number removes them.",
+        "deltaInvalid": "Enter a nonzero whole number between -1000 and 1000.",
+        "reason": "Reason",
+        "reasonRequired": "A reason is required.",
+        "submit": "Save correction",
+        "success": "Correction saved.",
+        "invalid": "Please check the form for errors.",
+        "notFound": "Could not correct this credit.",
+        "archived": "This student is archived — its credit can't be corrected."
+      },
+      "creditHistory": {
+        "heading": "Onboarding credit history",
+        "columnDate": "Date",
+        "columnClasses": "Classes",
+        "columnBy": "Granted by",
+        "columnStatus": "Status",
+        "columnReason": "Reason",
+        "statusActive": "Current belt",
+        "statusOutOfScope": "Past belt"
       }
     }
   },

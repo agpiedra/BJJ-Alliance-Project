@@ -22,6 +22,7 @@ export const TENANT_SCOPED_MODELS = new Set([
   "ClassSession",
   "AttendanceRecord",
   "Promotion",
+  "PromotionCredit",
   "BeltRank",
   "PromotionConfig",
   "PaymentPlan",

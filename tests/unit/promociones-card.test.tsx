@@ -22,6 +22,9 @@ vi.mock("../../src/app/[locale]/(staff)/students/[id]/promotion-actions", () => 
 vi.mock("../../src/app/[locale]/(staff)/students/[id]/track-change-actions", () => ({
   changeTrackAction: vi.fn(),
 }));
+vi.mock("../../src/app/[locale]/(staff)/students/[id]/promotion-credit-actions", () => ({
+  adjustPromotionCredit: vi.fn(),
+}));
 
 const { PromocionesCard } = await import("../../src/app/[locale]/(staff)/students/[id]/promociones-card");
 
@@ -42,6 +45,7 @@ const BASE_PROPS: React.ComponentProps<typeof PromocionesCard> = {
   currentStripes: 2,
   maxStripes: 4,
   atBeltCount: 47,
+  creditedClasses: 0,
   lifetimeCount: 47,
   nextTarget: "STRIPE",
   remainingAttendance: 3,
@@ -50,6 +54,7 @@ const BASE_PROPS: React.ComponentProps<typeof PromocionesCard> = {
   isEligible: false,
   mode: "ATTENDANCE",
   history: [],
+  creditHistory: [],
   canAct: true,
   rankOptions: [],
   trackChange: null,

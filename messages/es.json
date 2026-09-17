@@ -486,6 +486,12 @@
       "trackKids": "Niño",
       "currentBelt": "Cinturón actual",
       "currentStripes": "Franjas actuales",
+      "beltAwardedAt": "Cinturón otorgado el (opcional)",
+      "beltAwardedAtHint": "Aproximadamente cuándo se ganó este cinturón. Déjalo en blanco para un estudiante que empieza hoy.",
+      "classesCredited": "Clases acreditadas hacia la siguiente promoción",
+      "classesCreditedHint": "Una estimación de clases asistidas desde que se otorgó el cinturón anterior. 0 para un principiante genuino.",
+      "creditReason": "¿Por qué esta estimación?",
+      "creditReasonRequired": "Se requiere una razón para un crédito distinto de cero.",
       "dateOfBirth": "Fecha de nacimiento (opcional)",
       "guardianName": "Nombre del tutor (requerido si es menor de edad)",
       "guardianPhone": "Teléfono del tutor",
@@ -592,6 +598,7 @@
       "promociones": {
         "heading": "Promociones",
         "atBeltCount": "Asistencias en este cinturón",
+        "creditedClasses": "De las cuales, crédito de incorporación",
         "lifetimeCount": "Asistencias totales",
         "nextTargetSTRIPE": "Próximo: grado {ordinal}",
         "nextTargetBELT": "Próximo: examen de cinturón",
@@ -670,6 +677,29 @@
         "invalid": "Por favor revisa el formulario.",
         "notFound": "No se pudo agregar este ajuste.",
         "archived": "Este estudiante está archivado — no se puede ajustar su asistencia."
+      },
+      "creditAdjustment": {
+        "toggle": "Corregir crédito de incorporación",
+        "delta": "Ajuste",
+        "deltaHint": "Un número positivo agrega clases acreditadas, uno negativo las quita.",
+        "deltaInvalid": "Ingresa un número entero distinto de cero entre -1000 y 1000.",
+        "reason": "Motivo",
+        "reasonRequired": "El motivo es obligatorio.",
+        "submit": "Guardar corrección",
+        "success": "Corrección guardada.",
+        "invalid": "Por favor revisa el formulario.",
+        "notFound": "No se pudo corregir este crédito.",
+        "archived": "Este estudiante está archivado — no se puede corregir su crédito."
+      },
+      "creditHistory": {
+        "heading": "Historial de crédito de incorporación",
+        "columnDate": "Fecha",
+        "columnClasses": "Clases",
+        "columnBy": "Otorgado por",
+        "columnStatus": "Estado",
+        "columnReason": "Motivo",
+        "statusActive": "Cinturón actual",
+        "statusOutOfScope": "Cinturón anterior"
       }
     }
   },

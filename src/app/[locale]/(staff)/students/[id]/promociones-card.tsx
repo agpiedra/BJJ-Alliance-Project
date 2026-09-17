@@ -9,9 +9,19 @@ import { Button } from "@/components/ui/button";
 import { awardFromStudentPage } from "./promotion-actions";
 import { PromotionCorrectionForm, type RankOption } from "./promotion-correction-form";
 import { TrackChangeForm, type TrackChangeRankOption } from "./track-change-form";
+import { PromotionCreditAdjustmentForm } from "./promotion-credit-adjustment-form";
 import type { ActionState } from "@/lib/action-state";
 
 const INITIAL_STATE: ActionState = {};
+
+export interface PromotionCreditHistoryRow {
+  id: string;
+  classesGranted: number;
+  reason: string;
+  grantedAtFormatted: string;
+  grantedByName: string;
+  active: boolean;
+}
 
 export interface PromocionesHistoryRow {
   id: string;
@@ -38,6 +48,7 @@ export interface PromocionesCardProps {
   currentStripes: number;
   maxStripes: number;
   atBeltCount: number;
+  creditedClasses: number;
   lifetimeCount: number;
   nextTarget: "STRIPE" | "BELT" | "NONE" | "MANUAL_DISPLAY";
   remainingAttendance: number | null;
@@ -46,6 +57,7 @@ export interface PromocionesCardProps {
   isEligible: boolean;
   mode: "ATTENDANCE" | "TIME" | "HYBRID" | "MANUAL";
   history: PromocionesHistoryRow[];
+  creditHistory: PromotionCreditHistoryRow[];
   /** ADMIN/DIRECTOR — INSTRUCTOR/STUDENT get `false` and see everything above read-only, no buttons rendered at all (server rejects the call regardless). */
   canAct: boolean;
   rankOptions: RankOption[];
@@ -78,6 +90,7 @@ export interface PromocionesCardProps {
 export function PromocionesCard(props: PromocionesCardProps) {
   const t = useTranslations("students.detail.promociones");
   const tHistory = useTranslations("students.detail.promotionHistory");
+  const tCredit = useTranslations("students.detail.creditHistory");
   const [state, formAction, isPending] = useActionState(
     awardFromStudentPage.bind(null, props.organizationId),
     INITIAL_STATE,
@@ -133,6 +146,12 @@ export function PromocionesCard(props: PromocionesCardProps) {
             <dl className="mt-2 grid grid-cols-2 gap-x-6 gap-y-1 text-sm">
               <dt className="text-muted-foreground">{t("atBeltCount")}</dt>
               <dd>{props.atBeltCount}</dd>
+              {props.creditedClasses !== 0 && (
+                <>
+                  <dt className="text-muted-foreground">{t("creditedClasses")}</dt>
+                  <dd>{props.creditedClasses}</dd>
+                </>
+              )}
               <dt className="text-muted-foreground">{t("lifetimeCount")}</dt>
               <dd>{props.lifetimeCount}</dd>
             </dl>
@@ -180,6 +199,40 @@ export function PromocionesCard(props: PromocionesCardProps) {
             defaultRankId={props.trackChange.defaultRankId}
             isTransition={props.trackChange.isTransition}
           />
+        )}
+
+        <PromotionCreditAdjustmentForm organizationId={props.organizationId} studentId={props.studentId} />
+
+        {props.creditHistory.length > 0 && (
+          <div>
+            <h3 className="mb-2 text-sm font-medium">{tCredit("heading")}</h3>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm">
+                <thead>
+                  <tr className="text-muted-foreground">
+                    <th className="pb-2 pr-4 font-medium">{tCredit("columnDate")}</th>
+                    <th className="pb-2 pr-4 font-medium">{tCredit("columnClasses")}</th>
+                    <th className="pb-2 pr-4 font-medium">{tCredit("columnBy")}</th>
+                    <th className="pb-2 pr-4 font-medium">{tCredit("columnStatus")}</th>
+                    <th className="pb-2 font-medium">{tCredit("columnReason")}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {props.creditHistory.map((row) => (
+                    <tr key={row.id} className="border-t">
+                      <td className="py-2 pr-4 align-top whitespace-nowrap">{row.grantedAtFormatted}</td>
+                      <td className="py-2 pr-4 align-top whitespace-nowrap">{row.classesGranted}</td>
+                      <td className="py-2 pr-4 align-top">{row.grantedByName}</td>
+                      <td className="py-2 pr-4 align-top">
+                        <Badge variant="outline">{tCredit(row.active ? "statusActive" : "statusOutOfScope")}</Badge>
+                      </td>
+                      <td className="py-2 align-top whitespace-pre-wrap">{row.reason}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
         )}
 
         <div>

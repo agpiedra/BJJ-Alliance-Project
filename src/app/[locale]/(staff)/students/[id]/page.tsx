@@ -12,6 +12,7 @@ import { currentCrDateParts } from "@/lib/payments/get-current-period";
 import { ensureCustomPromoPlan } from "@/lib/payments/ensure-custom-promo-plan";
 import { getStudentForStaff } from "./get-student";
 import { getPromotionHistory } from "./get-promotion-history";
+import { getPromotionCreditHistory } from "./get-promotion-credit-history";
 import { getPaymentHistory } from "./get-payment-history";
 import { EditStudentForm } from "./edit-student-form";
 import { ArchiveStudentButton } from "./archive-student-button";
@@ -19,7 +20,7 @@ import { ApproveStudentButton } from "./approve-student-button";
 import { RegenerateCodeButton } from "./regenerate-code-button";
 import { AddAdjustmentForm } from "./add-adjustment-form";
 import { RecordPaymentForm } from "@/components/payments/record-payment-form";
-import { PromocionesCard, type PromocionesHistoryRow } from "./promociones-card";
+import { PromocionesCard, type PromocionesHistoryRow, type PromotionCreditHistoryRow } from "./promociones-card";
 import { resolveDefaultTrackChangeRankId } from "@/lib/promotion/track-change";
 
 // Staff data an admin/director/instructor could change without a redeploy —
@@ -71,6 +72,7 @@ export default async function StudentDetailPage({
   const configByTrack = await resolvePromotionConfigMap(context.organizationId);
   const summary = await getAtBeltSummary(student.id, context.organizationId, configByTrack);
   const promotionHistory = await getPromotionHistory(student.id, context.organizationId);
+  const creditHistoryRaw = await getPromotionCreditHistory(student.id, context.organizationId, student.beltAwardedAt);
   const paymentHistory = await getPaymentHistory(student.id, context.organizationId);
 
   const t = await getTranslations("students");
@@ -171,6 +173,14 @@ export default async function StudentDetailPage({
     source: promotion.source,
     notes: promotion.notes,
   }));
+  const creditHistory: PromotionCreditHistoryRow[] = creditHistoryRaw.map((credit) => ({
+    id: credit.id,
+    classesGranted: credit.classesGranted,
+    reason: credit.reason,
+    grantedAtFormatted: formatTimestampInAcademyZone(credit.grantedAt, locale) ?? "—",
+    grantedByName: credit.grantedByName,
+    active: credit.active,
+  }));
 
   return (
     <main className="flex flex-col gap-6 p-6">
@@ -199,6 +209,7 @@ export default async function StudentDetailPage({
         currentStripes={student.currentStripes}
         maxStripes={summary.maxStripes}
         atBeltCount={summary.atBeltCount}
+        creditedClasses={summary.creditedClasses}
         lifetimeCount={summary.lifetimeCount}
         nextTarget={cardNextTarget}
         remainingAttendance={summary.remainingAttendance}
@@ -207,6 +218,7 @@ export default async function StudentDetailPage({
         isEligible={summary.isEligible}
         mode={summary.mode}
         history={promocionesHistory}
+        creditHistory={creditHistory}
         canAct={canEdit}
         rankOptions={rankOptions}
         trackChange={
