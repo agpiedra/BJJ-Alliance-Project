@@ -16,7 +16,7 @@ import {
 import { ThemeToggle } from "@/components/theme/theme-toggle";
 import { findActiveNavItem } from "./find-active-nav-item";
 import type { StaffSidebarNavEntry } from "./staff-sidebar";
-import type { StaffRoleName } from "@/lib/auth/session";
+import type { StaffRole } from "./nav-items";
 import { signOutStaff } from "@/lib/auth/sign-out-actions";
 
 function initialsFromEmail(email: string): string {
@@ -33,7 +33,7 @@ export interface StaffTopBarProps {
   locale: string;
   navItems: StaffSidebarNavEntry[];
   userEmail: string;
-  role: StaffRoleName;
+  role: StaffRole;
   academyLabel: string;
   /** The rest of the header's right side (notification bell) — kept as a
    * passthrough slot rather than imported directly, since NotificationBell

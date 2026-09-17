@@ -20,12 +20,13 @@ import type { NotificationChannel } from "@/lib/notifications/types";
  */
 export async function notifyEligibilityReached(
   studentId: string,
+  organizationId: string,
   type: "STRIPE_THRESHOLD" | "EXAM_THRESHOLD",
   channels?: NotificationChannel[],
 ): Promise<void> {
   try {
     const student = await prisma.student.findUnique({
-      where: { id: studentId },
+      where: { id: studentId, organizationId },
       select: {
         firstName: true,
         lastName: true,

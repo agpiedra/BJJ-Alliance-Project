@@ -12,10 +12,14 @@ import type { NotificationChannel } from "@/lib/notifications/types";
  * only when omitted — see `notifyEligibilityReached` for why the import
  * can't be top-level.
  */
-export async function notifyNewSignup(studentId: string, channels?: NotificationChannel[]): Promise<void> {
+export async function notifyNewSignup(
+  studentId: string,
+  organizationId: string,
+  channels?: NotificationChannel[],
+): Promise<void> {
   try {
     const student = await prisma.student.findUnique({
-      where: { id: studentId },
+      where: { id: studentId, organizationId },
       select: { firstName: true, lastName: true, homeAcademyId: true },
     });
     if (!student) return;

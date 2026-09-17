@@ -89,7 +89,7 @@ async function classifyActiveStudents(context: TenantContext): Promise<
       // P2025 it can raise is from its own `findUniqueOrThrow(student)` —
       // i.e. the student vanished.
       try {
-        const summary = await getAtBeltSummary(student.id, configByTrack);
+        const summary = await getAtBeltSummary(student.id, context.organizationId, configByTrack);
         let status: QueueStatus;
         if (summary.nextTarget === "STRIPE" && summary.isEligible) {
           status = "stripe-eligible";

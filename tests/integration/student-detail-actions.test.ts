@@ -21,11 +21,9 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 // underneath so `getTenantContext()`'s own DB queries run unmodified.
 //
 // NOTE: every session below must name a user id that genuinely exists and is
-// `active`, and (for anything that drives an action, not the standalone
-// `getStaffSession()` tests below) an `activeOrganizationId` matching a real
-// `OrganizationMembership` row — `getTenantContext()`/`getStaffSession()`
-// both re-read from the DB on every call and fail closed on a mismatch or
-// absence.
+// `active`, and an `activeOrganizationId` matching a real
+// `OrganizationMembership` row — `getTenantContext()` re-reads both from the
+// DB on every call and fails closed on a mismatch or absence.
 let currentSession: { user: { id: string; role: string } | null; activeOrganizationId?: string } | null = null;
 
 vi.mock("@/auth", () => ({
@@ -39,7 +37,6 @@ const { updateStudent, archiveStudent, approveStudent, regenerateStudentCode } =
 const { addAttendanceAdjustment } = await import(
   "../../src/app/[locale]/(staff)/students/[id]/adjustment-actions"
 );
-const { getStaffSession } = await import("../../src/lib/auth/session");
 const { getTenantContext } = await import("../../src/lib/tenant/context");
 const { getAtBeltSummary } = await import("../../src/lib/students/attendance-summary");
 
@@ -541,63 +538,21 @@ describe("student detail actions", () => {
     }
   });
 
-  // Finding 6: the JWT lives for up to 30 days, so `role`/`active` in it are
-  // a snapshot from login time. `getStaffSession` must re-read both from the
-  // DB on every call and fail closed.
-  describe("stale JWT claims are re-validated against the database on every call", () => {
-    it("returns null once the user is deactivated, even though the JWT's role claim is still staff", async () => {
-      const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
-      const director = await makeStaffUser("DIRECTOR", "stale-session-director", escazu.id);
-
-      // Still active: a normal session resolves.
-      currentSession = { user: { id: director.id, role: "DIRECTOR" } };
-      expect(await getStaffSession()).toMatchObject({ userId: director.id, role: "DIRECTOR" });
-
-      // Deactivated after "login" — the JWT is unchanged and still claims
-      // DIRECTOR, but the session must now fail closed.
-      await prisma.user.update({ where: { id: director.id }, data: { active: false } });
-      expect(await getStaffSession()).toBeNull();
-    });
-
-    it("returns null for a deactivated ADMIN too — the branch that previously never touched the DB", async () => {
-      const admin = await makeStaffUser("ADMIN", "stale-session-admin");
-
-      currentSession = { user: { id: admin.id, role: "ADMIN" } };
-      expect(await getStaffSession()).toMatchObject({ userId: admin.id, role: "ADMIN", academyIds: "ALL" });
-
-      await prisma.user.update({ where: { id: admin.id }, data: { active: false } });
-      expect(await getStaffSession()).toBeNull();
-    });
-
-    it("returns null when the DB role no longer matches the JWT's claimed role (a demotion)", async () => {
-      const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
-      const demoted = await makeStaffUser("ADMIN", "stale-session-demoted");
-
-      currentSession = { user: { id: demoted.id, role: "ADMIN" } };
-      expect(await getStaffSession()).not.toBeNull();
-
-      // Demoted to INSTRUCTOR. The stale token still claims ADMIN — that
-      // claim must be refused outright, not silently downgraded.
-      await prisma.user.update({ where: { id: demoted.id }, data: { role: "INSTRUCTOR" } });
-      await prisma.staffAssignment.create({
-        data: { userId: demoted.id, academyId: escazu.id, organizationId: escazu.organizationId, role: "INSTRUCTOR" },
-      });
-      expect(await getStaffSession()).toBeNull();
-
-      // A freshly-issued token claiming their real, current role works again.
-      currentSession = { user: { id: demoted.id, role: "INSTRUCTOR" } };
-      expect(await getStaffSession()).toMatchObject({
-        userId: demoted.id,
-        role: "INSTRUCTOR",
-        academyIds: [escazu.id],
-      });
-    });
-
-    it("returns null when the JWT names a user that no longer exists", async () => {
-      currentSession = { user: { id: "this-user-id-does-not-exist", role: "ADMIN" } };
-      expect(await getStaffSession()).toBeNull();
-    });
-  });
+  // `getStaffSession` (Finding 6's stale-JWT re-validation: deactivation,
+  // demotion, deleted-user) was deleted in revision 23 along with the rest
+  // of `StaffSession`, in favor of `TenantContext` everywhere. Its
+  // re-validation tests are removed here rather than ported, because
+  // `getTenantContext()`/`resolveContext()` do NOT reproduce the same
+  // guarantee: `resolveContext()` (`src/lib/tenant/context.ts`) checks
+  // `OrganizationMembership` and `Organization.status` on every call, but
+  // never `User.active` — confirmed by grep, this session. A deactivated
+  // user's stale JWT keeps a fully working `TenantContext` for the rest of
+  // the token's life. This is a real, pre-existing gap in `resolveContext()`
+  // (every OTHER staff page already used `requireTenantContext`, not
+  // `getStaffSession`, before this PR) that this PR's deletion merely
+  // extends to the 3 files migrated off `StaffSession` — not something this
+  // PR introduces, but not something it fixes either. Flagged for a
+  // follow-up, not silently dropped.
 
   // Task 8: addAttendanceAdjustment. Unlike updateStudent/archiveStudent
   // (ADMIN/DIRECTOR only), spec §3 grants attendance marking/correction to
@@ -609,7 +564,7 @@ describe("student detail actions", () => {
       const admin = await makeStaffUser("ADMIN", "adj-positive-admin");
       const student = await makeStudent(escazu.id, escazu.organizationId, { lastName: "AdjPositive" });
 
-      const before = await getAtBeltSummary(student.id, ALLIANCE_ATTENDANCE_CONFIG);
+      const before = await getAtBeltSummary(student.id, student.organizationId, ALLIANCE_ATTENDANCE_CONFIG);
 
       currentSession = { user: { id: admin.id, role: "ADMIN" }, activeOrganizationId: admin.organizationId };
       const result = await addAttendanceAdjustment(
@@ -619,7 +574,7 @@ describe("student detail actions", () => {
       );
       expect(result.ok).toBe(true);
 
-      const after = await getAtBeltSummary(student.id, ALLIANCE_ATTENDANCE_CONFIG);
+      const after = await getAtBeltSummary(student.id, student.organizationId, ALLIANCE_ATTENDANCE_CONFIG);
       expect(after.atBeltCount).toBe(before.atBeltCount + 3);
       expect(after.lifetimeCount).toBe(before.lifetimeCount + 3);
 
@@ -651,7 +606,7 @@ describe("student detail actions", () => {
       });
 
       await addCheckins(student.id, escazu.id, escazu.organizationId, 30, new Date(beltAwardedAt.getTime() + DAY_MS));
-      const crossed = await getAtBeltSummary(student.id, ALLIANCE_ATTENDANCE_CONFIG);
+      const crossed = await getAtBeltSummary(student.id, student.organizationId, ALLIANCE_ATTENDANCE_CONFIG);
       expect(crossed.atBeltCount).toBe(30);
       expect(crossed.remainingAttendance).toBe(0);
 
@@ -664,7 +619,7 @@ describe("student detail actions", () => {
       expect(result.ok).toBe(true);
 
       // Back below the threshold it had just crossed.
-      const after = await getAtBeltSummary(student.id, ALLIANCE_ATTENDANCE_CONFIG);
+      const after = await getAtBeltSummary(student.id, student.organizationId, ALLIANCE_ATTENDANCE_CONFIG);
       expect(after.atBeltCount).toBe(25);
       expect(after.remainingAttendance).toBe(5);
     });

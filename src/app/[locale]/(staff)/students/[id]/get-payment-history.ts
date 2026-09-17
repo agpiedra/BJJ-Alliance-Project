@@ -23,9 +23,12 @@ export type PaymentHistoryEntry = {
  *    Client Component also imports from to avoid Turbopack trying to bundle
  *    Prisma's runtime for the browser.
  */
-export async function getPaymentHistory(studentId: string): Promise<PaymentHistoryEntry[]> {
+export async function getPaymentHistory(
+  studentId: string,
+  organizationId: string,
+): Promise<PaymentHistoryEntry[]> {
   const periods = await prisma.paymentPeriod.findMany({
-    where: { studentId },
+    where: { studentId, organizationId },
     orderBy: [{ year: "desc" }, { month: "desc" }],
     select: {
       id: true,

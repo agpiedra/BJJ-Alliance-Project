@@ -1,41 +1,54 @@
 import type { ReactNode } from "react";
 import { cookies } from "next/headers";
 import { getLocale, getTranslations } from "next-intl/server";
-import { getStaffSession } from "@/lib/auth/session";
+import { getTenantContext } from "@/lib/tenant/context";
+import { getScopedDb } from "@/lib/tenant/scoped-client";
 import { auth } from "@/auth";
-import { prisma } from "@/lib/prisma";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { StaffSidebar } from "@/components/staff-sidebar/staff-sidebar";
 import { StaffTopBar } from "@/components/staff-sidebar/staff-top-bar";
-import { NAV_ITEMS } from "@/components/staff-sidebar/nav-items";
+import { NAV_ITEMS, type StaffTenantContext } from "@/components/staff-sidebar/nav-items";
 import { NotificationBell } from "./dashboard/notification-bell";
 import { getMyNotifications, getUnreadCount } from "./dashboard/notification-actions";
 
 /**
  * Persistent shell for every staff-facing page (brand redesign Task 2).
  *
- * This layout's own session read is used ONLY to decide which nav links to
+ * This layout's own context read is used ONLY to decide which nav links to
  * show — it must never become a second access-control gate. Every moved
  * page (and every server action it calls) keeps enforcing access itself via
- * its own `requireStaffSession` call, exactly as before this task; if this
- * layout's `getStaffSession()` finds no session, nav items are simply all
- * hidden here, while `getMyNotifications`/`getUnreadCount` below (and the
- * page underneath) still self-enforce via their own `requireStaffSession`
- * calls and redirect to `/login` exactly as they always have.
+ * its own `requireTenantContext` call, exactly as before this task; if this
+ * layout's `getTenantContext()` resolves to anything other than a non-STUDENT
+ * `OK` tenant, nav items are simply all hidden here, while
+ * `getMyNotifications`/`getUnreadCount` below (and the page underneath)
+ * still self-enforce via their own `requireTenantContext` calls and redirect
+ * exactly as they always have.
+ *
+ * `getTenantContext()` replaced `getStaffSession()` in revision 23: the old
+ * function queried `Academy`/`Student` via the raw, unscoped Prisma client
+ * with no organizationId filter at all (a real cross-tenant leak once a
+ * second organization exists — docs/MULTI_ACADEMY_AND_KIDS_BELTS.md). A
+ * STUDENT's tenant context is treated the same as "no context" here, same as
+ * `getStaffSession()` returning null for a STUDENT claim before.
  */
 export default async function StaffLayout({ children }: { children: ReactNode }) {
   const locale = await getLocale();
-  const session = await getStaffSession();
+  const tenantResult = await getTenantContext();
+  const resolvedContext = tenantResult.status === "OK" ? tenantResult.context : null;
+  const context: StaffTenantContext | null =
+    resolvedContext && resolvedContext.organizationRole !== "STUDENT"
+      ? (resolvedContext as StaffTenantContext)
+      : null;
 
-  // Academy list for the switcher: every academy for ADMIN (unscoped),
-  // or only the academies this DIRECTOR/INSTRUCTOR is assigned to — same
-  // split students/page.tsx already uses for its own academy select.
-  const scopedAcademyIds =
-    session && Array.isArray(session.academyIds) ? session.academyIds : [];
-  const academies = session
-    ? session.role === "ADMIN"
-      ? await prisma.academy.findMany({ orderBy: { name: "asc" }, select: { id: true, name: true } })
-      : await prisma.academy.findMany({
+  // Academy list for the switcher: every academy for ADMIN (org-scoped,
+  // unfiltered by branch), or only the academies this DIRECTOR/INSTRUCTOR is
+  // assigned to — same split students/page.tsx already uses for its own
+  // academy select.
+  const scopedAcademyIds = context && Array.isArray(context.academyIds) ? context.academyIds : [];
+  const academies = context
+    ? context.organizationRole === "ADMIN"
+      ? await getScopedDb(context).academy.findMany({ where: {}, orderBy: { name: "asc" }, select: { id: true, name: true } })
+      : await getScopedDb(context).academy.findMany({
           where: { id: { in: scopedAcademyIds } },
           orderBy: { name: "asc" },
           select: { id: true, name: true },
@@ -45,24 +58,24 @@ export default async function StaffLayout({ children }: { children: ReactNode })
   const cookieStore = await cookies();
   const requestedAcademyId = cookieStore.get("selected_academy")?.value ?? null;
   const selectedAcademyId =
-    session?.role === "ADMIN" && academies.some((a) => a.id === requestedAcademyId)
+    context?.organizationRole === "ADMIN" && academies.some((a) => a.id === requestedAcademyId)
       ? requestedAcademyId
       : null;
 
   const tShell = await getTranslations("staffShell");
   const academyLabel =
-    session?.role === "ADMIN"
+    context?.organizationRole === "ADMIN"
       ? (academies.find((a) => a.id === selectedAcademyId)?.name ?? tShell("academySwitcher.bothSelected"))
       : academies.map((a) => a.name).join(", ");
 
   // Active-student count for the "Alumnos" nav badge — same ACTIVE +
   // home-academy scoping students/page.tsx's own query already uses,
   // just narrowed to a count instead of a full roster fetch.
-  const activeStudentCount = session
-    ? await prisma.student.count({
+  const activeStudentCount = context
+    ? await getScopedDb(context).student.count({
         where: {
           status: "ACTIVE",
-          ...(session.academyIds === "ALL" ? {} : { homeAcademyId: { in: session.academyIds } }),
+          ...(context.academyIds === "ALL" ? {} : { homeAcademyId: { in: context.academyIds } }),
         },
       })
     : 0;
@@ -71,8 +84,8 @@ export default async function StaffLayout({ children }: { children: ReactNode })
   // can't cross the Server -> Client boundary as data — this resolves both
   // server-side into a plain, serializable shape (`StaffSidebarNavEntry`)
   // before handing it to the client `StaffSidebar`.
-  const navItems = session
-    ? NAV_ITEMS.filter((item) => item.visible(session)).map((item) => ({
+  const navItems = context
+    ? NAV_ITEMS.filter((item) => item.visible(context)).map((item) => ({
         href: item.href,
         labelKey: item.labelKey,
         icon: <item.icon />,
@@ -106,7 +119,7 @@ export default async function StaffLayout({ children }: { children: ReactNode })
         academySwitcher={{
           academies,
           selectedAcademyId,
-          readOnly: session?.role !== "ADMIN",
+          readOnly: context?.organizationRole !== "ADMIN",
         }}
       />
       {/*
@@ -122,12 +135,12 @@ export default async function StaffLayout({ children }: { children: ReactNode })
         data-slot="sidebar-inset"
         className="relative flex w-full min-w-0 flex-1 flex-col overflow-x-hidden bg-background md:peer-data-[variant=inset]:m-2 md:peer-data-[variant=inset]:ml-0 md:peer-data-[variant=inset]:rounded-xl md:peer-data-[variant=inset]:shadow-sm md:peer-data-[variant=inset]:peer-data-[state=collapsed]:ml-2"
       >
-        {session && (
+        {context && (
           <StaffTopBar
             locale={locale}
             navItems={navItems}
             userEmail={authSession?.user?.email ?? ""}
-            role={session.role}
+            role={context.organizationRole}
             academyLabel={academyLabel}
           >
             <NotificationBell initialNotifications={notifications} initialUnreadCount={unreadCount} />

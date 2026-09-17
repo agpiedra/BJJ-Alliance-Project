@@ -277,7 +277,7 @@ export async function performCheckIn(input: PerformCheckInInput): Promise<CheckI
   // Resolved once and reused for both summaries below (same student, same
   // org) rather than once per call.
   const configByTrack = await resolvePromotionConfigMap(input.context.organizationId);
-  const summaryBefore = await getAtBeltSummary(student.id, configByTrack);
+  const summaryBefore = await getAtBeltSummary(student.id, input.context.organizationId, configByTrack);
 
   let created: { id: string };
   try {
@@ -306,13 +306,15 @@ export async function performCheckIn(input: PerformCheckInInput): Promise<CheckI
     throw error;
   }
 
-  const summaryAfter = await getAtBeltSummary(student.id, configByTrack);
+  const summaryAfter = await getAtBeltSummary(student.id, input.context.organizationId, configByTrack);
 
   if (summaryBefore.remainingAttendance === 1 && summaryAfter.remainingAttendance !== 1) {
     const type = summaryAfter.nextTarget === "BELT" && summaryAfter.isEligible ? "EXAM_THRESHOLD" : "STRIPE_THRESHOLD";
     // See fire-and-forget.ts for why this is wrapped in after() with a
     // fallback rather than left as a bare un-awaited promise.
-    fireAndForget("notifyEligibilityReached", () => notifyEligibilityReached(student.id, type));
+    fireAndForget("notifyEligibilityReached", () =>
+      notifyEligibilityReached(student.id, input.context.organizationId, type),
+    );
   }
 
   return {

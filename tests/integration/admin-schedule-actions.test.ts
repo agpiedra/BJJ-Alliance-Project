@@ -216,7 +216,7 @@ describe("admin class-schedule CRUD actions", () => {
 
     // listClassSessions (an admin-only "list including inactive" read) still
     // returns the now-inactive row rather than silently dropping it.
-    const listed = await listClassSessions(testAcademyId);
+    const listed = await listClassSessions(testOrganizationId, testAcademyId);
     const listedSession = listed.find((s) => s.id === session.id);
     expect(listedSession).toBeDefined();
     expect(listedSession!.active).toBe(false);

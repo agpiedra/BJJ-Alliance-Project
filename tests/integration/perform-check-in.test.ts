@@ -882,7 +882,7 @@ describe("performCheckIn", () => {
         ).ok,
       ).toBe(true);
 
-      const summary = await getAtBeltSummary(student.id, ALLIANCE_ATTENDANCE_CONFIG);
+      const summary = await getAtBeltSummary(student.id, student.organizationId, ALLIANCE_ATTENDANCE_CONFIG);
       expect(summary.atBeltCount).toBe(1);
       expect(summary.lifetimeCount).toBe(1);
     });

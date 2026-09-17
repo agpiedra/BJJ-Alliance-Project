@@ -309,7 +309,7 @@ export default async function DashboardPage() {
   const queueConfigByTrack = await resolvePromotionConfigMap(context.organizationId);
   const queueRows = await Promise.all(
     promotionQueue.map(async (candidate) => {
-      const summary = await getAtBeltSummary(candidate.studentId, queueConfigByTrack);
+      const summary = await getAtBeltSummary(candidate.studentId, context.organizationId, queueConfigByTrack);
       if (candidate.status === "exam-eligible") {
         // Real catalog lookup (Phase 2c-ii) — replaces eligibility.ts's old
         // hardcoded BELT_ORDER array. A read/display path: a broken catalog

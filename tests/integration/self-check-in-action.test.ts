@@ -258,7 +258,7 @@ describe("selfCheckIn", () => {
 
     expect(state.ok).toBe(true);
     expect(state.earnedStripe).toBe(true);
-    expect(notifyEligibilityState.spy).toHaveBeenCalledWith(student.id, "STRIPE_THRESHOLD");
+    expect(notifyEligibilityState.spy).toHaveBeenCalledWith(student.id, user.organizationId, "STRIPE_THRESHOLD");
   });
 
   it("1f-4: a real STUDENT membership doesn't help against an organizationId their tab doesn't belong to — refuses with invalid_code, audits, and checks in nothing; the same session checking in against their own org still succeeds", async () => {

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { unscopedPrisma } from "@/lib/prisma/unscoped";
 import { requireEnv } from "@/lib/env";
 import { sendWeeklyDigestForAcademy } from "@/lib/notifications/weekly-digest";
 
@@ -24,7 +24,9 @@ export async function GET(request: Request) {
     return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
   }
 
-  const academies = await prisma.academy.findMany({ where: { active: true }, select: { id: true } });
+  // Explicit escape hatch: this job iterates every organization on the
+  // platform by design (revision 23, docs/MULTI_ACADEMY_AND_KIDS_BELTS.md).
+  const academies = await unscopedPrisma.academy.findMany({ where: { active: true }, select: { id: true } });
 
   const errors: Array<{ academyId: string; error: string }> = [];
   let processed = 0;

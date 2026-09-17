@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { unscopedPrisma } from "@/lib/prisma/unscoped";
 import type { Recipient } from "@/lib/notifications/types";
 
 /**
@@ -23,7 +24,12 @@ export async function resolveStaffRecipients(academyId: string): Promise<Recipie
   // MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 1: Notification.organizationId is
   // required — the org this notification is about (this academy's), not
   // necessarily every recipient's only membership.
-  const academy = await prisma.academy.findUniqueOrThrow({
+  //
+  // Explicit escape hatch (revision 23): this is the org-identity resolution
+  // itself — the organizationId isn't known yet at this line, so it can't be
+  // the thing scoping the lookup that discovers it. Same reasoning as the
+  // kiosk's slug-to-organization resolution.
+  const academy = await unscopedPrisma.academy.findUniqueOrThrow({
     where: { id: academyId },
     select: { organizationId: true },
   });
@@ -39,7 +45,7 @@ export async function resolveStaffRecipients(academyId: string): Promise<Recipie
       select: { user: { select: { id: true, email: true, locale: true } } },
     }),
     prisma.staffAssignment.findMany({
-      where: { academyId, user: { active: true } },
+      where: { organizationId: academy.organizationId, academyId, user: { active: true } },
       select: { user: { select: { id: true, email: true, locale: true } } },
     }),
   ]);

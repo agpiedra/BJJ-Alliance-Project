@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { unscopedPrisma } from "@/lib/prisma/unscoped";
 import { digestLookupSecret } from "@/lib/crypto";
 import { requireEnv } from "@/lib/env";
 import { reassignAttendance } from "@/lib/kiosk/reassign-attendance";
@@ -53,8 +54,9 @@ export async function POST(request: Request) {
   }
 
   // Same academy lookup + token verification, in the same order and with the
-  // same deliberately indistinguishable failure shape, as the check-in route.
-  const academy = await prisma.academy.findUnique({ where: { slug: academySlug } });
+  // same deliberately indistinguishable failure shape, as the check-in route
+  // — an explicit escape hatch, same reasoning as there (revision 23).
+  const academy = await unscopedPrisma.academy.findUnique({ where: { slug: academySlug } });
   if (!academy) {
     return NextResponse.json({ ok: false, error: "invalid_token" }, { status: 404 });
   }
@@ -64,7 +66,7 @@ export async function POST(request: Request) {
   }
 
   const record = await prisma.attendanceRecord.findUnique({
-    where: { id: attendanceRecordId },
+    where: { id: attendanceRecordId, organizationId: academy.organizationId },
     select: { id: true, academyId: true, date: true, student: { select: { userId: true } } },
   });
 
@@ -75,6 +77,7 @@ export async function POST(request: Request) {
   if (classSessionId === undefined) {
     const sessions = await prisma.classSession.findMany({
       where: {
+        organizationId: academy.organizationId,
         academyId: academy.id,
         active: true,
         dayOfWeek: attendanceDateDayOfWeek(record.date),

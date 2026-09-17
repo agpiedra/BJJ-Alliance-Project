@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { unscopedPrisma } from "@/lib/prisma/unscoped";
 import { digestLookupSecret } from "@/lib/crypto";
 import { requireEnv } from "@/lib/env";
 import { finalizeKioskAttempt, reserveKioskAttempt } from "@/lib/kiosk/rate-limit";
@@ -49,9 +50,11 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false, error: "invalid_request" }, { status: 400 });
   }
 
-  // Step 1: look up the academy by slug. Not found is reported with the same
-  // generic shape as a bad token below, so a caller can't tell which one failed.
-  const academy = await prisma.academy.findUnique({ where: { slug: academySlug } });
+  // Step 1: look up the academy by slug — the one lookup that can never be
+  // scoped by the organization it exists to discover (explicit escape hatch,
+  // revision 23). Not found is reported with the same generic shape as a bad
+  // token below, so a caller can't tell which one failed.
+  const academy = await unscopedPrisma.academy.findUnique({ where: { slug: academySlug } });
   if (!academy) {
     return NextResponse.json({ ok: false, error: "invalid_token" }, { status: 404 });
   }
@@ -127,7 +130,7 @@ export async function POST(request: Request) {
   // (No reconciliation branch is needed here any more: with the gate ahead of
   // the guess there is no longer a case where a real, committed check-in could
   // be hidden behind a rate-limit rejection.)
-  await finalizeKioskAttempt(reservation.attemptId, result.ok ? "success" : result.error);
+  await finalizeKioskAttempt(reservation.attemptId, academy.organizationId, result.ok ? "success" : result.error);
 
   if (result.ok) {
     return NextResponse.json(result, { status: 200 });

@@ -1,4 +1,4 @@
-import { prisma } from "@/lib/prisma";
+import { unscopedPrisma } from "@/lib/prisma/unscoped";
 import type { PrismaClient } from "@/generated/prisma/client";
 import type { AccessContext } from "./types";
 
@@ -11,7 +11,7 @@ import type { AccessContext } from "./types";
  * public org discovery, migrations/seeds). Reaching for them through this
  * wrapper is refused at runtime, not merely undocumented.
  */
-const TENANT_SCOPED_MODELS = new Set([
+export const TENANT_SCOPED_MODELS = new Set([
   "Academy",
   "Student",
   "ClassSession",
@@ -167,7 +167,7 @@ type BlockedRawSqlMethods = Record<string, (...args: unknown[]) => Promise<never
 
 export function getScopedDb(context: AccessContext): ScopedDb {
   const organizationId = context.organizationId;
-  const extended = prisma.$extends({
+  const extended = unscopedPrisma.$extends({
     // Blocked at runtime, not just unexported from `ScopedDb`'s type — a
     // `$allModels.$allOperations` query hook never sees these client-level
     // methods, so the type-only omission alone would be bypassable via an

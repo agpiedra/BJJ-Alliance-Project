@@ -1,15 +1,16 @@
-import { PrismaClient } from "@/generated/prisma/client";
-import { PrismaPg } from "@prisma/adapter-pg";
-import { requireEnv } from "@/lib/env";
+import { unscopedPrisma } from "@/lib/prisma/unscoped";
+import { tenantGuardExtension } from "@/lib/tenant/tenant-guard";
 
-const globalForPrisma = globalThis as unknown as {
-  prisma: PrismaClient | undefined;
-};
-
-const adapter = new PrismaPg({ connectionString: requireEnv("DATABASE_URL") });
-
-export const prisma = globalForPrisma.prisma ?? new PrismaClient({ adapter });
-
-if (process.env.NODE_ENV !== "production") {
-  globalForPrisma.prisma = prisma;
-}
+/**
+ * The default, guarded client — revision 23
+ * (docs/MULTI_ACADEMY_AND_KIDS_BELTS.md): this used to be the raw client,
+ * which made the obvious default import the unsafe one. Any query against a
+ * tenant-scoped model with no `organizationId` anywhere in its arguments
+ * throws (`tenant-guard.ts`) instead of silently returning every
+ * organization's rows. Platform-level models (`Organization`, `User`,
+ * `OrganizationMembership`, `AuditLog`, `PasswordResetToken`) pass through
+ * untouched — they were never in the guarded set. `getScopedDb()` does NOT
+ * build on this client (see scoped-client.ts) — it extends `unscopedPrisma`
+ * directly, so a correctly-scoped query never pays for a redundant check.
+ */
+export const prisma = unscopedPrisma.$extends(tenantGuardExtension());

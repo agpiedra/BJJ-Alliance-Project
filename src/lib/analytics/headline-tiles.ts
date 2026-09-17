@@ -157,6 +157,7 @@ export async function getHeadlineTiles(
       : await prisma.attendanceRecord.findMany({
           where: {
             studentId: { in: studentIds },
+            organizationId: context.organizationId,
             type: "CHECKIN",
             occurredAt: { gte: previous.from.toJSDate(), lte: range.to.toJSDate() },
           },
@@ -206,7 +207,7 @@ export async function getHeadlineTiles(
     studentIds.length === 0
       ? []
       : await prisma.paymentPeriod.findMany({
-          where: { studentId: { in: studentIds }, year: today.year, month: today.month },
+          where: { studentId: { in: studentIds }, organizationId: context.organizationId, year: today.year, month: today.month },
           select: { studentId: true, status: true },
         });
   const healthyStudentIds = new Set(

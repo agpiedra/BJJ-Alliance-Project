@@ -27,10 +27,10 @@ export interface OverdueStudent {
  * `listApproachingStudents` (which INSTRUCTOR can view read-only, spec §3),
  * this feature has no INSTRUCTOR-visible variant at all, so the gate can't
  * be left to the caller/page to hide a button — it's enforced right here,
- * against the `session.role` the caller already resolved, the same
- * enforcement `confirmPromotion` (`dashboard/promotion-actions.ts`) applies
- * via `requireStaffSession(["ADMIN", "DIRECTOR"])`. This function can't call
- * that helper itself (it takes an already-resolved `StaffSession`, not a
+ * against the `context` the caller already resolved, the same enforcement
+ * `confirmPromotion` (`dashboard/promotion-actions.ts`) applies via
+ * `requireTenantContext(["ADMIN", "DIRECTOR"])`. This function can't call
+ * that helper itself (it takes an already-resolved `AccessContext`, not a
  * fresh cookie-bound one — same shape as `listPromotionQueue`), so the
  * equivalent check is inlined instead of trusted away.
  */
@@ -88,11 +88,11 @@ export async function listOverdueStudents(
     students.map(async (student) => {
       // Reused verbatim from Task 2 — never a second, drifting
       // implementation of "resolve a student's current-month PaymentPeriod".
-      const period = await getCurrentPaymentPeriod(student.id, today);
+      const period = await getCurrentPaymentPeriod(student.id, context.organizationId, today);
       if (!isOverdue(period, today)) return null;
 
       const lastPaid = await prisma.paymentPeriod.findFirst({
-        where: { studentId: student.id, status: "PAID" },
+        where: { studentId: student.id, organizationId: context.organizationId, status: "PAID" },
         orderBy: [{ year: "desc" }, { month: "desc" }],
         select: { year: true, month: true },
       });

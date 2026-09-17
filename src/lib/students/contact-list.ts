@@ -97,7 +97,7 @@ export async function listStudentsToContact(
   const studentIds = students.map((student) => student.id);
   const lastAttendances = await prisma.attendanceRecord.groupBy({
     by: ["studentId"],
-    where: { studentId: { in: studentIds }, type: "CHECKIN" },
+    where: { studentId: { in: studentIds }, organizationId: context.organizationId, type: "CHECKIN" },
     _max: { occurredAt: true },
   });
   const lastAttendanceByStudentId = new Map(lastAttendances.map((a) => [a.studentId, a._max.occurredAt ?? null]));
@@ -118,8 +118,8 @@ export async function listStudentsToContact(
   const results = await Promise.all(
     qualifying.map(async ({ student, lastAttendanceAt, daysAbsent }) => {
       const [summary, currentPeriod] = await Promise.all([
-        getAtBeltSummary(student.id, configByTrack),
-        getCurrentPaymentPeriod(student.id, today),
+        getAtBeltSummary(student.id, context.organizationId, configByTrack),
+        getCurrentPaymentPeriod(student.id, context.organizationId, today),
       ]);
 
       const paymentStatus: ContactPaymentStatus = isOverdue(currentPeriod, today)

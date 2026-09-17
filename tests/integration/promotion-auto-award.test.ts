@@ -245,8 +245,8 @@ describe("GET /api/cron/promotion-auto-award", () => {
       await addAttendances(unaffected.id, academyId, orgId, 30, new Date(beltAwardedAt.getTime() + 2 * DAY_MS));
 
       const original = attendanceSummaryModule.getAtBeltSummary;
-      const spy = vi.spyOn(attendanceSummaryModule, "getAtBeltSummary").mockImplementation(async (studentId, configByTrack) => {
-        const result = await original(studentId, configByTrack);
+      const spy = vi.spyOn(attendanceSummaryModule, "getAtBeltSummary").mockImplementation(async (studentId, organizationId, configByTrack) => {
+        const result = await original(studentId, organizationId, configByTrack);
         if (studentId === contested.id) {
           // Simulate a concurrent manual confirm landing strictly between
           // this read (which established fromStripes) and writeAward's own

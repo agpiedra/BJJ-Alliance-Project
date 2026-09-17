@@ -1,6 +1,7 @@
 import { DateTime } from "luxon";
 import { Resend } from "resend";
 import { prisma } from "@/lib/prisma";
+import { unscopedPrisma } from "@/lib/prisma/unscoped";
 import { requireEnv } from "@/lib/env";
 import { ZONE, attendanceDateFromZoned } from "@/lib/scheduling/zone";
 import { resolveSystemJobContext } from "@/lib/tenant/context";
@@ -39,7 +40,10 @@ export async function sendWeeklyDigestForAcademy(
   academyId: string,
   resendClient: ResendClient = new Resend(requireEnv("RESEND_API_KEY")),
 ): Promise<void> {
-  const academy = await prisma.academy.findUniqueOrThrow({ where: { id: academyId } });
+  // Explicit escape hatch (revision 23): this is the org-identity resolution
+  // itself — no organizationId is known yet at this line, so it can't scope
+  // the lookup that discovers it.
+  const academy = await unscopedPrisma.academy.findUniqueOrThrow({ where: { id: academyId } });
   const jobContext = await resolveSystemJobContext(academy.organizationId, "weekly-digest");
   // The organization was suspended/cancelled between the cron route's own
   // dispatch loop and this call — skip, per spec: "Skip non-active
@@ -60,7 +64,12 @@ export async function sendWeeklyDigestForAcademy(
 
   const [attendanceCount, inactiveStudents, overdueStudents, recipients] = await Promise.all([
     prisma.attendanceRecord.count({
-      where: { academyId, type: "CHECKIN", date: { gte: windowStart, lte: windowEnd } },
+      where: {
+        organizationId: jobContext.organizationId,
+        academyId,
+        type: "CHECKIN",
+        date: { gte: windowStart, lte: windowEnd },
+      },
     }),
     // The full returned list already IS "students inactive 30+ days" (every
     // bucket `getRetentionList` returns is 30+ days quiet) — no further

@@ -155,7 +155,7 @@ describe("signup — a staff-created student's email is REFUSED, never duplicate
 
     // I-1: fires through the REAL signup action entry point, not just when
     // notifyNewSignup is called directly (see notify-new-signup.test.ts).
-    expect(notifyNewSignupState.spy).toHaveBeenCalledWith(students[0].id);
+    expect(notifyNewSignupState.spy).toHaveBeenCalledWith(students[0].id, students[0].organizationId);
   });
 
   it("a student whose row is ALREADY claimed cannot signup again (the User email is taken)", async () => {

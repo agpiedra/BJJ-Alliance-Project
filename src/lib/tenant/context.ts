@@ -32,19 +32,24 @@ async function resolveSelfStudentId(
   role: MembershipRole,
 ): Promise<string | null> {
   if (role !== "STUDENT") return null;
+  // `userId` alone is the real unique key (Student.userId is a plain
+  // `@unique` field, not composite) — `organizationId` is an EXTRA filter
+  // alongside it, same pattern `scoped-client.ts`'s `scopeArgs()` already
+  // relies on for `findUnique`. A cross-org student row now returns null
+  // directly instead of being fetched and discarded in JS.
   const student = await prisma.student.findUnique({
-    where: { userId },
-    select: { id: true, organizationId: true },
+    where: { userId, organizationId },
+    select: { id: true },
   });
-  if (!student || student.organizationId !== organizationId) return null;
-  return student.id;
+  return student?.id ?? null;
 }
 
 /** `resolveContext` only ever produces these three shapes by construction — narrower than the full `TenantContextResult` union so `TenantAccessError`'s callers don't have to account for statuses this function can never actually return. */
 type ResolveContextResult = Extract<TenantContextResult, { status: "OK" | "NO_MEMBERSHIP" | "ORG_NOT_ACTIVE" }>;
 
 async function resolveContext(userId: string, organizationId: string): Promise<ResolveContextResult> {
-  const [membership, organization] = await Promise.all([
+  const [user, membership, organization] = await Promise.all([
+    prisma.user.findUnique({ where: { id: userId }, select: { active: true } }),
     prisma.organizationMembership.findUnique({
       where: { userId_organizationId: { userId, organizationId } },
       select: { role: true },
@@ -52,7 +57,14 @@ async function resolveContext(userId: string, organizationId: string): Promise<R
     prisma.organization.findUnique({ where: { id: organizationId }, select: { status: true } }),
   ]);
 
-  if (!membership || !organization) {
+  // A deactivated (or deleted) user is exactly the case `requireTenantContext`'s
+  // own doc comment already describes NO_MEMBERSHIP as covering ("a deactivated
+  // member") — this check was documented as covered but never actually wired up
+  // until now. The JWT is valid for up to 30 days, so this is what makes a
+  // deactivation take effect on the very next request rather than at the end of
+  // the token's life (the same guarantee the deleted `getStaffSession()` gave
+  // the staff surface alone; this closes it for every `TenantContext` caller).
+  if (!user || !user.active || !membership || !organization) {
     return { status: "NO_MEMBERSHIP" };
   }
   if (organization.status !== "ACTIVE") {

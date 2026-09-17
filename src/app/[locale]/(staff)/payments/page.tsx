@@ -50,13 +50,13 @@ export default async function PaymentsPage() {
   });
 
   if (canRecordPayments) {
-    await Promise.all(academies.map((academy) => ensureCustomPromoPlan(academy.id)));
+    await Promise.all(academies.map((academy) => ensureCustomPromoPlan(context.organizationId, academy.id)));
   }
 
   const [rows, plans] = await Promise.all([
     listCurrentPaymentStatus(context, today),
     prisma.paymentPlan.findMany({
-      where: { academyId: { in: academies.map((a) => a.id) }, active: true },
+      where: { organizationId: context.organizationId, academyId: { in: academies.map((a) => a.id) }, active: true },
       orderBy: { name: "asc" },
       select: { id: true, name: true, academyId: true },
     }),

@@ -69,7 +69,7 @@ export async function regenerateKioskToken(
   // rotation happen with no record of who did it.
   await prisma.$transaction(async (tx) => {
     await tx.academy.update({
-      where: { id: academy.id },
+      where: { id: academy.id, organizationId: context.organizationId },
       data: { kioskTokenHash },
     });
 

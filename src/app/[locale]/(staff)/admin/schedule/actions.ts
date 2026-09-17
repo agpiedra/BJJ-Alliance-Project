@@ -183,7 +183,7 @@ export async function updateClassSession(
   try {
     await prisma.$transaction(async (tx) => {
       await tx.classSession.update({
-        where: { id: existing.id },
+        where: { id: existing.id, organizationId: existing.organizationId },
         data: after,
       });
 
@@ -252,7 +252,7 @@ export async function deactivateClassSession(
 
   await prisma.$transaction(async (tx) => {
     await tx.classSession.update({
-      where: { id: existing.id },
+      where: { id: existing.id, organizationId: existing.organizationId },
       data: { active: false },
     });
 

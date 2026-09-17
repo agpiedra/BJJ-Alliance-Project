@@ -128,6 +128,7 @@ export async function reserveKioskAttempt(
       const windowStart = new Date(Date.now() - RATE_LIMIT_WINDOW_SECONDS * 1000);
       const recentFailures = await tx.kioskAttempt.findMany({
         where: {
+          organizationId,
           academyId,
           kioskTokenHash,
           success: false,
@@ -187,14 +188,18 @@ export async function reserveKioskAttempt(
  * unexpected failure here leaves the row as a counting failure, which is the conservative
  * direction (it can only tighten the limiter, never loosen it).
  */
-export async function finalizeKioskAttempt(attemptId: string, outcome: KioskAttemptOutcome): Promise<void> {
+export async function finalizeKioskAttempt(
+  attemptId: string,
+  organizationId: string,
+  outcome: KioskAttemptOutcome,
+): Promise<void> {
   const countsAsFailure = OUTCOME_COUNTS_AS_FAILURE[outcome];
   const success = outcome === "success";
   if (countsAsFailure && !success) return;
 
   try {
     await prisma.kioskAttempt.update({
-      where: { id: attemptId },
+      where: { id: attemptId, organizationId },
       data: { success, countsAsFailure },
     });
   } catch (error) {

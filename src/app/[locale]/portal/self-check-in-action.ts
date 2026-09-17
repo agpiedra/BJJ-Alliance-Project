@@ -45,7 +45,7 @@ export async function selfCheckIn(
   // requireTenantContext) already IS the ownership proof, so none of the
   // staff "scope by id AND owner" ceremony applies to this lookup.
   const student = await prisma.student.findUnique({
-    where: { id: studentId },
+    where: { id: studentId, organizationId: context.organizationId },
     select: { homeAcademyId: true, status: true },
   });
 

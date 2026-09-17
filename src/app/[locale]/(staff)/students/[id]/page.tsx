@@ -69,9 +69,9 @@ export default async function StudentDetailPage({
   }
 
   const configByTrack = await resolvePromotionConfigMap(context.organizationId);
-  const summary = await getAtBeltSummary(student.id, configByTrack);
-  const promotionHistory = await getPromotionHistory(student.id);
-  const paymentHistory = await getPaymentHistory(student.id);
+  const summary = await getAtBeltSummary(student.id, context.organizationId, configByTrack);
+  const promotionHistory = await getPromotionHistory(student.id, context.organizationId);
+  const paymentHistory = await getPaymentHistory(student.id, context.organizationId);
 
   const t = await getTranslations("students");
   const tDetail = await getTranslations("students.detail");
@@ -128,11 +128,11 @@ export default async function StudentDetailPage({
   // shared `RecordPaymentForm` needs to offer it, same as the new
   // `/payments` route.
   if (canEdit) {
-    await ensureCustomPromoPlan(student.homeAcademyId);
+    await ensureCustomPromoPlan(context.organizationId, student.homeAcademyId);
   }
   const paymentPlans = canEdit
     ? await prisma.paymentPlan.findMany({
-        where: { academyId: student.homeAcademyId, active: true },
+        where: { organizationId: context.organizationId, academyId: student.homeAcademyId, active: true },
         orderBy: { name: "asc" },
         select: { id: true, name: true, academyId: true },
       })

@@ -96,10 +96,11 @@ const PROMOTION_RELEVANT: Prisma.AttendanceRecordWhereInput = {
  */
 export async function getAtBeltSummary(
   studentId: string,
+  organizationId: string,
   configByTrack: Map<Track, ResolvedTrackConfig>,
 ): Promise<AtBeltSummary> {
   const student = await prisma.student.findUniqueOrThrow({
-    where: { id: studentId },
+    where: { id: studentId, organizationId },
     select: {
       track: true,
       currentStripes: true,
@@ -146,13 +147,13 @@ export async function getAtBeltSummary(
 
   const [atBeltAgg, lifetimeAgg] = await Promise.all([
     prisma.attendanceRecord.aggregate({
-      where: { studentId, occurredAt: { gte: student.beltAwardedAt }, ...PROMOTION_RELEVANT },
+      where: { studentId, organizationId, occurredAt: { gte: student.beltAwardedAt }, ...PROMOTION_RELEVANT },
       _sum: { delta: true },
     }),
     // Unfiltered on purpose: every physical attendance ever, promotion-relevant
     // or not (see PROMOTION_RELEVANT's comment).
     prisma.attendanceRecord.aggregate({
-      where: { studentId },
+      where: { studentId, organizationId },
       _sum: { delta: true },
     }),
   ]);

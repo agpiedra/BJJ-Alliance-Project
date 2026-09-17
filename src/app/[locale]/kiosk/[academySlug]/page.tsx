@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation";
-import { prisma } from "@/lib/prisma";
+import { unscopedPrisma } from "@/lib/prisma/unscoped";
 import { BrandBanner } from "@/components/brand/brand-banner";
 import { KioskClient } from "./kiosk-client";
 
@@ -24,7 +24,11 @@ export default async function KioskPage({
   const { academySlug } = await params;
   const { token } = await searchParams;
 
-  const academy = await prisma.academy.findUnique({
+  // Explicit escape hatch: resolving the organization FROM its academy's
+  // slug is the one thing that can never itself be organization-scoped
+  // (Appendix C decision 4, point 3 — this is the kiosk's own tenant
+  // resolution, not a read that already has a tenant to scope by).
+  const academy = await unscopedPrisma.academy.findUnique({
     where: { slug: academySlug },
     select: { id: true, name: true, slug: true, active: true },
   });
