@@ -7,21 +7,10 @@
     "subheading": "Brazilian Jiu-Jitsu for the whole family, with locations in Escazú and Escalante. Train under certified instructors in a serious but welcoming environment.",
     "cta": "Create a student account",
     "loginLink": "Already have an account? Sign in",
-    "stats": {
-      "academies": "Active locations",
-      "weeklyClasses": "Weekly classes",
-      "timezone": "Timezone"
-    },
-    "schedule": {
-      "heading": "Weekly schedule — {academy}",
-      "description": "A sample of our regular classes. The full schedule is confirmed when you sign up.",
-      "table": {
-        "day": "Day",
-        "time": "Time",
-        "name": "Class",
-        "type": "Type"
-      },
-      "empty": "This location doesn't have any published classes yet."
+    "highlights": {
+      "family": "Kids and adults train together, with a curriculum built for both",
+      "progress": "Every stripe and belt promotion is tracked, so you always know where you stand",
+      "schedule": "A structured weekly class schedule confirmed when you sign up"
     },
     "belts": {
       "heading": "A clear path of progress",

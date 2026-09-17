@@ -3,12 +3,6 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { BrandBanner } from "@/components/brand/brand-banner";
 import { BeltGraphic, type BeltVisualData } from "@/components/belt-graphic/belt-graphic";
-import { getPublicHomeStats } from "./home-data";
-
-// Reads live, admin-editable data (academy/class-session counts, one
-// academy's schedule) that can change without a redeploy — same reasoning
-// as the signup and kiosk pages, never frozen at build time.
-export const dynamic = "force-dynamic";
 
 /** Static illustrative examples for this marketing page — not driven by
  * any real organization's catalog, so the color data is hardcoded here
@@ -54,14 +48,8 @@ export default async function HomePage({
   // belts, so it stays on `belt.<code>` message keys rather than a real
   // rank row's labelEs/labelEn (the one other deliberate exception, besides
   // the pre-Phase-3b /dev/belts stub).
-  const [t, tDay, tType, tBelt, { academyCount, weeklyClassCount, previewAcademy, previewSessions }] =
-    await Promise.all([
-      getTranslations("home"),
-      getTranslations("dayOfWeek"),
-      getTranslations("classType"),
-      getTranslations("belt"),
-      getPublicHomeStats(),
-    ]);
+  const t = await getTranslations("home");
+  const tBelt = await getTranslations("belt");
 
   return (
     <>
@@ -83,62 +71,20 @@ export default async function HomePage({
         <section className="grid grid-cols-1 gap-4 sm:grid-cols-3">
           <Card>
             <CardContent className="flex flex-col items-center gap-1 text-center">
-              <span className="text-3xl font-bold text-brand-gold">{academyCount}</span>
-              <span className="text-sm text-muted-foreground">{t("stats.academies")}</span>
+              <span className="text-sm font-medium">{t("highlights.family")}</span>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="flex flex-col items-center gap-1 text-center">
-              <span className="text-3xl font-bold text-brand-gold">{weeklyClassCount}</span>
-              <span className="text-sm text-muted-foreground">{t("stats.weeklyClasses")}</span>
+              <span className="text-sm font-medium">{t("highlights.progress")}</span>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="flex flex-col items-center gap-1 text-center">
-              <span className="text-xl font-bold sm:text-2xl">
-                {previewAcademy?.timezone ?? "—"}
-              </span>
-              <span className="text-sm text-muted-foreground">{t("stats.timezone")}</span>
+              <span className="text-sm font-medium">{t("highlights.schedule")}</span>
             </CardContent>
           </Card>
         </section>
-
-        {previewAcademy && (
-          <section className="flex flex-col gap-4">
-            <div className="text-center">
-              <h2 className="text-xl font-semibold">
-                {t("schedule.heading", { academy: previewAcademy.name })}
-              </h2>
-              <p className="text-sm text-muted-foreground">{t("schedule.description")}</p>
-            </div>
-            {previewSessions.length > 0 ? (
-              <div className="overflow-x-auto rounded-xl ring-1 ring-foreground/10">
-                <table className="w-full text-left text-sm">
-                  <thead>
-                    <tr className="border-b">
-                      <th className="px-4 py-2">{t("schedule.table.day")}</th>
-                      <th className="px-4 py-2">{t("schedule.table.time")}</th>
-                      <th className="px-4 py-2">{t("schedule.table.name")}</th>
-                      <th className="px-4 py-2">{t("schedule.table.type")}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {previewSessions.map((session) => (
-                      <tr key={session.id} className="border-b last:border-0">
-                        <td className="px-4 py-2">{tDay(session.dayOfWeek)}</td>
-                        <td className="px-4 py-2">{session.startTime}</td>
-                        <td className="px-4 py-2">{session.name}</td>
-                        <td className="px-4 py-2">{tType(session.type)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            ) : (
-              <p className="text-center text-sm text-muted-foreground">{t("schedule.empty")}</p>
-            )}
-          </section>
-        )}
 
         <section className="flex flex-col items-center gap-4">
           <h2 className="text-xl font-semibold">{t("belts.heading")}</h2>
