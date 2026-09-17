@@ -99,9 +99,22 @@ describe("createStudent", () => {
       select: { id: true },
     });
     const studentIds = students.map((s) => s.id);
-    await prisma.auditLog.deleteMany({
-      where: { OR: [{ entityId: { in: studentIds } }, { actorId: { in: cleanupUserIds } }] },
+    // PromotionCredit rows (Phase 3d) reference Student with ON DELETE
+    // RESTRICT — must go first, or student.deleteMany below fails outright.
+    const credits = await prisma.promotionCredit.findMany({
+      where: { studentId: { in: studentIds } },
+      select: { id: true },
     });
+    await prisma.auditLog.deleteMany({
+      where: {
+        OR: [
+          { entityId: { in: studentIds } },
+          { entityId: { in: credits.map((c) => c.id) } },
+          { actorId: { in: cleanupUserIds } },
+        ],
+      },
+    });
+    await prisma.promotionCredit.deleteMany({ where: { studentId: { in: studentIds } } });
     if (studentIds.length > 0) {
       await prisma.student.deleteMany({ where: { id: { in: studentIds } } });
     }
@@ -276,5 +289,68 @@ describe("createStudent", () => {
       await prisma.auditLog.deleteMany({ where: { organizationId: otherOrg.id } });
       await prisma.organization.delete({ where: { id: otherOrg.id } });
     }
+  });
+
+  // MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 3d — "Estado inicial" onboarding
+  // credit, granted in the same transaction as student.create.
+  describe("Phase 3d: onboarding credit", () => {
+    it("grants a PromotionCredit anchored to the submitted beltAwardedAt when classesCredited is nonzero", async () => {
+      const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+      const admin = await makeStaffUser("ADMIN", "create-test-credit-admin");
+      const fields = {
+        ...newStudentFields(escazu.id, "CreditedOnboard"),
+        beltAwardedAt: "2025-06-01",
+        classesCredited: "20",
+        creditReason: "Estimated from prior gym's own records.",
+      };
+
+      currentSession = { user: { id: admin.id, role: "ADMIN" }, activeOrganizationId: admin.organizationId };
+      const result = await createStudent(admin.organizationId, {}, formData(fields));
+      expect(result.ok).toBe(true);
+
+      const student = await prisma.student.findFirstOrThrow({ where: { email: fields.email } });
+      expect(student.beltAwardedAt.toISOString().slice(0, 10)).toBe("2025-06-01");
+
+      const credit = await prisma.promotionCredit.findFirstOrThrow({ where: { studentId: student.id } });
+      expect(credit.classesGranted).toBe(20);
+      expect(credit.reason).toBe("Estimated from prior gym's own records.");
+      expect(credit.grantedById).toBe(admin.id);
+      expect(credit.beltAwardedAtAnchor.getTime()).toBe(student.beltAwardedAt.getTime());
+
+      const audits = await prisma.auditLog.findMany({
+        where: { entityId: credit.id, action: "promotionCredit.grant" },
+      });
+      expect(audits).toHaveLength(1);
+    });
+
+    it("a classesCredited of 0 (explicit or omitted) creates no PromotionCredit row at all", async () => {
+      const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+      const admin = await makeStaffUser("ADMIN", "create-test-zero-credit-admin");
+      currentSession = { user: { id: admin.id, role: "ADMIN" }, activeOrganizationId: admin.organizationId };
+
+      const explicitZero = { ...newStudentFields(escazu.id, "ExplicitZeroCredit"), classesCredited: "0" };
+      const explicitResult = await createStudent(admin.organizationId, {}, formData(explicitZero));
+      expect(explicitResult.ok).toBe(true);
+      const explicitStudent = await prisma.student.findFirstOrThrow({ where: { email: explicitZero.email } });
+      expect(await prisma.promotionCredit.count({ where: { studentId: explicitStudent.id } })).toBe(0);
+
+      const omitted = newStudentFields(escazu.id, "OmittedCredit");
+      const omittedResult = await createStudent(admin.organizationId, {}, formData(omitted));
+      expect(omittedResult.ok).toBe(true);
+      const omittedStudent = await prisma.student.findFirstOrThrow({ where: { email: omitted.email } });
+      expect(await prisma.promotionCredit.count({ where: { studentId: omittedStudent.id } })).toBe(0);
+    });
+
+    it("rejects a nonzero classesCredited with no reason, writing nothing", async () => {
+      const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+      const admin = await makeStaffUser("ADMIN", "create-test-missing-reason-admin");
+      const fields = { ...newStudentFields(escazu.id, "MissingReason"), classesCredited: "10" };
+
+      currentSession = { user: { id: admin.id, role: "ADMIN" }, activeOrganizationId: admin.organizationId };
+      const result = await createStudent(admin.organizationId, {}, formData(fields));
+      expect(result.error).toBe("invalid");
+      expect(result.fieldErrors?.creditReason).toEqual(["creditReasonRequired"]);
+      expect(await prisma.student.findFirst({ where: { email: fields.email } })).toBeNull();
+    });
   });
 });

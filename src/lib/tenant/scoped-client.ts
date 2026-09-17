@@ -17,6 +17,7 @@ export const TENANT_SCOPED_MODELS = new Set([
   "ClassSession",
   "AttendanceRecord",
   "Promotion",
+  "PromotionCredit",
   "BeltRank",
   "PromotionConfig",
   "PaymentPlan",
@@ -133,6 +134,7 @@ export type ScopedDb = Pick<
   | "classSession"
   | "attendanceRecord"
   | "promotion"
+  | "promotionCredit"
   | "beltRank"
   | "promotionConfig"
   | "paymentPlan"

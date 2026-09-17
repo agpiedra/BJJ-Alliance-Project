@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { generateStudentCode } from "@/lib/students/generate-code";
 import { isAcademyInTenantScope, resolveActionContext } from "@/lib/tenant/context";
 import { getScopedDb } from "@/lib/tenant/scoped-client";
+import { CREDIT_DELTA_LIMIT } from "@/lib/promotion/credit";
 import { Prisma, StudentStatus } from "@/generated/prisma/client";
 import type { ActionState } from "@/lib/action-state";
 
@@ -25,6 +26,18 @@ const createStudentSchema = z
     track: z.enum(["ADULT", "KIDS"]),
     currentRankId: z.string().min(1),
     currentStripes: z.coerce.number().int().min(0),
+    // MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 3d: "roughly when it was
+    // awarded." Optional — omitted means "starting today," the same
+    // default Student.beltAwardedAt's own `@default(now())` already gave
+    // every student before this field existed. Never trusted as "now" when
+    // explicitly typed: parsed and passed through as-is below.
+    beltAwardedAt: z.string().optional(),
+    // "Estimated number of classes attended since then... Zero is valid and
+    // should be the default." Non-negative — this is an initial estimate,
+    // not a signed correction (see CREDIT_DELTA_LIMIT / adjustPromotionCredit
+    // for the correction path, which does allow negative).
+    classesCredited: z.coerce.number().int().min(0).max(CREDIT_DELTA_LIMIT).optional().default(0),
+    creditReason: z.string().optional(),
     dateOfBirth: z.string().optional(),
     guardianName: z.string().optional(),
     guardianPhone: z.string().optional(),
@@ -38,7 +51,16 @@ const createStudentSchema = z
       return true;
     },
     { message: "guardianRequiredForMinor", path: ["guardianName"] },
-  );
+  )
+  .refine((data) => data.classesCredited === 0 || !!data.creditReason?.trim(), {
+    // Auditability (Phase 3d spec point 3): "who granted it, when, how many
+    // classes, and free-text why" — a real, nonzero estimate is a claim that
+    // must be explainable. A credit of exactly 0 needs no justification
+    // (there is nothing to explain), matching point 1's "zero... must not
+    // look like an error state."
+    message: "creditReasonRequired",
+    path: ["creditReason"],
+  });
 
 export type CreateStudentState = ActionState & { code?: string };
 
@@ -106,9 +128,17 @@ export async function createStudent(
     return { error: "invalid", fieldErrors: { currentStripes: ["invalid"] } };
   }
 
-  // The create and its audit row go in one interactive transaction, so an
-  // audit row can never exist without the student it describes, nor a
-  // student appear with no record of who created them.
+  // MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 3d: computed once, here, so the
+  // exact same Date is both written to Student.beltAwardedAt AND snapshotted
+  // as the PromotionCredit's anchor below — never Prisma's own
+  // `@default(now())`, which would give the two writes two different
+  // instants a query could then fail to match.
+  const beltAwardedAt = data.beltAwardedAt ? new Date(data.beltAwardedAt) : new Date();
+
+  // The create and its audit row (and, when credited, the PromotionCredit
+  // grant) go in one interactive transaction, so an audit row can never
+  // exist without the student it describes, nor a student appear with no
+  // record of who created them.
   await prisma.$transaction(async (tx) => {
     // Staff created this student directly (in person or over the phone) —
     // there's no self-signup review step to wait on, so this row starts
@@ -124,6 +154,7 @@ export async function createStudent(
         email: data.email,
         currentRankId: rank.id,
         currentStripes: data.currentStripes,
+        beltAwardedAt,
         dateOfBirth: data.dateOfBirth ? new Date(data.dateOfBirth) : undefined,
         guardianName: data.guardianName,
         guardianPhone: data.guardianPhone,
@@ -159,6 +190,38 @@ export async function createStudent(
         },
       },
     });
+
+    // "Estado inicial" onboarding credit (Phase 3d) — omitted entirely for
+    // classesCredited === 0, which is what makes point 3's "a credit of 0
+    // behaves identically to no credit at all" true structurally: there is
+    // no row to sum, not a zero-valued one to special-case around.
+    if (data.classesCredited !== 0) {
+      const creditRecord = await tx.promotionCredit.create({
+        data: {
+          studentId: student.id,
+          academyId: student.homeAcademyId,
+          organizationId: student.organizationId,
+          beltAwardedAtAnchor: beltAwardedAt,
+          classesGranted: data.classesCredited,
+          // `.refine` above already guarantees a non-empty reason whenever
+          // classesCredited !== 0.
+          reason: data.creditReason!.trim(),
+          grantedById: context.actorUserId,
+        },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          actorId: context.actorUserId,
+          academyId: student.homeAcademyId,
+          action: "promotionCredit.grant",
+          entityType: "PromotionCredit",
+          entityId: creditRecord.id,
+          before: Prisma.DbNull,
+          after: { studentId: student.id, classesGranted: creditRecord.classesGranted, reason: creditRecord.reason },
+        },
+      });
+    }
   });
 
   return { ok: true, code };
