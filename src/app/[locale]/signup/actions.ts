@@ -2,6 +2,7 @@
 
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
+import { unscopedPrisma } from "@/lib/prisma/unscoped";
 import { hashSecret } from "@/lib/crypto";
 import { generateStudentCode } from "@/lib/students/generate-code";
 import { notifyNewSignup } from "@/lib/notifications/notify-new-signup";
@@ -79,8 +80,15 @@ export async function signup(_prevState: SignupState, formData: FormData): Promi
   // verification (a verified email, or a staff-mediated flow) and is Phase 8
   // territory; "refuse and send them to their academy" is the safe answer
   // here, and it still fixes the duplicate-row bug outright.
+  // Explicit escape hatch (revision 23): this is the org-identity resolution
+  // itself — no organizationId is known yet at this line, so it can't scope
+  // the lookup that discovers it. Resolved BEFORE the email-existence check
+  // below so that check can be scoped by organizationId instead of searching
+  // every organization on the platform for the email.
+  const homeAcademy = await unscopedPrisma.academy.findUniqueOrThrow({ where: { slug: data.homeAcademySlug } });
+
   const existingStudentWithoutAccount = await prisma.student.findFirst({
-    where: { email: data.email, userId: null },
+    where: { email: data.email, organizationId: homeAcademy.organizationId, userId: null },
     select: { id: true },
   });
 
@@ -91,7 +99,6 @@ export async function signup(_prevState: SignupState, formData: FormData): Promi
     };
   }
 
-  const homeAcademy = await prisma.academy.findUniqueOrThrow({ where: { slug: data.homeAcademySlug } });
   const { code, codeHash } = await generateStudentCode(homeAcademy.organizationId);
 
   // No authenticated tenant context exists yet at signup time (this is a
@@ -137,7 +144,7 @@ export async function signup(_prevState: SignupState, formData: FormData): Promi
 
   // See fire-and-forget.ts for why this is wrapped in after() with a
   // fallback rather than left as a bare un-awaited promise.
-  fireAndForget("notifyNewSignup", () => notifyNewSignup(studentId));
+  fireAndForget("notifyNewSignup", () => notifyNewSignup(studentId, homeAcademy.organizationId));
 
   return { ok: true, code };
 }
