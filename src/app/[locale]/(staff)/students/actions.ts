@@ -1,13 +1,22 @@
 import { branchScopeWhere } from "@/lib/tenant/context";
 import { getScopedDb } from "@/lib/tenant/scoped-client";
 import type { TenantContext } from "@/lib/tenant/types";
-import { StudentStatus, Prisma } from "@/generated/prisma/client";
+import { StudentStatus, Track, Prisma } from "@/generated/prisma/client";
 
 export type StudentFilters = {
   search?: string;
   belt?: string;
   status?: StudentStatus;
   academyId?: string;
+  /**
+   * MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 3c-iii: filters on the student's
+   * TRACK, never age — the kids/adults transition is a manual staff action
+   * (changeTrack), so a 17-year-old still on the kids track is a kid here,
+   * and a 15-year-old already moved to adult blue is an adult. Deriving
+   * this from dateOfBirth would silently disagree with what the belt
+   * actually says.
+   */
+  track?: Track;
 };
 
 /**
@@ -62,6 +71,10 @@ export async function listStudents(context: TenantContext, filters: StudentFilte
 
   if (filters.status) {
     conditions.push({ status: filters.status });
+  }
+
+  if (filters.track) {
+    conditions.push({ track: filters.track });
   }
 
   const search = filters.search?.trim();

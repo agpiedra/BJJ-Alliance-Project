@@ -26,6 +26,7 @@ import {
   type PromotionCandidate,
 } from "@/lib/students/promotion-queue";
 import { listOverdueStudents, type OverdueStudent } from "@/lib/payments/list-overdue";
+import { getActiveStudentCounts } from "@/lib/students/active-counts";
 import { getAtBeltSummary } from "@/lib/students/attendance-summary";
 import { resolvePromotionConfigMap } from "@/lib/promotion/config";
 type Belt = "WHITE" | "BLUE" | "PURPLE" | "BROWN" | "BLACK";
@@ -187,13 +188,14 @@ export default async function DashboardPage() {
     ],
   });
 
-  const [activeStudentCount, weeklyAttendanceCount, previousWeekAttendanceCount, academyRows] = await Promise.all([
-    getScopedDb(context).student.count({
-      where: {
-        status: "ACTIVE",
-        ...(scope.academyId ? { homeAcademyId: scope.academyId } : {}),
-      },
-    }),
+  const [activeCounts, weeklyAttendanceCount, previousWeekAttendanceCount, academyRows] = await Promise.all([
+    // Phase 3c-iii: separate kids/adults counts alongside the existing
+    // total — the same nav-badge/dashboard area revision 23 found leaking a
+    // platform-wide count via the raw client. getActiveStudentCounts scopes
+    // every one of its three queries through getScopedDb, so the tenant
+    // guard (tenant-guard.ts) would throw before any of them could repeat
+    // that leak.
+    getActiveStudentCounts(context),
     getScopedDb(context).attendanceRecord.count({ where: weeklyAttendanceConditions(currentWeekStart, currentWeekEnd) }),
     getScopedDb(context).attendanceRecord.count({ where: weeklyAttendanceConditions(previousWeekStart, previousWeekEnd) }),
     getScopedDb(context).academy.findMany({
@@ -204,6 +206,7 @@ export default async function DashboardPage() {
       select: { name: true },
     }),
   ]);
+  const { total: activeStudentCount, kids: activeKidsCount, adults: activeAdultsCount } = activeCounts;
 
   const academyLabel = academyRows.map((academy) => academy.name).join(` ${t("panel.academyJoin")} `);
 
@@ -383,9 +386,12 @@ export default async function DashboardPage() {
       </div>
 
       {/* §4.1 Task 1: stat row of 4 (3 for INSTRUCTOR, who never sees the
-          overdue-payments tile — see canViewOverduePayments's doc comment). */}
-      <StatRow columns={canViewOverduePayments ? 4 : 3}>
+          overdue-payments tile — see canViewOverduePayments's doc comment),
+          plus 2 more for Phase 3c-iii's kids/adults breakdown. */}
+      <StatRow columns={canViewOverduePayments ? 6 : 5}>
         <StatTile label={t("panel.stats.activeStudents.label")} value={activeStudentCount} note={academyLabel} />
+        <StatTile label={t("panel.stats.activeKids.label")} value={activeKidsCount} note={academyLabel} />
+        <StatTile label={t("panel.stats.activeAdults.label")} value={activeAdultsCount} note={academyLabel} />
         <StatTile
           label={t("panel.stats.weeklyAttendance.label")}
           value={weeklyAttendanceCount}

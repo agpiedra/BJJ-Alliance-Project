@@ -122,6 +122,12 @@
         "activeStudents": {
           "label": "Active students"
         },
+        "activeKids": {
+          "label": "Active kids"
+        },
+        "activeAdults": {
+          "label": "Active adults"
+        },
         "weeklyAttendance": {
           "label": "Check-ins this week",
           "deltaUp": "+{diff} vs. last week",
@@ -431,9 +437,13 @@
       "status": "Status",
       "payment": "Payment",
       "academy": "Academy",
+      "track": "Track",
       "allBelts": "All belts",
       "allStatuses": "All statuses",
       "allPayments": "All payments",
+      "allTracks": "All",
+      "trackKids": "Kids",
+      "trackAdults": "Adults",
       "bothAcademies": "Both",
       "submit": "Filter"
     },
