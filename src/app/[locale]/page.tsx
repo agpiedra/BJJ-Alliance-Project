@@ -59,12 +59,14 @@ export default async function HomePage({
           <h1 className="text-3xl font-bold sm:text-4xl">{t("heading")}</h1>
           <p className="max-w-xl text-lg text-muted-foreground">{t("subheading")}</p>
           <div className="flex flex-wrap items-center justify-center gap-4 pt-2">
-            {/* This whole page is already Alliance's own hardcoded marketing
-                copy (heading/subheading/highlights below), not generic
-                platform marketing — this link keeps that existing pattern
-                rather than introducing a new one. A genuinely multi-tenant
-                version of this page is out of scope for Phase 5. */}
-            <Button size="lg" nativeButton={false} render={<a href={`/${locale}/o/alliance-cr/signup`} />}>
+            {/* MULTI_ACADEMY_AND_KIDS_BELTS.md Item 2 — this is the
+                product's front door, so its CTA is the platform's own
+                registration entry point, never a specific organization's
+                signup link (that was the previous, pre-multi-tenant version
+                of this page: Alliance's own signup, hardcoded). Alliance
+                reaches its own students through /o/alliance-cr/signup
+                directly, not through this page. */}
+            <Button size="lg" nativeButton={false} render={<a href={`/${locale}/register-academy`} />}>
               {t("cta")}
             </Button>
             <a href={`/${locale}/login`} className="text-sm underline">

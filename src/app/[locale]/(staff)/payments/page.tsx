@@ -1,6 +1,7 @@
 import { getLocale, getTranslations } from "next-intl/server";
 import { requireTenantContext, branchScopeWhere } from "@/lib/tenant/context";
 import { getScopedDb } from "@/lib/tenant/scoped-client";
+import { getOrganizationBranding } from "@/lib/branding/get-branding";
 import { prisma } from "@/lib/prisma";
 import { Card, CardContent, CardHeader, CardTitle, CardAction } from "@/components/ui/card";
 import { StatRow, StatTile } from "@/components/ui/stat-tile";
@@ -30,6 +31,7 @@ function joinNames(names: string[], max = 3): string {
 export default async function PaymentsPage() {
   const context = await requireTenantContext();
   const t = await getTranslations("payments");
+  const branding = await getOrganizationBranding(context);
   const locale = await getLocale();
   const today = currentCrDateParts();
 
@@ -81,7 +83,7 @@ export default async function PaymentsPage() {
   return (
     <main className="flex flex-col gap-6 p-4 sm:p-6">
       <header className="flex flex-col gap-1">
-        <p className="font-mono text-[10.5px] tracking-[.11em] text-muted-foreground uppercase">{t("eyebrow")}</p>
+        <p className="font-mono text-[10.5px] tracking-[.11em] text-muted-foreground uppercase">{t("eyebrow", { orgName: branding.displayName })}</p>
         <h1>{t("heading")}</h1>
         <p className="text-sm text-muted-foreground">
           {t("sub", { month: monthLabel, academy: academyLabel })}

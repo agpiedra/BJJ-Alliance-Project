@@ -49,6 +49,7 @@ export default async function OrganizationLoginPage({
         initials={branding?.initials}
         initialsBackground={branding?.sidebar.background}
         initialsForeground={branding?.sidebar.foreground}
+        alt={branding?.displayName}
       />
       <LoginForm />
     </>

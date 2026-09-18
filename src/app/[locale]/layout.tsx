@@ -1,9 +1,10 @@
 import type { Metadata, Viewport } from "next";
 import { Archivo, IBM_Plex_Sans, IBM_Plex_Mono } from "next/font/google";
 import { hasLocale, NextIntlClientProvider } from "next-intl";
-import { getMessages, getTranslations, setRequestLocale } from "next-intl/server";
+import { getMessages, setRequestLocale } from "next-intl/server";
 import { notFound } from "next/navigation";
 import { routing } from "@/i18n/routing";
+import { PLATFORM_NAME } from "@/lib/platform";
 import "../globals.css";
 
 // Populates the --font-heading / --font-sans / --font-mono custom properties
@@ -38,14 +39,13 @@ export const viewport: Viewport = {
   themeColor: "#171717",
 };
 
-export async function generateMetadata({
-  params,
-}: {
-  params: Promise<{ locale: string }>;
-}): Promise<Metadata> {
-  const { locale } = await params;
-  const t = await getTranslations({ locale, namespace: "app" });
-  return { title: t("title"), manifest: "/manifest.json" };
+export function generateMetadata(): Metadata {
+  // MULTI_ACADEMY_AND_KIDS_BELTS.md Item 2 — the browser-tab title is
+  // global (resolved once, before any organization is known), so it names
+  // the platform, never Alliance. `manifest` is intentionally absent here:
+  // `src/app/manifest.ts` is Next's own file-convention route, which
+  // auto-injects the `<link rel="manifest">` itself.
+  return { title: PLATFORM_NAME };
 }
 
 export default async function LocaleLayout({

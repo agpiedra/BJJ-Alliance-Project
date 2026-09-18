@@ -40,7 +40,7 @@ export default async function BrandingSettingsPage() {
   return (
     <main className="flex flex-col gap-6 p-6">
       <div>
-        <p className="text-sm text-muted-foreground">{t("eyebrow")}</p>
+        <p className="text-sm text-muted-foreground">{t("eyebrow", { orgName: displayName })}</p>
         <h1 className="text-2xl font-bold">{t("heading")}</h1>
       </div>
 

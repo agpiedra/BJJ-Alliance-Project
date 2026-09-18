@@ -2,6 +2,7 @@ import { DateTime } from "luxon";
 import { getLocale, getTranslations } from "next-intl/server";
 import { requireTenantContext } from "@/lib/tenant/context";
 import { getScopedDb } from "@/lib/tenant/scoped-client";
+import { getOrganizationBranding } from "@/lib/branding/get-branding";
 import { ZONE } from "@/lib/scheduling/zone";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -177,6 +178,7 @@ export default async function AnalyticsPage({
       : [];
 
   const t = await getTranslations("dashboard.analytics");
+  const branding = await getOrganizationBranding(context);
   const intlLocale = locale === "es" ? "es-CR" : "en-US";
 
   const csvRows = [
@@ -234,7 +236,7 @@ export default async function AnalyticsPage({
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="flex flex-col gap-1">
             <p className="font-mono text-[10.5px] tracking-[.11em] text-muted-foreground uppercase">
-              {t("eyebrow")}
+              {t("eyebrow", { orgName: branding.displayName })}
             </p>
             <h1>{t("heading")}</h1>
           </div>

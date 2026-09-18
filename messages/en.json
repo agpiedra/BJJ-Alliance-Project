@@ -1,11 +1,8 @@
 {
-  "app": {
-    "title": "Alliance Jiu-Jitsu Costa Rica"
-  },
   "home": {
-    "heading": "Alliance Jiu-Jitsu Costa Rica",
-    "subheading": "Brazilian Jiu-Jitsu for the whole family, with locations in Escazú and Escalante. Train under certified instructors in a serious but welcoming environment.",
-    "cta": "Create a student account",
+    "heading": "Run your academy on one platform",
+    "subheading": "Belt tracking, attendance, and payments for Brazilian Jiu-Jitsu academies.",
+    "cta": "Register your academy",
     "loginLink": "Already have an account? Sign in",
     "highlights": {
       "family": "Kids and adults train together, with a curriculum built for both",
@@ -100,6 +97,12 @@
     "heading": "Dashboard",
     "pendingApprovals": "{count, plural, =0 {No students awaiting approval} one {# student awaiting approval} other {# students awaiting approval}}",
     "pendingApprovalsLink": "View pending students",
+    "brandingReminder": {
+      "title": "Finish setting up your academy's branding",
+      "body": "You skipped this step during setup. Add your logo and colors so your academy looks like your own.",
+      "cta": "Go to branding settings",
+      "dismiss": "Dismiss"
+    },
     "adminSection": "Administration",
     "adminKioskTokensLink": "Kiosk tokens",
     "adminScheduleLink": "Class schedule",
@@ -197,7 +200,7 @@
     },
     "analytics": {
       "heading": "Analytics",
-      "eyebrow": "Alliance · Analytics",
+      "eyebrow": "{orgName} · Analytics",
       "sub": "{active} active · {attendances} attendances in the selected period.",
       "exportCsv": "Export CSV",
       "filters": {
@@ -389,7 +392,6 @@
     }
   },
   "staffShell": {
-    "breadcrumbPrefix": "Alliance Costa Rica",
     "themeToggle": "Theme",
     "academySwitcher": {
       "bothLabel": "View both locations",
@@ -458,7 +460,7 @@
   },
   "students": {
     "heading": "Students",
-    "eyebrow": "Alliance · Student roster",
+    "eyebrow": "{orgName} · Student roster",
     "sub": "{active} active · {inactive} inactive.",
     "empty": "No students match these filters.",
     "beltStripes": "{count, plural, =0 {no stripes} one {# stripe} other {# stripes}}",
@@ -761,7 +763,7 @@
     }
   },
   "branding": {
-    "eyebrow": "Alliance · Academy management",
+    "eyebrow": "{orgName} · Academy management",
     "heading": "Branding",
     "logo": {
       "heading": "Logo",
@@ -805,7 +807,7 @@
     }
   },
   "payments": {
-    "eyebrow": "Alliance · Academy management",
+    "eyebrow": "{orgName} · Academy management",
     "heading": "Payments",
     "sub": "{month} · {academy} · manual recording — the app doesn't process charges.",
     "academyJoin": "and",
@@ -986,7 +988,7 @@
     }
   },
   "adminSchedule": {
-    "eyebrow": "Alliance · Schedule",
+    "eyebrow": "{orgName} · Schedule",
     "heading": "Class schedule",
     "description": "{academyName} · {count, plural, one {# class per week} other {# classes per week}}. Tap a class to see its details or edit it.",
     "academySelector": "Academy",

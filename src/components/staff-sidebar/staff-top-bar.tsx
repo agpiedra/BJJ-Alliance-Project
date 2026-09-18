@@ -18,6 +18,7 @@ import { findActiveNavItem } from "./find-active-nav-item";
 import type { StaffSidebarNavEntry } from "./staff-sidebar";
 import type { StaffRole } from "./nav-items";
 import { signOutStaff } from "@/lib/auth/sign-out-actions";
+import { PLATFORM_NAME } from "@/lib/platform";
 
 function initialsFromEmail(email: string): string {
   const local = email.split("@")[0] ?? "";
@@ -35,6 +36,13 @@ export interface StaffTopBarProps {
   userEmail: string;
   role: StaffRole;
   academyLabel: string;
+  /** MULTI_ACADEMY_AND_KIDS_BELTS.md Item 2 — the organization's own
+   * `displayName`, resolved server-side in `(staff)/layout.tsx`. Replaces
+   * the previous hardcoded `breadcrumbPrefix` translation string
+   * ("Alliance Costa Rica"), which named Alliance on every organization's
+   * staff pages. Falls back to `PLATFORM_NAME` only in the defensive case
+   * where this layout somehow rendered with no resolved branding at all. */
+  orgName?: string;
   /** The rest of the header's right side (notification bell) — kept as a
    * passthrough slot rather than imported directly, since NotificationBell
    * carries its own server-fetched props from (staff)/layout.tsx. */
@@ -53,6 +61,7 @@ export function StaffTopBar({
   userEmail,
   role,
   academyLabel,
+  orgName,
   children,
 }: StaffTopBarProps) {
   const pathname = usePathname();
@@ -72,7 +81,7 @@ export function StaffTopBar({
       <div className="flex min-w-0 items-center gap-3">
         <SidebarTrigger />
         <span className="truncate font-mono text-[10.5px] tracking-[.11em] text-muted-foreground uppercase">
-          {t("breadcrumbPrefix")}
+          {orgName ?? PLATFORM_NAME}
           {activeItem ? ` · ${tSidebar(activeItem.labelKey)}` : null}
         </span>
       </div>

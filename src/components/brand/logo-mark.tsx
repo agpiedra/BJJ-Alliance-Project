@@ -1,6 +1,5 @@
-import Image from "next/image";
-import { useTranslations } from "next-intl";
 import { cn } from "cn";
+import { PLATFORM_NAME } from "@/lib/platform";
 
 export interface LogoMarkProps {
   /** Width/height of the plaque in pixels. Defaults to a nav-bar-friendly size. */
@@ -8,11 +7,9 @@ export interface LogoMarkProps {
   className?: string;
   /**
    * MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 4 — organization branding, all
-   * optional. Every existing zero-props caller (login, signup, forgot/
-   * reset-password, select-organization, the two org-unavailable pages, the
-   * public home page — none of them in this phase's scope, see the doc's
-   * own decision on why) is byte-for-byte unchanged: no props means the
-   * original hardcoded Alliance lockup, exactly as before.
+   * optional. No props at all means there is no organization to show yet
+   * (a genuinely pre-tenant page) — the platform's own wordmark, not any
+   * organization's logo.
    */
   logoUrl?: string | null;
   /** Doc's "organization initials on the primary color" fallback — shown
@@ -21,33 +18,34 @@ export interface LogoMarkProps {
   initials?: string;
   initialsBackground?: string;
   initialsForeground?: string;
+  /**
+   * MULTI_ACADEMY_AND_KIDS_BELTS.md Item 2 — the organization's own
+   * `displayName`, used as `alt` text on a real `logoUrl` image. Every
+   * caller that passes `logoUrl` (staff sidebar, student portal, kiosk,
+   * `/o/[orgSlug]/login`) already resolves this from the same branding read
+   * that gave it `logoUrl` in the first place — threading it through here
+   * is what stopped a real organization's own uploaded logo from being
+   * announced to screen readers as "Alliance Jiu-Jitsu Costa Rica." Ignored
+   * when `logoUrl` isn't set (the `initials` branch renders its own text
+   * content, which is already announced correctly with no `alt` needed; the
+   * zero-props fallback always names the platform, never an organization).
+   */
+  alt?: string;
 }
 
 /**
- * The Alliance Jiu-Jitsu lockup (default), or — for a branded surface that
- * passed `logoUrl`/`initials` — the organization's own logo or its
- * initials-on-primary-color fallback, rendered inside the same light
- * plaque.
+ * The organization's own logo (`logoUrl`), or its initials-on-primary-color
+ * fallback (`initials`), or — for the genuinely pre-tenant, zero-props
+ * case — a plain text wordmark naming the platform, never any
+ * organization's logo asset.
  *
  * A real `logoUrl` uses a plain `<img>`, not `next/image`: Supabase Storage
  * URLs are external and not known at build time (no static `remotePatterns`
  * entry could cover every organization's project), so `next/image`'s
  * optimizer can't serve them — same reasoning `logo-uploader.tsx`'s own
  * upload preview already uses.
- *
- * `public/branding/logo.png` has an opaque WHITE background (not
- * transparent — confirmed via sharp alpha-channel inspection: min/max alpha
- * both 255 across the whole image), so the DEFAULT case always wraps it in
- * an explicitly light (`bg-white`) backdrop rather than a theme token — the
- * plaque must stay light even if `.dark` is ever activated, since the
- * logo's own background can't be made to blend into a dark surface. A real
- * organization logo/initials render against `initialsBackground` instead
- * (typically the sidebar color it sits on) per the doc's own "preview
- * against the chosen sidebar color, not white" ruling.
  */
-export function LogoMark({ size = 40, className, logoUrl, initials, initialsBackground, initialsForeground }: LogoMarkProps) {
-  const t = useTranslations("app");
-
+export function LogoMark({ size = 40, className, logoUrl, initials, initialsBackground, initialsForeground, alt }: LogoMarkProps) {
   if (logoUrl) {
     return (
       <span
@@ -55,7 +53,7 @@ export function LogoMark({ size = 40, className, logoUrl, initials, initialsBack
         style={{ width: size, height: size, backgroundColor: initialsBackground ?? "#ffffff" }}
       >
         {/* eslint-disable-next-line @next/next/no-img-element -- external Supabase URL, see this component's own doc comment */}
-        <img src={logoUrl} alt={t("title")} className="h-full w-full object-contain" />
+        <img src={logoUrl} alt={alt ?? PLATFORM_NAME} className="h-full w-full object-contain" />
       </span>
     );
   }
@@ -79,21 +77,10 @@ export function LogoMark({ size = 40, className, logoUrl, initials, initialsBack
 
   return (
     <span
-      className={cn(
-        "relative inline-flex shrink-0 items-center justify-center overflow-hidden rounded-xl bg-white p-1 shadow-sm",
-        className
-      )}
-      style={{ width: size, height: size }}
+      className={cn("inline-flex shrink-0 items-center whitespace-nowrap font-bold tracking-tight", className)}
+      style={{ height: size, fontSize: size * 0.4 }}
     >
-      <span className="relative h-full w-full">
-        <Image
-          src="/branding/logo.png"
-          alt={t("title")}
-          fill
-          sizes={`${size}px`}
-          className="object-contain"
-        />
-      </span>
+      {PLATFORM_NAME}
     </span>
   );
 }

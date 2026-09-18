@@ -2,6 +2,7 @@ import { DateTime } from "luxon";
 import { getLocale, getTranslations } from "next-intl/server";
 import { requireTenantContext } from "@/lib/tenant/context";
 import { getScopedDb } from "@/lib/tenant/scoped-client";
+import { getOrganizationBranding } from "@/lib/branding/get-branding";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { FilterBarSelect } from "@/components/ui/filter-bar";
@@ -93,6 +94,7 @@ export default async function AdminSchedulePage({
     : [];
 
   const t = await getTranslations("adminSchedule");
+  const branding = await getOrganizationBranding(context);
   const tCal = await getTranslations("adminSchedule.calendar");
   const tDay = await getTranslations("dayOfWeek");
   const tType = await getTranslations("classType");
@@ -137,7 +139,7 @@ export default async function AdminSchedulePage({
       <header className="flex flex-col gap-3">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="flex flex-col gap-1">
-            <p className="font-mono text-[10.5px] tracking-[.11em] text-muted-foreground uppercase">{t("eyebrow")}</p>
+            <p className="font-mono text-[10.5px] tracking-[.11em] text-muted-foreground uppercase">{t("eyebrow", { orgName: branding.displayName })}</p>
             <h1>{t("heading")}</h1>
           </div>
 

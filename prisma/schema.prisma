@@ -179,6 +179,16 @@ model Organization {
   /// succeeds; irrelevant once onboardingCompletedAt is set.
   onboardingStep        Int       @default(1)
 
+  /// MULTI_ACADEMY_AND_KIDS_BELTS.md Item 2 — the dashboard's "you skipped
+  /// branding, finish it here" card (wizard's own acceptance criteria).
+  /// Null shows the card (per organization dismissal, not a per-browser
+  /// cookie/localStorage flag — a director on a second device must see the
+  /// same dismissed state). Never reset once set; re-completing branding
+  /// doesn't need to un-dismiss it, since the card's own visibility
+  /// condition (no logo uploaded yet) already stops showing it once
+  /// branding is actually finished.
+  brandingReminderDismissedAt DateTime?
+
   approvedBy          User?                    @relation("OrganizationApprovedBy", fields: [approvedById], references: [id])
   memberships         OrganizationMembership[]
   academies           Academy[]
