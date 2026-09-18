@@ -19,7 +19,19 @@ const REGISTRATION_WINDOW_MINUTES = 60;
 const REGISTRATION_MAX_PER_IP = 5;
 const REGISTRATION_MAX_PER_EMAIL = 3;
 
-const registrationSchema = z.object({
+/**
+ * `z.strictObject`, not `z.object` — the doc's own acceptance criterion
+ * ("the public form accepts no file upload and no color input; a request
+ * that posts one is rejected") was previously ticked on Zod's DEFAULT
+ * behavior of silently stripping unrecognized keys, which is an accident of
+ * the library's default, not an enforced guarantee — the same "looked
+ * correct, checked nothing" shape this project has now found five times.
+ * `z.strictObject` makes an unrecognized key (a crafted `logo` or
+ * `primaryColor` field, for instance) an actual validation failure —
+ * `error: "invalid"` — not a silently-ignored no-op. See the test asserting
+ * this directly in tests/integration/organization-registration.test.ts.
+ */
+const registrationSchema = z.strictObject({
   organizationName: z.string().min(1).max(200),
   desiredSlug: z
     .string()
@@ -80,14 +92,29 @@ async function resolveClientIp(): Promise<string> {
  * and must reference a real entity; a rate-limited attempt is the common
  * case that creates nothing at all, and a transient high-volume counter has
  * a different purpose and retention shape than a permanent action record).
+ *
+ * The email check ALWAYS runs. The IP check is skipped entirely when `ip`
+ * is the "unknown" sentinel `resolveClientIp()` returns whenever it has no
+ * real signal (a host that doesn't set `x-forwarded-for`, or `headers()`
+ * throwing outside a real request). Every caller with no real IP shares
+ * that one literal string — counting it as a real IP would mean three
+ * requests from anyone on such a host locks out every OTHER legitimate
+ * registration attempt on the entire platform, on the one form that brings
+ * in customers. That is a worse failure than under-limiting a case this
+ * signal was already too weak to police (documented above: forgeable,
+ * rotatable, best-effort). Failing open on the IP axis specifically here —
+ * relying on the still-enforced, per-email limit — is deliberate, not an
+ * oversight.
  */
 async function isRegistrationRateLimited(ip: string, email: string): Promise<boolean> {
   const windowStart = new Date(Date.now() - REGISTRATION_WINDOW_MINUTES * 60 * 1000);
-  const [byIp, byEmail] = await Promise.all([
-    prisma.registrationAttempt.count({ where: { ip, createdAt: { gte: windowStart } } }),
-    prisma.registrationAttempt.count({ where: { email, createdAt: { gte: windowStart } } }),
-  ]);
-  return byIp >= REGISTRATION_MAX_PER_IP || byEmail >= REGISTRATION_MAX_PER_EMAIL;
+  const byEmail = await prisma.registrationAttempt.count({ where: { email, createdAt: { gte: windowStart } } });
+  if (byEmail >= REGISTRATION_MAX_PER_EMAIL) return true;
+
+  if (ip === "unknown") return false;
+
+  const byIp = await prisma.registrationAttempt.count({ where: { ip, createdAt: { gte: windowStart } } });
+  return byIp >= REGISTRATION_MAX_PER_IP;
 }
 
 /**

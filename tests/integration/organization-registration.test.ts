@@ -162,6 +162,45 @@ describe("registerOrganization", () => {
     expect(fourth.error).toBe("rateLimited");
   });
 
+  /**
+   * The unknown-IP path specifically — every call in THIS test file already
+   * runs it (resolveClientIp() has no real request to read x-forwarded-for
+   * from), which is exactly how the original cross-test bucket collision
+   * showed up. This test makes that path an explicit, permanent assertion
+   * rather than an accidental side effect other tests merely tolerate:
+   * REGISTRATION_MAX_PER_IP+1 (6) DIFFERENT emails must all succeed even
+   * though every one of them shares the same "unknown" ip value — proving
+   * the IP axis is genuinely skipped for it, not merely uncollided by luck.
+   * Each email's OWN limit still applies independently (proven above).
+   */
+  it("does not rate-limit on IP when the IP is unknown — only the per-email limit applies", async () => {
+    const ATTEMPTS = 6; // one more than actions.ts's own REGISTRATION_MAX_PER_IP (5)
+    for (let i = 0; i < ATTEMPTS; i++) {
+      const fd = registrationFormData();
+      const result = await registerOrganization({}, fd);
+      expect(result.error).not.toBe("rateLimited");
+      const org = await prisma.organization.findUniqueOrThrow({ where: { slug: fd.get("desiredSlug") as string } });
+      cleanupOrgIds.push(org.id);
+    }
+  });
+
+  it("a crafted request with a file field and a color field is genuinely REJECTED, not silently stripped and ignored", async () => {
+    const fd = registrationFormData();
+    const slug = fd.get("desiredSlug") as string;
+    // Neither field exists in registrationSchema at all — before
+    // z.strictObject, Zod's default behavior would have silently dropped
+    // both and let the (otherwise-valid) submission through anyway. That
+    // "guarantee" held only because of a library default, not because
+    // anything enforced it — exactly the failure shape this asserts against.
+    fd.set("logo", new File([new Uint8Array([0, 1, 2, 3])], "logo.png", { type: "image/png" }));
+    fd.set("primaryColor", "#FF0000");
+
+    const result = await registerOrganization({}, fd);
+
+    expect(result.error).toBe("invalid");
+    expect(await prisma.organization.findUnique({ where: { slug } })).toBeNull();
+  });
+
   it("checkSlugAvailability reflects real uniqueness, never the final authority", async () => {
     const fd = registrationFormData();
     const slug = fd.get("desiredSlug") as string;
