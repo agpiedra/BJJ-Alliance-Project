@@ -1,8 +1,10 @@
 import type { ReactNode } from "react";
 import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
 import { getLocale, getTranslations } from "next-intl/server";
 import { getTenantContext } from "@/lib/tenant/context";
 import { getScopedDb } from "@/lib/tenant/scoped-client";
+import { prisma } from "@/lib/prisma";
 import { auth } from "@/auth";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { StaffSidebar } from "@/components/staff-sidebar/staff-sidebar";
@@ -41,6 +43,26 @@ export default async function StaffLayout({ children }: { children: ReactNode })
     resolvedContext && resolvedContext.organizationRole !== "STUDENT"
       ? (resolvedContext as StaffTenantContext)
       : null;
+
+  // MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 5 — onboarding-wizard trigger.
+  // Deliberately narrower than "a second access-control gate" (this
+  // layout's own stated rule, see its doc comment): this never DENIES
+  // access, it only REDIRECTS an already-authorized ADMIN/DIRECTOR to a
+  // page they're equally authorized to see. Runs on every staff page load
+  // (not only right after accepting an invitation) because the doc's own
+  // acceptance criterion requires resuming mid-wizard after closing the
+  // browser and logging back in normally through /login. `/onboarding`
+  // lives outside the (staff) route group, so this layout never wraps it —
+  // no self-redirect-loop risk from this check.
+  if (context && (context.organizationRole === "ADMIN" || context.organizationRole === "DIRECTOR")) {
+    const organization = await prisma.organization.findUnique({
+      where: { id: context.organizationId },
+      select: { onboardingCompletedAt: true },
+    });
+    if (organization && !organization.onboardingCompletedAt) {
+      redirect(`/${locale}/onboarding`);
+    }
+  }
 
   // Academy list for the switcher: every academy for ADMIN (org-scoped,
   // unfiltered by branch), or only the academies this DIRECTOR/INSTRUCTOR is

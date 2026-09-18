@@ -61,6 +61,9 @@ function LoginFormInner() {
           </form>
         </CardContent>
       </Card>
+      <a href={`/${params.locale}/register-academy`} className="mt-4 text-sm underline">
+        {t("registerAcademy")}
+      </a>
     </main>
   );
 }

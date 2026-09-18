@@ -36,7 +36,7 @@ function escapeHtml(text: string): string {
  * student's name from public signup via `renderNotificationMessage`), so
  * each line is HTML-escaped before being wrapped in real `<p>` markup.
  */
-function bodyToHtml(body: string): string {
+export function bodyToHtml(body: string): string {
   return body
     .split("\n")
     .map((line) => `<p>${escapeHtml(line)}</p>`)

@@ -59,7 +59,12 @@ export default async function HomePage({
           <h1 className="text-3xl font-bold sm:text-4xl">{t("heading")}</h1>
           <p className="max-w-xl text-lg text-muted-foreground">{t("subheading")}</p>
           <div className="flex flex-wrap items-center justify-center gap-4 pt-2">
-            <Button size="lg" nativeButton={false} render={<a href={`/${locale}/signup`} />}>
+            {/* This whole page is already Alliance's own hardcoded marketing
+                copy (heading/subheading/highlights below), not generic
+                platform marketing — this link keeps that existing pattern
+                rather than introducing a new one. A genuinely multi-tenant
+                version of this page is out of scope for Phase 5. */}
+            <Button size="lg" nativeButton={false} render={<a href={`/${locale}/o/alliance-cr/signup`} />}>
               {t("cta")}
             </Button>
             <a href={`/${locale}/login`} className="text-sm underline">

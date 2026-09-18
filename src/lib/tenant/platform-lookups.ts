@@ -57,21 +57,42 @@ export async function resolveAcademyByIdOrThrow(
   });
 }
 
+export interface SignupOrganization {
+  id: string;
+  name: string;
+  academies: Array<{ slug: string; name: string }>;
+}
+
 /**
- * The self-signup form's academy dropdown. This flow is single-organization
- * today — `signup/actions.ts`'s own `homeAcademySlug` validation is a
- * hardcoded `z.enum(["escazu", "escalante"])`, not a real multi-tenant
- * selector (a genuine multi-org self-signup design is Phase 8 territory) —
- * so this queries exactly those two slugs, never "every active academy on
- * the platform," which is the cross-org leak this function's unrestricted
- * predecessor had.
+ * MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 5 — replaces the old
+ * `listSignupAcademies`'s hardcoded `z.enum(["escazu", "escalante"])`
+ * stopgap. That restriction existed because signup was public and
+ * pre-tenant — its unrestricted predecessor leaked every academy across
+ * every organization to anonymous visitors (revision 23). The real fix
+ * isn't a bigger allowlist, it's the same one login uses: the organization
+ * is now explicit, named by `/o/[orgSlug]/signup`'s own URL segment, so the
+ * academy list this returns is genuinely scoped by it — safe because the
+ * org was deliberately identified, not because of a hardcoded list.
+ *
+ * `null` for an unknown OR non-ACTIVE organization slug — unlike login,
+ * signup has no safe neutral fallback to show (there is nothing generic to
+ * sign up FOR), so the caller renders a plain 404, same as any other
+ * unmatched route.
  */
-export async function listSignupAcademies(): Promise<Array<{ slug: string; name: string }>> {
-  return unscopedPrisma.academy.findMany({
-    where: { active: true, slug: { in: ["escazu", "escalante"] } },
+export async function resolveOrganizationForSignup(orgSlug: string): Promise<SignupOrganization | null> {
+  const organization = await unscopedPrisma.organization.findUnique({
+    where: { slug: orgSlug },
+    select: { id: true, name: true, status: true },
+  });
+  if (!organization || organization.status !== "ACTIVE") return null;
+
+  const academies = await unscopedPrisma.academy.findMany({
+    where: { organizationId: organization.id, active: true },
     orderBy: { name: "asc" },
     select: { slug: true, name: true },
   });
+
+  return { id: organization.id, name: organization.name, academies };
 }
 
 /**
@@ -84,7 +105,7 @@ export async function listActiveAcademyIdsForDigest(): Promise<string[]> {
   return academies.map((academy) => academy.id);
 }
 
-export interface SingleOrganizationBranding {
+export interface OrganizationLoginBranding {
   displayName: string;
   initials: string;
   logoUrl: string | null;
@@ -93,13 +114,30 @@ export interface SingleOrganizationBranding {
 }
 
 /**
- * MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 4 — a deliberately cheap, honest,
- * SELF-REMOVING stopgap for the login page, which has no per-org routing
- * yet (that's Phase 5). With exactly one organization on the platform, its
- * branding is unambiguous even pre-auth; the moment a second organization
- * exists, this returns `null` forever, on its own — no manual deletion step
- * needed, though it should still be deleted outright once Phase 5's real
- * per-org login routing exists, rather than left as permanently-dead code.
+ * MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 5 — real per-org login branding,
+ * replacing Phase 4's `resolveSingleOrganizationBranding` stopgap outright
+ * (deleted, not deprecated, exactly as promised when that stopgap was
+ * built: "it should still be deleted outright once Phase 5's real per-org
+ * login routing exists").
+ *
+ * `null` for an unknown slug OR a non-ACTIVE organization — and
+ * deliberately the SAME `null` for both. An anonymous, pre-auth visitor is
+ * "not yet a member" by this project's own settled disclosure rule
+ * ("disclose to members, never to non-members" — see the Global rules
+ * above), so a PENDING/SUSPENDED/CANCELLED organization's branding, or
+ * even the fact that a slug does or doesn't correspond to a real
+ * organization, is never shown pre-auth. The caller (`/o/[orgSlug]/login`)
+ * renders the exact same neutral, unbranded login for all three cases. A
+ * real member who actually signs in still reaches `/organization-unavailable`
+ * via the existing `requireTenantContext` flow, which already discloses the
+ * honest reason correctly — that path is untouched here.
+ *
+ * IMPORTANT: `orgSlug` is a pre-auth DISPLAY signal only, never an
+ * authorization input. It decides what's SHOWN before credentials are
+ * submitted; it must never be used to scope, gate, or influence which
+ * organization a `signIn()` call actually authenticates into — that is
+ * resolved entirely from the verified user identity afterward, exactly as
+ * it is for bare `/login`.
  *
  * Duplicates get-branding.ts's own composition (resolve primary, feed its
  * background into the sidebar as the active-color default) rather than
@@ -109,17 +147,16 @@ export interface SingleOrganizationBranding {
  * scope by yet, which is what makes this a platform-lookups.ts function at
  * all, same as every other one in this file.
  */
-export async function resolveSingleOrganizationBranding(): Promise<SingleOrganizationBranding | null> {
-  const organizations = await unscopedPrisma.organization.findMany({ select: { id: true }, take: 2 });
-  if (organizations.length !== 1) return null;
-
-  const organizationId = organizations[0].id;
-  const row = await unscopedPrisma.organizationBranding.findUnique({
-    where: { organizationId },
-    include: { organization: { select: { name: true } } },
+export async function resolveOrganizationLoginBranding(orgSlug: string): Promise<OrganizationLoginBranding | null> {
+  const organization = await unscopedPrisma.organization.findUnique({
+    where: { slug: orgSlug },
+    select: { id: true, name: true, status: true },
   });
+  if (!organization || organization.status !== "ACTIVE") return null;
 
-  const displayName = row?.displayName || row?.organization.name || "Academy";
+  const row = await unscopedPrisma.organizationBranding.findUnique({ where: { organizationId: organization.id } });
+
+  const displayName = row?.displayName || organization.name;
   const primary = resolvePrimaryTheme(row?.primaryColor ?? "#FACC15");
 
   return {

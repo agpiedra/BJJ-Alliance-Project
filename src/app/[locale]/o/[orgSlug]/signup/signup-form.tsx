@@ -17,10 +17,10 @@ const INITIAL_STATE: SignupState = {};
 
 type Academy = { slug: string; name: string };
 
-export function SignupForm({ academies }: { academies: Academy[] }) {
+export function SignupForm({ orgSlug, academies }: { orgSlug: string; academies: Academy[] }) {
   const t = useTranslations("signup");
   const tBelt = useTranslations("belt");
-  const [state, formAction, isPending] = useActionState(signup, INITIAL_STATE);
+  const [state, formAction, isPending] = useActionState(signup.bind(null, orgSlug), INITIAL_STATE);
 
   if (state.ok) {
     return (
