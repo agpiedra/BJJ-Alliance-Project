@@ -58,7 +58,8 @@
       "password": "Contraseña",
       "submit": "Entrar",
       "invalidCredentials": "Correo o contraseña incorrectos.",
-      "forgotPassword": "¿Olvidaste tu contraseña?"
+      "forgotPassword": "¿Olvidaste tu contraseña?",
+      "registerAcademy": "Registra tu academia"
     },
     "forgotPassword": {
       "heading": "Recuperar contraseña",
@@ -72,6 +73,12 @@
       "submit": "Restablecer",
       "invalidToken": "Este enlace no es válido o ya expiró.",
       "success": "Tu contraseña fue restablecida. Ya puedes iniciar sesión."
+    },
+    "acceptInvitation": {
+      "heading": "Establece tu contraseña",
+      "newPassword": "Nueva contraseña",
+      "submit": "Continuar",
+      "invalidToken": "Este enlace de invitación no es válido o ya expiró."
     },
     "orgUnavailable": {
       "heading": "Organización no disponible",
@@ -418,7 +425,36 @@
     "invalid": "Por favor revisa el formulario.",
     "emailTaken": "Ya existe una cuenta con este correo electrónico.",
     "guardianRequiredForMinor": "El nombre y teléfono del tutor son requeridos para menores de edad.",
-    "emailLinkedToExistingStudent": "Este correo ya está asociado a un registro de estudiante. Contacta a tu academia para vincular tu cuenta."
+    "emailLinkedToExistingStudent": "Este correo ya está asociado a un registro de estudiante. Contacta a tu academia para vincular tu cuenta.",
+    "organizationUnavailable": "Esta academia no está aceptando registros en este momento."
+  },
+  "registerAcademy": {
+    "heading": "Registra tu academia",
+    "organizationName": "Nombre de la academia",
+    "desiredSlug": "URL (se usa en tu enlace de inicio de sesión)",
+    "slugChecking": "Verificando disponibilidad…",
+    "slugAvailable": "Disponible",
+    "slugTaken": "Esa URL ya está en uso",
+    "country": "País",
+    "city": "Ciudad",
+    "contactName": "Tu nombre",
+    "contactEmail": "Correo electrónico",
+    "contactPhone": "Teléfono",
+    "studentCountBand": "¿Cuántos estudiantes tienes?",
+    "studentCountBandPlaceholder": "Selecciona un rango",
+    "referralSource": "¿Cómo te enteraste de nosotros? (opcional)",
+    "preferredLocale": "Idioma preferido",
+    "termsAccepted": "Acepto los términos",
+    "submit": "Enviar para revisión",
+    "successHeading": "Solicitud recibida",
+    "successBody": "Gracias por registrarte. Tu solicitud está en revisión — te enviaremos un correo cuando sea aprobada.",
+    "error": {
+      "invalid": "Por favor revisa el formulario.",
+      "rateLimited": "Demasiados intentos — intenta de nuevo más tarde.",
+      "slugTaken": "Esa URL ya está en uso.",
+      "emailAlreadyRegistered": "Ya existe una academia registrada con este correo.",
+      "generic": "Algo salió mal."
+    }
   },
   "students": {
     "heading": "Estudiantes",
@@ -702,6 +738,26 @@
         "statusActive": "Cinturón actual",
         "statusOutOfScope": "Cinturón anterior"
       }
+    }
+  },
+  "onboarding": {
+    "heading": "Configura tu academia",
+    "stepOf": "Paso {step} de {total}",
+    "next": "Siguiente",
+    "finish": "Finalizar",
+    "skipForNow": "Lo haré después",
+    "step1": {
+      "name": "Nombre de la academia",
+      "displayName": "Nombre para mostrar (visible en la app)",
+      "slugNote": "Tu enlace de inicio de sesión usa \"{slug}\" — contacta a soporte para cambiarlo.",
+      "next": "Siguiente",
+      "error": "Por favor revisa el formulario."
+    },
+    "step2": {
+      "hint": "Sube tu logo, o omite este paso — el respaldo con iniciales se ve intencional de cualquier forma."
+    },
+    "step3": {
+      "hint": "Elige tus colores de marca y de la barra lateral. Todo esto se puede cambiar después en la configuración de Marca."
     }
   },
   "branding": {

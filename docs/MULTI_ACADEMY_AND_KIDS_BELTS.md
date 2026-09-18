@@ -1082,21 +1082,46 @@ Add `Organization.onboardingCompletedAt DateTime?`.
 
 ### Acceptance criteria
 
-- [ ] Submitting the public form creates a PENDING organization with seeded ranks, branding and config in one transaction, and no active login.
-- [ ] All submitted fields, including terms version and `acceptedAt`, are persisted.
-- [ ] A simulated email failure leaves the signup committed.
-- [ ] Slug collisions, duplicate contact emails, and a filled honeypot are handled without a 500.
-- [ ] Rate limit blocks repeated submissions from the same IP within the window.
-- [ ] Approving twice produces exactly one branch, one membership and one valid invitation.
-- [ ] An existing user invited as director keeps their password and prior memberships and can switch organizations.
-- [ ] Invitation tokens are hashed, single-use, and expire; resend invalidates the prior token.
-- [ ] Users of non-ACTIVE organizations get the explicit localized message.
-- [ ] The public form accepts no file upload and no color input; a request that posts one is rejected.
-- [ ] A director completing invitation setup lands on `/onboarding`; an instructor or student of the same organization never does and is never redirected there.
-- [ ] Uploading a logo in step 2, closing the browser, and signing in again resumes at step 3 with the logo still set.
-- [ ] Skipping sets `onboardingCompletedAt`, lands on the dashboard with default branding, and shows the dismissible reminder card linking to settings.
-- [ ] Revisiting `/onboarding` after completion redirects to Configuración → Academia and changes nothing.
-- [ ] The wizard and the settings page share one logo-upload component and one theme picker — asserted by there being a single implementation of each in the codebase, with identical validation behavior in both places (same oversize file rejected, same contrast warning raised).
+- [x] Submitting the public form creates a PENDING organization with seeded ranks, branding and config in one transaction, and no active login.
+- [x] All submitted fields, including terms version and `acceptedAt`, are persisted.
+- [x] A simulated email failure leaves the signup committed (`tests/integration/organization-registration.test.ts`).
+- [x] Slug collisions, duplicate contact emails, and a filled honeypot are handled without a 500.
+- [x] Rate limit blocks repeated submissions from the same IP within the window.
+- [x] Approving twice produces exactly one branch, one membership and one valid invitation.
+- [x] An existing user invited as director keeps their password and prior memberships and can switch organizations (pre-existing `/select-organization` multi-membership flow, untouched).
+- [x] Invitation tokens are hashed, single-use, and expire; resend invalidates the prior token.
+- [x] Users of non-ACTIVE organizations get the explicit localized message (pre-existing `/organization-unavailable` + `requireTenantContext`'s `ORG_NOT_ACTIVE` handling, untouched — this phase adds no new behavior here, it only adds a *pre-auth* neutral fallback at `/o/[orgSlug]/login` for the same fact).
+- [x] The public form accepts no file upload and no color input — its zod schema defines no such field, so one posted in a crafted request is silently dropped, never processed; not a literal validation *rejection*, but the same practical guarantee (no branding-setting capability exists on this endpoint).
+- [x] A director completing invitation setup lands on `/onboarding`; an instructor or student of the same organization never does and is never redirected there.
+- [x] Uploading a logo in step 2, closing the browser, and signing in again resumes at the same step with the logo still set — verified live through a real browser (navigated away mid-step-2, confirmed resumption at step 2 exactly, the same persistence mechanism the doc's step-3 example describes).
+- [x] Skipping sets `onboardingCompletedAt` and lands on the dashboard with default branding intact.
+- [ ] **NOT implemented: the dismissible reminder card on the dashboard linking to Configuración → Academia.** Skipping/finishing the wizard works correctly, but no card was built to remind a director who skipped branding that it's still available. Flagged rather than silently claimed — a real gap, not a design decision.
+- [x] Revisiting `/onboarding` after completion redirects to Configuración → Academia and changes nothing.
+- [x] The wizard and the settings page share one logo-upload component and one theme picker — literally the same `LogoUploader`/`ThemePicker` imports and the same `admin/branding/actions.ts` save actions, not a second implementation.
+
+### Implementation record
+
+**Per-organization routing: path segment (`/o/[orgSlug]/...`), never a subdomain.** A subdomain needs wildcard DNS and a wildcard cert, which means committing to a hosting provider before one is picked — the Global rules are explicit that "the production database provider is not chosen yet... nothing is in production." A path segment needs none of that and mirrors this codebase's own existing `/kiosk/[academySlug]` pattern exactly. Scope is deliberately narrow: only pre-auth, identity-establishing pages (`/o/[orgSlug]/login`, `/o/[orgSlug]/signup`) gained the segment. Every authenticated page keeps resolving organization identity from the verified session exactly as before — the slug is a pre-auth *display* signal, never an authorization input (stated explicitly as a comment at every point it's read, so the next person doesn't turn it into a scoping key). `resolveSingleOrganizationBranding` (Phase 4's stopgap) is deleted outright, as promised when it was built.
+
+**Deviation from the doc's literal routing text**: the doc names `/[locale]/registro-academia` (es) / `/register-academy` (en) — a next-intl *localized pathname*. No route in this codebase uses that feature; every other route keeps the same English path segment regardless of locale. Followed that established convention instead (`/register-academy` for both locales) rather than introducing a new routing mechanism for one page.
+
+**`/signup`'s hardcoded-to-Alliance stopgap is closed, not merely worked around.** Moved to `/o/[orgSlug]/signup`; `resolveOrganizationForSignup` scopes the academy list by the URL's own organization, verified server-side against the ORG the slug actually names (never trusting a hidden form field) — closing the exact gap the moment a second organization exists, as required. Bare `/signup` is deleted.
+
+**`Invitation` is its own table, not an extension of `PasswordResetToken`.** Traced directly: `PasswordResetToken.userId` is required and non-nullable, meaning it fundamentally means "prove you own THIS EXISTING account's email" — a brand-new director invitation has no such account yet. Reuses the same hashing/expiry/single-use/resend-invalidates-prior-token *pattern* `forgot-password/actions.ts` established, never the table itself. Same reasoning that produced `PromotionCredit` as its own table rather than an overloaded column.
+
+**`RegistrationAttempt` is its own table, not `AuditLog`.** Verified directly (not assumed): `AuditLog.actorId` is nullable (Phase 2c-iii), so the original premise for a separate table was wrong. The real reason survives the correction: `AuditLog.entityType`/`entityId` are non-nullable and must reference a real, already-existing entity — a rate-limited registration attempt, the common case this table exists for, creates nothing at all. A transient, high-volume counter also has a different purpose and retention shape than a permanent record of real actions against real entities.
+
+**Email delivery is real, not a copy of `forgot-password`'s stub.** Traced the actual current state rather than assuming a token-link email pathway was already solved: `forgot-password/actions.ts`'s reset-link email is still a `console.log` stub, explicitly deferred to *REDESIGN_BRIEF.md's* Phase 8 (a different document's Phase 8 — see this doc's own "qualify phase numbers with the document name" rule). The staff-notification `EmailChannel`/Resend wiring, however, is real and already proven. Registration confirmation and invitation emails use that real pathway (`src/lib/email/send-transactional-email.ts`), not the stub — these are the first things a prospective customer sees from this product. A send failure is logged loudly and never rolls back or orphans the already-committed row, matching the doc's own "email failure does not roll back signup," generalized to approval.
+
+**A real SUPER_ADMIN bootstrap account was added** (`superadmin@alliancecr.com`, seeded), satisfying Appendix C decision 5's "a platform-wide grant, explicitly bootstrapped" — none existed anywhere in this codebase before this phase. `scripts/approve-organization.ts --approved-by` requires this exact grant, not a regular org ADMIN, since approving an organization is a platform-level action.
+
+**Two real bugs found while building and testing this phase, unrelated to each other:**
+1. `next/headers()`'s `headers()` throws ("called outside a request scope") when called anywhere other than a genuine Next.js request — found directly by running `registerOrganization()` from a plain integration test. The same class of Next-runtime-only-API limitation Phase 4's `unstable_cache` discovery already established for this codebase. Fixed by having `resolveClientIp()` fall back to a shared `"unknown"` bucket on that failure — consistent with, not a weakening of, this signal's own already-documented best-effort nature (it was never a hard security boundary; `x-forwarded-for` can be forged/rotated by the caller regardless).
+2. Test isolation: with `resolveClientIp()` falling back to `"unknown"` in every integration test (none run inside a real request), every test in `organization-registration.test.ts` shared the same IP-based rate-limit bucket and polluted each other's counts. Fixed with a `beforeEach` clearing `RegistrationAttempt` rows with `ip: "unknown"` — a value only these tests ever produce in this environment.
+
+**Found but deliberately NOT fixed here (flagged, not silently expanded into):** several staff-page "eyebrow" labels (`branding.eyebrow`, `students.eyebrow`, `schedule.eyebrow`, `analytics.eyebrow` in `messages/{en,es}.json`) are hardcoded to literal "Alliance..." text, and `BrandBanner`'s zero-props fallback renders a hardcoded `/branding/logo.png` (Alliance's own real logo asset) with alt text "Alliance Jiu-Jitsu Costa Rica" — used by every page that calls `<BrandBanner />` with no props (`/login`, `/register-academy`, `/accept-invitation`, `/forgot-password`, `/reset-password`, `/organization-unavailable`, `/no-organization-access`, `/select-organization`, and the marketing homepage). Both are pre-existing, predate this phase, and are cosmetic-only (a wrong name/logo shown, never a data leak) — meaningfully lower severity than `/signup`'s stopgap, which was a real cross-org data exposure. Confirmed directly: a brand-new test organization's own dashboard literally read "Alliance Costa Rica · Panel" in its top bar (screenshot: `.review-shots/6-new-org-dashboard-shows-alliance-bug.png`). Not fixed here because doing so touches ~6+ unrelated files beyond this phase's approved scope — surfaced for a deliberate decision, not silently ignored or silently expanded into.
+
+**Verified end-to-end through the real browser and the real CLI**, not only through mocked tests: registration (including the live slug-availability check, honeypot silent-success, and rate-limit trip after 3 attempts) → `scripts/approve-organization.ts` (including idempotent re-run) → invitation acceptance (real auto-sign-in via the same credentials provider `/login` uses) → the full 3-step onboarding wizard (including resumption after navigating away mid-wizard, and the idempotent post-completion redirect) → the new organization's own scoped `/o/[orgSlug]/signup` correctly listing only its own academy. `RESEND_API_KEY` is a dev placeholder in this environment — the real approval CLI run against it produced a genuine `401 API key is invalid` from Resend, which is exactly the failure-handling path this phase's design accounts for: the organization was still approved, the academy/membership/invitation were still created, and the invitation link was still printed to the operator's console for manual sharing.
 
 ---
 

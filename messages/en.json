@@ -58,7 +58,8 @@
       "password": "Password",
       "submit": "Sign in",
       "invalidCredentials": "Incorrect email or password.",
-      "forgotPassword": "Forgot your password?"
+      "forgotPassword": "Forgot your password?",
+      "registerAcademy": "Register your academy"
     },
     "forgotPassword": {
       "heading": "Reset password",
@@ -72,6 +73,12 @@
       "submit": "Reset password",
       "invalidToken": "This link is invalid or has expired.",
       "success": "Your password has been reset. You can now sign in."
+    },
+    "acceptInvitation": {
+      "heading": "Set your password",
+      "newPassword": "New password",
+      "submit": "Continue",
+      "invalidToken": "This invitation link is invalid or has expired."
     },
     "orgUnavailable": {
       "heading": "Organization unavailable",
@@ -418,7 +425,36 @@
     "invalid": "Please check the form for errors.",
     "emailTaken": "An account with this email already exists.",
     "guardianRequiredForMinor": "Guardian name and phone are required for students under 18.",
-    "emailLinkedToExistingStudent": "This email is already associated with a student record. Contact your academy to link your account."
+    "emailLinkedToExistingStudent": "This email is already associated with a student record. Contact your academy to link your account.",
+    "organizationUnavailable": "This academy isn't accepting signups right now."
+  },
+  "registerAcademy": {
+    "heading": "Register your academy",
+    "organizationName": "Academy name",
+    "desiredSlug": "URL (used in your login link)",
+    "slugChecking": "Checking availability…",
+    "slugAvailable": "Available",
+    "slugTaken": "That URL is already taken",
+    "country": "Country",
+    "city": "City",
+    "contactName": "Your name",
+    "contactEmail": "Email",
+    "contactPhone": "Phone",
+    "studentCountBand": "How many students do you have?",
+    "studentCountBandPlaceholder": "Select a range",
+    "referralSource": "How did you hear about us? (optional)",
+    "preferredLocale": "Preferred language",
+    "termsAccepted": "I agree to the terms",
+    "submit": "Submit for review",
+    "successHeading": "Request received",
+    "successBody": "Thanks for registering. Your request is under review — we'll email you once it's approved.",
+    "error": {
+      "invalid": "Please check the form for errors.",
+      "rateLimited": "Too many attempts — please try again later.",
+      "slugTaken": "That URL is already taken.",
+      "emailAlreadyRegistered": "An academy is already registered with this email.",
+      "generic": "Something went wrong."
+    }
   },
   "students": {
     "heading": "Students",
@@ -702,6 +738,26 @@
         "statusActive": "Current belt",
         "statusOutOfScope": "Past belt"
       }
+    }
+  },
+  "onboarding": {
+    "heading": "Set up your academy",
+    "stepOf": "Step {step} of {total}",
+    "next": "Next",
+    "finish": "Finish",
+    "skipForNow": "I'll do this later",
+    "step1": {
+      "name": "Academy name",
+      "displayName": "Display name (shown in the app)",
+      "slugNote": "Your login link uses \"{slug}\" — contact support to change it.",
+      "next": "Next",
+      "error": "Please check the form for errors."
+    },
+    "step2": {
+      "hint": "Upload your logo, or skip — the initials fallback looks intentional either way."
+    },
+    "step3": {
+      "hint": "Pick your brand and sidebar colors. Everything here can be changed later in Branding settings."
     }
   },
   "branding": {

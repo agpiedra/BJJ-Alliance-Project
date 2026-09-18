@@ -3,7 +3,13 @@ import { getTestPrismaClient } from "../helpers/test-db";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { requireEnv } from "../../src/lib/env";
 import { digestLookupSecret } from "../../src/lib/crypto";
-import { signup } from "../../src/app/[locale]/signup/actions";
+import { signup } from "../../src/app/[locale]/o/[orgSlug]/signup/actions";
+
+// Alliance's own real seed slug — every fixture below uses its "escazu"
+// academy, so every signup() call must be bound to the organization that
+// academy actually belongs to (Phase 5: homeAcademySlug is now checked
+// against this, not a fixed 2-value enum).
+const ALLIANCE_ORG_SLUG = "alliance-cr";
 import { adultRankId } from "../helpers/belt-ranks";
 
 // I-1 regression coverage: notifyNewSignup must still fire when a new
@@ -74,6 +80,7 @@ describe("signup — a staff-created student's email is REFUSED, never duplicate
     // would be account takeover by email guess, on a row that is already
     // ACTIVE and would therefore skip staff review entirely.
     const result = await signup(
+      ALLIANCE_ORG_SLUG,
       {},
       formData({
         firstName: "SelfSignup",
@@ -130,6 +137,7 @@ describe("signup — a staff-created student's email is REFUSED, never duplicate
     cleanupEmails.push(email);
 
     const result = await signup(
+      ALLIANCE_ORG_SLUG,
       {},
       formData({
         firstName: "Fresh",
@@ -174,10 +182,10 @@ describe("signup — a staff-created student's email is REFUSED, never duplicate
       password: "a-sufficiently-long-password",
     };
 
-    expect((await signup({}, formData(base))).ok).toBe(true);
+    expect((await signup(ALLIANCE_ORG_SLUG, {}, formData(base))).ok).toBe(true);
     // The first signup set `userId`, so the userId-less lookup misses and the
     // pre-existing `emailTaken` User check is what refuses this one.
-    const second = await signup({}, formData(base));
+    const second = await signup(ALLIANCE_ORG_SLUG, {}, formData(base));
     expect(second.error).toBe("emailTaken");
     expect(await prisma.student.count({ where: { email } })).toBe(1);
   });
@@ -188,6 +196,7 @@ describe("signup — a staff-created student's email is REFUSED, never duplicate
     cleanupEmails.push(email);
 
     const result = await signup(
+      ALLIANCE_ORG_SLUG,
       {},
       formData({
         firstName: "A".repeat(101),

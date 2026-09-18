@@ -151,6 +151,34 @@ model Organization {
   approvedAt    DateTime?
   approvedById  String?
 
+  /// MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 5 — public registration form
+  /// fields, persisted verbatim per the doc's own "persist all submitted
+  /// registration fields" requirement. country/city feed the default
+  /// Academy created on approval ("named after the city").
+  country          String?
+  city             String?
+  studentCountBand String?
+  referralSource   String?
+  /// No real terms-of-service document exists yet (flagged explicitly in
+  /// this phase's own PR) — these record acceptance of whatever the
+  /// registration form currently shows, not a real legal record. Do not
+  /// treat termsAcceptedAt as proof of agreement to real terms until a real
+  /// document exists and this comment is updated to point at it.
+  termsVersion     String?
+  termsAcceptedAt  DateTime?
+
+  /// Phase 5 — null until the director completes (or explicitly skips) the
+  /// first-login onboarding wizard. Gates the /onboarding redirect; never
+  /// reset once set (idempotent/non-reentrant per the doc).
+  onboardingCompletedAt DateTime?
+  /// Which of the 3 wizard steps to resume at (1-indexed) — persisted, not
+  /// URL/client state, per the doc's own acceptance criterion: "uploading a
+  /// logo in step 2, closing the browser, and signing in again resumes at
+  /// step 3 with the logo still set." Advanced by the wizard's own
+  /// advanceOnboardingStep action after each step's save (or skip)
+  /// succeeds; irrelevant once onboardingCompletedAt is set.
+  onboardingStep        Int       @default(1)
+
   approvedBy          User?                    @relation("OrganizationApprovedBy", fields: [approvedById], references: [id])
   memberships         OrganizationMembership[]
   academies           Academy[]
@@ -167,6 +195,7 @@ model Organization {
   staffAssignments    StaffAssignment[]
   auditLogs           AuditLog[]
   notifications       Notification[]
+  invitations         Invitation[]
   usersLastActiveHere User[]                   @relation("UserLastActiveOrganization")
   /// MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 4 — genuinely 1:1, but typed
   /// optional here (Prisma can't express "always exists" from this side of a
@@ -203,7 +232,7 @@ model Organization {
 /// already covers) — same reasoning that cut `surfaceStyle`, applied
 /// consistently rather than carrying an undefined field forward.
 model OrganizationBranding {
-  organizationId String    @id
+  organizationId String  @id
   /// Friendly public-facing name (wizard step 1: "confirm or edit name and
   /// displayName") — distinct from Organization.name, the internal/admin
   /// identifier. Null falls back to Organization.name at read time.
@@ -326,6 +355,7 @@ model User {
   attendanceRecordsCreated   AttendanceRecord[]   @relation("AttendanceCreatedBy")
   attendanceRecordsCorrected AttendanceRecord[]   @relation("AttendanceCorrectedBy")
   passwordResetTokens        PasswordResetToken[]
+  invitationsSent            Invitation[]         @relation("InvitationInvitedBy")
 }
 
 model PasswordResetToken {
@@ -339,6 +369,57 @@ model PasswordResetToken {
   user User @relation(fields: [userId], references: [id])
 
   @@index([userId])
+}
+
+/// MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 5 — a table of its own, NOT an
+/// extension of PasswordResetToken. Traced directly: PasswordResetToken.userId
+/// is required and non-nullable, meaning it fundamentally means "prove you
+/// own THIS EXISTING account's email." A director invitation's whole point
+/// is that no User row exists yet for the common case (a brand-new academy)
+/// — making userId nullable plus bolting on organizationId/role/a purpose
+/// discriminator onto a table every existing caller assumes always has a
+/// real user is the same "everything must remember to filter" shape this
+/// project already rejected once for PromotionCredit. Reuses the SAME
+/// hashing/expiry/single-use/resend-invalidates-prior-token PATTERN as
+/// PasswordResetToken (see forgot-password/actions.ts), not the table.
+model Invitation {
+  id             String    @id @default(cuid())
+  tokenHash      String    @unique
+  email          String
+  organizationId String
+  role           Role
+  /// Null for a bootstrap/system-issued invitation — mirrors AuditLog.actorId's
+  /// own nullability reasoning (Phase 2c-iii): a real absence is not a data gap.
+  invitedById    String?
+  expiresAt      DateTime
+  usedAt         DateTime?
+  createdAt      DateTime  @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  invitedBy    User?        @relation("InvitationInvitedBy", fields: [invitedById], references: [id])
+
+  @@index([organizationId])
+  @@index([email])
+}
+
+/// MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 5 — the public registration form's
+/// rate limiter. Deliberately NOT AuditLog: AuditLog.entityType/entityId are
+/// non-nullable and must reference a real, already-existing entity, but a
+/// rate-limited registration attempt — the common case this table exists
+/// for — often creates nothing at all. A transient, high-volume counter also
+/// has a fundamentally different purpose and retention shape than a
+/// permanent record of real actions against real entities; mixing the two
+/// would force every AuditLog reader (Phase 6's own audit trail) to filter
+/// out rate-limit noise. No relations: an attempt from an unrecognized email
+/// or a rejected/duplicate submission still needs to count.
+model RegistrationAttempt {
+  id        String   @id @default(cuid())
+  ip        String
+  email     String
+  createdAt DateTime @default(now())
+
+  @@index([ip, createdAt])
+  @@index([email, createdAt])
 }
 
 model StaffAssignment {
@@ -533,10 +614,10 @@ model Promotion {
 /// auditability this exists for ("explainable to a student who asks why
 /// they were passed over").
 model PromotionCredit {
-  id             String   @id @default(cuid())
-  studentId      String
-  academyId      String
-  organizationId String
+  id                  String   @id @default(cuid())
+  studentId           String
+  academyId           String
+  organizationId      String
   /// Snapshot of Student.beltAwardedAt at the moment this credit was
   /// granted — the belt period it applies to, the same anchor
   /// attendance-summary.ts already filters AttendanceRecord by
@@ -549,10 +630,10 @@ model PromotionCredit {
   beltAwardedAtAnchor DateTime
   /// Signed, same reasoning as AttendanceRecord.delta: a correction is a
   /// new row with a negative delta, not an edit of the original estimate.
-  classesGranted Int
-  reason         String
-  grantedById    String?
-  grantedAt      DateTime @default(now())
+  classesGranted      Int
+  reason              String
+  grantedById         String?
+  grantedAt           DateTime @default(now())
 
   student      Student      @relation(fields: [organizationId, studentId], references: [organizationId, id])
   academy      Academy      @relation(fields: [organizationId, academyId], references: [organizationId, id])

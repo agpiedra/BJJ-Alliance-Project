@@ -88,6 +88,7 @@ describe("every page route renders through a real running server (non-5xx)", () 
   let studentCookie: string;
   let studentDetailId: string;
   let kioskAcademySlug: string;
+  let orgSlug: string;
 
   beforeAll(async () => {
     const users = await prisma.user.findMany({
@@ -125,6 +126,12 @@ describe("every page route renders through a real running server (non-5xx)", () 
     if (!membership) throw new Error("Smoke suite requires the seeded admin to have an OrganizationMembership.");
     const { organizationId } = membership;
 
+    const organization = await prisma.organization.findUniqueOrThrow({
+      where: { id: organizationId },
+      select: { slug: true },
+    });
+    orgSlug = organization.slug;
+
     const student = await prisma.student.findFirst({ where: { organizationId }, select: { id: true } });
     if (!student) throw new Error("Smoke suite requires at least one seeded Student row.");
     studentDetailId = student.id;
@@ -138,8 +145,9 @@ describe("every page route renders through a real running server (non-5xx)", () 
     const routes: RouteCase[] = [
       { label: "marketing home", path: "/en" },
       { label: "login", path: "/en/login" },
-      { label: "signup", path: "/en/signup" },
       { label: "forgot password", path: "/en/forgot-password" },
+      { label: "register academy", path: "/en/register-academy" },
+      { label: "accept invitation (invalid token)", path: "/en/accept-invitation?token=smoke-test-invalid-token" },
       { label: "reset password (no/invalid token)", path: "/en/reset-password?token=smoke-test-invalid-token" },
       { label: "dev belts showcase", path: "/en/dev/belts" },
       { label: "dev components showcase", path: "/en/dev/components" },
@@ -158,6 +166,17 @@ describe("every page route renders through a real running server (non-5xx)", () 
 
   it("kiosk (real academy slug, no session)", async () => {
     await assertNotServerError({ label: "kiosk check-in", path: `/en/kiosk/${kioskAcademySlug}` });
+  });
+
+  it("org-scoped routes (real org slug, no session) — replaces the deleted hardcoded /signup", async () => {
+    await assertNotServerError({ label: "org-scoped login", path: `/en/o/${orgSlug}/login` });
+    await assertNotServerError({ label: "org-scoped signup", path: `/en/o/${orgSlug}/signup` });
+    await assertNotServerError({ label: "org-scoped login (unknown slug — same neutral fallback)", path: "/en/o/smoke-test-unknown-org-slug/login" });
+    await assertNotServerError({ label: "org-scoped signup (unknown slug — 404, not 5xx)", path: "/en/o/smoke-test-unknown-org-slug/signup" });
+  });
+
+  it("onboarding — already-onboarded org redirects away, non-5xx either way", async () => {
+    await assertNotServerError({ label: "onboarding (ADMIN, already completed)", path: "/en/onboarding", cookie: adminCookie });
   });
 
   it("staff pages (ADMIN — a superset of every staff page's allowed roles)", async () => {

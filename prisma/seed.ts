@@ -1,12 +1,13 @@
 import "dotenv/config";
 import { PrismaClient, Role, StaffRole } from "../src/generated/prisma/client";
 import type { ClassType, DayOfWeek, StudentStatus } from "../src/generated/prisma/client";
-
-/// MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 2: the old `Belt` enum is gone
-/// (replaced by BeltRank, which is a string `code` column so it can vary
-/// per organization/track). This seed's own fixed adult belt set is still
-/// exactly these 5 values, so a local literal union replaces the import.
-type BeltCode = "WHITE" | "BLUE" | "PURPLE" | "BROWN" | "BLACK";
+import {
+  type BeltCode,
+  type KidsBeltCode,
+  ADULT_RANKS,
+  KIDS_RANKS,
+  KIDS_BAR,
+} from "../src/lib/organizations/default-belt-ranks";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { DateTime } from "luxon";
 import { digestLookupSecret, hashSecret } from "../src/lib/crypto";
@@ -46,154 +47,20 @@ const SEED_NOW = DateTime.fromISO("2026-09-07T12:00:00", { zone: ZONE });
 /** Every QA login shares this password (already communicated to Alexis). */
 const QA_PASSWORD = "TestPass123!";
 
-/**
- * MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 3b: primaryColor values are the
- * existing --belt-white/blue/purple/brown/black OKLCH design tokens
- * (globals.css) converted to hex — visual continuity with what the app
- * already renders via BELT_FILL_CLASS, not a new palette. barColor is black
- * for every adult rank except BLACK itself, whose bar is red (--bad) per
- * spec: "never hardcode black: a black belt's bar is red."
- */
-const ADULT_BAR_BLACK = "#111116";
-const ADULT_BAR_RED = "#B63B32";
-
-const ADULT_RANKS: Array<{
-  code: BeltCode;
-  labelEs: string;
-  labelEn: string;
-  order: number;
-  maxStripes: number;
-  attendancesPerStripe: number | null;
-  attendancesForExam: number | null;
-  isTerminal: boolean;
-  primaryColor: string;
-  barColor: string;
-}> = [
-  { code: "WHITE", labelEs: "Blanco", labelEn: "White", order: 1, maxStripes: 4, attendancesPerStripe: 30, attendancesForExam: 30, isTerminal: false, primaryColor: "#F0EBE0", barColor: ADULT_BAR_BLACK },
-  { code: "BLUE", labelEs: "Azul", labelEn: "Blue", order: 2, maxStripes: 4, attendancesPerStripe: 65, attendancesForExam: 65, isTerminal: false, primaryColor: "#215DA5", barColor: ADULT_BAR_BLACK },
-  { code: "PURPLE", labelEs: "Morado", labelEn: "Purple", order: 3, maxStripes: 4, attendancesPerStripe: 75, attendancesForExam: 75, isTerminal: false, primaryColor: "#652F94", barColor: ADULT_BAR_BLACK },
-  { code: "BROWN", labelEs: "Café", labelEn: "Brown", order: 4, maxStripes: 4, attendancesPerStripe: 85, attendancesForExam: 85, isTerminal: false, primaryColor: "#643D20", barColor: ADULT_BAR_BLACK },
-  // Terminal: zero seeded stripes, matches the old BeltRequirement's BLACK row.
-  { code: "BLACK", labelEs: "Negro", labelEn: "Black", order: 5, maxStripes: 0, attendancesPerStripe: null, attendancesForExam: null, isTerminal: true, primaryColor: "#111116", barColor: ADULT_BAR_RED },
-];
+// ADULT_RANKS/KIDS_RANKS/KIDS_BAR now live in
+// src/lib/organizations/default-belt-ranks.ts (imported above) — Phase 5's
+// registration transaction needs the exact same catalog, so there is
+// exactly one copy of this data. Only the deterministic-id helpers below
+// (specific to THIS seed's fixed-id/upsert convention) stay local.
 
 /** Deterministic, fixed id — no query needed to resolve a code to its BeltRank row. */
 function adultRankId(code: BeltCode): string {
   return `seed-belt-rank-adult-${code.toLowerCase()}`;
 }
 
-export type KidsBeltCode =
-  | "white"
-  | "grey_white"
-  | "grey"
-  | "grey_black"
-  | "yellow_white"
-  | "yellow"
-  | "yellow_black"
-  | "orange_white"
-  | "orange"
-  | "orange_black"
-  | "green_white"
-  | "green"
-  | "green_black";
-
 function kidsRankId(code: KidsBeltCode): string {
   return `seed-belt-rank-kids-${code}`;
 }
-
-/**
- * Revision 21: the third tape band is YELLOW on every 11-degree kids rank,
- * never the belt's own color — the spec table always read "4 white, 4 red,
- * 3 yellow"; an earlier pass wrongly generalized this to color-match the
- * belt. Do not derive tape color from belt color anywhere.
- */
-const TAPE = {
-  white: "#FFFFFF",
-  red: "#DC2626",
-  yellow: "#FACC15",
-} as const;
-
-/**
- * MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 3a — the "selected Alliance kids
- * preset" table. Its own `order` column is 0-based (0..12); this repo's real,
- * enforced convention (`validateTrackConfig`: "orders must be contiguous
- * starting at 1", spec rev 18) is 1-based — so every table position is
- * seeded at table-order + 1 (white=1 .. green_black=13), preserving the
- * exact sequence while conforming to the constraint the table's own column
- * header doesn't. `isTerminal` isn't a table column at all — green_black
- * (the last row) is the one rank with no row at order+1, so it is seeded
- * terminal, exactly the same shape as adult BLACK: the existing terminal
- * amendment (2b) already handles "terminal + below maxStripes -> STRIPE,
- * terminal + at maxStripes -> NONE" correctly for a terminal rank with real
- * degrees (unlike BLACK's maxStripes: 0), so this needs no engine change.
- *
- * `attendancesPerStripe: 10` / `attendancesForExam: 10` on every row per
- * "Alliance kids rule" — a different scale from the adult thresholds
- * (30/65/75/85), which is exactly what the kids-catalog math test below
- * exists to prove the engine handles without being adult-shaped.
- *
- * Tape colors are the real, spec-corrected values (revision 21): white/
- * red/yellow on every 11-degree rank regardless of the belt's own hue —
- * never derive tape color from belt color.
- */
-/**
- * Primary belt colors — one per hue in the table's own "belt" column,
- * reusing the off-white/near-black already established for adult ranks so
- * a plain white/black reads consistently across both tracks.
- */
-const KIDS_PRIMARY = {
-  white: "#F0EBE0",
-  grey: "#9CA3AF",
-  yellow: "#FACC15",
-  orange: "#F97316",
-  green: "#16A34A",
-  black: "#111116",
-} as const;
-const KIDS_BAR = "#111116";
-
-const TAPE_5 = [TAPE.white, TAPE.white, TAPE.white, TAPE.white, TAPE.red];
-const TAPE_11 = [
-  TAPE.white,
-  TAPE.white,
-  TAPE.white,
-  TAPE.white,
-  TAPE.red,
-  TAPE.red,
-  TAPE.red,
-  TAPE.red,
-  TAPE.yellow,
-  TAPE.yellow,
-  TAPE.yellow,
-];
-
-const KIDS_RANKS: Array<{
-  code: KidsBeltCode;
-  labelEs: string;
-  labelEn: string;
-  order: number;
-  maxStripes: number;
-  stripeColors: string[];
-  isTerminal: boolean;
-  primaryColor: string;
-  centerStripeColor?: string;
-}> = [
-  { code: "white", labelEs: "Blanco", labelEn: "White", order: 1, maxStripes: 5, stripeColors: TAPE_5, isTerminal: false, primaryColor: KIDS_PRIMARY.white },
-  { code: "grey_white", labelEs: "Gris y Blanco", labelEn: "Grey-White", order: 2, maxStripes: 5, stripeColors: TAPE_5, isTerminal: false, primaryColor: KIDS_PRIMARY.grey, centerStripeColor: KIDS_PRIMARY.white },
-  { code: "grey", labelEs: "Gris", labelEn: "Grey", order: 3, maxStripes: 11, stripeColors: TAPE_11, isTerminal: false, primaryColor: KIDS_PRIMARY.grey },
-  { code: "grey_black", labelEs: "Gris y Negro", labelEn: "Grey-Black", order: 4, maxStripes: 11, stripeColors: TAPE_11, isTerminal: false, primaryColor: KIDS_PRIMARY.grey, centerStripeColor: KIDS_PRIMARY.black },
-  { code: "yellow_white", labelEs: "Amarillo y Blanco", labelEn: "Yellow-White", order: 5, maxStripes: 11, stripeColors: TAPE_11, isTerminal: false, primaryColor: KIDS_PRIMARY.yellow, centerStripeColor: KIDS_PRIMARY.white },
-  { code: "yellow", labelEs: "Amarillo", labelEn: "Yellow", order: 6, maxStripes: 11, stripeColors: TAPE_11, isTerminal: false, primaryColor: KIDS_PRIMARY.yellow },
-  { code: "yellow_black", labelEs: "Amarillo y Negro", labelEn: "Yellow-Black", order: 7, maxStripes: 11, stripeColors: TAPE_11, isTerminal: false, primaryColor: KIDS_PRIMARY.yellow, centerStripeColor: KIDS_PRIMARY.black },
-  { code: "orange_white", labelEs: "Naranja y Blanco", labelEn: "Orange-White", order: 8, maxStripes: 11, stripeColors: TAPE_11, isTerminal: false, primaryColor: KIDS_PRIMARY.orange, centerStripeColor: KIDS_PRIMARY.white },
-  { code: "orange", labelEs: "Naranja", labelEn: "Orange", order: 9, maxStripes: 11, stripeColors: TAPE_11, isTerminal: false, primaryColor: KIDS_PRIMARY.orange },
-  { code: "orange_black", labelEs: "Naranja y Negro", labelEn: "Orange-Black", order: 10, maxStripes: 11, stripeColors: TAPE_11, isTerminal: false, primaryColor: KIDS_PRIMARY.orange, centerStripeColor: KIDS_PRIMARY.black },
-  { code: "green_white", labelEs: "Verde y Blanco", labelEn: "Green-White", order: 11, maxStripes: 11, stripeColors: TAPE_11, isTerminal: false, primaryColor: KIDS_PRIMARY.green, centerStripeColor: KIDS_PRIMARY.white },
-  { code: "green", labelEs: "Verde", labelEn: "Green", order: 12, maxStripes: 11, stripeColors: TAPE_11, isTerminal: false, primaryColor: KIDS_PRIMARY.green },
-  // Terminal: the last kids rank — no row exists at order 14. Unlike adult
-  // BLACK, this one still has 11 real degrees (transitioning to the adult
-  // track at 16 is a separate, explicit flow, not another BeltRank row).
-  { code: "green_black", labelEs: "Verde y Negro", labelEn: "Green-Black", order: 13, maxStripes: 11, stripeColors: TAPE_11, isTerminal: true, primaryColor: KIDS_PRIMARY.green, centerStripeColor: KIDS_PRIMARY.black },
-];
 
 const PAYMENT_PLAN_NAMES = ["Mensualidad", "Promoción", "Becado"] as const;
 
@@ -430,6 +297,13 @@ const INSTRUCTOR_USER_ID = "seed-user-instructor";
 const STUDENT_LOGIN_USER_ID = "seed-user-student";
 const QA_DIRECTOR_USER_ID = "seed-user-qa-director";
 const QA_STUDENT_RECORD_ID = "seed-student-qa-prueba";
+/// MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 5, Appendix C decision 5 — the
+/// "documented bootstrap" that decision requires. No organization
+/// membership: isSuperAdmin is a platform-wide grant, orthogonal to any
+/// specific organization (used by scripts/approve-organization.ts's
+/// --approved-by, which must approve organizations before they have any
+/// members at all).
+const SUPER_ADMIN_USER_ID = "seed-user-super-admin";
 
 async function seedOrganization() {
   const data = {
@@ -438,6 +312,12 @@ async function seedOrganization() {
     status: "ACTIVE" as const,
     timezone: ZONE,
     defaultLocale: "es",
+    // MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 5 — Alliance is long since fully
+    // set up; without this, (staff)/layout.tsx's new onboarding-wizard
+    // redirect would wrongly send every Alliance ADMIN/DIRECTOR to
+    // /onboarding on their next login, since a real registration is the
+    // only other path that ever sets this field.
+    onboardingCompletedAt: SEED_NOW.toJSDate(),
   };
   await prisma.organization.upsert({
     where: { id: ALLIANCE_ORG_ID },
@@ -636,6 +516,24 @@ async function seedQaUsers() {
       create: { id: login.id, ...data },
     });
   }
+
+  // Standalone — deliberately outside the QA_LOGINS loop above and its
+  // membership loop below: isSuperAdmin is a platform-wide grant, not tied
+  // to any organization, so this account gets no OrganizationMembership at
+  // all (see SUPER_ADMIN_USER_ID's own doc comment).
+  await prisma.user.upsert({
+    where: { id: SUPER_ADMIN_USER_ID },
+    update: { email: "superadmin@alliancecr.com", passwordHash, role: Role.ADMIN, locale: "es", active: true, isSuperAdmin: true },
+    create: {
+      id: SUPER_ADMIN_USER_ID,
+      email: "superadmin@alliancecr.com",
+      passwordHash,
+      role: Role.ADMIN,
+      locale: "es",
+      active: true,
+      isSuperAdmin: true,
+    },
+  });
 
   // MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 1 — organization membership is the
   // authorization source going forward (Appendix C decision 4); every QA
@@ -981,6 +879,7 @@ async function main() {
   console.log("  instructor@test.com (INSTRUCTOR, Escazú)");
   console.log("  student@test.com (STUDENT, Escazú)");
   console.log("  qa-director@alliancecr.com (DIRECTOR, Escalante)");
+  console.log("  superadmin@alliancecr.com (isSuperAdmin — scripts/approve-organization.ts --approved-by)");
 }
 
 main()

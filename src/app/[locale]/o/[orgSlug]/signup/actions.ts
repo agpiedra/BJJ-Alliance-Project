@@ -2,7 +2,7 @@
 
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { resolveAcademyBySlug } from "@/lib/tenant/platform-lookups";
+import { resolveAcademyBySlug, resolveOrganizationForSignup } from "@/lib/tenant/platform-lookups";
 import { hashSecret } from "@/lib/crypto";
 import { generateStudentCode } from "@/lib/students/generate-code";
 import { notifyNewSignup } from "@/lib/notifications/notify-new-signup";
@@ -19,7 +19,13 @@ const signupSchema = z
     lastName: z.string().min(1).max(100),
     phone: z.string().min(1),
     email: z.string().email(),
-    homeAcademySlug: z.enum(["escazu", "escalante"]),
+    // MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 5 — no longer a fixed
+    // z.enum(["escazu", "escalante"]): valid values now depend on which
+    // organization's academies the form actually listed, which this schema
+    // can't know statically. Membership in that organization is verified
+    // below, server-side, against `orgSlug` — never trusted from this
+    // string alone.
+    homeAcademySlug: z.string().min(1),
     currentBelt: z.enum(["WHITE", "BLUE", "PURPLE", "BROWN", "BLACK"]),
     currentStripes: z.coerce.number().int().min(0).max(4),
     password: z.string().min(8),
@@ -45,7 +51,17 @@ export type SignupState = {
   fieldErrors?: Record<string, string[]>;
 };
 
-export async function signup(_prevState: SignupState, formData: FormData): Promise<SignupState> {
+/**
+ * `orgSlug` comes from the URL segment (`/o/[orgSlug]/signup`), bound by
+ * `signup-form.tsx` — same "explicit argument, re-validated server-side"
+ * shape as every other action in this codebase that accepts an
+ * organization identifier from a page prop rather than trusting a hidden
+ * form field. Re-resolved here from scratch (never trusted as a bare
+ * override) via the exact same `resolveOrganizationForSignup` the page
+ * used to render the form, so a stale page (the organization got
+ * suspended between page load and submit) is refused, not silently allowed.
+ */
+export async function signup(orgSlug: string, _prevState: SignupState, formData: FormData): Promise<SignupState> {
   const raw = Object.fromEntries(formData.entries());
   const parsed = signupSchema.safeParse(raw);
 
@@ -54,6 +70,11 @@ export async function signup(_prevState: SignupState, formData: FormData): Promi
   }
 
   const data = parsed.data;
+
+  const organization = await resolveOrganizationForSignup(orgSlug);
+  if (!organization) {
+    return { error: "organizationUnavailable" };
+  }
 
   const existingEmail = await prisma.user.findUnique({ where: { email: data.email } });
   if (existingEmail) {
@@ -80,17 +101,17 @@ export async function signup(_prevState: SignupState, formData: FormData): Promi
   // verification (a verified email, or a staff-mediated flow) and is Phase 8
   // territory; "refuse and send them to their academy" is the safe answer
   // here, and it still fixes the duplicate-row bug outright.
-  // Resolved BEFORE the email-existence check below so that check can be
-  // scoped by organizationId instead of searching every organization on the
-  // platform for the email — see platform-lookups.ts for why this lookup
-  // itself can't be organization-scoped. `homeAcademySlug` is already
-  // constrained to a real academy by the zod enum above, so a miss here
-  // means the schema and seed data have drifted, not a real user input.
+  //
+  // homeAcademySlug is checked against the ALREADY-RESOLVED organization
+  // above, not merely "does this slug exist anywhere" — resolveAcademyBySlug
+  // is a global, cross-org lookup (see platform-lookups.ts for why it can't
+  // be organization-scoped by construction), so the explicit
+  // organizationId match below is what actually prevents a crafted request
+  // from attaching a signup to a different organization's academy than the
+  // URL claims.
   const homeAcademy = await resolveAcademyBySlug(data.homeAcademySlug);
-  if (!homeAcademy) {
-    throw new Error(
-      `signup: homeAcademySlug "${data.homeAcademySlug}" does not name a real academy — schema enum and seed data have drifted.`,
-    );
+  if (!homeAcademy || homeAcademy.organizationId !== organization.id) {
+    return { error: "invalid", fieldErrors: { homeAcademySlug: ["invalid"] } };
   }
 
   const existingStudentWithoutAccount = await prisma.student.findFirst({
