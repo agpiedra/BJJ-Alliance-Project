@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "prepare": "git config core.hooksPath .githooks || true",
     "dev": "next dev --turbopack -p 3000",
     "build": "next build --turbopack",
     "start": "next start",
