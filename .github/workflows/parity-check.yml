@@ -45,6 +45,13 @@ jobs:
       RESEND_API_KEY: re_ci_placeholder_not_a_real_key
       EMAIL_FROM: "Alliance BJJ <notifications@resend.dev>"
       CRON_SECRET: ci-only-cron-secret
+      # Dev-only session-minting bypass (src/app/api/e2e-auth-bypass/route.ts)
+      # — the smoke suite below uses it to mint real staff/student sessions.
+      # Inert unless NODE_ENV!=="production", which is exactly why the smoke
+      # suite runs against `pnpm dev`, never the production `pnpm build`/
+      # `pnpm start` pair also exercised later in this job.
+      E2E_AUTH_BYPASS_SECRET: ci-only-e2e-bypass-secret
+      SMOKE_BASE_URL: http://localhost:3000
 
     steps:
       - uses: actions/checkout@v4
@@ -82,7 +89,7 @@ jobs:
       - name: Pending-callers registry — symbols built ahead of their caller (informational)
         run: pnpm check:pending-callers
 
-      - name: Migrate the dev-role database (needed for unit/build steps only)
+      - name: Migrate the dev-role database (needed for build/smoke steps only)
         run: pnpm exec prisma migrate deploy
 
       - name: Drift check — migration history vs the just-migrated database
@@ -93,6 +100,29 @@ jobs:
 
       - name: Integration tests (against TEST_DATABASE_URL only)
         run: pnpm test:integration
+
+      - name: Seed the dev-role database (needed for smoke tests only)
+        run: pnpm exec prisma db seed
+
+      - name: Start the app (dev) and wait for it to be ready
+        run: |
+          pnpm dev &
+          echo $! > /tmp/dev-server.pid
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:3000/en/login > /dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Dev server did not become ready in time"
+          exit 1
+
+      - name: Smoke tests — every page route through a real running server (non-5xx)
+        run: pnpm test:smoke
+
+      - name: Stop the dev server
+        if: always()
+        run: kill "$(cat /tmp/dev-server.pid)" 2>/dev/null || true
 
       - name: Build
         run: pnpm build

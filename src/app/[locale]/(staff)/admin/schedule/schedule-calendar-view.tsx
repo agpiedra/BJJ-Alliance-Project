@@ -6,11 +6,11 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "
 import { Pill } from "@/components/ui/pill";
 import {
   WeekCalendar,
-  rowFor,
   type WeekCalendarBlock,
   type WeekCalendarDay,
   type WeekCalendarLegendItem,
 } from "@/components/ui/week-calendar";
+import { rowFor } from "@/components/ui/week-calendar-grid";
 import { EditClassSessionForm } from "./edit-class-session-form";
 import { DeactivateClassSessionButton } from "./deactivate-class-session-button";
 import { addMinutesToClockTime, CLASS_TYPE_COLOR_CLASS } from "./calendar-helpers";

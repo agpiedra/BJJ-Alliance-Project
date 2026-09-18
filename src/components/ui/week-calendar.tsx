@@ -2,6 +2,7 @@
 
 import { Fragment } from "react";
 import { cn } from "cn";
+import { CALENDAR_START_HOUR, CALENDAR_END_HOUR, rowFor } from "./week-calendar-grid";
 
 /**
  * REDESIGN_BRIEF.md Phase 5 "WeekCalendar". Generic/reusable: no Prisma
@@ -9,18 +10,15 @@ import { cn } from "cn";
  * variant (a later, separate task) is expected to reuse this same component,
  * so callers own translating their own domain data (ClassSession rows, etc.)
  * into these plain shapes.
+ *
+ * `CALENDAR_START_HOUR`/`CALENDAR_END_HOUR`/`rowFor` live in
+ * ./week-calendar-grid, NOT here — that file's own doc comment explains why
+ * (this file is "use client"; a Server Component cannot call a function
+ * re-exported through it). Re-exported below only because this component's
+ * own default prop values need them; a server page must import `rowFor`
+ * from week-calendar-grid directly, never from here.
  */
-
-export const CALENDAR_START_HOUR = 6;
-export const CALENDAR_END_HOUR = 20; // exclusive — last half-hour track ends at 20:00
-
-/**
- * The brief's own formula: grid row 2 is 06:00, each hour is 2 half-hour
- * tracks. Exported so the row-placement math has a direct unit test.
- */
-export function rowFor(hour: number, minute: number): number {
-  return 2 + (hour - CALENDAR_START_HOUR) * 2 + (minute === 30 ? 1 : 0);
-}
+export { CALENDAR_START_HOUR, CALENDAR_END_HOUR };
 
 export interface WeekCalendarDay {
   /** Stable key matched against WeekCalendarBlock.dayKey. */
