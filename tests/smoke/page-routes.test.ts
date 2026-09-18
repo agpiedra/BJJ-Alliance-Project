@@ -1,7 +1,6 @@
 import "dotenv/config";
 import { beforeAll, describe, expect, it } from "vitest";
 import { prisma } from "../../src/lib/prisma";
-import { resolveAnyAcademySlugForSmokeTest, resolveAnyStudentIdForSmokeTest } from "../../src/lib/tenant/platform-lookups";
 
 /**
  * docs/MULTI_ACADEMY_AND_KIDS_BELTS.md's fifth "invisible to a fully green
@@ -113,13 +112,26 @@ describe("every page route renders through a real running server (non-5xx)", () 
       mintSessionCookie(studentUserId),
     ]);
 
-    const resolvedStudentId = await resolveAnyStudentIdForSmokeTest();
-    if (!resolvedStudentId) throw new Error("Smoke suite requires at least one seeded Student row.");
-    studentDetailId = resolvedStudentId;
+    // Academy/Student are tenant-scoped models (see tenant-guard.ts) — the
+    // guard only requires a real organizationId somewhere in the query
+    // args, not that the call goes through getScopedDb(context), so
+    // resolving one via the admin's own (non-tenant-scoped)
+    // OrganizationMembership row and filtering by it here is a genuinely
+    // scoped query, not a workaround around the guard.
+    const membership = await prisma.organizationMembership.findFirst({
+      where: { userId: adminId },
+      select: { organizationId: true },
+    });
+    if (!membership) throw new Error("Smoke suite requires the seeded admin to have an OrganizationMembership.");
+    const { organizationId } = membership;
 
-    const resolvedSlug = await resolveAnyAcademySlugForSmokeTest();
-    if (!resolvedSlug) throw new Error("Smoke suite requires at least one seeded Academy row.");
-    kioskAcademySlug = resolvedSlug;
+    const student = await prisma.student.findFirst({ where: { organizationId }, select: { id: true } });
+    if (!student) throw new Error("Smoke suite requires at least one seeded Student row.");
+    studentDetailId = student.id;
+
+    const academy = await prisma.academy.findFirst({ where: { organizationId }, select: { slug: true } });
+    if (!academy) throw new Error("Smoke suite requires at least one seeded Academy row.");
+    kioskAcademySlug = academy.slug;
   });
 
   it("public pages (anonymous)", async () => {
