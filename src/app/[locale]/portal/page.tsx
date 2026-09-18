@@ -12,11 +12,11 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { EmptyState } from "@/components/ui/empty-state";
 import {
   WeekCalendar,
-  rowFor,
   type WeekCalendarBlock,
   type WeekCalendarDay,
   type WeekCalendarLegendItem,
 } from "@/components/ui/week-calendar";
+import { rowFor } from "@/components/ui/week-calendar-grid";
 import { getAtBeltSummary, type AtBeltSummary } from "@/lib/students/attendance-summary";
 import { resolvePromotionConfigMap } from "@/lib/promotion/config";
 import { getAttendanceHistory } from "@/lib/students/attendance-history";

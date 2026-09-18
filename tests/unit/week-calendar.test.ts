@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { rowFor, layoutOverlappingBlocks, clampBlockRows, CALENDAR_START_HOUR, CALENDAR_END_HOUR } from "@/components/ui/week-calendar";
+import { layoutOverlappingBlocks, clampBlockRows, CALENDAR_START_HOUR, CALENDAR_END_HOUR } from "@/components/ui/week-calendar";
+import { rowFor } from "@/components/ui/week-calendar-grid";
 
 const MIN_ROW = 2; // rowFor(CALENDAR_START_HOUR, 0)
 const MAX_ROW = 2 + (CALENDAR_END_HOUR - CALENDAR_START_HOUR) * 2; // rowFor(CALENDAR_END_HOUR, 0)

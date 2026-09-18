@@ -137,3 +137,22 @@ export async function resolveSingleOrganizationBranding(): Promise<SingleOrganiz
     }),
   };
 }
+
+/**
+ * Test-support, used only by tests/smoke/page-routes.test.ts: an arbitrary
+ * real Academy slug / Student id to drive the kiosk and student-detail
+ * routes against real seeded data. Platform-level in the same sense as
+ * every lookup above — the smoke suite has no tenant context to scope by
+ * (it doesn't know an organizationId until it has already picked a
+ * fixture), so this is exactly the shape `unscopedPrisma` exists for, not a
+ * workaround around the guard.
+ */
+export async function resolveAnyAcademySlugForSmokeTest(): Promise<string | null> {
+  const academy = await unscopedPrisma.academy.findFirst({ select: { slug: true } });
+  return academy?.slug ?? null;
+}
+
+export async function resolveAnyStudentIdForSmokeTest(): Promise<string | null> {
+  const student = await unscopedPrisma.student.findFirst({ select: { id: true } });
+  return student?.id ?? null;
+}
