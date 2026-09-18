@@ -2,6 +2,7 @@ import { DateTime } from "luxon";
 import { getLocale, getTranslations } from "next-intl/server";
 import { requireTenantContext } from "@/lib/tenant/context";
 import { getScopedDb } from "@/lib/tenant/scoped-client";
+import { getOrganizationBranding } from "@/lib/branding/get-branding";
 import { prisma } from "@/lib/prisma";
 import { Card, CardContent } from "@/components/ui/card";
 import { FilterBar, FilterBarSearch, FilterBarSelect } from "@/components/ui/filter-bar";
@@ -278,6 +279,7 @@ export default async function StudentsPage({
   ]);
 
   const t = await getTranslations("students");
+  const branding = await getOrganizationBranding(context);
   const tBelt = await getTranslations("belt");
   const tStatus = await getTranslations("students.status");
   const tPaymentStatus = await getTranslations("students.paymentStatus");
@@ -288,7 +290,7 @@ export default async function StudentsPage({
   return (
     <main className="flex flex-col gap-6 p-4 sm:p-6">
       <header className="flex flex-col gap-1">
-        <p className="font-mono text-[10.5px] tracking-[.11em] text-muted-foreground uppercase">{t("eyebrow")}</p>
+        <p className="font-mono text-[10.5px] tracking-[.11em] text-muted-foreground uppercase">{t("eyebrow", { orgName: branding.displayName })}</p>
         <h1>{t("heading")}</h1>
         <p className="text-sm text-muted-foreground">
           {t("sub", { active: activeCount, inactive: inactiveCount })}

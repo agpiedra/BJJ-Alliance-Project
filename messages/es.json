@@ -1,11 +1,8 @@
 {
-  "app": {
-    "title": "Alliance Jiu-Jitsu Costa Rica"
-  },
   "home": {
-    "heading": "Alliance Jiu-Jitsu Costa Rica",
-    "subheading": "Jiu-Jitsu brasileño para toda la familia, con sedes en Escazú y Escalante. Entrena bajo instructores certificados en un ambiente serio pero cercano.",
-    "cta": "Crear cuenta de estudiante",
+    "heading": "Administra tu academia en una sola plataforma",
+    "subheading": "Seguimiento de cinturones, asistencia y pagos para academias de Jiu-Jitsu Brasileño.",
+    "cta": "Registra tu academia",
     "loginLink": "¿Ya tienes cuenta? Inicia sesión",
     "highlights": {
       "family": "Niños y adultos entrenan juntos, con un currículo pensado para ambos",
@@ -100,6 +97,12 @@
     "heading": "Panel de control",
     "pendingApprovals": "{count, plural, =0 {Ningún estudiante esperando aprobación} one {# estudiante esperando aprobación} other {# estudiantes esperando aprobación}}",
     "pendingApprovalsLink": "Ver estudiantes pendientes",
+    "brandingReminder": {
+      "title": "Termina de configurar la marca de tu academia",
+      "body": "Omitiste este paso durante la configuración. Agrega tu logo y colores para que tu academia se vea como propia.",
+      "cta": "Ir a configuración de marca",
+      "dismiss": "Descartar"
+    },
     "adminSection": "Administración",
     "adminKioskTokensLink": "Tokens de kiosco",
     "adminScheduleLink": "Horario de clases",
@@ -197,7 +200,7 @@
     },
     "analytics": {
       "heading": "Analítica",
-      "eyebrow": "Alliance · Analítica",
+      "eyebrow": "{orgName} · Analítica",
       "sub": "{active} activos · {attendances} asistencias en el período seleccionado.",
       "exportCsv": "Exportar CSV",
       "filters": {
@@ -389,7 +392,6 @@
     }
   },
   "staffShell": {
-    "breadcrumbPrefix": "Alliance Costa Rica",
     "themeToggle": "Tema",
     "academySwitcher": {
       "bothLabel": "Ver ambas sedes",
@@ -458,7 +460,7 @@
   },
   "students": {
     "heading": "Estudiantes",
-    "eyebrow": "Alliance · Gestión de alumnos",
+    "eyebrow": "{orgName} · Gestión de alumnos",
     "sub": "{active} activos · {inactive} inactivos.",
     "empty": "Ningún estudiante coincide con estos filtros.",
     "beltStripes": "{count, plural, =0 {sin franjas} one {# franja} other {# franjas}}",
@@ -761,7 +763,7 @@
     }
   },
   "branding": {
-    "eyebrow": "Alliance · Administración de academia",
+    "eyebrow": "{orgName} · Administración de academia",
     "heading": "Marca",
     "logo": {
       "heading": "Logo",
@@ -805,7 +807,7 @@
     }
   },
   "payments": {
-    "eyebrow": "Alliance · Gestión de academias",
+    "eyebrow": "{orgName} · Gestión de academias",
     "heading": "Pagos",
     "sub": "{month} · {academy} · registro manual, la app no procesa cobros.",
     "academyJoin": "y",
@@ -986,7 +988,7 @@
     }
   },
   "adminSchedule": {
-    "eyebrow": "Alliance · Horario",
+    "eyebrow": "{orgName} · Horario",
     "heading": "Horario de clases",
     "description": "{academyName} · {count, plural, one {# clase por semana} other {# clases por semana}}. Tocá una clase para ver el detalle o editarla.",
     "academySelector": "Academia",

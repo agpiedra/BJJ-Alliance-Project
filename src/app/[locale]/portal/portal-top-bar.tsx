@@ -30,6 +30,9 @@ export interface PortalTopBarProps {
     initials: string;
     initialsBackground: string;
     initialsForeground: string;
+    /** MULTI_ACADEMY_AND_KIDS_BELTS.md Item 2 — passed straight through to
+     * BrandBanner's `alt`, see StaffSidebarProps's own matching field. */
+    displayName: string;
   };
 }
 
@@ -61,6 +64,7 @@ export function PortalTopBar({ locale, firstName, lastName, logo }: PortalTopBar
       initials={logo?.initials}
       initialsBackground={logo?.initialsBackground}
       initialsForeground={logo?.initialsForeground}
+      alt={logo?.displayName}
     >
       <DropdownMenu>
         <DropdownMenuTrigger className="ml-auto flex size-8 items-center justify-center rounded-full bg-sidebar-accent text-xs font-semibold text-sidebar-accent-foreground">

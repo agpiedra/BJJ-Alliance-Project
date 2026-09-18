@@ -2,6 +2,9 @@ import { DateTime } from "luxon";
 import { getLocale, getTranslations } from "next-intl/server";
 import { requireTenantContext, branchScopeWhere } from "@/lib/tenant/context";
 import { getScopedDb } from "@/lib/tenant/scoped-client";
+import { prisma } from "@/lib/prisma";
+import { getOrganizationBranding } from "@/lib/branding/get-branding";
+import { BrandingReminderCard } from "./branding-reminder-card";
 import { ZONE } from "@/lib/scheduling/zone";
 import { BeltBar } from "@/components/belt-graphic/belt-bar";
 import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -359,6 +362,25 @@ export default async function DashboardPage() {
   // `getRetentionList`).
   const contactList = await listStudentsToContact(context);
 
+  // MULTI_ACADEMY_AND_KIDS_BELTS.md Item 2 — the wizard's own acceptance
+  // criteria named this reminder card as not yet built. Shown to
+  // ADMIN/DIRECTOR (reusing `canViewOverduePayments`'s own role check, not a
+  // new one) only while the organization still has no logo uploaded and
+  // hasn't dismissed it before — a logo is the most visible sign branding is
+  // actually finished, and dismissal never needs to un-set on a later
+  // branding edit (see this field's own schema doc comment).
+  let showBrandingReminder = false;
+  if (canViewOverduePayments) {
+    const [organization, branding] = await Promise.all([
+      prisma.organization.findUnique({
+        where: { id: context.organizationId },
+        select: { brandingReminderDismissedAt: true },
+      }),
+      getOrganizationBranding(context),
+    ]);
+    showBrandingReminder = !organization?.brandingReminderDismissedAt && !branding.logoUrl;
+  }
+
   return (
     <main className="flex flex-col gap-6 p-4 sm:p-6">
       <header className="flex flex-col gap-1">
@@ -372,6 +394,8 @@ export default async function DashboardPage() {
           })}
         </p>
       </header>
+
+      {showBrandingReminder && <BrandingReminderCard locale={locale} />}
 
       <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
         <span>{t("pendingApprovals", { count: pendingCount })}</span>

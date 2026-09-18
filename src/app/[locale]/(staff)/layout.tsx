@@ -153,6 +153,7 @@ export default async function StaffLayout({ children }: { children: ReactNode })
                 initials: branding.initials,
                 initialsBackground: branding.sidebar.background,
                 initialsForeground: branding.sidebar.foreground,
+                displayName: branding.displayName,
               }
             : null
         }
@@ -177,6 +178,7 @@ export default async function StaffLayout({ children }: { children: ReactNode })
             userEmail={authSession?.user?.email ?? ""}
             role={context.organizationRole}
             academyLabel={academyLabel}
+            orgName={branding?.displayName}
           >
             <NotificationBell initialNotifications={notifications} initialUnreadCount={unreadCount} />
           </StaffTopBar>

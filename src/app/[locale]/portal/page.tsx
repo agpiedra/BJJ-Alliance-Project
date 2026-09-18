@@ -230,6 +230,7 @@ export default async function StudentPortalPage({
           initials: branding.initials,
           initialsBackground: branding.sidebar.background,
           initialsForeground: branding.sidebar.foreground,
+          displayName: branding.displayName,
         }}
       />
       <main className="mx-auto flex w-full max-w-md flex-col gap-6 p-4">

@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation";
-import { resolveOrganizationForSignup } from "@/lib/tenant/platform-lookups";
+import { resolveOrganizationForSignup, resolveOrganizationLoginBranding } from "@/lib/tenant/platform-lookups";
 import { BrandBanner } from "@/components/brand/brand-banner";
 import { SignupForm } from "./signup-form";
 
@@ -25,6 +25,14 @@ export const dynamic = "force-dynamic";
  * offer ("sign up" requires a real organization to join). `notFound()`
  * here, same as any other unmatched route, discloses nothing more than
  * "page not found."
+ *
+ * MULTI_ACADEMY_AND_KIDS_BELTS.md Item 2 — this page already knows the
+ * real organization (checked ACTIVE above), so it also resolves its real
+ * branding via `resolveOrganizationLoginBranding`, the exact same function
+ * `/o/[orgSlug]/login` uses. Previously this rendered a zero-props
+ * `<BrandBanner />`, which meant every organization's own signup page
+ * showed Alliance's logo/name — the same leak `/o/[orgSlug]/login` had
+ * already been built to avoid.
  */
 export default async function OrganizationSignupPage({
   params,
@@ -32,14 +40,23 @@ export default async function OrganizationSignupPage({
   params: Promise<{ orgSlug: string }>;
 }) {
   const { orgSlug } = await params;
-  const organization = await resolveOrganizationForSignup(orgSlug);
+  const [organization, branding] = await Promise.all([
+    resolveOrganizationForSignup(orgSlug),
+    resolveOrganizationLoginBranding(orgSlug),
+  ]);
   if (!organization) {
     notFound();
   }
 
   return (
     <>
-      <BrandBanner />
+      <BrandBanner
+        logoUrl={branding?.logoUrl}
+        initials={branding?.initials}
+        initialsBackground={branding?.sidebar.background}
+        initialsForeground={branding?.sidebar.foreground}
+        alt={branding?.displayName}
+      />
       <SignupForm orgSlug={orgSlug} academies={organization.academies} />
     </>
   );

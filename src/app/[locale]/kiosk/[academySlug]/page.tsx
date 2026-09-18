@@ -63,6 +63,7 @@ export default async function KioskPage({
         initials={branding.initials}
         initialsBackground={branding.sidebar.background}
         initialsForeground={branding.sidebar.foreground}
+        alt={branding.displayName}
       >
         <span className="truncate font-medium">{academy.name}</span>
       </BrandBanner>

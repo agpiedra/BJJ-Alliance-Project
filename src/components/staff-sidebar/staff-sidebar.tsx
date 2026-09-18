@@ -54,6 +54,10 @@ export interface StaffSidebarProps {
     initials: string;
     initialsBackground: string;
     initialsForeground: string;
+    /** MULTI_ACADEMY_AND_KIDS_BELTS.md Item 2 — passed straight through to
+     * BrandBanner's `alt`, so a real logo is never announced under
+     * another organization's name. */
+    displayName: string;
   } | null;
 }
 
@@ -86,6 +90,7 @@ export function StaffSidebar({ locale, navItems, academySwitcher, logo }: StaffS
           initials={logo?.initials}
           initialsBackground={logo?.initialsBackground}
           initialsForeground={logo?.initialsForeground}
+          alt={logo?.displayName}
         />
         <div className="border-b border-sidebar-border px-2 py-2">
           <AcademySwitcher {...academySwitcher} />

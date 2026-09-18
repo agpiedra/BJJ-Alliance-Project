@@ -14,6 +14,9 @@ export interface BrandBannerProps {
   initials?: string;
   initialsBackground?: string;
   initialsForeground?: string;
+  /** MULTI_ACADEMY_AND_KIDS_BELTS.md Item 2 — passed straight through to
+   * LogoMark's own `alt`; see that component's own doc comment. */
+  alt?: string;
 }
 
 /**
@@ -28,7 +31,7 @@ export interface BrandBannerProps {
  * it reads as a brand accent without the contrast/legibility risk of gold
  * covering a large surface.
  */
-export function BrandBanner({ children, compact = false, logoUrl, initials, initialsBackground, initialsForeground }: BrandBannerProps) {
+export function BrandBanner({ children, compact = false, logoUrl, initials, initialsBackground, initialsForeground, alt }: BrandBannerProps) {
   return (
     <div
       className={cn(
@@ -42,6 +45,7 @@ export function BrandBanner({ children, compact = false, logoUrl, initials, init
         initials={initials}
         initialsBackground={initialsBackground}
         initialsForeground={initialsForeground}
+        alt={alt}
       />
       {children ? (
         <div className="flex min-w-0 flex-1 items-center gap-3">{children}</div>
