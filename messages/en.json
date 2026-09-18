@@ -373,6 +373,7 @@
     "analytics": "Analytics",
     "adminSchedule": "Schedule",
     "adminKioskTokens": "Kiosk",
+    "adminBranding": "Branding",
     "signOut": "Sign out",
     "groups": {
       "operations": "Operations",
@@ -700,6 +701,50 @@
         "columnReason": "Reason",
         "statusActive": "Current belt",
         "statusOutOfScope": "Past belt"
+      }
+    }
+  },
+  "branding": {
+    "eyebrow": "Alliance · Academy management",
+    "heading": "Branding",
+    "logo": {
+      "heading": "Logo",
+      "hint": "PNG, JPEG or WebP, up to 512 KB.",
+      "upload": "Upload",
+      "uploaded": "Logo uploaded.",
+      "remove": "Remove logo",
+      "error": {
+        "invalidFormat": "That file isn't a PNG, JPEG or WebP image.",
+        "tooLarge": "That file is larger than 512 KB.",
+        "invalidImage": "Could not read that file as an image.",
+        "extremeAspectRatio": "That image is too wide or too tall to use as a logo.",
+        "rateLimited": "Too many uploads in a short time — try again in a few minutes.",
+        "generic": "Something went wrong."
+      }
+    },
+    "theme": {
+      "heading": "Colors",
+      "displayName": "Display name",
+      "primaryColor": "Brand color",
+      "contrastPass": "Passes WCAG AA ({ratio}:1).",
+      "contrastWarn": "May be hard to read ({ratio}:1) — consider a darker or lighter shade.",
+      "sidebarBackground": "Sidebar color",
+      "customizeSidebarToggle": "Customize sidebar text and active-item colors",
+      "sidebarForeground": "Sidebar text",
+      "sidebarActiveBackground": "Active item background",
+      "sidebarActiveForeground": "Active item text",
+      "sidebarBorder": "Sidebar border",
+      "sidebarContrastBlocked": "This combination fails WCAG AA and can't be saved — use the suggested color shown.",
+      "previewLabel": "Preview",
+      "previewNavActive": "Active item",
+      "previewNavHover": "Hover",
+      "previewNavDefault": "Default item",
+      "previewButton": "Button",
+      "save": "Save",
+      "saved": "Saved.",
+      "error": {
+        "invalid": "Please check the form for errors.",
+        "generic": "Something went wrong."
       }
     }
   },

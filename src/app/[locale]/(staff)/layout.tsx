@@ -10,6 +10,8 @@ import { StaffTopBar } from "@/components/staff-sidebar/staff-top-bar";
 import { NAV_ITEMS, type StaffTenantContext } from "@/components/staff-sidebar/nav-items";
 import { NotificationBell } from "./dashboard/notification-bell";
 import { getMyNotifications, getUnreadCount } from "./dashboard/notification-actions";
+import { getOrganizationBranding } from "@/lib/branding/get-branding";
+import { BrandingScope } from "@/components/branding/branding-scope";
 
 /**
  * Persistent shell for every staff-facing page (brand redesign Task 2).
@@ -110,8 +112,9 @@ export default async function StaffLayout({ children }: { children: ReactNode })
   const sidebarDefaultOpen = sidebarState !== "false";
 
   const authSession = await auth();
+  const branding = context ? await getOrganizationBranding(context) : null;
 
-  return (
+  const shell = (
     <SidebarProvider defaultOpen={sidebarDefaultOpen}>
       <StaffSidebar
         locale={locale}
@@ -121,6 +124,16 @@ export default async function StaffLayout({ children }: { children: ReactNode })
           selectedAcademyId,
           readOnly: context?.organizationRole !== "ADMIN",
         }}
+        logo={
+          branding
+            ? {
+                logoUrl: branding.logoUrl,
+                initials: branding.initials,
+                initialsBackground: branding.sidebar.background,
+                initialsForeground: branding.sidebar.foreground,
+              }
+            : null
+        }
       />
       {/*
         Plain `<div>` carrying `SidebarInset`'s exact className, not
@@ -150,4 +163,11 @@ export default async function StaffLayout({ children }: { children: ReactNode })
       </div>
     </SidebarProvider>
   );
+
+  // MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 4 — the staff sidebar is one of
+  // the 3 surfaces branding applies to. `branding` is null only when
+  // `context` itself is (the layout's own "hide everything" fallback for a
+  // non-staff/unauthenticated request, which each page's own
+  // requireTenantContext bounces regardless) — nothing to theme there.
+  return branding ? <BrandingScope branding={branding}>{shell}</BrandingScope> : shell;
 }

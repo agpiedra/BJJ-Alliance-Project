@@ -444,6 +444,24 @@ async function seedOrganization() {
     update: data,
     create: { id: ALLIANCE_ORG_ID, ...data },
   });
+
+  // MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 4 — Alliance's own yellow/near-
+  // black brand identity becomes DATA here, not hardcoded (the acceptance
+  // criterion this satisfies: "No literal Alliance, brand hex or logo path
+  // remains in src/**"). `logoUrl` stays null (initials fallback) — this
+  // seed has no real Supabase credentials to upload `public/branding/
+  // logo.png` with; an ADMIN can upload the real logo through the
+  // Configuración → Academia settings page once deployed.
+  const brandingData = {
+    displayName: "Alliance Jiu-Jitsu Costa Rica",
+    primaryColor: "#FACC15",
+    sidebarBackground: "#111827",
+  };
+  await prisma.organizationBranding.upsert({
+    where: { organizationId: ALLIANCE_ORG_ID },
+    update: brandingData,
+    create: { organizationId: ALLIANCE_ORG_ID, ...brandingData },
+  });
 }
 
 async function seedAcademies() {

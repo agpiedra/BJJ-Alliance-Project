@@ -30,6 +30,7 @@ export const TENANT_SCOPED_MODELS = new Set([
   "KioskAttempt",
   "StaffAssignment",
   "Notification",
+  "OrganizationBranding",
 ]);
 
 const WRITE_TARGET_OPERATIONS = new Set(["create", "createMany", "upsert"]);

@@ -27,6 +27,8 @@ import { isOverdue } from "@/lib/payments/overdue";
 import type { ContactPaymentStatus } from "@/lib/students/contact-list";
 import { SelfCheckInButton } from "./self-check-in-button";
 import { PortalTopBar } from "./portal-top-bar";
+import { getOrganizationBranding } from "@/lib/branding/get-branding";
+import { BrandingScope } from "@/components/branding/branding-scope";
 import { listClassSessions } from "../(staff)/admin/schedule/queries";
 import {
   SUNDAY_FIRST_DAYS,
@@ -115,6 +117,7 @@ export default async function StudentPortalPage({
 }) {
   const context = await requireTenantContext(["STUDENT"]);
   const { locale } = await params;
+  const branding = await getOrganizationBranding(context);
 
   // selfStudentId is non-null whenever organizationRole is STUDENT and a
   // linked Student row genuinely exists for this user in this organization
@@ -217,8 +220,18 @@ export default async function StudentPortalPage({
   }));
 
   return (
-    <>
-      <PortalTopBar locale={locale} firstName={student.firstName} lastName={student.lastName} />
+    <BrandingScope branding={branding}>
+      <PortalTopBar
+        locale={locale}
+        firstName={student.firstName}
+        lastName={student.lastName}
+        logo={{
+          logoUrl: branding.logoUrl,
+          initials: branding.initials,
+          initialsBackground: branding.sidebar.background,
+          initialsForeground: branding.sidebar.foreground,
+        }}
+      />
       <main className="mx-auto flex w-full max-w-md flex-col gap-6 p-4">
         <h1 className="text-2xl font-bold">{t("greeting", { name: student.firstName })}</h1>
 
@@ -377,6 +390,6 @@ export default async function StudentPortalPage({
           )}
         </Card>
       </main>
-    </>
+    </BrandingScope>
   );
 }
