@@ -1,22 +1,22 @@
 import sharp, { type Metadata } from "sharp";
+import { ACCEPTED_MIME_TYPES, MAX_LOGO_BYTES, MAX_LOGO_DIMENSION, MAX_ASPECT_RATIO } from "./logo-constraints";
 
 /**
- * MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 4 — logo upload constraints.
+ * MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 4 — logo upload validation.
  *
- * SVG is deliberately NOT in this list (a documented deviation from the
- * original Phase 4 draft, approved explicitly): inline SVG can carry
- * `<script>`/event-handler payloads, which needs a real sanitizer to accept
- * safely, and real gym logos are overwhelmingly PNG/JPEG in practice — not
- * worth that attack surface for this audience.
+ * SVG is deliberately NOT in the accepted format list (a documented
+ * deviation from the original Phase 4 draft, approved explicitly): inline
+ * SVG can carry `<script>`/event-handler payloads, which needs a real
+ * sanitizer to accept safely, and real gym logos are overwhelmingly
+ * PNG/JPEG in practice — not worth that attack surface for this audience.
+ *
+ * The constants themselves live in ./logo-constraints (no `sharp` import),
+ * so a client component can enforce the same limits before ever uploading a
+ * byte — see logo-uploader.tsx. That client check is convenience only; this
+ * file remains the actual authority, run again here regardless of what the
+ * client already checked.
  */
-export const ACCEPTED_MIME_TYPES = ["image/png", "image/jpeg", "image/webp"] as const;
-export const MAX_LOGO_BYTES = 512 * 1024;
-export const MAX_LOGO_DIMENSION = 1024;
-/** Beyond this, `object-contain` alone can't rescue legibility — a 2000x50
- * wordmark would render illegibly tiny inside any nav-icon-sized slot. Below
- * it, a wide/tall logo just renders smaller within its slot, never rejected:
- * most real gym wordmarks are well inside this. */
-export const MAX_ASPECT_RATIO = 5;
+export { ACCEPTED_MIME_TYPES, MAX_LOGO_BYTES, MAX_LOGO_DIMENSION, MAX_ASPECT_RATIO };
 
 export type LogoValidationError = "invalidFormat" | "tooLarge" | "invalidImage" | "extremeAspectRatio";
 

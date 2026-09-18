@@ -4,9 +4,24 @@ import { useActionState, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { deriveForeground, deriveInitials } from "@/lib/theme";
+import { ACCEPTED_MIME_TYPES, MAX_LOGO_BYTES } from "@/lib/branding/logo-constraints";
 import type { ActionState } from "@/lib/action-state";
 
 const INITIAL_STATE: ActionState = {};
+
+/**
+ * Convenience only, never enforcement — validateAndReencodeLogo (server)
+ * runs the real check regardless of what this returns, same as every other
+ * guard in this project. This exists purely so a director picking an
+ * oversized or wrong-format file sees the exact same message instantly,
+ * before a single byte leaves the browser, instead of waiting on a round
+ * trip only to get told the same thing.
+ */
+function clientValidationError(file: File): "tooLarge" | "invalidFormat" | null {
+  if (file.size > MAX_LOGO_BYTES) return "tooLarge";
+  if (!(ACCEPTED_MIME_TYPES as readonly string[]).includes(file.type)) return "invalidFormat";
+  return null;
+}
 
 export interface LogoUploaderProps {
   organizationId: string;
@@ -46,6 +61,7 @@ export function LogoUploader({
     INITIAL_STATE,
   );
   const [previewFile, setPreviewFile] = useState<string | null>(null);
+  const [clientError, setClientError] = useState<"tooLarge" | "invalidFormat" | null>(null);
 
   const initials = deriveInitials(displayName);
   const initialsForeground = deriveForeground(previewBackground);
@@ -69,7 +85,16 @@ export function LogoUploader({
       <form
         action={uploadFormAction}
         className="flex flex-col gap-2"
-        onSubmit={() => setPreviewFile(null)}
+        onSubmit={(e) => {
+          if (clientError) {
+            // Never call the server action for a file this component already
+            // knows is invalid — the server re-checks regardless, but there's
+            // no reason to spend a round trip confirming what's already known.
+            e.preventDefault();
+            return;
+          }
+          setPreviewFile(null);
+        }}
       >
         <input
           type="file"
@@ -77,17 +102,26 @@ export function LogoUploader({
           accept="image/png,image/jpeg,image/webp"
           onChange={(e) => {
             const file = e.target.files?.[0];
-            setPreviewFile(file ? URL.createObjectURL(file) : null);
+            if (!file) {
+              setPreviewFile(null);
+              setClientError(null);
+              return;
+            }
+            const error = clientValidationError(file);
+            setClientError(error);
+            setPreviewFile(error ? null : URL.createObjectURL(file));
           }}
         />
         <p className="text-sm text-muted-foreground">{t("hint")}</p>
-        {uploadState.error && (
+        {(clientError ?? uploadState.error) && (
           <p className="text-sm text-bad">
-            {t.has(`error.${uploadState.error}`) ? t(`error.${uploadState.error}` as never) : t("error.generic")}
+            {t.has(`error.${clientError ?? uploadState.error}`)
+              ? t(`error.${clientError ?? uploadState.error}` as never)
+              : t("error.generic")}
           </p>
         )}
-        {uploadState.ok && <p className="text-sm text-ok">{t("uploaded")}</p>}
-        <Button type="submit" disabled={isUploading} size="sm">
+        {!clientError && uploadState.ok && <p className="text-sm text-ok">{t("uploaded")}</p>}
+        <Button type="submit" disabled={isUploading || !!clientError} size="sm">
           {t("upload")}
         </Button>
       </form>
