@@ -1,6 +1,9 @@
 import { notFound } from "next/navigation";
 import { resolveAcademyBySlug } from "@/lib/tenant/platform-lookups";
 import { BrandBanner } from "@/components/brand/brand-banner";
+import { getOrganizationBranding } from "@/lib/branding/get-branding";
+import { BrandingScope } from "@/components/branding/branding-scope";
+import type { KioskContext } from "@/lib/tenant/types";
 import { KioskClient } from "./kiosk-client";
 
 // Public, zero-credential tablet surface — spec explicitly calls for NO auth
@@ -42,9 +45,25 @@ export default async function KioskPage({
   // come back `invalid_token` from the API, same as a wrong one.
   const tokenValue = typeof token === "string" ? token : "";
 
+  // MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 4 — the kiosk matters most: it's
+  // the screen students actually stand in front of. `KioskContext` is a
+  // real `AccessContext` member (tenant/types.ts), so this goes through the
+  // exact same tenant-guarded `getOrganizationBranding` read every other
+  // surface uses — never a platform-lookup escape hatch for branding
+  // specifically, even though the academy identity above genuinely needs
+  // one of its own.
+  const kioskContext: KioskContext = { kind: "kiosk", organizationId: academy.organizationId, academyId: academy.id };
+  const branding = await getOrganizationBranding(kioskContext);
+
   return (
-    <>
-      <BrandBanner compact>
+    <BrandingScope branding={branding}>
+      <BrandBanner
+        compact
+        logoUrl={branding.logoUrl}
+        initials={branding.initials}
+        initialsBackground={branding.sidebar.background}
+        initialsForeground={branding.sidebar.foreground}
+      >
         <span className="truncate font-medium">{academy.name}</span>
       </BrandBanner>
       <KioskClient
@@ -53,6 +72,6 @@ export default async function KioskPage({
         academySlug={academy.slug}
         token={tokenValue}
       />
-    </>
+    </BrandingScope>
   );
 }

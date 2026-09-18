@@ -1,4 +1,5 @@
 import { unscopedPrisma } from "@/lib/prisma/unscoped";
+import { deriveInitials, resolvePrimaryTheme, resolveSidebarTheme, type ResolvedPrimaryTheme, type ResolvedSidebarTheme } from "@/lib/theme";
 import type { Academy } from "@/generated/prisma/client";
 
 /**
@@ -81,4 +82,58 @@ export async function listSignupAcademies(): Promise<Array<{ slug: string; name:
 export async function listActiveAcademyIdsForDigest(): Promise<string[]> {
   const academies = await unscopedPrisma.academy.findMany({ where: { active: true }, select: { id: true } });
   return academies.map((academy) => academy.id);
+}
+
+export interface SingleOrganizationBranding {
+  displayName: string;
+  initials: string;
+  logoUrl: string | null;
+  primary: ResolvedPrimaryTheme;
+  sidebar: ResolvedSidebarTheme;
+}
+
+/**
+ * MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 4 — a deliberately cheap, honest,
+ * SELF-REMOVING stopgap for the login page, which has no per-org routing
+ * yet (that's Phase 5). With exactly one organization on the platform, its
+ * branding is unambiguous even pre-auth; the moment a second organization
+ * exists, this returns `null` forever, on its own — no manual deletion step
+ * needed, though it should still be deleted outright once Phase 5's real
+ * per-org login routing exists, rather than left as permanently-dead code.
+ *
+ * Duplicates get-branding.ts's own composition (resolve primary, feed its
+ * background into the sidebar as the active-color default) rather than
+ * sharing it — deliberately: that function takes a tenant `AccessContext`
+ * and reads through `getScopedDb`, which requires exactly the tenant
+ * identity this function is being asked to find. There is no context to
+ * scope by yet, which is what makes this a platform-lookups.ts function at
+ * all, same as every other one in this file.
+ */
+export async function resolveSingleOrganizationBranding(): Promise<SingleOrganizationBranding | null> {
+  const organizations = await unscopedPrisma.organization.findMany({ select: { id: true }, take: 2 });
+  if (organizations.length !== 1) return null;
+
+  const organizationId = organizations[0].id;
+  const row = await unscopedPrisma.organizationBranding.findUnique({
+    where: { organizationId },
+    include: { organization: { select: { name: true } } },
+  });
+
+  const displayName = row?.displayName || row?.organization.name || "Academy";
+  const primary = resolvePrimaryTheme(row?.primaryColor ?? "#FACC15");
+
+  return {
+    displayName,
+    initials: deriveInitials(displayName),
+    logoUrl: row?.logoUrl ?? null,
+    primary,
+    sidebar: resolveSidebarTheme({
+      background: row?.sidebarBackground ?? "#111827",
+      foreground: row?.sidebarForeground,
+      activeBackground: row?.sidebarActiveBackground,
+      activeForeground: row?.sidebarActiveForeground,
+      activeBackgroundDefault: primary.background,
+      border: row?.sidebarBorder,
+    }),
+  };
 }

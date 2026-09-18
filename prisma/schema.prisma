@@ -168,6 +168,72 @@ model Organization {
   auditLogs           AuditLog[]
   notifications       Notification[]
   usersLastActiveHere User[]                   @relation("UserLastActiveOrganization")
+  /// MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 4 — genuinely 1:1, but typed
+  /// optional here (Prisma can't express "always exists" from this side of a
+  /// shared-primary-key relation). In practice it always exists: created in
+  /// the same transaction as the Organization (Phase 5's registration flow,
+  /// and this migration's own Alliance backfill via prisma/seed.ts). The one
+  /// read path (get-branding.ts) still degrades to system defaults rather
+  /// than throwing if it's ever somehow missing — a wrong theme is a visual
+  /// bug, not a tenant-isolation failure, so fail-soft is deliberate here,
+  /// unlike everywhere else in this file.
+  branding            OrganizationBranding?
+}
+
+/// MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 4 — per-organization branding.
+/// `organizationId` is the primary key (not a separate cuid `id`): this
+/// relation is genuinely 1:1, and using the FK as the PK makes "every
+/// organization has exactly one branding row" structurally visible rather
+/// than something every reader has to defensively check for.
+///
+/// Only backgrounds are ever stored — every foreground is derived from
+/// luminance at read time in src/lib/theme.ts, never persisted, so a future
+/// improvement to the derivation algorithm applies to every organization
+/// automatically instead of needing a backfill. The four sidebarXxx fields
+/// below are nullable for exactly this reason: null means "derive from
+/// sidebarBackground," a real value means the director explicitly typed an
+/// override into the settings page's advanced per-token picker.
+///
+/// `accentColor`/`surfaceStyle` from the original Phase 4 draft are
+/// deliberately absent: neither has a defined meaning anywhere in this
+/// codebase's actual token system (verified directly — `--primary`/
+/// `--accent` are fixed neutral ink tokens with their own explicit "never
+/// themed" ruling in globals.css; the one real brand-color knob is
+/// `--brand-gold`/`--brand-gold-foreground`, which `primaryColor` alone
+/// already covers) — same reasoning that cut `surfaceStyle`, applied
+/// consistently rather than carrying an undefined field forward.
+model OrganizationBranding {
+  organizationId String    @id
+  /// Friendly public-facing name (wizard step 1: "confirm or edit name and
+  /// displayName") — distinct from Organization.name, the internal/admin
+  /// identifier. Null falls back to Organization.name at read time.
+  displayName    String?
+
+  /// Supabase Storage public URL — never bytes in Postgres. See
+  /// src/lib/branding/logo-storage.ts for why the bucket is public and the
+  /// upload/delete ordering that keeps a row from ever pointing at a
+  /// deleted object.
+  logoUrl       String?
+  logoMimeType  String?
+  logoUpdatedAt DateTime?
+
+  /// The one brand-color knob (see this model's own doc comment for why
+  /// there's exactly one, not two). Overrides `--brand-gold`; its foreground
+  /// is always derived, never stored — see src/lib/theme.ts.
+  primaryColor String @default("#FACC15")
+
+  /// The sidebar's own five-token palette (doc: "chosen independently" of
+  /// primaryColor). Only the background is required; the other four are
+  /// derive-unless-overridden, per this model's own doc comment.
+  sidebarBackground       String  @default("#111827")
+  sidebarForeground       String?
+  sidebarActiveBackground String?
+  sidebarActiveForeground String?
+  sidebarBorder           String?
+
+  updatedAt DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id])
 }
 
 /// The only authorization source for ADMIN/DIRECTOR/INSTRUCTOR/STUDENT access

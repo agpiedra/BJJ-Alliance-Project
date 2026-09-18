@@ -23,6 +23,14 @@ export interface PortalTopBarProps {
   locale: string;
   firstName: string;
   lastName: string;
+  /** MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 4 — see StaffSidebarProps's own
+   * matching field; same shape, passed straight through to BrandBanner. */
+  logo?: {
+    logoUrl: string | null;
+    initials: string;
+    initialsBackground: string;
+    initialsForeground: string;
+  };
 }
 
 /**
@@ -37,7 +45,7 @@ export interface PortalTopBarProps {
  * action (unchanged) via the same useTransition pattern `StaffTopBar` already
  * established for the three staff portals.
  */
-export function PortalTopBar({ locale, firstName, lastName }: PortalTopBarProps) {
+export function PortalTopBar({ locale, firstName, lastName, logo }: PortalTopBarProps) {
   const t = useTranslations("portal");
   const [isSigningOut, startSignOut] = useTransition();
 
@@ -48,7 +56,12 @@ export function PortalTopBar({ locale, firstName, lastName }: PortalTopBarProps)
   }
 
   return (
-    <BrandBanner>
+    <BrandBanner
+      logoUrl={logo?.logoUrl}
+      initials={logo?.initials}
+      initialsBackground={logo?.initialsBackground}
+      initialsForeground={logo?.initialsForeground}
+    >
       <DropdownMenu>
         <DropdownMenuTrigger className="ml-auto flex size-8 items-center justify-center rounded-full bg-sidebar-accent text-xs font-semibold text-sidebar-accent-foreground">
           {initialsFromName(firstName, lastName)}

@@ -1,62 +1,36 @@
-"use client";
-
-import { Suspense, useActionState } from "react";
-import { useTranslations } from "next-intl";
-import { useParams, useSearchParams } from "next/navigation";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { BrandBanner } from "@/components/brand/brand-banner";
-import { login } from "./actions";
-import { INITIAL_ACTION_STATE } from "@/lib/action-state";
+import { resolveSingleOrganizationBranding } from "@/lib/tenant/platform-lookups";
+import { LoginForm } from "./login-form";
 
-export default function LoginPage() {
+// The single-org branding lookup can change without a redeploy (a director
+// finishing their branding, or a second organization onboarding) — never
+// statically cached.
+export const dynamic = "force-dynamic";
+
+/**
+ * MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 4 — a generic login leading into a
+ * fully branded app read as unfinished ("the first screen the director sees
+ * in the demo"). Full per-org login branding needs routing that doesn't
+ * exist until Phase 5 (no org slug/subdomain in the URL today — verified
+ * directly in middleware.ts), so this is deliberately NOT that: with
+ * exactly one organization on the platform, its branding is unambiguous
+ * even pre-auth, and `resolveSingleOrganizationBranding` returns `null` the
+ * moment a second one exists — no manual removal step needed, though the
+ * whole thing should be deleted outright once Phase 5's real per-org
+ * routing lands, rather than kept as permanently-dead code.
+ */
+export default async function LoginPage() {
+  const branding = await resolveSingleOrganizationBranding();
+
   return (
     <>
-      <BrandBanner />
-      <Suspense fallback={null}>
-        <LoginForm />
-      </Suspense>
+      <BrandBanner
+        logoUrl={branding?.logoUrl}
+        initials={branding?.initials}
+        initialsBackground={branding?.sidebar.background}
+        initialsForeground={branding?.sidebar.foreground}
+      />
+      <LoginForm />
     </>
-  );
-}
-
-function LoginForm() {
-  const t = useTranslations("auth.login");
-  const params = useParams<{ locale: string }>();
-  const searchParams = useSearchParams();
-  const callbackUrl = searchParams.get("callbackUrl") ?? undefined;
-
-  const [state, formAction, isPending] = useActionState(
-    login.bind(null, params.locale, callbackUrl),
-    INITIAL_ACTION_STATE,
-  );
-
-  return (
-    <main className="flex min-h-[calc(100vh-4rem)] flex-col items-center justify-center bg-background p-6">
-      <Card className="w-full max-w-sm">
-        <CardHeader>
-          <CardTitle className="text-2xl">{t("heading")}</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <form action={formAction} className="flex flex-col gap-3">
-            <label className="flex flex-col gap-1">
-              <span>{t("email")}</span>
-              <input type="email" name="email" required className="rounded border border-input px-3 py-2" />
-            </label>
-            <label className="flex flex-col gap-1">
-              <span>{t("password")}</span>
-              <input type="password" name="password" required className="rounded border border-input px-3 py-2" />
-            </label>
-            {state.error && <p className="text-sm text-destructive">{t(state.error)}</p>}
-            <Button type="submit" variant="primary" disabled={isPending}>
-              {t("submit")}
-            </Button>
-            <a href={`/${params.locale}/forgot-password`} className="text-sm underline">
-              {t("forgotPassword")}
-            </a>
-          </form>
-        </CardContent>
-      </Card>
-    </main>
   );
 }

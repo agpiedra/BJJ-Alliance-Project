@@ -1,4 +1,4 @@
-import { BarChart3, CalendarClock, KeyRound, LayoutDashboard, Users, Wallet } from "lucide-react";
+import { BarChart3, CalendarClock, KeyRound, LayoutDashboard, Palette, Users, Wallet } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type { MembershipRole, TenantContext } from "@/lib/tenant/types";
 
@@ -82,6 +82,16 @@ export const NAV_ITEMS: StaffNavItem[] = [
     href: "/admin/kiosk-tokens",
     labelKey: "adminKioskTokens",
     icon: KeyRound,
+    visible: (context) => context.organizationRole === "ADMIN" || context.organizationRole === "DIRECTOR",
+    group: "academy",
+  },
+  {
+    // MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 4 — matches
+    // admin/branding/page.tsx's own requireTenantContext(["ADMIN",
+    // "DIRECTOR"]) gate exactly, same convention as every other item here.
+    href: "/admin/branding",
+    labelKey: "adminBranding",
+    icon: Palette,
     visible: (context) => context.organizationRole === "ADMIN" || context.organizationRole === "DIRECTOR",
     group: "academy",
   },

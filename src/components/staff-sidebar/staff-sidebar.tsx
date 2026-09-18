@@ -46,6 +46,15 @@ export interface StaffSidebarProps {
   /** Already filtered to this session's visible items — see (staff)/layout.tsx. */
   navItems: StaffSidebarNavEntry[];
   academySwitcher: AcademySwitcherProps;
+  /** MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 4 — resolved server-side in
+   * (staff)/layout.tsx, passed straight through to BrandBanner. Optional
+   * (null when the layout has no context to theme at all). */
+  logo?: {
+    logoUrl: string | null;
+    initials: string;
+    initialsBackground: string;
+    initialsForeground: string;
+  } | null;
 }
 
 /**
@@ -56,7 +65,7 @@ export interface StaffSidebarProps {
  * Colors come entirely from the `--sidebar-*`/`--brand-gold*` tokens; no
  * color is hardcoded here.
  */
-export function StaffSidebar({ locale, navItems, academySwitcher }: StaffSidebarProps) {
+export function StaffSidebar({ locale, navItems, academySwitcher, logo }: StaffSidebarProps) {
   const pathname = usePathname();
   const t = useTranslations("staffSidebar");
   const activeItem = findActiveNavItem(pathname, locale, navItems);
@@ -71,7 +80,13 @@ export function StaffSidebar({ locale, navItems, academySwitcher }: StaffSidebar
   return (
     <Sidebar>
       <SidebarHeader className="gap-0 p-0">
-        <BrandBanner compact />
+        <BrandBanner
+          compact
+          logoUrl={logo?.logoUrl}
+          initials={logo?.initials}
+          initialsBackground={logo?.initialsBackground}
+          initialsForeground={logo?.initialsForeground}
+        />
         <div className="border-b border-sidebar-border px-2 py-2">
           <AcademySwitcher {...academySwitcher} />
         </div>
@@ -94,7 +109,22 @@ export function StaffSidebar({ locale, navItems, academySwitcher }: StaffSidebar
                         <SidebarMenuButton
                           isActive={activeItem?.href === item.href}
                           render={<a href={fullHref} />}
-                          className="data-active:bg-brand-gold data-active:text-brand-gold-foreground"
+                          // MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 4: was
+                          // hardcoded to `bg-brand-gold`/`text-brand-gold-
+                          // foreground` — the SAME token `primaryColor`
+                          // overrides for buttons/banners/stat-tiles
+                          // elsewhere, which would have silently defeated
+                          // "the sidebar's active-item color is chosen
+                          // independently of primaryColor" (a director
+                          // could never set them differently; this one
+                          // token would always win in both places at once).
+                          // `--sidebar-primary`/`--sidebar-primary-
+                          // foreground` were already declared in
+                          // globals.css (defaulting to `var(--brand-gold)`,
+                          // so an unbranded org's look is byte-for-byte
+                          // unchanged) but never actually consumed by any
+                          // component until now — this is that wiring.
+                          className="data-active:bg-sidebar-primary data-active:text-sidebar-primary-foreground"
                         >
                           {item.icon}
                           <span>{t(item.labelKey)}</span>

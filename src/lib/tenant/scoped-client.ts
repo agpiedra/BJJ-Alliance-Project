@@ -25,6 +25,7 @@ export const TENANT_SCOPED_MODELS = new Set([
   "KioskAttempt",
   "StaffAssignment",
   "Notification",
+  "OrganizationBranding",
 ]);
 
 const WHERE_SCOPED_OPERATIONS = new Set([
@@ -142,6 +143,7 @@ export type ScopedDb = Pick<
   | "kioskAttempt"
   | "staffAssignment"
   | "notification"
+  | "organizationBranding"
   | "$transaction"
 >;
 

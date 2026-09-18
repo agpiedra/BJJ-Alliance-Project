@@ -373,6 +373,7 @@
     "analytics": "Análisis",
     "adminSchedule": "Horario",
     "adminKioskTokens": "Kiosco",
+    "adminBranding": "Marca",
     "signOut": "Salir",
     "groups": {
       "operations": "Operación",
@@ -700,6 +701,50 @@
         "columnReason": "Motivo",
         "statusActive": "Cinturón actual",
         "statusOutOfScope": "Cinturón anterior"
+      }
+    }
+  },
+  "branding": {
+    "eyebrow": "Alliance · Administración de academia",
+    "heading": "Marca",
+    "logo": {
+      "heading": "Logo",
+      "hint": "PNG, JPEG o WebP, hasta 512 KB.",
+      "upload": "Subir",
+      "uploaded": "Logo subido.",
+      "remove": "Eliminar logo",
+      "error": {
+        "invalidFormat": "Ese archivo no es una imagen PNG, JPEG o WebP.",
+        "tooLarge": "Ese archivo pesa más de 512 KB.",
+        "invalidImage": "No se pudo leer ese archivo como imagen.",
+        "extremeAspectRatio": "Esa imagen es demasiado ancha o alta para usarla como logo.",
+        "rateLimited": "Demasiadas subidas en poco tiempo — intenta de nuevo en unos minutos.",
+        "generic": "Ocurrió un error."
+      }
+    },
+    "theme": {
+      "heading": "Colores",
+      "displayName": "Nombre para mostrar",
+      "primaryColor": "Color de marca",
+      "contrastPass": "Cumple WCAG AA ({ratio}:1).",
+      "contrastWarn": "Puede ser difícil de leer ({ratio}:1) — considera un tono más oscuro o claro.",
+      "sidebarBackground": "Color del menú lateral",
+      "customizeSidebarToggle": "Personalizar el texto y el color del elemento activo",
+      "sidebarForeground": "Texto del menú lateral",
+      "sidebarActiveBackground": "Fondo del elemento activo",
+      "sidebarActiveForeground": "Texto del elemento activo",
+      "sidebarBorder": "Borde del menú lateral",
+      "sidebarContrastBlocked": "Esta combinación no cumple WCAG AA y no se puede guardar — usa el color sugerido.",
+      "previewLabel": "Vista previa",
+      "previewNavActive": "Elemento activo",
+      "previewNavHover": "Al pasar el cursor",
+      "previewNavDefault": "Elemento por defecto",
+      "previewButton": "Botón",
+      "save": "Guardar",
+      "saved": "Guardado.",
+      "error": {
+        "invalid": "Por favor revisa el formulario.",
+        "generic": "Ocurrió un error."
       }
     }
   },

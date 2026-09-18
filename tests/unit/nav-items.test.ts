@@ -26,20 +26,23 @@ describe("NAV_ITEMS visibility", () => {
       "/dashboard/analytics",
       "/admin/schedule",
       "/admin/kiosk-tokens",
+      "/admin/branding",
     ]);
   });
 
   // REDESIGN_BRIEF.md Phase 9 opened the Kiosco page to DIRECTOR for its new
   // "Marcajes de hoy" table (the page's own gate is now
   // requireStaffSession(["ADMIN", "DIRECTOR"])); /admin/schedule stays
-  // ADMIN-only.
-  it("DIRECTOR sees dashboard, students, payments, analytics and Kiosco — not the ADMIN-only schedule link", () => {
+  // ADMIN-only. MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 4's /admin/branding
+  // matches the doc's own "org ADMIN/DIRECTOR only" settings-page gate.
+  it("DIRECTOR sees dashboard, students, payments, analytics, Kiosco and Branding — not the ADMIN-only schedule link", () => {
     expect(visibleHrefs("DIRECTOR")).toEqual([
       "/dashboard",
       "/students",
       "/payments",
       "/dashboard/analytics",
       "/admin/kiosk-tokens",
+      "/admin/branding",
     ]);
   });
 

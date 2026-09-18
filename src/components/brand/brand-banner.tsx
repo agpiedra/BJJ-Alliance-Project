@@ -7,6 +7,13 @@ export interface BrandBannerProps {
   children?: ReactNode;
   /** Single-line kiosk-appropriate variant — visibly shorter than the default bar. */
   compact?: boolean;
+  /** MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 4 — passed straight through to
+   * LogoMark; see that component's own doc comment. All optional, every
+   * existing zero-props caller unchanged. */
+  logoUrl?: string | null;
+  initials?: string;
+  initialsBackground?: string;
+  initialsForeground?: string;
 }
 
 /**
@@ -21,7 +28,7 @@ export interface BrandBannerProps {
  * it reads as a brand accent without the contrast/legibility risk of gold
  * covering a large surface.
  */
-export function BrandBanner({ children, compact = false }: BrandBannerProps) {
+export function BrandBanner({ children, compact = false, logoUrl, initials, initialsBackground, initialsForeground }: BrandBannerProps) {
   return (
     <div
       className={cn(
@@ -29,7 +36,13 @@ export function BrandBanner({ children, compact = false }: BrandBannerProps) {
         compact ? "h-12" : "h-16"
       )}
     >
-      <LogoMark size={compact ? 32 : 44} />
+      <LogoMark
+        size={compact ? 32 : 44}
+        logoUrl={logoUrl}
+        initials={initials}
+        initialsBackground={initialsBackground}
+        initialsForeground={initialsForeground}
+      />
       {children ? (
         <div className="flex min-w-0 flex-1 items-center gap-3">{children}</div>
       ) : null}
