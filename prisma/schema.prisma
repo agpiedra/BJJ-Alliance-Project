@@ -189,6 +189,16 @@ model Organization {
   /// branding is actually finished.
   brandingReminderDismissedAt DateTime?
 
+  /// MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 6 billing — platform billing (the
+  /// organization paying Alexis for the app), a distinct concept from the
+  /// student-facing Pagos section (PaymentPlan/PaymentPeriod). Never merge
+  /// the two models, pages, or terminology (the doc's own explicit rule).
+  /// The platform default applied to NEWLY ISSUED invoices only — see
+  /// OrganizationInvoice.graceDaysApplied's own doc comment for why this
+  /// value is snapshotted rather than read live by every invoice.
+  graceDays   Int     @default(5)
+  billingNote String?
+
   approvedBy          User?                    @relation("OrganizationApprovedBy", fields: [approvedById], references: [id])
   memberships         OrganizationMembership[]
   academies           Academy[]
@@ -198,6 +208,7 @@ model Organization {
   promotions          Promotion[]
   promotionCredits    PromotionCredit[]
   beltRanks           BeltRank[]
+  invoices            OrganizationInvoice[]
   promotionConfigs    PromotionConfig[]
   paymentPlans        PaymentPlan[]
   paymentPeriods      PaymentPeriod[]
@@ -217,6 +228,65 @@ model Organization {
   /// bug, not a tenant-isolation failure, so fail-soft is deliberate here,
   /// unlike everywhere else in this file.
   branding            OrganizationBranding?
+}
+
+/// MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 6 billing — platform invoices,
+/// created manually by a SUPER_ADMIN (v1: no scheduled job creates one —
+/// verified by test). A distinct model from PaymentPlan/PaymentPeriod
+/// (student-facing) by the doc's own explicit rule; never reused, never
+/// shared terminology.
+///
+/// Every derived value (state, deadline) is computed at read time from the
+/// fields below — see src/lib/billing/deadline.ts — never stored, so a
+/// grace-days or extension change is instantly reflected without a backfill.
+model OrganizationInvoice {
+  id             String    @id @default(cuid())
+  organizationId String
+  periodStart    DateTime
+  periodEnd      DateTime
+  /// A calendar date, not an instant — compared against
+  /// `DateTime.now().setZone(organization.timezone)`, never UTC or the
+  /// server's local zone (deadline.ts's own doc comment has the exact
+  /// precision rules).
+  dueOn          DateTime
+  /// Snapshot of `Organization.graceDays` AT ISSUE TIME, never read live —
+  /// a deadline a customer has already been told must never move silently
+  /// when the platform default later changes. Changing `graceDays` affects
+  /// only invoices issued after the change; this field is why.
+  graceDaysApplied   Int      @default(5)
+  /// Explicit per-invoice extension, on top of graceDaysApplied — the only
+  /// way to move an OUTSTANDING invoice's own deadline (doc: "use the
+  /// explicit per-invoice extension").
+  graceExtensionDays Int      @default(0)
+
+  paidAt        DateTime?
+  paidNote      String?
+  recordedById  String?
+
+  voidedAt      DateTime?
+  voidReason    String?
+
+  /// Scoped to ONE expiration episode — set to the `flaggedFrom` date that
+  /// was current when acknowledged. If a later extension pushes the
+  /// deadline out and the invoice expires AGAIN, this stale value no longer
+  /// matches the new `flaggedFrom`, so a fresh review item reappears
+  /// automatically — an old acknowledgment can never suppress it
+  /// indefinitely (deadline.ts's own `isUnreviewed` implements this exactly
+  /// as the doc specifies, including the canonical-date-value comparison
+  /// rule: never compare by `Date` object identity).
+  reviewAcknowledgedAt           DateTime?
+  reviewAcknowledgedById         String?
+  reviewNote                     String?
+  reviewAcknowledgedForFlaggedOn DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  recordedBy   User?        @relation("OrganizationInvoiceRecordedBy", fields: [recordedById], references: [id])
+  reviewAcknowledgedBy User? @relation("OrganizationInvoiceReviewAcknowledgedBy", fields: [reviewAcknowledgedById], references: [id])
+
+  @@index([organizationId])
 }
 
 /// MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 4 — per-organization branding.
@@ -366,6 +436,8 @@ model User {
   attendanceRecordsCorrected AttendanceRecord[]   @relation("AttendanceCorrectedBy")
   passwordResetTokens        PasswordResetToken[]
   invitationsSent            Invitation[]         @relation("InvitationInvitedBy")
+  organizationInvoicesRecorded         OrganizationInvoice[] @relation("OrganizationInvoiceRecordedBy")
+  organizationInvoicesReviewAcknowledged OrganizationInvoice[] @relation("OrganizationInvoiceReviewAcknowledgedBy")
 }
 
 model PasswordResetToken {

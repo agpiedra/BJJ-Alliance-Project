@@ -1117,6 +1117,11 @@
       "searchPlaceholder": "Buscar por nombre, slug o contacto",
       "countryPlaceholder": "País",
       "filterAllStatuses": "Todos los estados",
+      "filterAllBilling": "Toda facturación",
+      "filterBillingDue": "Atrasada",
+      "filterBillingGraceExpired": "Plazo vencido",
+      "filterBillingUnreviewed": "Sin revisar",
+      "billingUnreviewedSuffix": "sin revisar",
       "applyFilters": "Aplicar",
       "empty": {
         "description": "Ninguna academia coincide con estos filtros."
@@ -1128,6 +1133,7 @@
         "branches": "Sedes",
         "students": "Alumnos (activos/total)",
         "attendance30d": "Asistencia (30d)",
+        "billing": "Facturación",
         "actions": "Acciones"
       },
       "rowActions": {
@@ -1247,6 +1253,55 @@
         "errors": {
           "cannotRevokeSelf": "No puedes revocar tu propio acceso — pide a otro administrador de plataforma que lo haga.",
           "cannotRevokeLastAdmin": "No puedes revocar al último administrador de plataforma restante."
+        }
+      }
+    }
+  },
+  "billing": {
+    "banner": {
+      "due": "Tu cuenta está atrasada (desde {dueOn}). Por favor gestiona el pago antes del {deadline}.",
+      "graceExpired": "Tu cuenta está significativamente atrasada (desde {dueOn}). La fecha límite del {deadline} ya pasó — por favor contáctanos lo antes posible."
+    },
+    "status": {
+      "CURRENT": "Al día",
+      "DUE": "Atrasada",
+      "GRACE_EXPIRED": "Plazo vencido"
+    },
+    "detail": {
+      "heading": "Facturación",
+      "graceDaysLabel": "Días de gracia por defecto para nuevas facturas",
+      "graceDaysHelp": "Se aplica a las facturas emitidas de ahora en adelante. Las facturas pendientes mantienen su fecha límite actual — extiéndelas individualmente.",
+      "graceDaysSave": "Guardar",
+      "invoicesHeading": "Facturas",
+      "noInvoices": "Aún no hay facturas.",
+      "newInvoice": {
+        "heading": "Crear factura",
+        "periodStart": "Inicio del período",
+        "periodEnd": "Fin del período",
+        "dueOn": "Fecha de vencimiento",
+        "graceDaysPreview": "Días de gracia al emitir: {graceDays} — la fecha límite sería {deadline}.",
+        "submit": "Crear factura"
+      },
+      "invoiceRow": {
+        "period": "{periodStart} – {periodEnd}",
+        "due": "Vence {dueOn}",
+        "deadline": "Fecha límite {deadline}",
+        "paid": "Pagada {paidAt}",
+        "voided": "Anulada: {reason}",
+        "unreviewed": "Sin revisar",
+        "acknowledged": "Revisada",
+        "recordPayment": "Registrar pago",
+        "void": "Anular",
+        "acknowledge": "Marcar como revisada",
+        "extend": "Extender plazo",
+        "extensionDaysLabel": "Nueva extensión total (días)",
+        "noteLabel": "Nota",
+        "confirmVoid": "¿Anular esta factura? Esta acción no se puede deshacer.",
+        "errors": {
+          "noteRequired": "Se requiere una nota.",
+          "reasonRequired": "Se requiere un motivo.",
+          "alreadyResolved": "Esta factura ya está pagada o anulada.",
+          "invalidExtension": "Los días de extensión deben ser un número entero no negativo."
         }
       }
     }

@@ -1117,6 +1117,11 @@
       "searchPlaceholder": "Search by name, slug, or contact",
       "countryPlaceholder": "Country",
       "filterAllStatuses": "All statuses",
+      "filterAllBilling": "All billing",
+      "filterBillingDue": "Due",
+      "filterBillingGraceExpired": "Grace expired",
+      "filterBillingUnreviewed": "Unreviewed",
+      "billingUnreviewedSuffix": "unreviewed",
       "applyFilters": "Apply",
       "empty": {
         "description": "No organizations match these filters."
@@ -1128,6 +1133,7 @@
         "branches": "Branches",
         "students": "Students (active/total)",
         "attendance30d": "Attendance (30d)",
+        "billing": "Billing",
         "actions": "Actions"
       },
       "rowActions": {
@@ -1247,6 +1253,55 @@
         "errors": {
           "cannotRevokeSelf": "You cannot revoke your own access — ask another platform admin.",
           "cannotRevokeLastAdmin": "You cannot revoke the last remaining platform admin."
+        }
+      }
+    }
+  },
+  "billing": {
+    "banner": {
+      "due": "Your account is past due (since {dueOn}). Please arrange payment by {deadline}.",
+      "graceExpired": "Your account is significantly past due (since {dueOn}). The deadline of {deadline} has passed — please contact us as soon as possible."
+    },
+    "status": {
+      "CURRENT": "Current",
+      "DUE": "Due",
+      "GRACE_EXPIRED": "Grace expired"
+    },
+    "detail": {
+      "heading": "Billing",
+      "graceDaysLabel": "Default grace days for new invoices",
+      "graceDaysHelp": "Applies to invoices issued from now on. Outstanding invoices keep their current deadline — extend those individually.",
+      "graceDaysSave": "Save",
+      "invoicesHeading": "Invoices",
+      "noInvoices": "No invoices yet.",
+      "newInvoice": {
+        "heading": "Create invoice",
+        "periodStart": "Period start",
+        "periodEnd": "Period end",
+        "dueOn": "Due date",
+        "graceDaysPreview": "Grace days at issue: {graceDays} — deadline would be {deadline}.",
+        "submit": "Create invoice"
+      },
+      "invoiceRow": {
+        "period": "{periodStart} – {periodEnd}",
+        "due": "Due {dueOn}",
+        "deadline": "Deadline {deadline}",
+        "paid": "Paid {paidAt}",
+        "voided": "Voided: {reason}",
+        "unreviewed": "Unreviewed",
+        "acknowledged": "Acknowledged",
+        "recordPayment": "Record payment",
+        "void": "Void",
+        "acknowledge": "Acknowledge",
+        "extend": "Extend grace",
+        "extensionDaysLabel": "New total extension (days)",
+        "noteLabel": "Note",
+        "confirmVoid": "Void this invoice? This cannot be undone.",
+        "errors": {
+          "noteRequired": "A note is required.",
+          "reasonRequired": "A reason is required.",
+          "alreadyResolved": "This invoice is already paid or voided.",
+          "invalidExtension": "Extension days must be a non-negative whole number."
         }
       }
     }

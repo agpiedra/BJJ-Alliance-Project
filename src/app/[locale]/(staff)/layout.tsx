@@ -14,6 +14,8 @@ import { NotificationBell } from "./dashboard/notification-bell";
 import { getMyNotifications, getUnreadCount } from "./dashboard/notification-actions";
 import { getOrganizationBranding } from "@/lib/branding/get-branding";
 import { BrandingScope } from "@/components/branding/branding-scope";
+import { resolveDirectorBillingBanner } from "@/lib/billing/banner";
+import { BillingBanner } from "./billing-banner";
 
 /**
  * Persistent shell for every staff-facing page (brand redesign Task 2).
@@ -63,6 +65,14 @@ export default async function StaffLayout({ children }: { children: ReactNode })
       redirect(`/${locale}/onboarding`);
     }
   }
+
+  // MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 6 billing — "show a non-blocking
+  // banner to that organization's ADMIN/DIRECTOR only — never to
+  // instructors, students, or the kiosk." `context` above already excludes
+  // STUDENT but still includes INSTRUCTOR, so this needs its own,
+  // narrower role check rather than reusing `context`'s truthiness alone.
+  const canSeeBillingBanner = context && (context.organizationRole === "ADMIN" || context.organizationRole === "DIRECTOR");
+  const billingBanner = canSeeBillingBanner ? await resolveDirectorBillingBanner(context) : null;
 
   // Academy list for the switcher: every academy for ADMIN (org-scoped,
   // unfiltered by branch), or only the academies this DIRECTOR/INSTRUCTOR is
@@ -183,6 +193,7 @@ export default async function StaffLayout({ children }: { children: ReactNode })
             <NotificationBell initialNotifications={notifications} initialUnreadCount={unreadCount} />
           </StaffTopBar>
         )}
+        {billingBanner && <BillingBanner state={billingBanner.state} dueOn={billingBanner.dueOn} deadline={billingBanner.deadline} />}
         {children}
       </div>
     </SidebarProvider>

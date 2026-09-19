@@ -1,5 +1,6 @@
 import { unscopedPrisma } from "@/lib/prisma/unscoped";
 import { deriveInitials, resolvePrimaryTheme, resolveSidebarTheme, type ResolvedPrimaryTheme, type ResolvedSidebarTheme } from "@/lib/theme";
+import { resolveInvoiceState, isUnreviewed } from "@/lib/billing/deadline";
 import type { Academy, OrganizationStatus, Prisma } from "@/generated/prisma/client";
 
 /**
@@ -263,12 +264,26 @@ export interface PlatformOrganizationSummary {
   createdAt: Date;
   approvedAt: Date | null;
   lastActivityAt: Date | null;
+  /** MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 6 billing — the most urgent OPEN
+   * invoice's derived state (GRACE_EXPIRED outranks DUE), or `null` when
+   * every invoice is CURRENT/paid/voided/nonexistent. `billingUnreviewed`
+   * is true only when that invoice is GRACE_EXPIRED and not yet
+   * acknowledged for its current expiration episode — see deadline.ts's
+   * own `isUnreviewed`. */
+  billingState: "DUE" | "GRACE_EXPIRED" | null;
+  billingUnreviewed: boolean;
 }
 
 export interface PlatformOrganizationFilters {
   status?: OrganizationStatus;
   country?: string;
   search?: string;
+  /** "DUE" / "GRACE_EXPIRED" / "unreviewed" (doc: "filters for DUE /
+   * GRACE_EXPIRED / acknowledged, so the overdue set is one click away") —
+   * applied after the derived billing state is computed, since it can't be
+   * expressed as a Prisma `where` clause (it depends on a per-organization
+   * calculation, not a stored column). */
+  billing?: "DUE" | "GRACE_EXPIRED" | "unreviewed";
 }
 
 /**
@@ -304,10 +319,15 @@ export async function listOrganizationsForPlatformAdmin(
       status: true,
       country: true,
       city: true,
+      timezone: true,
       createdAt: true,
       approvedAt: true,
       branding: { select: { logoUrl: true } },
       _count: { select: { academies: true, students: true } },
+      invoices: {
+        where: { paidAt: null, voidedAt: null },
+        select: { dueOn: true, graceDaysApplied: true, graceExtensionDays: true, paidAt: true, voidedAt: true, reviewAcknowledgedForFlaggedOn: true },
+      },
     },
   });
 
@@ -336,22 +356,41 @@ export async function listOrganizationsForPlatformAdmin(
   const attendanceByOrg = new Map(attendanceGroups.map((g) => [g.organizationId, g._count._all]));
   const lastActivityByOrg = new Map(lastActivityGroups.map((g) => [g.organizationId, g._max.occurredAt]));
 
-  return organizations.map((organization) => ({
-    id: organization.id,
-    slug: organization.slug,
-    name: organization.name,
-    status: organization.status,
-    country: organization.country,
-    city: organization.city,
-    logoUrl: organization.branding?.logoUrl ?? null,
-    branchCount: organization._count.academies,
-    studentCount: organization._count.students,
-    activeStudentCount: activeStudentsByOrg.get(organization.id) ?? 0,
-    attendanceLast30Days: attendanceByOrg.get(organization.id) ?? 0,
-    createdAt: organization.createdAt,
-    approvedAt: organization.approvedAt,
-    lastActivityAt: lastActivityByOrg.get(organization.id) ?? null,
-  }));
+  const summaries = organizations.map((organization) => {
+    let billingState: "DUE" | "GRACE_EXPIRED" | null = null;
+    let billingUnreviewed = false;
+    for (const invoice of organization.invoices) {
+      const state = resolveInvoiceState(invoice, organization.timezone);
+      if (state === "CURRENT") continue;
+      if (!billingState || (state === "GRACE_EXPIRED" && billingState === "DUE")) {
+        billingState = state;
+        billingUnreviewed = state === "GRACE_EXPIRED" && isUnreviewed(invoice, organization.timezone);
+      }
+    }
+
+    return {
+      id: organization.id,
+      slug: organization.slug,
+      name: organization.name,
+      status: organization.status,
+      country: organization.country,
+      city: organization.city,
+      logoUrl: organization.branding?.logoUrl ?? null,
+      branchCount: organization._count.academies,
+      studentCount: organization._count.students,
+      activeStudentCount: activeStudentsByOrg.get(organization.id) ?? 0,
+      attendanceLast30Days: attendanceByOrg.get(organization.id) ?? 0,
+      createdAt: organization.createdAt,
+      approvedAt: organization.approvedAt,
+      lastActivityAt: lastActivityByOrg.get(organization.id) ?? null,
+      billingState,
+      billingUnreviewed,
+    };
+  });
+
+  if (!filters.billing) return summaries;
+  if (filters.billing === "unreviewed") return summaries.filter((s) => s.billingUnreviewed);
+  return summaries.filter((s) => s.billingState === filters.billing);
 }
 
 export interface PlatformOverview {
@@ -465,6 +504,14 @@ export async function resolveOrganizationDetailForPlatformAdmin(organizationId: 
       academies: { orderBy: { name: "asc" } },
       promotionConfigs: true,
       memberships: { include: { user: { select: { email: true, active: true } } } },
+      // MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 6 billing — this is the
+      // platform admin's OWN detail page, the one surface `graceDays`/
+      // `graceDaysApplied`/`graceExtensionDays` are explicitly allowed on
+      // (SUPER_ADMIN-only). The director-facing rule ("never a bare
+      // findUnique whose whole row is handed to a component") governs
+      // director surfaces, not this one — see billing/banner.ts for the
+      // actual director-facing DTO that rule applies to.
+      invoices: { orderBy: { dueOn: "desc" } },
     },
   });
 }

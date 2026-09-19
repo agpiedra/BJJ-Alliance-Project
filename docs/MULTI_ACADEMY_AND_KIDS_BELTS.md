@@ -1282,25 +1282,25 @@ Enforce impersonation permissions, read-only mode, and expiration **on the serve
 - [x] The panel's approve action and `scripts/approve-organization.ts` produce identical results (organization status, branch, invitation, and audit row) from identical starting states — both call the same `approveOrganization()`, verified directly, not merely by code inspection.
 - [x] A platform admin cannot revoke their own access, even mid-session; revoking the last remaining platform admin is refused (defense-in-depth; see the `/platform/admins` page description above for why the second case is currently unreachable through this action alone).
 
-### Acceptance criteria — billing (separate PR, not yet implemented)
+### Acceptance criteria — billing
 
-- [ ] An organization one day past `dueOn` is `DUE`, remains ACTIVE, and its kiosk and every page work normally; only its ADMIN/DIRECTOR see the banner.
-- [ ] An invoice due Jan 28 with 5 grace days is `DUE` through Feb 2 inclusive and `GRACE_EXPIRED` from 00:00 org-time on Feb 3 — asserted at each boundary date, evaluated in the organization's timezone, with a test that fails if UTC or server-local time is used.
-- [ ] `graceDays: 0` makes the deadline the due date itself; negative or non-integer values are rejected at validation.
-- [ ] A `GRACE_EXPIRED` organization is still ACTIVE and fully functional, and appears in the admin review queue.
-- [ ] No job, action or code path sets `status = SUSPENDED` from billing state — verified by test.
-- [ ] Changing `Organization.graceDays` leaves every outstanding invoice's deadline unchanged, and applies to the next invoice issued — asserted with an invoice open at the time of the change.
-- [ ] Extending an outstanding invoice moves its deadline, and an extension past today returns it from `GRACE_EXPIRED` to `DUE` and clears the review flag.
-- [ ] A DIRECTOR cannot read or write `graceDays` or `graceExtensionDays` through any route or server action; both are SUPER_ADMIN-only and audited with before/after values and the actor.
-- [ ] `graceDays`, `graceDaysApplied`, `graceExtensionDays` and the review fields appear nowhere in a director-facing **serialized payload** — asserted against route-handler JSON and the RSC payload/server-action return values, not against the rendered DOM.
-- [ ] Acknowledging a flagged invoice with a note removes it from the unreviewed queue while leaving it `GRACE_EXPIRED`, unpaid, present in the outstanding-invoices view and in overdue totals, with the director's banner unchanged.
-- [ ] Acknowledge → extend (invoice returns to `DUE`) → let the new deadline pass: the invoice reappears as a **fresh unreviewed item**, because `reviewAcknowledgedForFlaggedOn` no longer matches the new `flaggedFrom`.
-- [ ] Expiration begins exactly at midnight: at `23:59:59.999` org-time on `graceEndsOn` the invoice is `DUE`, and at `00:00:00.000` on the next day it is `GRACE_EXPIRED`. Both instants asserted.
-- [ ] Acknowledgment-key equality is compared by canonical date value: a test that acknowledges and then re-reads with a freshly constructed equivalent date still shows the invoice as reviewed (this fails if `Date` object identity or reference comparison is used anywhere in the path).
-- [ ] Invoices are only ever created by a SUPER_ADMIN action; no job or cron creates one — verified by test. Creation snapshots `graceDays` into `graceDaysApplied` and is audited.
-- [ ] With no code running in between, an unpaid invoice's state still moves `CURRENT → DUE → GRACE_EXPIRED` purely as dates pass (evaluated on read), and no invoice is marked paid and no organization suspended as a result.
-- [ ] Recording a payment clears the banner and flag and writes an audit row.
-- [ ] Platform billing fields and UI are entirely separate from the student Pagos section; no shared model or route.
+- [x] An organization one day past `dueOn` is `DUE`, remains ACTIVE, and its kiosk and every page work normally; only its ADMIN/DIRECTOR see the banner.
+- [x] An invoice due Jan 28 with 5 grace days is `DUE` through Feb 2 inclusive and `GRACE_EXPIRED` from 00:00 org-time on Feb 3 — asserted at each boundary date, evaluated in the organization's timezone, with a test that fails if UTC or server-local time is used.
+- [x] `graceDays: 0` makes the deadline the due date itself; negative or non-integer values are rejected at validation.
+- [x] A `GRACE_EXPIRED` organization is still ACTIVE and fully functional, and appears in the admin review queue.
+- [x] No job, action or code path sets `status = SUSPENDED` from billing state — verified by test.
+- [x] Changing `Organization.graceDays` leaves every outstanding invoice's deadline unchanged, and applies to the next invoice issued — asserted with an invoice open at the time of the change.
+- [x] Extending an outstanding invoice moves its deadline, and an extension past today returns it from `GRACE_EXPIRED` to `DUE` and clears the review flag.
+- [x] A DIRECTOR cannot read or write `graceDays` or `graceExtensionDays` through any route or server action; both are SUPER_ADMIN-only and audited with before/after values and the actor.
+- [x] `graceDays`, `graceDaysApplied`, `graceExtensionDays` and the review fields appear nowhere in a director-facing **serialized payload** — asserted against route-handler JSON and the RSC payload/server-action return values, not against the rendered DOM.
+- [x] Acknowledging a flagged invoice with a note removes it from the unreviewed queue while leaving it `GRACE_EXPIRED`, unpaid, present in the outstanding-invoices view and in overdue totals, with the director's banner unchanged.
+- [x] Acknowledge → extend (invoice returns to `DUE`) → let the new deadline pass: the invoice reappears as a **fresh unreviewed item**, because `reviewAcknowledgedForFlaggedOn` no longer matches the new `flaggedFrom`.
+- [x] Expiration begins exactly at midnight: at `23:59:59.999` org-time on `graceEndsOn` the invoice is `DUE`, and at `00:00:00.000` on the next day it is `GRACE_EXPIRED`. Both instants asserted.
+- [x] Acknowledgment-key equality is compared by canonical date value: a test that acknowledges and then re-reads with a freshly constructed equivalent date still shows the invoice as reviewed (this fails if `Date` object identity or reference comparison is used anywhere in the path).
+- [x] Invoices are only ever created by a SUPER_ADMIN action; no job or cron creates one — verified by test. Creation snapshots `graceDays` into `graceDaysApplied` and is audited.
+- [x] With no code running in between, an unpaid invoice's state still moves `CURRENT → DUE → GRACE_EXPIRED` purely as dates pass (evaluated on read), and no invoice is marked paid and no organization suspended as a result.
+- [x] Recording a payment clears the banner and flag and writes an audit row.
+- [x] Platform billing fields and UI are entirely separate from the student Pagos section; no shared model or route.
 
 ### Implementation record
 
@@ -1320,7 +1320,17 @@ Enforce impersonation permissions, read-only mode, and expiration **on the serve
 
 **Two things flagged, not silently built or silently dropped:** impersonation (its own open question, above) and a director-facing audit view (its own known-future-need note, above). Both were named in the original doc text or implied by existing audit infrastructure; neither is delivered in this phase.
 
-**Billing is its own PR**, as decided during the brainstorm — its acceptance criteria are listed above but unchecked; nothing in this section's own scope (organizations, approval, audit, authorization) depends on it.
+**Billing shipped as its own PR**, as decided during the brainstorm — its own Implementation record entries follow.
+
+**`src/lib/billing/deadline.ts` is the one place every derived billing value is computed — nothing is stored.** `resolveInvoiceState`/`graceEndsOn`/`flaggedFrom`/`isUnreviewed`/`toDateKey` are pure functions taking `timezone` as an explicit parameter (never a default), so a caller cannot accidentally reach for `America/Costa_Rica` when the invoice belongs to a different organization. Verified against the doc's own exact worked example (Jan 28 due date, 5 grace days → `DUE` through Feb 2 inclusive, `GRACE_EXPIRED` from Feb 3 00:00:00.000) as a direct unit test, not inferred from the formula reading correctly.
+
+**The director-facing DTO (`src/lib/billing/banner.ts`) is a genuinely separate function from the platform admin's own read (`platform-lookups.ts`'s `resolveOrganizationDetailForPlatformAdmin`), not the same data with fields hidden at render time.** `DirectorBillingBanner` has exactly three fields — `state`, `dueOn`, `deadline` — and the function that produces it never reads `graceDays`/`graceDaysApplied`/`graceExtensionDays`/`reviewAcknowledgedForFlaggedOn` past the point they're needed to compute those three values. Asserted directly against the object's own `Object.keys()`, not against the rendered DOM, per the doc's own explicit instruction on what "not visible to directors" has to mean.
+
+**One pre-existing gap found and fixed while checking the doc for staleness before implementing:** `onboarding/page.tsx`'s own `prisma.organization.findUniqueOrThrow` had no `select` at all — the entire `Organization` row was pulled into a director-facing server component's scope, safe today only because nobody happened to spread the whole object into a client prop. Tightened to an explicit 4-field `select` (the only fields this file ever reads) before `graceDays`/`billingNote` existed to make the gap consequential — the doc's own "select explicit field lists for organization reads on director surfaces" rule, applied to a call site that predated the rule.
+
+**The admin organizations list's new billing column/filter computes state via one extra `invoices` include per query, not a query per organization** — same reasoning as the existing `branchCount`/`studentCount` aggregates on that same list (`listOrganizationsForPlatformAdmin`'s own doc comment).
+
+**Billing never touches `Organization.status`, by construction, not by convention.** Every billing action (`billing-actions.ts`) writes only `OrganizationInvoice` or `Organization.graceDays`/`billingNote` — none of them reaches the `status` column at all, verified directly by a test that deeply expires an invoice and confirms the organization is still `ACTIVE` throughout.
 
 ---
 
