@@ -2,6 +2,18 @@ import path from "node:path";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vitest/config";
 
+// Deliberately hostile to every timezone this codebase actually seeds
+// (Central America, UTC-6, no DST) — a test that passes only because the
+// machine running it happens to share an offset with the fixture data is
+// agreeing with its environment, not asserting anything. UTC-only isn't
+// enough: it's just 6 hours off and shares a date boundary with UTC-6 far
+// too often to catch calendar-date bugs. Pacific/Kiritimati (UTC+14) is 20
+// hours away and almost never on the same calendar date. Per Vitest's own
+// docs (docs/guide/common-errors.md "Time Zone Does Not Change in Worker
+// Threads"), TZ must be set here, in the main process before worker pools
+// start — `test.env` has no effect under the default `pool: 'threads'`.
+process.env.TZ = "Pacific/Kiritimati";
+
 export default defineConfig({
   plugins: [react()],
   test: {

@@ -2,6 +2,11 @@ import path from "node:path";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vitest/config";
 
+// See vitest.config.ts's own comment on this exact line for the full
+// reasoning — same hostile zone, same reason it must be set here (main
+// process, before worker pools start) rather than via `test.env`.
+process.env.TZ = "Pacific/Kiritimati";
+
 /**
  * Separate from vitest.config.ts (used by `pnpm test:unit`, which never
  * touches a database and must not require TEST_DATABASE_URL) specifically so

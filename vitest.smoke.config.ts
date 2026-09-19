@@ -1,6 +1,14 @@
 import path from "node:path";
 import { defineConfig } from "vitest/config";
 
+// See vitest.config.ts's own comment on this exact line for the full
+// reasoning. Note this only hostile-zones the test-runner process itself —
+// the app server this suite hits (started separately, e.g. `pnpm dev`)
+// keeps whatever TZ launched it in. That's fine today (this suite asserts
+// HTTP status codes, not dates), but is a real limit if a smoke test ever
+// needs to assert date-dependent rendered content.
+process.env.TZ = "Pacific/Kiritimati";
+
 /**
  * Separate from both vitest.config.ts and vitest.integration.config.ts:
  * this suite makes real HTTP requests against an ALREADY-RUNNING `next
