@@ -28,6 +28,7 @@ interface OrganizationsSearchParams {
   status?: string;
   country?: string;
   q?: string;
+  billing?: string;
 }
 
 export default async function PlatformOrganizationsPage({
@@ -41,12 +42,15 @@ export default async function PlatformOrganizationsPage({
   const query = await searchParams;
   const t = await getTranslations("platform.organizations");
   const tStatus = await getTranslations("platform.status");
+  const tBillingStatus = await getTranslations("billing.status");
 
   const status = query.status && query.status !== "ALL" ? (query.status as OrganizationStatus) : undefined;
+  const billing = query.billing && query.billing !== "ALL" ? (query.billing as "DUE" | "GRACE_EXPIRED" | "unreviewed") : undefined;
   const organizations = await listOrganizationsForPlatformAdmin({
     status,
     country: query.country || undefined,
     search: query.q || undefined,
+    billing,
   });
 
   return (
@@ -66,6 +70,12 @@ export default async function PlatformOrganizationsPage({
             <option value="CANCELLED">{tStatus("CANCELLED")}</option>
           </FilterBarSelect>
           <FilterBarSearch name="country" placeholder={t("countryPlaceholder")} defaultValue={query.country ?? ""} />
+          <FilterBarSelect name="billing" defaultValue={query.billing ?? "ALL"}>
+            <option value="ALL">{t("filterAllBilling")}</option>
+            <option value="DUE">{t("filterBillingDue")}</option>
+            <option value="GRACE_EXPIRED">{t("filterBillingGraceExpired")}</option>
+            <option value="unreviewed">{t("filterBillingUnreviewed")}</option>
+          </FilterBarSelect>
           <button type="submit" className="text-sm underline">
             {t("applyFilters")}
           </button>
@@ -84,6 +94,7 @@ export default async function PlatformOrganizationsPage({
               <DataTableHeaderCell>{t("columns.branches")}</DataTableHeaderCell>
               <DataTableHeaderCell>{t("columns.students")}</DataTableHeaderCell>
               <DataTableHeaderCell>{t("columns.attendance30d")}</DataTableHeaderCell>
+              <DataTableHeaderCell>{t("columns.billing")}</DataTableHeaderCell>
               <DataTableHeaderCell>{t("columns.actions")}</DataTableHeaderCell>
             </DataTableHeaderRow>
           </DataTableHead>
@@ -108,6 +119,16 @@ export default async function PlatformOrganizationsPage({
                   {organization.activeStudentCount} / {organization.studentCount}
                 </DataTableCell>
                 <DataTableCell>{organization.attendanceLast30Days}</DataTableCell>
+                <DataTableCell>
+                  {organization.billingState ? (
+                    <Pill variant={organization.billingState === "GRACE_EXPIRED" ? "bad" : "warn"}>
+                      {tBillingStatus(organization.billingState)}
+                      {organization.billingUnreviewed ? ` · ${t("billingUnreviewedSuffix")}` : ""}
+                    </Pill>
+                  ) : (
+                    <Pill variant="ok">{tBillingStatus("CURRENT")}</Pill>
+                  )}
+                </DataTableCell>
                 <DataTableCell>
                   <RowActions organizationId={organization.id} status={organization.status} />
                 </DataTableCell>

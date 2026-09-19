@@ -3,7 +3,9 @@ import { getTranslations } from "next-intl/server";
 import { Card, CardContent } from "@/components/ui/card";
 import { Pill } from "@/components/ui/pill";
 import { resolveOrganizationAuditTrail, resolveOrganizationDetailForPlatformAdmin } from "@/lib/tenant/platform-lookups";
+import { resolveInvoiceState, graceEndsOn, isUnreviewed } from "@/lib/billing/deadline";
 import { DangerZone } from "./danger-zone";
+import { BillingSection, type BillingInvoiceRow } from "./billing-section";
 
 export const dynamic = "force-dynamic";
 
@@ -26,6 +28,24 @@ export default async function OrganizationDetailPage({ params }: { params: Promi
   if (!organization) notFound();
 
   const auditTrail = await resolveOrganizationAuditTrail(id);
+
+  // MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 6 billing — every derived value
+  // computed here, server-side, in the organization's own timezone, and
+  // handed to the client component as plain data. The client component
+  // only renders and dispatches actions; it never re-derives state itself.
+  const invoiceRows: BillingInvoiceRow[] = organization.invoices.map((invoice) => ({
+    id: invoice.id,
+    periodStart: invoice.periodStart.toISOString().slice(0, 10),
+    periodEnd: invoice.periodEnd.toISOString().slice(0, 10),
+    dueOn: invoice.dueOn.toISOString().slice(0, 10),
+    deadline: graceEndsOn(invoice, organization.timezone).toISODate()!,
+    state: resolveInvoiceState(invoice, organization.timezone),
+    paidAt: invoice.paidAt ? invoice.paidAt.toISOString().slice(0, 10) : null,
+    voidedAt: invoice.voidedAt ? invoice.voidedAt.toISOString().slice(0, 10) : null,
+    voidReason: invoice.voidReason,
+    unreviewed: isUnreviewed(invoice, organization.timezone),
+    reviewAcknowledgedAt: invoice.reviewAcknowledgedAt ? invoice.reviewAcknowledgedAt.toISOString().slice(0, 10) : null,
+  }));
 
   return (
     <>
@@ -135,6 +155,8 @@ export default async function OrganizationDetailPage({ params }: { params: Promi
           )}
         </CardContent>
       </Card>
+
+      <BillingSection organizationId={organization.id} graceDays={organization.graceDays} invoices={invoiceRows} />
 
       <Card>
         <CardContent>

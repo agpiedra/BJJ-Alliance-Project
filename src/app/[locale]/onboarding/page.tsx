@@ -37,7 +37,16 @@ export default async function OnboardingPage({
   const context = await requireTenantContext(["ADMIN", "DIRECTOR"]);
   const t = await getTranslations("onboarding");
 
-  const organization = await prisma.organization.findUniqueOrThrow({ where: { id: context.organizationId } });
+  // MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 6 billing — "Select explicit
+  // field lists for organization reads on director surfaces; never...
+  // a bare findUnique whose whole row is handed to a component." Only
+  // these 4 fields are ever read from this row (below); an explicit
+  // select means a future billing field (graceDays, billingNote) can
+  // never leak into this server component's scope by accident.
+  const organization = await prisma.organization.findUniqueOrThrow({
+    where: { id: context.organizationId },
+    select: { onboardingCompletedAt: true, onboardingStep: true, name: true, slug: true },
+  });
 
   // Idempotent and non-reentrant (doc): once completed, this page only ever
   // redirects away — nothing here is lost or reset by visiting it again.
