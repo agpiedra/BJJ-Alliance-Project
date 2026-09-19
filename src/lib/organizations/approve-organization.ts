@@ -49,6 +49,21 @@ export async function approveOrganization(orgSlug: string, approvedById: string)
       where: { id: organization.id },
       data: { status: "ACTIVE", approvedAt: new Date(), approvedById },
     });
+    // MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 6 — audited here, inside the
+    // one shared function, so both scripts/approve-organization.ts and the
+    // platform panel's own approve action get this "for free," identically,
+    // rather than each caller having to remember to audit its own call.
+    await prisma.auditLog.create({
+      data: {
+        actorId: approvedById,
+        organizationId: organization.id,
+        action: "organization.approve",
+        entityType: "Organization",
+        entityId: organization.id,
+        before: { status: "PENDING" },
+        after: { status: "ACTIVE" },
+      },
+    });
   }
 
   // Step 3: default branch, named after the city — Academy.slug is

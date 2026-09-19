@@ -156,6 +156,7 @@ export async function updateStudent(
       await tx.auditLog.create({
         data: {
           actorId: context.actorUserId,
+          organizationId: student.organizationId,
           academyId: student.homeAcademyId,
           action: "student.update",
           entityType: "Student",
@@ -229,6 +230,7 @@ export async function archiveStudent(
       await tx.auditLog.create({
         data: {
           actorId: context.actorUserId,
+          organizationId: student.organizationId,
           academyId: student.homeAcademyId,
           action: "student.archive",
           entityType: "Student",
@@ -306,6 +308,7 @@ export async function approveStudent(
       await tx.auditLog.create({
         data: {
           actorId: context.actorUserId,
+          organizationId: student.organizationId,
           academyId: student.homeAcademyId,
           action: "student.approve",
           entityType: "Student",
@@ -382,6 +385,7 @@ export async function regenerateStudentCode(
       await tx.auditLog.create({
         data: {
           actorId: context.actorUserId,
+          organizationId: student.organizationId,
           academyId: student.homeAcademyId,
           action: "student.regenerateCode",
           entityType: "Student",

@@ -124,6 +124,7 @@ export async function reassignAttendance(
         await tx.auditLog.create({
           data: {
             actorId: opts.actorUserId,
+            organizationId: opts.context.organizationId,
             academyId: record.academyId,
             action: "attendance.reassign",
             entityType: "AttendanceRecord",

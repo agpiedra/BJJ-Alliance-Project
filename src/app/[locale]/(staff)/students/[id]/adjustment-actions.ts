@@ -112,6 +112,7 @@ export async function addAttendanceAdjustment(
     await tx.auditLog.create({
       data: {
         actorId: context.actorUserId,
+        organizationId: context.organizationId,
         academyId: student.homeAcademyId,
         action: "attendance.adjustment",
         entityType: "AttendanceRecord",

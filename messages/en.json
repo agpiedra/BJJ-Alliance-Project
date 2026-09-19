@@ -1080,5 +1080,175 @@
       "title": "Weekly digest — {academyName}",
       "body": "{academyName}: {attendanceCount} check-ins in the last 7 days, {inactiveCount} students inactive 30+ days, {overduePayments} overdue payments."
     }
+  },
+  "platform": {
+    "nav": {
+      "overview": "Overview",
+      "organizations": "Organizations",
+      "admins": "Platform admins",
+      "signOut": "Sign out"
+    },
+    "status": {
+      "PENDING": "Pending",
+      "ACTIVE": "Active",
+      "SUSPENDED": "Suspended",
+      "CANCELLED": "Cancelled"
+    },
+    "overview": {
+      "heading": "Platform overview",
+      "pendingCallout": "{count, plural, one {# organization awaiting approval} other {# organizations awaiting approval}}",
+      "pendingCalloutLink": "Review pending",
+      "stats": {
+        "active": "Active",
+        "pending": "Pending",
+        "suspended": "Suspended",
+        "cancelled": "Cancelled",
+        "totalStudents": "Total students",
+        "newThisMonth": "New this month"
+      },
+      "attendanceTrend": {
+        "heading": "Attendance across the platform",
+        "empty": "Not enough recorded attendance yet to show a trend.",
+        "countLabel": "check-ins"
+      }
+    },
+    "organizations": {
+      "heading": "Organizations",
+      "searchPlaceholder": "Search by name, slug, or contact",
+      "countryPlaceholder": "Country",
+      "filterAllStatuses": "All statuses",
+      "applyFilters": "Apply",
+      "empty": {
+        "description": "No organizations match these filters."
+      },
+      "columns": {
+        "name": "Name",
+        "status": "Status",
+        "location": "Location",
+        "branches": "Branches",
+        "students": "Students (active/total)",
+        "attendance30d": "Attendance (30d)",
+        "actions": "Actions"
+      },
+      "rowActions": {
+        "suspend": "Suspend",
+        "reactivate": "Reactivate",
+        "confirmSuspend": "Suspend this organization? Its members will lose access on their next request."
+      },
+      "pending": {
+        "heading": "Pending approval",
+        "empty": {
+          "description": "No organizations are currently awaiting approval."
+        },
+        "fields": {
+          "location": "Location",
+          "contact": "Contact",
+          "email": "Email",
+          "phone": "Phone",
+          "studentCount": "Student count",
+          "referralSource": "Referral source"
+        },
+        "rowActions": {
+          "approve": "Approve",
+          "reject": "Reject",
+          "confirmReject": "Confirm rejection",
+          "cancel": "Cancel",
+          "rejectNotePlaceholder": "Reason for rejection (internal note)",
+          "noteRequired": "A reason is required to reject."
+        }
+      },
+      "new": {
+        "heading": "Register an organization manually",
+        "fields": {
+          "organizationName": "Academy name",
+          "desiredSlug": "URL slug",
+          "country": "Country",
+          "city": "City",
+          "directorEmail": "Director's email",
+          "contactName": "Contact name",
+          "contactPhone": "Phone",
+          "studentCountBand": "Student count",
+          "preferredLocale": "Preferred language",
+          "promotionMode": "Promotion mode"
+        },
+        "promotionModes": {
+          "ATTENDANCE": "Attendance-based",
+          "TIME": "Time-based",
+          "MANUAL": "Manual only"
+        },
+        "errors": {
+          "invalid": "Please check the highlighted fields.",
+          "slugTaken": "That URL slug is already taken."
+        },
+        "submit": "Create organization"
+      },
+      "detail": {
+        "fields": {
+          "location": "Location",
+          "contact": "Contact",
+          "created": "Created",
+          "approved": "Approved",
+          "internalNotes": "Internal notes"
+        },
+        "branding": {
+          "heading": "Branding",
+          "displayName": "Display name",
+          "hasLogo": "Logo uploaded",
+          "noLogo": "No logo uploaded"
+        },
+        "branches": {
+          "heading": "{count, plural, one {# branch} other {# branches}}",
+          "active": "active",
+          "inactive": "inactive"
+        },
+        "members": {
+          "heading": "{count, plural, one {# member} other {# members}}",
+          "inactive": "inactive"
+        },
+        "promotionRules": {
+          "heading": "Promotion rules"
+        },
+        "auditTrail": {
+          "heading": "Audit trail",
+          "empty": "No audit entries yet."
+        },
+        "dangerZone": {
+          "heading": "Danger zone",
+          "suspend": "Suspend",
+          "reactivate": "Reactivate",
+          "cancel": "Cancel organization",
+          "cancelNotePlaceholder": "Reason for cancellation (internal note)",
+          "confirmSuspend": "Suspend this organization? Its members will lose access on their next request.",
+          "confirmCancel": "This permanently cancels the organization. Continue?",
+          "confirmCancelButton": "Confirm cancellation",
+          "cancelDialogCancel": "Never mind",
+          "noteRequired": "A reason is required to cancel.",
+          "alreadyCancelled": "This organization has already been cancelled."
+        }
+      }
+    },
+    "admins": {
+      "heading": "Platform admins",
+      "description": "isSuperAdmin grants access to every /platform route across every organization. Grant it deliberately.",
+      "grant": {
+        "heading": "Grant access",
+        "emailLabel": "User's email",
+        "submit": "Grant",
+        "errors": {
+          "userNotFound": "No user exists with that email.",
+          "alreadyGranted": "That user is already a platform admin."
+        }
+      },
+      "list": {
+        "heading": "{count, plural, one {# platform admin} other {# platform admins}}",
+        "inactive": "inactive",
+        "revoke": "Revoke",
+        "confirmRevoke": "Revoke this user's platform admin access?",
+        "errors": {
+          "cannotRevokeSelf": "You cannot revoke your own access — ask another platform admin.",
+          "cannotRevokeLastAdmin": "You cannot revoke the last remaining platform admin."
+        }
+      }
+    }
   }
 }

@@ -129,10 +129,17 @@ export async function saveBrandingTheme(
 const LOGO_UPLOAD_WINDOW_MINUTES = 10;
 const LOGO_UPLOAD_MAX_PER_WINDOW = 10;
 
-async function isLogoUploadRateLimited(actorUserId: string): Promise<boolean> {
+async function isLogoUploadRateLimited(actorUserId: string, organizationId: string): Promise<boolean> {
   const windowStart = new Date(Date.now() - LOGO_UPLOAD_WINDOW_MINUTES * 60 * 1000);
+  // MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 6 — `organizationId` added here
+  // when AuditLog joined TENANT_SCOPED_MODELS; this is exactly the read the
+  // investigation was for: a `count()` keyed only on `actorId` had no
+  // organizationId anywhere, invisible to the guard right up until AuditLog
+  // became scoped. Narrowing by organization is also the more correct
+  // semantic — a director who belongs to two organizations shouldn't have
+  // an upload flood in one count against their limit in the other.
   const count = await prisma.auditLog.count({
-    where: { actorId: actorUserId, action: "organizationBranding.logoUpload", createdAt: { gte: windowStart } },
+    where: { actorId: actorUserId, organizationId, action: "organizationBranding.logoUpload", createdAt: { gte: windowStart } },
   });
   return count >= LOGO_UPLOAD_MAX_PER_WINDOW;
 }
@@ -158,7 +165,7 @@ export async function uploadBrandingLogo(
   if (!auth.ok) return { error: "notFound" };
   const context = auth.context;
 
-  if (await isLogoUploadRateLimited(context.actorUserId)) {
+  if (await isLogoUploadRateLimited(context.actorUserId, context.organizationId)) {
     return { error: "rateLimited" };
   }
 

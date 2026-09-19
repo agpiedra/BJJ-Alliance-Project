@@ -1080,5 +1080,175 @@
       "title": "Resumen semanal — {academyName}",
       "body": "{academyName}: {attendanceCount} asistencias en los últimos 7 días, {inactiveCount} estudiantes inactivos por 30+ días, {overduePayments} pagos atrasados."
     }
+  },
+  "platform": {
+    "nav": {
+      "overview": "Resumen",
+      "organizations": "Academias",
+      "admins": "Administradores de plataforma",
+      "signOut": "Cerrar sesión"
+    },
+    "status": {
+      "PENDING": "Pendiente",
+      "ACTIVE": "Activa",
+      "SUSPENDED": "Suspendida",
+      "CANCELLED": "Cancelada"
+    },
+    "overview": {
+      "heading": "Resumen de la plataforma",
+      "pendingCallout": "{count, plural, one {# academia esperando aprobación} other {# academias esperando aprobación}}",
+      "pendingCalloutLink": "Revisar pendientes",
+      "stats": {
+        "active": "Activas",
+        "pending": "Pendientes",
+        "suspended": "Suspendidas",
+        "cancelled": "Canceladas",
+        "totalStudents": "Total de alumnos",
+        "newThisMonth": "Nuevas este mes"
+      },
+      "attendanceTrend": {
+        "heading": "Asistencia en toda la plataforma",
+        "empty": "Aún no hay suficiente asistencia registrada para mostrar una tendencia.",
+        "countLabel": "asistencias"
+      }
+    },
+    "organizations": {
+      "heading": "Academias",
+      "searchPlaceholder": "Buscar por nombre, slug o contacto",
+      "countryPlaceholder": "País",
+      "filterAllStatuses": "Todos los estados",
+      "applyFilters": "Aplicar",
+      "empty": {
+        "description": "Ninguna academia coincide con estos filtros."
+      },
+      "columns": {
+        "name": "Nombre",
+        "status": "Estado",
+        "location": "Ubicación",
+        "branches": "Sedes",
+        "students": "Alumnos (activos/total)",
+        "attendance30d": "Asistencia (30d)",
+        "actions": "Acciones"
+      },
+      "rowActions": {
+        "suspend": "Suspender",
+        "reactivate": "Reactivar",
+        "confirmSuspend": "¿Suspender esta academia? Sus miembros perderán acceso en su próxima solicitud."
+      },
+      "pending": {
+        "heading": "Pendientes de aprobación",
+        "empty": {
+          "description": "Ninguna academia está esperando aprobación actualmente."
+        },
+        "fields": {
+          "location": "Ubicación",
+          "contact": "Contacto",
+          "email": "Correo",
+          "phone": "Teléfono",
+          "studentCount": "Cantidad de alumnos",
+          "referralSource": "Cómo se enteraron"
+        },
+        "rowActions": {
+          "approve": "Aprobar",
+          "reject": "Rechazar",
+          "confirmReject": "Confirmar rechazo",
+          "cancel": "Cancelar",
+          "rejectNotePlaceholder": "Motivo del rechazo (nota interna)",
+          "noteRequired": "Se requiere un motivo para rechazar."
+        }
+      },
+      "new": {
+        "heading": "Registrar una academia manualmente",
+        "fields": {
+          "organizationName": "Nombre de la academia",
+          "desiredSlug": "Slug de URL",
+          "country": "País",
+          "city": "Ciudad",
+          "directorEmail": "Correo del director",
+          "contactName": "Nombre de contacto",
+          "contactPhone": "Teléfono",
+          "studentCountBand": "Cantidad de alumnos",
+          "preferredLocale": "Idioma preferido",
+          "promotionMode": "Modo de promoción"
+        },
+        "promotionModes": {
+          "ATTENDANCE": "Por asistencia",
+          "TIME": "Por tiempo",
+          "MANUAL": "Solo manual"
+        },
+        "errors": {
+          "invalid": "Revisa los campos marcados.",
+          "slugTaken": "Ese slug de URL ya está en uso."
+        },
+        "submit": "Crear academia"
+      },
+      "detail": {
+        "fields": {
+          "location": "Ubicación",
+          "contact": "Contacto",
+          "created": "Creada",
+          "approved": "Aprobada",
+          "internalNotes": "Notas internas"
+        },
+        "branding": {
+          "heading": "Marca",
+          "displayName": "Nombre visible",
+          "hasLogo": "Logo cargado",
+          "noLogo": "Sin logo cargado"
+        },
+        "branches": {
+          "heading": "{count, plural, one {# sede} other {# sedes}}",
+          "active": "activa",
+          "inactive": "inactiva"
+        },
+        "members": {
+          "heading": "{count, plural, one {# miembro} other {# miembros}}",
+          "inactive": "inactivo"
+        },
+        "promotionRules": {
+          "heading": "Reglas de promoción"
+        },
+        "auditTrail": {
+          "heading": "Registro de auditoría",
+          "empty": "Aún no hay entradas de auditoría."
+        },
+        "dangerZone": {
+          "heading": "Zona de riesgo",
+          "suspend": "Suspender",
+          "reactivate": "Reactivar",
+          "cancel": "Cancelar academia",
+          "cancelNotePlaceholder": "Motivo de la cancelación (nota interna)",
+          "confirmSuspend": "¿Suspender esta academia? Sus miembros perderán acceso en su próxima solicitud.",
+          "confirmCancel": "Esto cancela la academia permanentemente. ¿Continuar?",
+          "confirmCancelButton": "Confirmar cancelación",
+          "cancelDialogCancel": "No, gracias",
+          "noteRequired": "Se requiere un motivo para cancelar.",
+          "alreadyCancelled": "Esta academia ya fue cancelada."
+        }
+      }
+    },
+    "admins": {
+      "heading": "Administradores de plataforma",
+      "description": "isSuperAdmin otorga acceso a cada ruta /platform en todas las academias. Otórgalo con criterio.",
+      "grant": {
+        "heading": "Otorgar acceso",
+        "emailLabel": "Correo del usuario",
+        "submit": "Otorgar",
+        "errors": {
+          "userNotFound": "No existe ningún usuario con ese correo.",
+          "alreadyGranted": "Ese usuario ya es administrador de plataforma."
+        }
+      },
+      "list": {
+        "heading": "{count, plural, one {# administrador de plataforma} other {# administradores de plataforma}}",
+        "inactive": "inactivo",
+        "revoke": "Revocar",
+        "confirmRevoke": "¿Revocar el acceso de administrador de plataforma de este usuario?",
+        "errors": {
+          "cannotRevokeSelf": "No puedes revocar tu propio acceso — pide a otro administrador de plataforma que lo haga.",
+          "cannotRevokeLastAdmin": "No puedes revocar al último administrador de plataforma restante."
+        }
+      }
+    }
   }
 }

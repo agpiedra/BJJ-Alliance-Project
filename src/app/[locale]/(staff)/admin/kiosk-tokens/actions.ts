@@ -76,6 +76,7 @@ export async function regenerateKioskToken(
     await tx.auditLog.create({
       data: {
         actorId: context.actorUserId,
+        organizationId: context.organizationId,
         academyId: academy.id,
         action: "academy.regenerateKioskToken",
         entityType: "Academy",

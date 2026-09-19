@@ -3,7 +3,7 @@
 import { z } from "zod";
 import { headers } from "next/headers";
 import { prisma } from "@/lib/prisma";
-import { ADULT_RANKS, KIDS_RANKS, KIDS_BAR } from "@/lib/organizations/default-belt-ranks";
+import { seedOrganizationDefaults } from "@/lib/organizations/seed-defaults";
 import { sendTransactionalEmail } from "@/lib/email/send-transactional-email";
 import type { ActionState } from "@/lib/action-state";
 
@@ -196,59 +196,10 @@ export async function registerOrganization(_prevState: RegistrationState, formDa
       },
     });
 
-    // Branding defaults — same shape as the transactional create documented
-    // on OrganizationBranding's own schema doc comment ("created in the
-    // same transaction as the Organization").
-    await tx.organizationBranding.create({ data: { organizationId: organization.id } });
-
-    // Both seeded rank catalogs, from the same single source of truth
-    // Alliance's own seed uses (src/lib/organizations/default-belt-ranks.ts)
-    // — see that module's own doc comment for why there is exactly one copy
-    // of this data.
-    await tx.beltRank.createMany({
-      data: ADULT_RANKS.map((rank) => ({
-        organizationId: organization.id,
-        track: "ADULT" as const,
-        code: rank.code,
-        labelEs: rank.labelEs,
-        labelEn: rank.labelEn,
-        order: rank.order,
-        maxStripes: rank.maxStripes,
-        attendancesPerStripe: rank.attendancesPerStripe,
-        attendancesForExam: rank.attendancesForExam,
-        isTerminal: rank.isTerminal,
-        primaryColor: rank.primaryColor,
-        barColor: rank.barColor,
-        stripeColors: Array.from({ length: rank.maxStripes }, () => "#FFFFFF"),
-        visibleStripeSlots: 4,
-      })),
-    });
-    await tx.promotionConfig.create({
-      data: { organizationId: organization.id, track: "ADULT", mode: "ATTENDANCE", requiresCoachApproval: true },
-    });
-
-    await tx.beltRank.createMany({
-      data: KIDS_RANKS.map((rank) => ({
-        organizationId: organization.id,
-        track: "KIDS" as const,
-        code: rank.code,
-        labelEs: rank.labelEs,
-        labelEn: rank.labelEn,
-        order: rank.order,
-        maxStripes: rank.maxStripes,
-        attendancesPerStripe: 10,
-        attendancesForExam: 10,
-        isTerminal: rank.isTerminal,
-        primaryColor: rank.primaryColor,
-        centerStripeColor: rank.centerStripeColor ?? null,
-        barColor: KIDS_BAR,
-        stripeColors: rank.stripeColors,
-        visibleStripeSlots: 4,
-      })),
-    });
-    await tx.promotionConfig.create({
-      data: { organizationId: organization.id, track: "KIDS", mode: "ATTENDANCE", requiresCoachApproval: true },
-    });
+    // Branding defaults + both seeded rank catalogs — extracted into
+    // seed-defaults.ts (see its own doc comment) once Phase 6's manual
+    // organization creation needed the exact same seeding.
+    await seedOrganizationDefaults(tx, organization.id);
 
     return organization.id;
   });

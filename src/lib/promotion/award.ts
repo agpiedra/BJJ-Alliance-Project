@@ -118,6 +118,7 @@ export async function writeAward(params: WriteAwardParams): Promise<{ ok: true }
       await tx.auditLog.create({
         data: {
           actorId: params.awardedById,
+          organizationId: params.organizationId,
           academyId: params.homeAcademyId,
           action: params.auditAction ?? "student.promote",
           entityType: "Student",
