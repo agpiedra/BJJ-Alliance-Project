@@ -290,7 +290,12 @@ describe("MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 6 billing", () => {
     const superAdmin = await makeSuperAdmin();
     currentSession = { user: { id: superAdmin.id } };
 
-    const dueOn = DateTime.now().plus({ days: 5 });
+    // Anchored to the org's own timezone, not the test runner's system
+    // zone — createInvoiceAction now writes dates anchored to the
+    // organization's timezone (see billing-actions.ts's own comment), so
+    // "+N days" probes must advance calendar days in that same zone or
+    // they drift by the zone offset relative to what actually got stored.
+    const dueOn = DateTime.now().setZone(org.timezone).plus({ days: 5 });
     const fd = new FormData();
     fd.set("periodStart", dueOn.minus({ months: 1 }).toISODate()!);
     fd.set("periodEnd", dueOn.toISODate()!);
