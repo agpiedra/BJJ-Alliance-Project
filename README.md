@@ -64,18 +64,12 @@ profile field (`MULTI_ACADEMY_AND_KIDS_BELTS.md` Appendix C decision 5) — it c
 organization's boundary, so it can only ever come from someone who already has it, or from a
 one-time manual step for the very first grant. There is no self-service path, on purpose.
 
-**The very first platform admin, in a brand-new deployment** (no super admin exists yet):
-
-1. Get a real `User` row for yourself first — the simplest way is to register your own
-   organization through the public flow (`/register-academy`) like any other director would,
-   which creates your account with a real password once approved.
-2. Connect directly to the production database (your hosting provider's SQL console, or
-   `psql "$DATABASE_URL"` from a trusted machine) and run:
-   ```sql
-   UPDATE "User" SET "isSuperAdmin" = true WHERE email = 'you@yourdomain.com';
-   ```
-3. Sign in and confirm `/platform` is now reachable (it calls `requireSuperAdmin()`, which
-   re-checks this flag fresh from the database on every request — no session refresh needed).
+**The very first platform admin, in a brand-new deployment:** see
+`docs/DEPLOYMENT_RUNBOOK.md`'s own step-by-step first-deploy sequence — the exact order
+matters (register-then-approve alone is circular with zero users in the database; the
+runbook's sequence is verified against the real code in `approve-organization.ts`, not
+assumed from how the pieces are supposed to fit together) and is kept in one place rather
+than duplicated here where it could drift out of sync.
 
 There is deliberately no script for this step: a script that grants platform-wide access by
 running it is exactly the "backdoor admin account" shape `scripts/lib/seed-safety-guard.ts`
