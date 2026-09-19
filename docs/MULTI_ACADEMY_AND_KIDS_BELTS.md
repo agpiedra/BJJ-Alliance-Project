@@ -1145,19 +1145,29 @@ After this fix, a repo-wide case-insensitive grep for "alliance" was re-run: eve
 
 ## Phase 6 — Platform admin panel, audit, and authorization
 
-Route group `/[locale]/admin/**`, restricted to `SUPER_ADMIN` via a server-side check in the layout **and** in every server action — not middleware alone. This is the only place the platform/global data-access module is used outside the paths listed in Phase 1.
+**Deviation from the doc's literal routing text, decided during this phase's brainstorm and applied before any code was written:** the route group is `/[locale]/platform/**`, not `/[locale]/admin/**` as originally written here. `/admin/branding`, `/admin/kiosk-tokens`, and `/admin/schedule` (all shipped in earlier phases) already occupy that exact prefix, gated by the ORGANIZATION role `ADMIN` (`requireTenantContext(["ADMIN"])`) — a completely different authorization domain from the platform-wide `isSuperAdmin` flag this phase gates. Sharing a URL prefix between two unrelated authorization meanings is the exact ambiguity that produced every real tenant-isolation bug this project has found (revision 23, the layout leak, the unauthenticated-signup leak). `/platform/**` keeps the two domains structurally distinct everywhere, at zero cost to the three existing `/admin/*` pages. Restricted to `isSuperAdmin` via a server-side check (`requireSuperAdmin`/`resolveSuperAdminActionContext`) in the layout **and** in every server action — not middleware alone. This is the only place the platform/global data-access module (`platform-lookups.ts`) is used outside the paths listed in Phase 1.
 
 ### Pages
 
-**`/admin/organizations`** — list: logo, name, slug, status, country/city, branch count, student count, active students, attendance in the last 30 days, created/approved dates, last activity. Filters by status and country; search by name/slug/contact. Row actions: view, approve, reject, suspend, reactivate, open as.
+**`/platform/organizations`** — list: logo, name, slug, status, country/city, branch count, student count, active students, attendance in the last 30 days, created/approved dates, last activity. Filters by status and country; search by name/slug/contact. Row actions: view, suspend, reactivate. Approve/reject live on the pending queue page instead (below). "Open as" (impersonation) is deliberately not offered — see the Phase 6 open question below.
 
-**`/admin/organizations/pending`** — approval queue with the full submitted form and Approve / Reject with a note, reachable from a badge counter in the admin sidebar.
+**`/platform/organizations/pending`** — approval queue with the full submitted form and Approve / Reject with a note, reachable from a badge counter in the admin sidebar.
 
-**`/admin/organizations/new`** — manual registration: same fields as the public form, plus direct ACTIVE status, director email, optional branding, and a promotion preset (Alliance attendance / time-based / manual). Creates organization, branding, config, rank catalogs, first branch and the director invitation in one transaction, reusing the same idempotent approval path.
+**`/platform/organizations/new`** — manual registration: same fields as the public form, plus direct ACTIVE status, director email, optional branding, and a promotion preset (attendance / time-based / manual). Creates organization, branding, config, rank catalogs, first branch and the director invitation in one transaction, reusing the same idempotent approval path.
 
-**`/admin/organizations/[id]`** — detail: overview and internal notes, branding, promotion rules, branches, members (resend invite, reset link, deactivate), audit trail, danger zone (suspend, cancel — never hard delete).
+**`/platform/organizations/[id]`** — detail: overview and internal notes, branding, promotion rules, branches, members, audit trail, danger zone (suspend, cancel — never hard delete).
 
-**`/admin`** — overview: organizations by status, total students across organizations, new organizations this month, attendance trend (recharts, same visual language as the director dashboard), pending-requests callout.
+**`/platform`** — overview: organizations by status, total students across organizations, new organizations this month, attendance trend (recharts, same visual language as the director dashboard), pending-requests callout.
+
+**`/platform/admins`** — not originally named as its own page in this doc, added during the brainstorm: `isSuperAdmin` had exactly one seeded holder and no UI at all before this phase. Lists every current holder; an existing platform admin can grant it to another user by email or revoke it. Self-revocation is disallowed outright (decided during the brainstorm: `requireSuperAdmin()` re-reads fresh on every request, so a self-revoke would lock the actor out of the very page they're using to manage this, mid-session, with no benefit over asking another platform admin). Revoking the last remaining platform admin is refused unconditionally, as defense-in-depth against a lockout with no recovery path short of a raw database write — currently unreachable through this action alone, since the self-revoke check already covers the only path the action's own auth model can produce, but kept for the invariant itself in case that model ever changes.
+
+### Open question: impersonation is not delivered in this phase
+
+The doc's original page list named an "open as" row action (impersonation) as part of the organizations list, and `AccessContext`'s own type (`tenant/types.ts`) already reserves a shape for it (`impersonation?: { asSuperAdminUserId, startedAt, readOnly }`). Deliberately deferred, not built: a platform admin acting inside a paying customer's account is the most sensitive capability in this system, and it deserves its own design pass — what gets audited and how it's distinguished from the real user's own actions, a banner the impersonated organization cannot miss, a time limit, and a decision about whether this capability is wanted at all before a single paying customer exists to justify it. Building it as a rushed extension of this phase's own row-action list would be exactly the kind of scope-creep this project's own process exists to prevent. Flagged here as a real, open question — not a silent omission.
+
+### Known future need: a director-facing audit view
+
+`resolveOrganizationAuditTrail` (platform-lookups.ts) only serves the platform admin's own `/platform/organizations/[id]` page. No director-facing "who changed this?" view exists anywhere in this phase, and the doc never specified one. It's a real future need, not a gap invented here: promotion corrections were built with an audit trail partly to answer exactly "who changed this student's belt?", and a director will ask that question eventually with no page to answer it. Recorded here rather than silently left out — building it now would mean inventing its own scope, its own organizationId-filtered query, and its own acceptance criteria with no source of truth to check them against.
 
 ### Organization billing status and grace period
 
@@ -1254,20 +1264,26 @@ So if an extension pushes the deadline out and the invoice later expires again, 
 
 Enforce organization status on protected requests and mutations, **including existing sessions** — a director whose organization is suspended mid-session loses access on their next request, not at their next login.
 
-Enforce impersonation permissions, read-only mode, and expiration **on the server**. A banner or a disabled button is not an authorization control. Impersonation writes an audit row at start and stop, is read-only unless edits are explicitly enabled (logged again), and expires after 60 minutes.
+Enforce impersonation permissions, read-only mode, and expiration **on the server**. A banner or a disabled button is not an authorization control. Impersonation writes an audit row at start and stop, is read-only unless edits are explicitly enabled (logged again), and expires after 60 minutes. **Deferred — see the Phase 6 open question above.** Not built in this PR; the criteria below that depend on it are marked accordingly.
 
 ### Audit
 
-**Extend the existing `AuditLog`; do not introduce a duplicate model.** Write entries for: organization approve/reject/suspend/reactivate, impersonation start/stop, manual promotions and corrections, promotion-rule and configuration changes with before/after values, membership changes, and branding changes. Surface the trail on the organization detail page.
+**Extend the existing `AuditLog`; do not introduce a duplicate model.** Write entries for: organization approve/reject/suspend/reactivate, impersonation start/stop, manual promotions and corrections, promotion-rule and configuration changes with before/after values, membership changes, and branding changes. Surface the trail on the organization detail page. **`AuditLog` itself moved into `TENANT_SCOPED_MODELS` as part of this phase — see the Implementation record below.**
 
-### Acceptance criteria
+### Acceptance criteria — organizations, approval, audit, authorization (this PR)
 
-- [ ] A director hitting any `/admin` route or server action gets 403/404 — verified by test for both the page and the actions.
-- [ ] Counts on the list match direct queries for a seeded fixture of three organizations.
-- [ ] Manual creation produces a fully working organization (ranks seeded, director can accept the invitation, kiosk works) with no manual SQL, and is idempotent on retry.
-- [ ] Suspending an organization blocks its users on their next request with an existing session open, without deleting data; reactivating restores access.
-- [ ] Impersonation is server-enforced: read-only by default, expires, and both start and stop are audited.
-- [ ] Every admin mutation writes an `AuditLog` row with before/after values where applicable.
+- [x] An org ADMIN hitting any `/platform` route or server action gets **exactly 404**, never 403 and never 200 — verified by test for both the page (real HTTP, smoke suite) and the actions (`resolveSuperAdminActionContext`). 404, not a `{403, 404}` range: a 403 would itself disclose that the route exists, which "disclose to members, never to non-members" forbids when the caller is a non-member of the platform surface.
+- [x] Counts on the list match direct queries for a seeded fixture of organizations (`listOrganizationsForPlatformAdmin`'s `groupBy` aggregates, asserted against direct Prisma counts).
+- [x] Manual creation produces a fully working organization (ranks seeded, director invited, first branch created) with no manual SQL, and reuses the same idempotent `approveOrganization()` path as self-serve registration.
+- [x] Suspending an organization blocks its users on their next request with an existing session open, without deleting data; reactivating restores access — verified by a test that suspends via the panel's own action (not a direct DB write) with a director's session already open, and asserts their very next `getTenantContext()` call is refused.
+- [ ] Impersonation is server-enforced: read-only by default, expires, and both start and stop are audited. **Deferred — not built in this PR (see open question above).**
+- [x] Every platform-admin mutation writes an `AuditLog` row with before/after values where applicable.
+- [x] `AuditLog` reads are tenant-guarded like every other model: a query missing `organizationId` throws, and the one deliberately cross-tenant reader (`resolveOrganizationAuditTrail`) is a single named function, verified by an isolation test asserting one organization's audit rows never appear in another's trail.
+- [x] The panel's approve action and `scripts/approve-organization.ts` produce identical results (organization status, branch, invitation, and audit row) from identical starting states — both call the same `approveOrganization()`, verified directly, not merely by code inspection.
+- [x] A platform admin cannot revoke their own access, even mid-session; revoking the last remaining platform admin is refused (defense-in-depth; see the `/platform/admins` page description above for why the second case is currently unreachable through this action alone).
+
+### Acceptance criteria — billing (separate PR, not yet implemented)
+
 - [ ] An organization one day past `dueOn` is `DUE`, remains ACTIVE, and its kiosk and every page work normally; only its ADMIN/DIRECTOR see the banner.
 - [ ] An invoice due Jan 28 with 5 grace days is `DUE` through Feb 2 inclusive and `GRACE_EXPIRED` from 00:00 org-time on Feb 3 — asserted at each boundary date, evaluated in the organization's timezone, with a test that fails if UTC or server-local time is used.
 - [ ] `graceDays: 0` makes the deadline the due date itself; negative or non-integer values are rejected at validation.
@@ -1285,6 +1301,26 @@ Enforce impersonation permissions, read-only mode, and expiration **on the serve
 - [ ] With no code running in between, an unpaid invoice's state still moves `CURRENT → DUE → GRACE_EXPIRED` purely as dates pass (evaluated on read), and no invoice is marked paid and no organization suspended as a result.
 - [ ] Recording a payment clears the banner and flag and writes an audit row.
 - [ ] Platform billing fields and UI are entirely separate from the student Pagos section; no shared model or route.
+
+### Implementation record
+
+**Routing: `/platform/**`, not `/admin/**`** — see this phase's own opening paragraph for the full reasoning. Found and decided during the brainstorm, before any code was written, precisely so it never became a choice between "rename the new pages" and "rename the three already-shipped ones."
+
+**`AuditLog` moved into `TENANT_SCOPED_MODELS`.** Investigated, not assumed, per the brainstorm's own instruction to report what specifically blocks it rather than dropping the idea: the blocker was that roughly 16 of 23 existing `AuditLog.create` write sites across the codebase carried only `academyId`, not `organizationId`, in their `data` — the tenant guard requires the literal `organizationId` field (or an `organization: { connect }` relation), and a bare `academyId` doesn't satisfy it. Fixed by adding `organizationId` to every one of those writes (the value was already in scope at every site — `context.organizationId`, `student.organizationId`, or equivalent — nothing needed deriving). Two genuinely platform-level exceptions needed `unscopedPrisma` explicitly rather than an `organizationId`, since a literal JS `null` does not satisfy the guard's own non-empty-string check: the `isSuperAdmin` grant/revoke audit rows (`organizationId: null`, matching the schema's own doc comment on that column's nullability), extracted into `grantSuperAdminFlag`/`revokeSuperAdminFlag` in `platform-lookups.ts` rather than left inline in the route's own actions file.
+
+**A real bug the investigation caught, unprompted:** `admin/branding/actions.ts`'s logo-upload rate limiter counted an actor's recent uploads via `prisma.auditLog.count({ where: { actorId, action, createdAt } })` — no `organizationId` anywhere. Before this phase, that silently counted a director's upload attempts **across every organization they belong to**, not just the one they were uploading for — invisible, because a query with no scoping filter that happens to return a small number doesn't look wrong. The guard caught it the moment `AuditLog` became scoped (an integration test failed with `UnscopedTenantQueryError` — the exact "loud failure, not a silent wrong answer" the guard exists to produce). Fixed by adding `organizationId` to the rate-limit query, which is also the more correct behavior.
+
+**`getScopedDb`'s `ScopedDb` type gained `auditLog`.** A future director-facing audit view (see the open question above) can now read through `getScopedDb(context).auditLog` with the same automatic per-organization scoping every other model gets — no separate mechanism needed when that page eventually gets built.
+
+**New platform-level reads live in `platform-lookups.ts`, not a second file.** A `src/lib/platform-admin/organizations.ts` was written first, then deleted and merged in — `eslint.config.mjs`'s own allowlist comment already recorded why: "every genuinely platform-level operation was extracted into named, single-purpose functions in `platform-lookups.ts`... so the bracket-as-character-class glob bug that hid three entries from this list structurally cannot recur." A second file reopens exactly that hole. Corrected before it shipped, not after.
+
+**`requireSuperAdmin()`/`resolveSuperAdminActionContext()` re-read `isSuperAdmin` fresh from the database on every call, never from the session/JWT** — the same principle `resolveContext()`'s own `Organization.status` re-check already established for organization suspension, applied here so revoking someone's platform-admin flag takes effect on their very next request, not whenever their session happens to refresh. Verified directly, not assumed: a test grants, confirms success, revokes, and confirms the very next call is refused with no session change in between.
+
+**Self-revocation is disallowed outright**, decided during the brainstorm rather than left as an open UI question: with `requireSuperAdmin()` re-reading fresh every request, a self-revoke would lock the actor out of the very page they're using to manage this, mid-session, with no legitimate workflow lost (asking another platform admin achieves the same thing without the surprise).
+
+**Two things flagged, not silently built or silently dropped:** impersonation (its own open question, above) and a director-facing audit view (its own known-future-need note, above). Both were named in the original doc text or implied by existing audit infrastructure; neither is delivered in this phase.
+
+**Billing is its own PR**, as decided during the brainstorm — its acceptance criteria are listed above but unchecked; nothing in this section's own scope (organizations, approval, audit, authorization) depends on it.
 
 ---
 

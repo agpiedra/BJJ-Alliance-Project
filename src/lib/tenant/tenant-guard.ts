@@ -31,6 +31,15 @@ export const TENANT_SCOPED_MODELS = new Set([
   "StaffAssignment",
   "Notification",
   "OrganizationBranding",
+  // MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 6 — AuditLog moved in from the
+  // excluded list once it gained its first READ path (the platform admin's
+  // per-organization audit trail). A write forgetting `organizationId` was
+  // silent before (every AuditLog write was already inside an
+  // already-scoped transaction); a READ forgetting it is not silent, it's a
+  // `findMany` that returns every organization's history. See
+  // `platform-lookups.ts`'s `resolveOrganizationAuditTrail` for the one
+  // deliberately unscoped reader this exclusion is now narrowed to.
+  "AuditLog",
 ]);
 
 const WRITE_TARGET_OPERATIONS = new Set(["create", "createMany", "upsert"]);

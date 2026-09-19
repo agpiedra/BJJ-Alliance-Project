@@ -5,11 +5,22 @@ import type { AccessContext } from "./types";
 /**
  * Every model that carries `organizationId` and is reachable through the
  * tenant-scoped client. Deliberately excludes `Organization`,
- * `OrganizationMembership`, `User`, `PasswordResetToken`, and `AuditLog` —
- * those stay behind the separate platform/global data-access module the
- * spec calls for (authentication, membership resolution, platform admin,
- * public org discovery, migrations/seeds). Reaching for them through this
- * wrapper is refused at runtime, not merely undocumented.
+ * `OrganizationMembership`, `User`, and `PasswordResetToken` — those stay
+ * behind the separate platform/global data-access module the spec calls for
+ * (authentication, membership resolution, platform admin, public org
+ * discovery, migrations/seeds). Reaching for them through this wrapper is
+ * refused at runtime, not merely undocumented.
+ *
+ * `AuditLog` moved IN as of Phase 6 (MULTI_ACADEMY_AND_KIDS_BELTS.md):
+ * excluding it made sense while every write already sat inside an
+ * already-scoped transaction, but Phase 6 gave it its first READ path (the
+ * platform admin's per-organization audit trail), and a read that forgets
+ * `organizationId` is silent, not obvious, the way an unscoped write inside
+ * a validated transaction never was. The one genuinely cross-tenant reader
+ * (the platform admin viewing an arbitrary organization's trail) goes
+ * through `platform-lookups.ts`'s `resolveOrganizationAuditTrail` instead of
+ * this wrapper, using `unscopedPrisma` explicitly — named, greppable, and
+ * the only place that bypasses this guarantee on purpose.
  */
 export const TENANT_SCOPED_MODELS = new Set([
   "Academy",
@@ -26,6 +37,9 @@ export const TENANT_SCOPED_MODELS = new Set([
   "StaffAssignment",
   "Notification",
   "OrganizationBranding",
+  // MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 6 — see tenant-guard.ts's own
+  // matching entry for why this moved in from the excluded list.
+  "AuditLog",
 ]);
 
 const WHERE_SCOPED_OPERATIONS = new Set([
@@ -144,6 +158,7 @@ export type ScopedDb = Pick<
   | "staffAssignment"
   | "notification"
   | "organizationBranding"
+  | "auditLog"
   | "$transaction"
 >;
 

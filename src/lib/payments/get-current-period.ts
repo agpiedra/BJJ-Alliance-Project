@@ -212,6 +212,7 @@ async function materializeCarryForward(
       await tx.auditLog.create({
         data: {
           actorId: candidate.recordedById,
+          organizationId: candidate.organizationId,
           academyId: candidate.academyId,
           action: "payment.carryForward",
           entityType: "PaymentPeriod",

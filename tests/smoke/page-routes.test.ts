@@ -81,19 +81,44 @@ async function assertNotServerError(routeCase: RouteCase): Promise<void> {
   ).toBeLessThan(500);
 }
 
+/**
+ * MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 6 — asserts EXACTLY 404, not a
+ * {403, 404} range. A refused non-super-admin hitting `/platform/**` must
+ * get the same disclosure as a genuine non-member ("disclose to members,
+ * never to non-members"): a 403 would itself confirm the route exists. A
+ * test that accepted either status would not fail if `requireSuperAdmin()`
+ * ever regressed from `notFound()` to a distinct forbidden response —
+ * exactly the "a test that accepts a range accepts the regression too"
+ * shape this project has been corrected on before.
+ */
+async function assertRefusedWithExactly404(routeCase: RouteCase): Promise<void> {
+  const response = await fetch(`${BASE_URL}${routeCase.path}`, {
+    headers: routeCase.cookie ? { Cookie: routeCase.cookie } : {},
+    redirect: "follow",
+  });
+  expect(
+    response.status,
+    `${routeCase.label} (${routeCase.path}) returned ${response.status}, expected exactly 404 — a non-super-admin must never learn this route exists`,
+  ).toBe(404);
+}
+
 describe("every page route renders through a real running server (non-5xx)", () => {
   let adminCookie: string;
   let directorCookie: string;
   let instructorCookie: string;
   let studentCookie: string;
+  let superAdminCookie: string;
   let studentDetailId: string;
   let kioskAcademySlug: string;
   let orgSlug: string;
+  let seededOrganizationId: string;
 
   beforeAll(async () => {
     const users = await prisma.user.findMany({
       where: {
-        email: { in: ["admin@alliancecr.com", "director@test.com", "instructor@test.com", "student@test.com"] },
+        email: {
+          in: ["admin@alliancecr.com", "director@test.com", "instructor@test.com", "student@test.com", "superadmin@alliancecr.com"],
+        },
       },
       select: { id: true, email: true },
     });
@@ -102,15 +127,19 @@ describe("every page route renders through a real running server (non-5xx)", () 
     const directorId = byEmail.get("director@test.com");
     const instructorId = byEmail.get("instructor@test.com");
     const studentUserId = byEmail.get("student@test.com");
-    if (!adminId || !directorId || !instructorId || !studentUserId) {
-      throw new Error("Smoke suite requires the seeded QA users (admin/director/instructor/student@test.com) to exist.");
+    const superAdminId = byEmail.get("superadmin@alliancecr.com");
+    if (!adminId || !directorId || !instructorId || !studentUserId || !superAdminId) {
+      throw new Error(
+        "Smoke suite requires the seeded QA users (admin/director/instructor/student/superadmin@alliancecr.com) to exist.",
+      );
     }
 
-    [adminCookie, directorCookie, instructorCookie, studentCookie] = await Promise.all([
+    [adminCookie, directorCookie, instructorCookie, studentCookie, superAdminCookie] = await Promise.all([
       mintSessionCookie(adminId),
       mintSessionCookie(directorId),
       mintSessionCookie(instructorId),
       mintSessionCookie(studentUserId),
+      mintSessionCookie(superAdminId),
     ]);
 
     // Academy/Student are tenant-scoped models (see tenant-guard.ts) — the
@@ -125,6 +154,7 @@ describe("every page route renders through a real running server (non-5xx)", () 
     });
     if (!membership) throw new Error("Smoke suite requires the seeded admin to have an OrganizationMembership.");
     const { organizationId } = membership;
+    seededOrganizationId = organizationId;
 
     const organization = await prisma.organization.findUniqueOrThrow({
       where: { id: organizationId },
@@ -198,6 +228,38 @@ describe("every page route renders through a real running server (non-5xx)", () 
   it("staff pages render for DIRECTOR and INSTRUCTOR too, not only ADMIN", async () => {
     await assertNotServerError({ label: "dashboard (DIRECTOR)", path: "/en/dashboard", cookie: directorCookie });
     await assertNotServerError({ label: "dashboard (INSTRUCTOR)", path: "/en/dashboard", cookie: instructorCookie });
+  });
+
+  it("platform admin pages (SUPER_ADMIN)", async () => {
+    const routes: RouteCase[] = [
+      { label: "platform overview", path: "/en/platform" },
+      { label: "platform organizations", path: "/en/platform/organizations" },
+      { label: "platform organizations pending", path: "/en/platform/organizations/pending" },
+      { label: "platform organizations new", path: "/en/platform/organizations/new" },
+      { label: "platform organization detail", path: `/en/platform/organizations/${seededOrganizationId}` },
+      { label: "platform admins", path: "/en/platform/admins" },
+    ];
+    for (const route of routes) {
+      await assertNotServerError({ ...route, cookie: superAdminCookie });
+    }
+  });
+
+  it("MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 6 — an org ADMIN is refused every /platform route with exactly 404, never 403 or 200", async () => {
+    const routes: RouteCase[] = [
+      { label: "platform overview", path: "/en/platform" },
+      { label: "platform organizations", path: "/en/platform/organizations" },
+      { label: "platform organizations pending", path: "/en/platform/organizations/pending" },
+      { label: "platform organizations new", path: "/en/platform/organizations/new" },
+      { label: "platform organization detail", path: `/en/platform/organizations/${seededOrganizationId}` },
+      { label: "platform admins", path: "/en/platform/admins" },
+    ];
+    for (const route of routes) {
+      await assertRefusedWithExactly404({ ...route, cookie: adminCookie });
+    }
+  });
+
+  it("an unauthenticated visitor is also refused every /platform route with exactly 404", async () => {
+    await assertRefusedWithExactly404({ label: "platform overview (anonymous)", path: "/en/platform" });
   });
 
   it("student portal (STUDENT session) — the exact page and role that were 500ing", async () => {

@@ -168,6 +168,7 @@ export async function createStudent(
     await tx.auditLog.create({
       data: {
         actorId: context.actorUserId,
+        organizationId: context.organizationId,
         academyId: student.homeAcademyId,
         action: "student.create",
         entityType: "Student",
@@ -213,6 +214,7 @@ export async function createStudent(
       await tx.auditLog.create({
         data: {
           actorId: context.actorUserId,
+          organizationId: context.organizationId,
           academyId: student.homeAcademyId,
           action: "promotionCredit.grant",
           entityType: "PromotionCredit",

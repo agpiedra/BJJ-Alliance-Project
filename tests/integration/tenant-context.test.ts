@@ -18,6 +18,9 @@ vi.mock("@/auth", () => ({
 const { getTenantContext, requireOrganizationAccess, resolveSystemJobContext, TenantAccessError } = await import(
   "../../src/lib/tenant/context"
 );
+const { suspendOrganizationAction, reactivateOrganizationAction } = await import(
+  "../../src/app/[locale]/platform/organizations/actions"
+);
 
 const prisma = getTestPrismaClient();
 
@@ -42,6 +45,7 @@ function getAllianceOrganizationId() {
 // ADMIN_USER_ID gets a second membership here; nothing else in the suite
 // counts memberships globally, so this is safe alongside concurrent files.
 const SCRATCH_ORG_ID = "tenant-context-test-scratch-org";
+const SUPER_ADMIN_USER_ID = "seed-user-super-admin";
 
 beforeAll(async () => {
   await prisma.organization.upsert({
@@ -201,6 +205,40 @@ describe("getTenantContext", () => {
     await prisma.organization.update({ where: { id: SCRATCH_ORG_ID }, data: { status: "SUSPENDED" } });
     try {
       expect(await getTenantContext()).toEqual({ status: "ORG_NOT_ACTIVE", organizationStatus: "SUSPENDED" });
+    } finally {
+      await prisma.organization.update({ where: { id: SCRATCH_ORG_ID }, data: { status: "ACTIVE" } });
+    }
+  });
+
+  it("REQUIRED: MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 6 — suspendOrganizationAction (the panel's own action, not a direct DB write) locks out an ADMIN's already-open session on their very next request, and reactivateOrganizationAction restores it. This is deliberately a different claim from the test above: that one proves the guard re-validates; this one proves the panel's action is what actually flips the switch the guard reads.", async () => {
+    currentSession = { user: { id: ADMIN_USER_ID }, activeOrganizationId: SCRATCH_ORG_ID };
+    expect(await getTenantContext()).toEqual({
+      status: "OK",
+      context: expect.objectContaining({ organizationId: SCRATCH_ORG_ID }),
+    });
+
+    // Switch to the platform admin's own session to call the real action —
+    // exactly what a browser tab open on /platform/organizations would do,
+    // not a test helper reaching around it into the database directly.
+    currentSession = { user: { id: SUPER_ADMIN_USER_ID }, activeOrganizationId: null };
+    const suspendResult = await suspendOrganizationAction(SCRATCH_ORG_ID);
+    expect(suspendResult.ok).toBe(true);
+
+    try {
+      // The ADMIN's session cookie is completely unchanged — same JWT, same
+      // organizationId — yet their very next request is now refused.
+      currentSession = { user: { id: ADMIN_USER_ID }, activeOrganizationId: SCRATCH_ORG_ID };
+      expect(await getTenantContext()).toEqual({ status: "ORG_NOT_ACTIVE", organizationStatus: "SUSPENDED" });
+
+      currentSession = { user: { id: SUPER_ADMIN_USER_ID }, activeOrganizationId: null };
+      const reactivateResult = await reactivateOrganizationAction(SCRATCH_ORG_ID);
+      expect(reactivateResult.ok).toBe(true);
+
+      currentSession = { user: { id: ADMIN_USER_ID }, activeOrganizationId: SCRATCH_ORG_ID };
+      expect(await getTenantContext()).toEqual({
+        status: "OK",
+        context: expect.objectContaining({ organizationId: SCRATCH_ORG_ID }),
+      });
     } finally {
       await prisma.organization.update({ where: { id: SCRATCH_ORG_ID }, data: { status: "ACTIVE" } });
     }

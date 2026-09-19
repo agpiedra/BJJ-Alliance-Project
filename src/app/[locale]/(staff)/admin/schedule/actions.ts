@@ -106,6 +106,7 @@ export async function createClassSession(
       await tx.auditLog.create({
         data: {
           actorId: context.actorUserId,
+          organizationId: context.organizationId,
           academyId: academy.id,
           action: "classSession.create",
           entityType: "ClassSession",
@@ -190,6 +191,7 @@ export async function updateClassSession(
       await tx.auditLog.create({
         data: {
           actorId: context.actorUserId,
+          organizationId: context.organizationId,
           academyId: existing.academyId,
           action: "classSession.update",
           entityType: "ClassSession",
@@ -259,6 +261,7 @@ export async function deactivateClassSession(
     await tx.auditLog.create({
       data: {
         actorId: context.actorUserId,
+        organizationId: context.organizationId,
         academyId: existing.academyId,
         action: "classSession.deactivate",
         entityType: "ClassSession",
