@@ -6,8 +6,13 @@ export interface BarListItem {
   label: ReactNode;
   value: number;
   displayValue?: ReactNode;
-  /** Tailwind bg-* class for the filled bar — defaults to brand gold. Pass a
-   * belt or class token class (e.g. "bg-belt-blue") for belt/modality bars. */
+  /** Tailwind bg-* class for the filled bar — defaults to the fixed,
+   * non-brand-configurable data color (`bg-data`, never `bg-brand-gold`:
+   * a director's chosen brand color can be pale enough to make a bar
+   * invisible against `bg-muted`, live and confirmed via
+   * class-popularity-panel.tsx, which never overrode this default). Pass a
+   * belt or class token class (e.g. "bg-belt-blue") for belt/modality bars,
+   * where the color IS the data (semantically correct, not this bug). */
   colorClassName?: string;
 }
 
@@ -40,7 +45,7 @@ export function BarList({ items, max, className }: BarListProps) {
                 code-only review. */}
             <span className="h-2 overflow-hidden rounded-full bg-muted ring-1 ring-inset ring-border">
               <span
-                className={cn("block h-full rounded-full", item.colorClassName ?? "bg-brand-gold")}
+                className={cn("block h-full rounded-full", item.colorClassName ?? "bg-data")}
                 style={{ width: `${pct}%` }}
               />
             </span>

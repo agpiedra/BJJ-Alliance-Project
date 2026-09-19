@@ -100,6 +100,87 @@ function translateDayOfWeek(day: DayOfWeek, locale: string): string {
  * for `label`'s translated day name; production callers (the analytics
  * page) pass the request's actual locale.
  */
+/**
+ * The two queries `getClassPopularity` and `getAttendanceByClass` both need
+ * — which `ClassSession`s are in scope, and which `AttendanceRecord`s count
+ * toward them in a window — extracted so both public functions share
+ * exactly one definition of "what counts," never two independently-written
+ * ones. `branchScopeWhere(context)` is what actually narrows an INSTRUCTOR
+ * to their own assigned academies; neither helper adds a role check on top
+ * of it, since the two public functions below differ in who may call them
+ * at all, not in how the data itself is scoped.
+ */
+async function resolveClassSessionsInScope(context: TenantContext, academyId: string | null) {
+  const conditions: Prisma.ClassSessionWhereInput[] = [branchScopeWhere(context)];
+  if (academyId) {
+    conditions.push({ academyId });
+  }
+  return getScopedDb(context).classSession.findMany({
+    where: { AND: conditions },
+    select: { id: true, dayOfWeek: true, startTime: true, name: true, type: true },
+  });
+}
+
+async function countCheckinAttendances(
+  classSessionIds: string[],
+  organizationId: string,
+  from: DateTime,
+  to: DateTime,
+): Promise<Array<{ classSessionId: string | null; occurredAt: Date }>> {
+  if (classSessionIds.length === 0) return [];
+  return prisma.attendanceRecord.findMany({
+    where: {
+      classSessionId: { in: classSessionIds },
+      organizationId,
+      type: "CHECKIN",
+      occurredAt: { gte: from.toJSDate(), lte: to.toJSDate() },
+    },
+    select: { classSessionId: true, occurredAt: true },
+  });
+}
+
+export interface AttendanceByClassRow {
+  classSessionId: string;
+  label: string;
+  attendances: number;
+}
+
+/**
+ * MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 8 — the director dashboard's
+ * (Panel) attendance-by-class companion to the weekly trend, sharing that
+ * chart's own fixed window, not a filterable one (Panel has no range
+ * control — see this phase's own doc note on why "Data" originally implied
+ * one). Deliberately NOT role-gated the way `getClassPopularity` is:
+ * Panel is reachable by ADMIN, DIRECTOR, and INSTRUCTOR alike (unlike
+ * `/dashboard/analytics`, which INSTRUCTOR's own nav never lists), so an
+ * INSTRUCTOR calling this sees only their own assigned academies' classes
+ * via `branchScopeWhere` — the same mechanism that already scopes every
+ * other Panel query for them, not a new or different rule invented here.
+ */
+export async function getAttendanceByClass(
+  context: TenantContext,
+  filters: AnalyticsFilters,
+  locale: string = routing.defaultLocale,
+): Promise<AttendanceByClassRow[]> {
+  const classSessions = await resolveClassSessionsInScope(context, filters.academyId);
+  const classSessionIds = classSessions.map((cs) => cs.id);
+  const attendances = await countCheckinAttendances(classSessionIds, context.organizationId, filters.from, filters.to);
+
+  const countByClassId = new Map<string, number>();
+  for (const record of attendances) {
+    if (!record.classSessionId) continue;
+    countByClassId.set(record.classSessionId, (countByClassId.get(record.classSessionId) ?? 0) + 1);
+  }
+
+  const rows: AttendanceByClassRow[] = classSessions.map((cs) => ({
+    classSessionId: cs.id,
+    label: `${translateDayOfWeek(cs.dayOfWeek, locale)} ${cs.startTime} — ${cs.name}`,
+    attendances: countByClassId.get(cs.id) ?? 0,
+  }));
+
+  return rows.sort((a, b) => b.attendances - a.attendances);
+}
+
 export async function getClassPopularity(
   context: TenantContext,
   filters: AnalyticsFilters,
@@ -109,32 +190,13 @@ export async function getClassPopularity(
     throw new Error("FORBIDDEN");
   }
 
-  const conditions: Prisma.ClassSessionWhereInput[] = [branchScopeWhere(context)];
-  if (filters.academyId) {
-    conditions.push({ academyId: filters.academyId });
-  }
-
-  const classSessions = await getScopedDb(context).classSession.findMany({
-    where: { AND: conditions },
-    select: { id: true, dayOfWeek: true, startTime: true, name: true, type: true },
-  });
+  const classSessions = await resolveClassSessionsInScope(context, filters.academyId);
 
   const range: DateRange = { from: filters.from, to: filters.to };
   const previous = previousEquivalentRange(range);
 
   const classSessionIds = classSessions.map((cs) => cs.id);
-  const attendances =
-    classSessionIds.length === 0
-      ? []
-      : await prisma.attendanceRecord.findMany({
-          where: {
-            classSessionId: { in: classSessionIds },
-            organizationId: context.organizationId,
-            type: "CHECKIN",
-            occurredAt: { gte: previous.from.toJSDate(), lte: range.to.toJSDate() },
-          },
-          select: { classSessionId: true, occurredAt: true },
-        });
+  const attendances = await countCheckinAttendances(classSessionIds, context.organizationId, previous.from, range.to);
 
   const attendanceDatesByClassId = new Map<string, Date[]>();
   for (const record of attendances) {

@@ -61,6 +61,8 @@
   --color-class-strike: var(--class-strike);
   --color-class-kids: var(--class-kids);
   --color-class-open: var(--class-open);
+  --color-data: var(--data);
+  --color-data-muted: var(--data-muted);
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);
@@ -159,6 +161,21 @@
   --class-strike: oklch(0.43 0.16 305);
   --class-kids: oklch(0.47 0.09 75);
   --class-open: oklch(0.45 0.03 265);
+  /* Fixed data-visualization color, deliberately NOT overridable by
+     BrandingScope (unlike --brand-gold, which is — see that component's own
+     comment: `--brand-gold: ${branding.primary.background}`). A director's
+     chosen brand color belongs in chrome (buttons, banners, the sidebar),
+     never in what a chart measures — a pale brand color would otherwise
+     make a chart's own data invisible against --card, which is exactly what
+     happened, live, via --brand-gold on WeeklyAttendanceChart and BarList's
+     own default before this fix. Blue (hue 255, matching this codebase's
+     existing --class-gi) is as far from gold's hue (85) as two hues get, so
+     it can never visually merge with the sanctioned gold-accent chrome.
+     Measured via real oklch->sRGB->WCAG-relative-luminance conversion, not
+     eyeballed (WCAG 1.4.11, non-text graphical objects, >= 3:1):
+     --data vs --card (white) = 7.20:1. --data-muted vs --card = 3.64:1. */
+  --data: oklch(0.46 0.14 255);
+  --data-muted: oklch(0.62 0.09 255);
 }
 
 .dark {
@@ -204,6 +221,14 @@
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.556 0 0);
+
+  /* Chosen for dark, not auto-inverted from :root's values — a lighter blue
+     is needed against a near-black --card here, a completely different L
+     than the light-theme pair above. Same hue (255), same non-brandable
+     guarantee. Measured: --data vs --card (dark, oklch(0.205 0.006 85)) =
+     6.21:1. --data-muted vs --card (dark) = 3.69:1. */
+  --data: oklch(0.68 0.13 255);
+  --data-muted: oklch(0.55 0.1 255);
 
   /* Only the semantic trio + belt-white lighten for dark (Phase 1.2); the
      -soft/-line variants and every class-* color are intentionally absent
