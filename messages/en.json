@@ -156,6 +156,20 @@
         "empty": "Not enough recorded attendance yet to show a trend.",
         "countLabel": "Check-ins"
       },
+      "attendanceByClass": {
+        "heading": "Attendance by class",
+        "empty": "Not enough recorded attendance yet to show this.",
+        "showAll": "Show all {count} classes",
+        "showLess": "Show less",
+        "viewAsTable": "View as table",
+        "viewAsChart": "View as chart",
+        "shareOfTotal": "{percent}% of total",
+        "table": {
+          "class": "Class",
+          "attendances": "Check-ins",
+          "share": "Share"
+        }
+      },
       "beltDistribution": {
         "heading": "Belt distribution",
         "caption": "Average attendances per grade: {white} white · {blue} blue · {purple} purple · {brown} brown",
@@ -1209,7 +1223,11 @@
         },
         "members": {
           "heading": "{count, plural, one {# member} other {# members}}",
-          "inactive": "inactive"
+          "inactive": "inactive",
+          "resendInvitation": "Resend invitation",
+          "confirmResendInvitation": "Resend the invitation? This invalidates any previous invitation link for this organization.",
+          "resendInvitationSent": "Invitation resent.",
+          "resendInvitationError": "Could not resend the invitation."
         },
         "promotionRules": {
           "heading": "Promotion rules"

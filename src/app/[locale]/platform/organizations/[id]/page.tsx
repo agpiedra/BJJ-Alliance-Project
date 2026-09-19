@@ -6,6 +6,7 @@ import { resolveOrganizationAuditTrail, resolveOrganizationDetailForPlatformAdmi
 import { resolveInvoiceState, graceEndsOn, isUnreviewed } from "@/lib/billing/deadline";
 import { DangerZone } from "./danger-zone";
 import { BillingSection, type BillingInvoiceRow } from "./billing-section";
+import { ResendInvitationButton } from "./resend-invitation-button";
 
 export const dynamic = "force-dynamic";
 
@@ -122,6 +123,11 @@ export default async function OrganizationDetailPage({ params }: { params: Promi
               </li>
             ))}
           </ul>
+          {organization.status === "ACTIVE" && (
+            <div className="mt-3 border-t border-border pt-3">
+              <ResendInvitationButton organizationId={organization.id} />
+            </div>
+          )}
         </CardContent>
       </Card>
 

@@ -156,6 +156,20 @@
         "empty": "Aún no hay suficientes asistencias registradas para mostrar la tendencia.",
         "countLabel": "Asistencias"
       },
+      "attendanceByClass": {
+        "heading": "Asistencia por clase",
+        "empty": "Aún no hay suficientes asistencias registradas para mostrar esto.",
+        "showAll": "Ver las {count} clases",
+        "showLess": "Ver menos",
+        "viewAsTable": "Ver como tabla",
+        "viewAsChart": "Ver como gráfico",
+        "shareOfTotal": "{percent}% del total",
+        "table": {
+          "class": "Clase",
+          "attendances": "Asistencias",
+          "share": "Porcentaje"
+        }
+      },
       "beltDistribution": {
         "heading": "Distribución de cinturones",
         "caption": "Promedio de asistencias por grado: {white} blanca · {blue} azul · {purple} morada · {brown} café",
@@ -1209,7 +1223,11 @@
         },
         "members": {
           "heading": "{count, plural, one {# miembro} other {# miembros}}",
-          "inactive": "inactivo"
+          "inactive": "inactivo",
+          "resendInvitation": "Reenviar invitación",
+          "confirmResendInvitation": "¿Reenviar la invitación? Esto invalida cualquier enlace de invitación anterior para esta organización.",
+          "resendInvitationSent": "Invitación reenviada.",
+          "resendInvitationError": "No se pudo reenviar la invitación."
         },
         "promotionRules": {
           "heading": "Reglas de promoción"

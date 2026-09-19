@@ -9,7 +9,7 @@ import type { TenantContext, MembershipRole } from "../../src/lib/tenant/types";
 import type { AnalyticsFilters } from "../../src/lib/analytics/filters";
 import { adultRankId } from "../helpers/belt-ranks";
 
-const { getClassPopularity } = await import("../../src/lib/analytics/class-popularity");
+const { getClassPopularity, getAttendanceByClass } = await import("../../src/lib/analytics/class-popularity");
 const { previousEquivalentRange } = await import("../../src/lib/analytics/headline-tiles");
 
 const prisma = getTestPrismaClient();
@@ -257,5 +257,102 @@ describe("getClassPopularity", () => {
     const filters: AnalyticsFilters = { from: RANGE_FROM, to: RANGE_TO, academyId: null };
 
     await expect(getClassPopularity(instructor, filters)).rejects.toThrow("FORBIDDEN");
+  });
+});
+
+/**
+ * MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 8 — the director dashboard's
+ * (Panel) attendance-by-class chart. Unlike getClassPopularity above,
+ * INSTRUCTOR is not rejected — Panel is a page INSTRUCTOR also reaches, and
+ * this function relies entirely on branchScopeWhere to narrow them to
+ * their own assigned academies, the same mechanism proven above for
+ * getClassPopularity's own DIRECTOR-scoping tests.
+ */
+describe("getAttendanceByClass", () => {
+  afterAll(cleanup);
+
+  it("reconciles exactly with getClassPopularity's own current-period counts over the same window", async () => {
+    const academy = await makeAcademy("attendance-by-class-reconcile");
+    const student = await makeStudent(academy.id, academy.organizationId);
+    const popular = await makeClassSession(academy.id, academy.organizationId, {
+      dayOfWeek: "MONDAY",
+      startTime: "18:00",
+      name: "Fundamentals",
+    });
+    const quiet = await makeClassSession(academy.id, academy.organizationId, {
+      dayOfWeek: "WEDNESDAY",
+      startTime: "07:00",
+      name: "Open Mat",
+    });
+
+    await makeCheckin(student.id, academy.id, academy.organizationId, popular.id, RANGE_FROM.plus({ days: 1 }));
+    await makeCheckin(student.id, academy.id, academy.organizationId, popular.id, RANGE_FROM.plus({ days: 2 }));
+
+    const director = ctx("DIRECTOR", [academy.id], academy.organizationId);
+    const filters: AnalyticsFilters = { from: RANGE_FROM, to: RANGE_TO, academyId: academy.id };
+
+    const [popularityRows, byClassRows] = await Promise.all([
+      getClassPopularity(director, filters),
+      getAttendanceByClass(director, filters),
+    ]);
+
+    expect(byClassRows).toHaveLength(2);
+    expect(byClassRows.map((r) => r.classSessionId)).toEqual([popular.id, quiet.id]);
+    for (const row of byClassRows) {
+      const matchingPopularityRow = popularityRows.find((r) => r.classSessionId === row.classSessionId)!;
+      expect(row.attendances).toBe(matchingPopularityRow.attendances);
+      expect(row.label).toBe(matchingPopularityRow.label);
+    }
+  });
+
+  it("an INSTRUCTOR is never rejected, unlike getClassPopularity's own INSTRUCTOR throw", async () => {
+    const academy = await makeAcademy("attendance-by-class-not-forbidden");
+    const instructor = ctx("INSTRUCTOR", [academy.id], academy.organizationId);
+    const filters: AnalyticsFilters = { from: RANGE_FROM, to: RANGE_TO, academyId: null };
+
+    await expect(getAttendanceByClass(instructor, filters)).resolves.toEqual([]);
+  });
+
+  it("REQUIRED: an INSTRUCTOR sees only their own assigned academy's classes, never another academy's — even in the same organization", async () => {
+    const ownAcademy = await makeAcademy("attendance-by-class-own");
+    const otherAcademy = await makeAcademy("attendance-by-class-other");
+    const ownSession = await makeClassSession(ownAcademy.id, ownAcademy.organizationId, {
+      dayOfWeek: "MONDAY",
+      startTime: "18:00",
+      name: "Own Academy Class",
+    });
+    await makeClassSession(otherAcademy.id, otherAcademy.organizationId, {
+      dayOfWeek: "MONDAY",
+      startTime: "18:00",
+      name: "Other Academy Class",
+    });
+
+    // academyIds: [ownAcademy.id] only — never otherAcademy.id — matching how
+    // a real INSTRUCTOR's TenantContext is resolved from their own
+    // StaffAssignment rows, not from the organization at large.
+    const instructor = ctx("INSTRUCTOR", [ownAcademy.id], ownAcademy.organizationId);
+    const filters: AnalyticsFilters = { from: RANGE_FROM, to: RANGE_TO, academyId: null };
+
+    const rows = await getAttendanceByClass(instructor, filters);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].classSessionId).toBe(ownSession.id);
+    expect(rows[0].label).toContain("Own Academy Class");
+  });
+
+  it("sorted descending by attendance count, same as getClassPopularity", async () => {
+    const academy = await makeAcademy("attendance-by-class-sort");
+    const student = await makeStudent(academy.id, academy.organizationId);
+    const low = await makeClassSession(academy.id, academy.organizationId, { dayOfWeek: "TUESDAY", startTime: "19:00", name: "Low" });
+    const high = await makeClassSession(academy.id, academy.organizationId, { dayOfWeek: "MONDAY", startTime: "18:00", name: "High" });
+
+    await makeCheckin(student.id, academy.id, academy.organizationId, low.id, RANGE_FROM.plus({ days: 1 }));
+    await makeCheckin(student.id, academy.id, academy.organizationId, high.id, RANGE_FROM.plus({ days: 1 }));
+    await makeCheckin(student.id, academy.id, academy.organizationId, high.id, RANGE_FROM.plus({ days: 2 }));
+
+    const director = ctx("DIRECTOR", [academy.id], academy.organizationId);
+    const rows = await getAttendanceByClass(director, { from: RANGE_FROM, to: RANGE_TO, academyId: academy.id });
+
+    expect(rows.map((r) => r.classSessionId)).toEqual([high.id, low.id]);
   });
 });

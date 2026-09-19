@@ -27,6 +27,12 @@ interface DotRenderProps {
  * property, never a hardcoded color literal — unlike the pre-existing
  * (out-of-scope) `retention-panel.tsx`/`class-popularity-panel.tsx`, which
  * still hardcode a literal blue.
+ *
+ * Uses `--data`, not `--brand-gold`: this chart's line/area color is real
+ * chart data, not chrome, and `--brand-gold` is a director's own
+ * configurable brand color (`branding-scope.tsx` overrides it per
+ * organization) — a pale gold pick made this chart's own line nearly
+ * invisible against `--card`, confirmed live before this fix.
  */
 export function WeeklyAttendanceChart({
   data,
@@ -82,9 +88,9 @@ export function WeeklyAttendanceChart({
           <Area
             type="monotone"
             dataKey="count"
-            stroke="var(--brand-gold)"
+            stroke="var(--data)"
             strokeWidth={2.4}
-            fill="var(--brand-gold)"
+            fill="var(--data)"
             fillOpacity={0.13}
             dot={(dotProps: DotRenderProps) => {
               const { cx, cy, index, payload } = dotProps;
@@ -95,8 +101,8 @@ export function WeeklyAttendanceChart({
                     cx={cx}
                     cy={cy}
                     r={isLast ? 5 : 2.8}
-                    fill={isLast ? "var(--brand-gold)" : "var(--card)"}
-                    stroke="var(--brand-gold)"
+                    fill={isLast ? "var(--data)" : "var(--card)"}
+                    stroke="var(--data)"
                     strokeWidth={isLast ? 2 : 1.8}
                   />
                   {isLast && payload && (

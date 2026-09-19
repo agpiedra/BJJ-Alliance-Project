@@ -36,6 +36,7 @@ type Belt = "WHITE" | "BLUE" | "PURPLE" | "BROWN" | "BLACK";
 import { resolveNextRank } from "@/lib/promotion/config";
 import { getWeeklyAttendanceTrend } from "@/lib/analytics/retention";
 import { getBeltDistribution } from "@/lib/analytics/progression";
+import { getAttendanceByClass } from "@/lib/analytics/class-popularity";
 import type { AnalyticsFilters } from "@/lib/analytics/filters";
 import {
   getFranjaHeatmap,
@@ -47,6 +48,7 @@ import { listStudentsToContact, CONTACT_THRESHOLD_DAYS, type ContactPaymentStatu
 import { formatTimestampInAcademyZone } from "@/lib/format-date";
 import { ConfirmPromotionButton } from "./confirm-promotion-button";
 import { WeeklyAttendanceChart } from "./weekly-attendance-chart";
+import { AttendanceByClassChart } from "./attendance-by-class-chart";
 import { buildWhatsAppLink } from "./whatsapp-link";
 import type { Prisma } from "@/generated/prisma/client";
 import { cn } from "cn";
@@ -244,20 +246,26 @@ export default async function DashboardPage() {
   // instead of resolving one from search params (unlike the /dashboard/analytics
   // page); `academyId: null` defers entirely to the session's own scope,
   // exactly like `resolveAnalyticsFilters` does for a non-ADMIN session.
+  //
+  // Hoisted above the ADMIN/DIRECTOR gate (unlike before Phase 8): the
+  // attendance-by-class chart below shares this exact same window and is
+  // NOT ADMIN/DIRECTOR-only — see getAttendanceByClass's own doc comment on
+  // why INSTRUCTOR reaches it too. `getWeeklyAttendanceTrend`'s bucket list
+  // runs `from.startOf("week")` to `to.startOf("week")` inclusive, so `from`
+  // must already sit on a week boundary `WEEKLY_CHART_WINDOW_WEEKS - 1`
+  // weeks back — otherwise the range spans one extra bucket, and that
+  // leftmost bucket only counts partial data (`occurredAt >= from`, not
+  // from the start of that week).
+  const eightWeekFilters: AnalyticsFilters = {
+    from: now.minus({ weeks: WEEKLY_CHART_WINDOW_WEEKS - 1 }).startOf("week"),
+    to: now.endOf("day"),
+    academyId: null,
+  };
+
   let weeklyTrend: Array<{ weekStart: string; count: number }> = [];
   let beltDistribution: Array<{ belt: Belt; count: number }> = [];
   let stripeThresholdByBelt = new Map<Belt, number>();
   if (canViewOverduePayments) {
-    // `getWeeklyAttendanceTrend`'s bucket list runs `from.startOf("week")` to
-    // `to.startOf("week")` inclusive, so `from` must already sit on a week
-    // boundary `WEEKLY_CHART_WINDOW_WEEKS - 1` weeks back — otherwise the
-    // range spans one extra bucket, and that leftmost bucket only counts
-    // partial data (`occurredAt >= from`, not from the start of that week).
-    const eightWeekFilters: AnalyticsFilters = {
-      from: now.minus({ weeks: WEEKLY_CHART_WINDOW_WEEKS - 1 }).startOf("week"),
-      to: now.endOf("day"),
-      academyId: null,
-    };
     const [trend, distribution, stripeThresholdRows] = await Promise.all([
       getWeeklyAttendanceTrend(context, eightWeekFilters),
       getBeltDistribution(context, eightWeekFilters),
@@ -281,6 +289,12 @@ export default async function DashboardPage() {
       stripeThresholdRows.map((row) => [row.code as Belt, row.attendancesPerStripe ?? 0]),
     );
   }
+
+  // Phase 8 — every staff role (ADMIN/DIRECTOR/INSTRUCTOR) reaches this,
+  // scoped to their own assigned academies via branchScopeWhere inside
+  // getAttendanceByClass itself, the same mechanism every other
+  // INSTRUCTOR-visible query on this page already uses — not a new rule.
+  const attendanceByClass = await getAttendanceByClass(context, eightWeekFilters, locale);
 
   const beltDistributionHasData = beltDistribution.some((row) => row.count > 0);
   const beltBarItems: BarListItem[] = beltDistribution.map((row) => ({
@@ -478,6 +492,21 @@ export default async function DashboardPage() {
           </Card>
         </div>
       )}
+
+      {/* Phase 8: attendance-by-class, directly below the weekly trend, full
+          width, sharing its exact window — every staff role sees this (see
+          getAttendanceByClass's own doc comment), unlike the trend above. */}
+      <Card>
+        <CardHeader className="border-b">
+          <CardTitle>{t("panel.attendanceByClass.heading")}</CardTitle>
+          <CardAction className="text-xs text-muted-foreground">
+            {t("panel.weeklyChart.caption", { weeks: WEEKLY_CHART_WINDOW_WEEKS })}
+          </CardAction>
+        </CardHeader>
+        <CardContent>
+          <AttendanceByClassChart rows={attendanceByClass} emptyMessage={t("panel.attendanceByClass.empty")} />
+        </CardContent>
+      </Card>
 
       {/* §4.1 Task 3: franja heatmap + promotion queue/"Próximos". */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[7fr_5fr]">
