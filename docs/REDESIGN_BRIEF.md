@@ -1,5 +1,14 @@
 # Alliance BJJ — UI redesign brief
 
+> **Status: implemented, kept for its rationale, not an open task list.** Audited during
+> MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 7 (revision 28): every phase below (0 through 9) is
+> fully built — confirmed by the existence of every named component, route, and behavior, not
+> assumed. Nothing here describes pending work. It stays in the repo, not folded into the main
+> spec and not deleted, because ~50 source files across `src/` cite a specific phase of this
+> document by name as the reasoning behind a real decision (a role gate, a matching rule, a
+> token choice) — deleting it would orphan those citations for no actual gain, since there is
+> no still-open work here to fold forward. Read it as design history, not a checklist.
+
 Apply the approved visual design to the whole app, add a **Pagos** (payments) section, a
 **week-calendar** schedule view, **custom promotions**, **automatic class matching for kiosk
 check-ins**, and a **sign-out** control on the four account portals (not the kiosk).

@@ -233,4 +233,32 @@ describe("acceptInvitation", () => {
     const replay = await acceptInvitation("en", {}, fd());
     expect(replay.error).toBe("invalidToken");
   });
+
+  // MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 7: actions.ts's own guard
+  // (`invitation.expiresAt < new Date()`) had never been exercised by a
+  // test — the code checked expiry, nothing proved the check worked.
+  it("an expired, unused token is refused, never a 500", async () => {
+    const org = await makePendingOrganization();
+    const approver = await makeSuperAdmin();
+    const { invitationLink } = await approveOrganization(org.slug, approver.id);
+    const director = await prisma.user.findUniqueOrThrow({ where: { email: org.contactEmail! } });
+    cleanupUserIds.push(director.id);
+
+    const token = new URL(invitationLink!).searchParams.get("token")!;
+    const invitation = await prisma.invitation.findFirstOrThrow({ where: { organizationId: org.id } });
+    await prisma.invitation.update({ where: { id: invitation.id }, data: { expiresAt: new Date(Date.now() - 1000) } });
+
+    const fd = new FormData();
+    fd.set("token", token);
+    fd.set("password", "MyRealPassword123!");
+
+    const result = await acceptInvitation("en", {}, fd);
+    expect(result.error).toBe("invalidToken");
+
+    const unchanged = await prisma.user.findUniqueOrThrow({ where: { id: director.id } });
+    expect(unchanged.active).toBe(false);
+
+    const stillUnused = await prisma.invitation.findUniqueOrThrow({ where: { id: invitation.id } });
+    expect(stillUnused.usedAt).toBeNull();
+  });
 });
