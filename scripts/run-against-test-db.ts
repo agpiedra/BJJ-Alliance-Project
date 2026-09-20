@@ -9,7 +9,7 @@
  */
 import "dotenv/config";
 import { spawnSync } from "node:child_process";
-import { resolveGuardedTestDatabaseUrl } from "./lib/test-database-guard";
+import { resolveGuardedTestDatabaseUrl, testDatabaseChildEnv } from "./lib/test-database-guard";
 
 const [, , command, ...args] = process.argv;
 if (!command) {
@@ -27,7 +27,7 @@ const quotedArgs = isWindows ? args.map((a) => (/\s/.test(a) ? `"${a.replace(/"/
 const result = spawnSync(command, quotedArgs, {
   stdio: "inherit",
   shell: isWindows,
-  env: { ...process.env, DATABASE_URL: testUrl },
+  env: testDatabaseChildEnv(testUrl),
 });
 
 process.exit(result.status ?? 1);

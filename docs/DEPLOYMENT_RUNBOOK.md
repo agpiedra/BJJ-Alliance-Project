@@ -59,19 +59,32 @@ together.
    against every `requireEnv`/`process.env` read in the codebase (re-verified for this
    runbook, nothing new since Phase 7's own audit): `README.md`'s table is complete. Two
    values need to be set specifically, not just "some Supabase URL":
-   - `DATABASE_URL` — the **pooled** connection string (port 6543), with `?pgbouncer=true`
-     appended. See "Connection pooling" below for why this exact form, not the direct one.
+   - `DATABASE_URL` — the **pooled** connection string (port 6543), as Supabase gives it,
+     plus an explicit `sslmode` (which one is the open SSL decision below). **No `?pgbouncer=true`** — see "Connection
+     pooling" below for why that flag does nothing in this app. Also read the SSL item there
+     before this first deploy: it is an open decision, not a formality.
    - `NODE_ENV` — Vercel sets this to `production` automatically; don't set it by hand, and
      confirm it's actually `production` after the first deploy (the e2e-auth-bypass route's
      entire defense rests on this evaluating correctly).
    Leave `E2E_AUTH_BYPASS_SECRET` unset. `TEST_DATABASE_URL`/`SHADOW_DATABASE_URL`/
-   `BASELINE_DATABASE_URL` are dev/CI-only — don't set them here at all.
-5. **Run `pnpm exec prisma migrate deploy`** — but against the **direct** connection string
-   (port 5432), not the pooled one from step 4. `migrate deploy` needs session-level DDL
-   that transaction-mode pooling doesn't support well; this is the one command in this whole
-   sequence that should NOT use the same `DATABASE_URL` the running app uses. Run it once,
-   manually, from a trusted machine — not from the deployed app itself. Applies all 26
-   existing migrations to a database that has none yet.
+   `BASELINE_DATABASE_URL` are dev/CI-only — don't set them here at all. **`DIRECT_URL` is
+   also not set in Vercel** — it belongs only on the machine that runs step 5.
+5. **Run `prisma migrate deploy` against the direct connection**, from a trusted machine:
+   ```
+   DIRECT_URL="<direct connection string, port 5432>" \
+   DATABASE_URL="<the pooled string from step 4>" \
+   pnpm exec prisma migrate deploy
+   ```
+   `prisma7.config.ts` makes the Prisma CLI use `DIRECT_URL` when it is set (and
+   `DATABASE_URL` when it isn't — local dev and CI, where no pooler is in front). It refuses
+   to run if the two name different databases. Never run migrations through the pooler: it
+   appears to work, then leaves Prisma Migrate's advisory lock held by an idle pooled
+   connection, and the *next* deploy fails with `P1002: Timed out trying to acquire a
+   postgres advisory lock` — a failure that surfaces one deploy after the mistake that caused
+   it. (If you ever see that P1002: find the idle session holding advisory lock `72707369`
+   via `pg_locks` / `pg_stat_activity` and `pg_terminate_backend` it.) Run it manually, once,
+   not from the deployed app itself. Applies all 26 existing migrations to a database that
+   has none yet.
 6. **Do not run `prisma/seed.ts` against this database.** It's deliberately guarded
    (`scripts/lib/seed-safety-guard.ts`) to refuse any target that isn't localhost or named
    `*test*` — that's correct, working behavior, not a step to route around. It creates
@@ -119,40 +132,72 @@ correct up to now.
 
 ### 1. Connection pooling (most likely, and the one you named)
 
-**What the code assumes today, checked directly** (`src/lib/prisma/unscoped.ts`): a single
-`PrismaPg` adapter wrapping a `pg.Pool`, constructed from `DATABASE_URL` as-is, with no
-pooler awareness anywhere in the connection string or the adapter config. In dev this is a
-single long-lived Node process — one `pg.Pool`, well under any connection limit, forever.
-
-In production, every Vercel serverless function instance gets its **own** `pg.Pool`
-(`pg`'s own default max is 10 connections per pool). A burst of real concurrent traffic —
-several staff loading the dashboard at once, a handful of kiosk taps in the same minute at
-class start — can make Vercel spin up multiple function instances simultaneously, each
-opening its own pool of connections directly against Supabase's Postgres. Direct
-connections are a small, fixed number on any Supabase plan; this is the textbook
+**The problem.** In dev this app is one long-lived Node process with one `pg.Pool`, well
+under any connection limit, forever. In production every Vercel function instance gets its
+**own** `pg.Pool` (`pg`'s default max is 10). A burst of real concurrent traffic — several
+staff loading the dashboard at once, a handful of kiosk taps at class start — makes Vercel
+spin up several instances, each opening its own pool straight against Supabase's Postgres.
+Direct connections are a small fixed number on any Supabase plan, so this is the textbook
 serverless-Postgres exhaustion failure, and it cannot happen in a single-process dev
-session no matter how long or how hard you test locally.
+session however hard you test.
 
-**What has to change:**
-- `DATABASE_URL` in production must point at Supabase's **pooled** connection (Supavisor,
-  transaction mode, port 6543) — not the direct one. The pooler multiplexes many client
-  connections down to a small number of real backend ones.
-- Append **`?pgbouncer=true`** to that connection string. Verified against Prisma's own
-  current docs: transaction-mode pooling doesn't preserve session state, prepared
-  statements, or `SET` commands across transaction boundaries, and Prisma's engine uses
-  prepared statements by default. Without this flag, expect intermittent "prepared
-  statement already exists" or similar errors — specifically under concurrent load, which
-  is exactly the condition a solo dev session never produces.
-- `prisma migrate deploy` (step 5 above) needs the **direct** connection instead —
-  migrations need real session-level DDL, which transaction pooling doesn't support well.
-  Two different connection strings for two different jobs; using the pooled one for
-  migrations, or the direct one for the running app, are both real mistakes to check for.
-- Worth adding, not yet in the code: `@vercel/functions`' `attachDatabasePool` utility
-  around the `pg.Pool`, per Prisma's own current Vercel-specific guidance — it prevents
-  connections from leaking when Vercel suspends a function mid-lifecycle, a distinct
-  failure mode from plain connection-count exhaustion. Also worth capping the `pg.Pool`'s
-  own `max` low (e.g. `max: 1`), since each function instance already gets its own pool —
-  a large per-instance pool defeats the point of pointing at a pooler in the first place.
+**What is implemented** (`src/lib/prisma/unscoped.ts`, `prisma7.config.ts`):
+- The running app uses `DATABASE_URL` = Supabase's **pooled** string (Supavisor, transaction
+  mode, port 6543). The pooler multiplexes many client connections onto a few real backends.
+- The Prisma CLI uses `DIRECT_URL` = the direct string (port 5432) when set, and falls back
+  to `DATABASE_URL` when not (dev, CI). Step 5 above is the only place it is set.
+- The pool is built explicitly: `idleTimeoutMillis: 5000` plus `@vercel/functions`'
+  `attachDatabasePool`, which is Vercel's own guidance for `pg` on Fluid compute — idle
+  connections close before an instance is suspended instead of leaking. It is inert off
+  Vercel, so dev and CI are unchanged.
+
+**What this runbook used to say, and was wrong** (corrected in the same PR that implemented
+the real fix — checked against the actual code and a real PgBouncer, not documentation alone):
+- **`?pgbouncer=true` does nothing here.** It is a Prisma *engine* connection-string
+  parameter. This app uses the `PrismaPg` *driver adapter*, which hands the URL to
+  node-postgres; node-postgres parses the flag into an inert key and never sends it. Do not
+  add it — it would only make a working configuration look like it depends on it.
+- **The real transaction-pooling hazard is named prepared statements**, and this app is
+  already safe from it *by construction*: `@prisma/adapter-pg` only creates named statements
+  if you pass `statementNameGenerator`, which this app never does (0 rows in
+  `pg_prepared_statements`). Opting in fails 110 of 120 concurrent queries with
+  `42P05 prepared statement already exists`. `tests/integration/no-named-prepared-statements.test.ts`
+  pins both halves, so adding a `statementNameGenerator` later fails CI rather than
+  production.
+- **`max: 1` on the pool is not recommended.** Vercel's guidance is to avoid it — it limits
+  concurrency inside an instance without reducing connections, and a request holding a
+  connection while awaiting another can deadlock. The pool keeps `pg`'s default max.
+- **Migrations go direct because of the advisory lock, not because DDL is unsupported.**
+  `migrate deploy` through a transaction-mode pooler *succeeds* on a fresh database; the
+  damage is that it leaves Prisma Migrate's session-level advisory lock held by an idle pooled
+  backend, and the next deploy times out with `P1002`. See step 5 for the recovery.
+
+**Limits of what was verified.** The pooler tested was PgBouncer 1.25.2 in transaction mode,
+not Supavisor itself — same transaction-pooling semantics, same conclusions, but Supavisor
+has not been exercised. The first deploy is the first real Supavisor test: after step 9, load
+the dashboard and tap the kiosk a few times concurrently and watch the Vercel function logs
+for `prepared statement` or `too many connections` errors.
+
+**Open decision — SSL to the pooler (needs Alexis before the first deploy).** With no
+`sslmode` in the URL, `pg` connects **without TLS**, and Supabase accepts that by default
+("to maximize client compatibility") — so a plain `DATABASE_URL` works and silently sends
+credentials and data in cleartext. `pg` (8.23) treats `sslmode=require`, `prefer` and
+`verify-full` all as *strict certificate verification* (and warns that it will change in
+v9), and `sslmode=no-verify` as encrypted-but-unverified. Supabase's certificate chain is
+signed by its own CA, which is not in Node's default trust store, so strict verification
+against Supabase commonly fails with `self-signed certificate in certificate chain` — the
+failure that will appear if this is skipped. The options:
+1. **`sslmode=verify-full` + Supabase's CA certificate** (dashboard → Database Settings → SSL
+   Configuration; Supabase's own recommendation, and required if you turn on "Enforce SSL"):
+   correct, but needs the CA delivered to the Vercel runtime (`NODE_EXTRA_CA_CERTS` or a
+   code change to pass `ssl.ca` to the pool). Not implemented; how to deliver the cert on
+   Vercel has not been verified.
+2. **`sslmode=no-verify`**: encrypted in transit, but does not check who is on the other end.
+   Works with no other changes; a conscious downgrade, not a default.
+
+Whichever is chosen, verify it on the *first* deploy: hit any page that reads the database
+and confirm it renders rather than 500s with a TLS error. Nothing has been verified against
+a real Supabase project yet.
 
 ### 2. The weekly digest cron silently never fires
 

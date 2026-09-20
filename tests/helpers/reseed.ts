@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { resolveGuardedTestDatabaseUrl } from "../../scripts/lib/test-database-guard";
+import { resolveGuardedTestDatabaseUrl, testDatabaseChildEnv } from "../../scripts/lib/test-database-guard";
 
 /**
  * Runs the real seed script exactly as `pnpm db:test:seed` does (the same
@@ -16,7 +16,7 @@ export function reseed(): void {
   const databaseUrl = resolveGuardedTestDatabaseUrl();
   const result = spawnSync("pnpm", ["exec", "tsx", "prisma/seed.ts"], {
     cwd: process.cwd(),
-    env: { ...process.env, DATABASE_URL: databaseUrl },
+    env: testDatabaseChildEnv(databaseUrl),
     encoding: "utf-8",
     shell: process.platform === "win32",
   });

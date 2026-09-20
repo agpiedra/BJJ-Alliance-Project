@@ -2,7 +2,14 @@
 // npm install --save-dev prisma dotenv
 import "dotenv/config";
 import { defineConfig } from "prisma/config";
+import { resolveCliDatabaseUrl } from "./scripts/lib/prisma-cli-url";
 
+// `datasource.url` is what the Prisma CLI connects to — migrations must go
+// DIRECT to Postgres (DIRECT_URL) once the running app's DATABASE_URL points
+// at a transaction-mode pooler. See scripts/lib/prisma-cli-url.ts for the
+// fallback and for the guard that stops a stale DIRECT_URL from silently
+// overriding a script that redirects DATABASE_URL to the test database.
+//
 // SHADOW_DATABASE_URL: a dedicated, empty database Prisma uses internally to
 // compute "what does the migration history actually produce" — required for
 // `prisma migrate diff --from-migrations` (this project's new
@@ -17,7 +24,7 @@ export default defineConfig({
     seed: "tsx prisma/seed.ts",
   },
   datasource: {
-    url: process.env["DATABASE_URL"],
+    url: resolveCliDatabaseUrl(),
     shadowDatabaseUrl: process.env["SHADOW_DATABASE_URL"],
   },
 });

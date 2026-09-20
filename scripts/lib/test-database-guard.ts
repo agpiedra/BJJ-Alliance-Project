@@ -60,6 +60,28 @@ export function resolveGuardedTestDatabaseUrl(): string {
   return testUrl;
 }
 
+/**
+ * The environment for any child process (a `prisma` CLI call, the seed) that
+ * must run against the guarded test database.
+ *
+ * Redirecting `DATABASE_URL` alone is no longer enough: prisma7.config.ts
+ * lets `DIRECT_URL` take precedence for the CLI (migrations must go direct
+ * once the app is behind a pooler), so an ambient `DIRECT_URL` — for example
+ * a production string left in the shell after running `migrate deploy` by
+ * hand — would silently win and aim these commands at the wrong database.
+ * Dropping it here means test-database commands can never be redirected by
+ * it. (prisma-cli-url.ts additionally refuses when the two name different
+ * databases, as the backstop for any call site that forgets to use this.)
+ */
+export function testDatabaseChildEnv(
+  testUrl: string,
+  baseEnv: Record<string, string | undefined> = process.env,
+): NodeJS.ProcessEnv {
+  const env: Record<string, string | undefined> = { ...baseEnv, DATABASE_URL: testUrl };
+  delete env.DIRECT_URL;
+  return env as NodeJS.ProcessEnv;
+}
+
 /** Test-support only — resets the memoization above so a test file can
  * exercise the guard fresh across multiple env-var scenarios in one process. */
 export function __resetGuardedTestDatabaseUrlCacheForTests(): void {
