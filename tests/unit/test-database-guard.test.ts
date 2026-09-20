@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   __resetGuardedTestDatabaseUrlCacheForTests,
   resolveGuardedTestDatabaseUrl,
+  testDatabaseChildEnv,
 } from "../../scripts/lib/test-database-guard";
 
 const ORIGINAL_TEST_URL = process.env.TEST_DATABASE_URL;
@@ -50,5 +51,29 @@ describe("resolveGuardedTestDatabaseUrl", () => {
   it("accepts a test-named database even when DATABASE_URL is unset", () => {
     process.env.TEST_DATABASE_URL = "postgresql://alliance:pw@localhost:5433/alliance_bjj_test";
     expect(resolveGuardedTestDatabaseUrl()).toBe(process.env.TEST_DATABASE_URL);
+  });
+});
+
+describe("testDatabaseChildEnv", () => {
+  const TEST_URL = "postgresql://alliance:pw@localhost:5433/alliance_bjj_test";
+
+  it("REQUIRED: redirects DATABASE_URL to the test database AND drops an ambient DIRECT_URL — otherwise the CLI would silently follow DIRECT_URL to whatever it points at", () => {
+    const base = {
+      DATABASE_URL: "postgresql://alliance:pw@localhost:5432/alliance_bjj",
+      DIRECT_URL: "postgresql://postgres:pw@db.example.supabase.co:5432/postgres",
+      PATH: "/usr/bin",
+    };
+
+    const env = testDatabaseChildEnv(TEST_URL, base);
+
+    expect(env.DATABASE_URL).toBe(TEST_URL);
+    expect("DIRECT_URL" in env).toBe(false);
+    expect(env.PATH).toBe("/usr/bin");
+  });
+
+  it("does not mutate the environment it was given", () => {
+    const base = { DATABASE_URL: "x", DIRECT_URL: "y" };
+    testDatabaseChildEnv(TEST_URL, base);
+    expect(base).toEqual({ DATABASE_URL: "x", DIRECT_URL: "y" });
   });
 });

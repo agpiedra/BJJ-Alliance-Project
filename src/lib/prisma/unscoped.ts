@@ -1,3 +1,5 @@
+import { Pool } from "pg";
+import { attachDatabasePool } from "@vercel/functions";
 import { PrismaClient } from "@/generated/prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { requireEnv } from "@/lib/env";
@@ -6,7 +8,30 @@ const globalForPrisma = globalThis as unknown as {
   unscopedPrisma: PrismaClient | undefined;
 };
 
-const adapter = new PrismaPg({ connectionString: requireEnv("DATABASE_URL") });
+/**
+ * Built for a DATABASE_URL that points at a transaction-mode pooler in
+ * production (docs/DEPLOYMENT_RUNBOOK.md). Verified against the real
+ * adapter and a real PgBouncer in transaction mode, not assumed:
+ *
+ * - No `?pgbouncer=true`: that's a Prisma *engine* parameter. This adapter
+ *   hands the URL to node-postgres, which stores it as an inert key and
+ *   never sends it.
+ * - Never pass `statementNameGenerator`: without it this adapter creates no
+ *   named prepared statements (0 in `pg_prepared_statements`), which is what
+ *   makes transaction pooling safe. Opting in fails 110 of 120 concurrent
+ *   queries with `42P05 prepared statement already exists`
+ *   (tests/integration/no-named-prepared-statements.test.ts pins this).
+ * - `idleTimeoutMillis: 5000` + `attachDatabasePool`: Vercel's guidance for
+ *   pg on Fluid compute — idle connections close before an instance
+ *   suspends. `attachDatabasePool` is inert off Vercel. Don't cap `max` at 1
+ *   (Vercel: it harms concurrency without reducing connections).
+ * - `disposeExternalPool`: the pool is ours, so `$disconnect()` must end it.
+ */
+function buildUnscopedClient(): PrismaClient {
+  const pool = new Pool({ connectionString: requireEnv("DATABASE_URL"), idleTimeoutMillis: 5_000 });
+  attachDatabasePool(pool);
+  return new PrismaClient({ adapter: new PrismaPg(pool, { disposeExternalPool: true }) });
+}
 
 /**
  * The ONE real, unguarded Prisma client in this codebase. Revision 23
@@ -84,7 +109,7 @@ const adapter = new PrismaPg({ connectionString: requireEnv("DATABASE_URL") });
  * organization it's trying to discover), and signup's page + action (public,
  * pre-auth, both restricted to Alliance's two hardcoded academy slugs).
  */
-export const unscopedPrisma = globalForPrisma.unscopedPrisma ?? new PrismaClient({ adapter });
+export const unscopedPrisma = globalForPrisma.unscopedPrisma ?? buildUnscopedClient();
 
 if (process.env.NODE_ENV !== "production") {
   globalForPrisma.unscopedPrisma = unscopedPrisma;

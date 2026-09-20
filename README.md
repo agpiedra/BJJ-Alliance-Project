@@ -37,7 +37,8 @@ for and why — copy it to `.env` and fill in real values for a real deployment.
 
 | Variable | Required? | What it's for |
 |---|---|---|
-| `DATABASE_URL` | Always | The app's own Postgres database. |
+| `DATABASE_URL` | Always | What the **running app** connects with. In production this is the **pooled** connection string (Supabase port 6543) — no `?pgbouncer=true` (a Prisma-engine parameter; inert on this app's driver-adapter path), explicit `sslmode` (which one is an open decision in the runbook). Locally it is just the dev database. See `docs/DEPLOYMENT_RUNBOOK.md`. |
+| `DIRECT_URL` | Only where `prisma migrate deploy` runs against a pooled database | The **direct** connection (Supabase port 5432) the Prisma CLI uses for migrations. Unset = the CLI falls back to `DATABASE_URL` (right for local dev and CI). Must name the same database as `DATABASE_URL` or the CLI refuses to run. Set it on the trusted machine that runs migrations — **not** in the deployed app's environment. |
 | `TEST_DATABASE_URL` | Only to run `pnpm test:integration` | A **separate** database (never the same as `DATABASE_URL`) — the integration suite resets and reseeds it. |
 | `SHADOW_DATABASE_URL` | Only for `prisma migrate dev` / `pnpm db:check-drift` | An empty scratch database Prisma uses to compute migrations; never holds real data. |
 | `CODE_PEPPER` | Always | Server-side secret mixed into password/token hashing. Long random value, never reused across deployments. |

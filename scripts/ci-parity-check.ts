@@ -16,7 +16,7 @@ import "dotenv/config";
 import { spawnSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
-import { resolveGuardedTestDatabaseUrl } from "./lib/test-database-guard";
+import { resolveGuardedTestDatabaseUrl, testDatabaseChildEnv } from "./lib/test-database-guard";
 
 // On win32, spawnSync's shell:true joins command+args into one string for
 // cmd.exe without auto-quoting elements containing spaces (a real gotcha —
@@ -41,7 +41,7 @@ function run(command: string, args: string[], env: NodeJS.ProcessEnv): void {
 
 function main(): void {
   const testUrl = resolveGuardedTestDatabaseUrl();
-  const env = { ...process.env, DATABASE_URL: testUrl };
+  const env = testDatabaseChildEnv(testUrl);
 
   const outDir = path.resolve(process.cwd(), "ci", "seed-snapshots");
   mkdirSync(outDir, { recursive: true });

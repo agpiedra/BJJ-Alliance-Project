@@ -2,7 +2,7 @@ import "dotenv/config";
 import { execFileSync } from "node:child_process";
 import { PrismaClient } from "../src/generated/prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
-import { resolveGuardedTestDatabaseUrl } from "../scripts/lib/test-database-guard";
+import { resolveGuardedTestDatabaseUrl, testDatabaseChildEnv } from "../scripts/lib/test-database-guard";
 
 // Every model table, truncated with CASCADE so FK order doesn't matter.
 const TABLES = [
@@ -36,7 +36,7 @@ async function truncateAll(databaseUrl: string): Promise<void> {
 function runCommand(args: string[], databaseUrl: string): void {
   execFileSync("pnpm", args, {
     stdio: "inherit",
-    env: { ...process.env, DATABASE_URL: databaseUrl },
+    env: testDatabaseChildEnv(databaseUrl),
     shell: process.platform === "win32",
   });
 }
