@@ -83,8 +83,7 @@
       "joined": "You've joined {organization}",
       "joinedBody": "Sign in with the password you already have.",
       "signIn": "Sign in",
-      "invalidPassword": "Your password needs at least 8 characters.",
-      "studentAccount": "This email belongs to a student account, which can't also be staff. Ask the Owner to invite a different address."
+      "invalidPassword": "Your password needs at least 8 characters."
     },
     "orgUnavailable": {
       "heading": "Organization unavailable",
@@ -1467,8 +1466,10 @@
     "roleHint": {
       "ADMIN": "Every location, and manages staff.",
       "DIRECTOR": "Runs the locations they're assigned to.",
-      "INSTRUCTOR": "Teaches at the locations they're assigned to."
+      "INSTRUCTOR": "Teaches at the locations they're assigned to.",
+      "STUDENT": "Loses the staff app and keeps their own training."
     },
+    "roleStudentOnly": "Student only",
     "fields": {
       "email": "Email",
       "role": "Role",
@@ -1504,7 +1505,7 @@
     },
     "deactivate": {
       "button": "Deactivate",
-      "confirm": "Deactivate this person? They lose access to {organization} on their next request. Their access to any other academy is not affected, and you can reactivate them later."
+      "confirm": "Deactivate this person? They lose access to {organization} on their next request. Their access to any other academy is not affected, and you can reactivate them later. If they also train here and should keep their training, choose Student only under Edit instead."
     },
     "reactivate": {
       "button": "Reactivate"
@@ -1524,7 +1525,7 @@
       "alreadyMember": "This person is already on your team.",
       "alreadyMemberInactive": "This person is on your team but deactivated. Reactivate them instead.",
       "alreadyInvited": "This address already has a pending invitation. Resend it instead.",
-      "studentAccount": "This address belongs to a student account, which can't also be staff. Invite a different address.",
+      "noStudentRecord": "This person has no active student record here, so there is nothing to keep. Deactivate them instead.",
       "selfChange": "You can't deactivate or change your own access.",
       "lastOwner": "An academy must always keep at least one active Owner.",
       "notPending": "This invitation is no longer pending."

@@ -38,8 +38,11 @@ class InvitationAlreadyConsumed extends Error {}
  *
  * The membership (and, for a director/instructor, the academy assignments) is
  * created here, at acceptance — a pending invitation grants nothing. An
- * existing membership is left exactly as it is: an old link can neither
- * change a role nor reactivate someone an Owner has since deactivated.
+ * existing membership is left exactly as it is — an old link can neither
+ * change a role nor reactivate someone an Owner has since deactivated — with ONE
+ * exception: an ACTIVE student membership plus a staff invitation is PROMOTED in
+ * place (same row, login, password and student record; audited before/after), because
+ * in a jiu-jitsu academy every instructor is a student.
  */
 export async function acceptInvitation(locale: string, _prevState: ActionState, formData: FormData): Promise<ActionState> {
   const parsed = tokenSchema.safeParse({ token: formData.get("token") });
@@ -57,12 +60,6 @@ export async function acceptInvitation(locale: string, _prevState: ActionState, 
     prisma.user.findUnique({ where: { email: invitation.email } }),
     prisma.organization.findUniqueOrThrow({ where: { id: invitation.organizationId }, select: { defaultLocale: true } }),
   ]);
-
-  // The global `User.role` gates whole route trees; a student account cannot
-  // also be staff (see inviteStaffMember, which refuses this up front).
-  if (existingUser?.role === "STUDENT" && invitation.role !== "STUDENT") {
-    return { error: "studentAccount" };
-  }
 
   // Only a brand-new account, or an unaccepted placeholder, is asked for a password.
   const needsPassword = !existingUser || !existingUser.active;
@@ -122,6 +119,30 @@ export async function acceptInvitation(locale: string, _prevState: ActionState, 
         await syncStaffAssignments(tx, userId, invitation.organizationId, staffRole, academyIds);
       }
 
+      // PROMOTION IN PLACE: an ACTIVE student membership plus a staff invitation
+      // makes that same membership the invited role — same row, same login, same
+      // password, same student record — and assigns the academies. In a jiu-jitsu
+      // academy every instructor is a student, and access is membership. It is the
+      // ONLY change to an existing membership an invitation may make: anyone already
+      // staff, or deactivated since the link was issued, is left exactly as they are
+      // (an old link can neither change a role nor reactivate someone).
+      const promotes = membership !== null && membership.active && membership.role === "STUDENT" && staffRole !== null;
+      if (promotes && staffRole) {
+        await tx.organizationMembership.update({ where: { id: membership.id }, data: { role: staffRole } });
+        await syncStaffAssignments(tx, userId, invitation.organizationId, staffRole, academyIds);
+        await tx.auditLog.create({
+          data: {
+            actorId: userId,
+            organizationId: invitation.organizationId,
+            action: "staff.promote",
+            entityType: "OrganizationMembership",
+            entityId: membership.id,
+            before: { role: "STUDENT", academyIds: [] },
+            after: { role: staffRole, academyIds },
+          },
+        });
+      }
+
       await tx.auditLog.create({
         data: {
           actorId: userId,
@@ -129,7 +150,7 @@ export async function acceptInvitation(locale: string, _prevState: ActionState, 
           action: "staff.accept",
           entityType: "OrganizationMembership",
           entityId: joined.id,
-          after: { role: joined.role, academyIds, createdMembership: !membership },
+          after: { role: promotes && staffRole ? staffRole : joined.role, academyIds, createdMembership: !membership, promoted: promotes },
         },
       });
     });

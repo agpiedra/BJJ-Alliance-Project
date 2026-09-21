@@ -426,6 +426,16 @@ model User {
   id           String   @id @default(cuid())
   email        String   @unique
   passwordHash String
+  /// NOT an authorization source. This is a legacy account-level value, written when
+  /// the account is created; it once gated whole route trees, and nothing may read it
+  /// for a gate now. Access is MEMBERSHIP: `OrganizationMembership.role` for the
+  /// organization the person is acting in, plus a linked ACTIVE `Student` record for
+  /// the portal — derived from the database as the session's `{ staff, portal }`
+  /// claim (src/lib/auth/route-access.ts, derive-access.ts). A person who both teaches
+  /// and trains has ONE account with a staff membership and a student record; this
+  /// column cannot say that, which is why it cannot be trusted to. Enforced by
+  /// tests/unit/user-role-is-not-authorization.test.ts (an explicit allowlist of the
+  /// few files that may still read it).
   role         Role
   /// MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 1, Appendix C decision 5 — a
   /// platform-wide grant, explicitly bootstrapped, never inferred from a

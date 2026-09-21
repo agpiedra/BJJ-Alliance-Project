@@ -56,7 +56,8 @@ const inviteSchema = z.object({
 
 const updateSchema = z.object({
   membershipId: z.string().min(1),
-  role: z.enum(STAFF_ROLES),
+  // Staff roles, plus "Student only" — taking staff access away and keeping the training.
+  role: z.enum([...STAFF_ROLES, "STUDENT"]),
   academyIds: z.array(z.string().min(1)),
 });
 

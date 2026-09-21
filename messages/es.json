@@ -83,8 +83,7 @@
       "joined": "Te uniste a {organization}",
       "joinedBody": "Inicia sesión con la contraseña que ya tienes.",
       "signIn": "Iniciar sesión",
-      "invalidPassword": "Tu contraseña necesita al menos 8 caracteres.",
-      "studentAccount": "Este correo pertenece a una cuenta de alumno, que no puede ser también personal del equipo. Pídele al Dueño que invite otra dirección."
+      "invalidPassword": "Tu contraseña necesita al menos 8 caracteres."
     },
     "orgUnavailable": {
       "heading": "Organización no disponible",
@@ -1467,8 +1466,10 @@
     "roleHint": {
       "ADMIN": "Todas las sedes, y administra al equipo.",
       "DIRECTOR": "Dirige las sedes que tiene asignadas.",
-      "INSTRUCTOR": "Da clases en las sedes que tiene asignadas."
+      "INSTRUCTOR": "Da clases en las sedes que tiene asignadas.",
+      "STUDENT": "Pierde la app del equipo y conserva su propio entrenamiento."
     },
+    "roleStudentOnly": "Solo alumno",
     "fields": {
       "email": "Correo electrónico",
       "role": "Rol",
@@ -1504,7 +1505,7 @@
     },
     "deactivate": {
       "button": "Desactivar",
-      "confirm": "¿Desactivar a esta persona? Pierde el acceso a {organization} en su próxima solicitud. Su acceso a cualquier otra academia no se ve afectado, y puedes reactivarla después."
+      "confirm": "¿Desactivar a esta persona? Pierde el acceso a {organization} en su próxima solicitud. Su acceso a cualquier otra academia no se ve afectado, y puedes reactivarla después. Si también entrena aquí y debe conservar su entrenamiento, elegí Solo alumno en Editar."
     },
     "reactivate": {
       "button": "Reactivar"
@@ -1524,7 +1525,7 @@
       "alreadyMember": "Esta persona ya está en tu equipo.",
       "alreadyMemberInactive": "Esta persona está en tu equipo pero desactivada. Reactívala en su lugar.",
       "alreadyInvited": "Esta dirección ya tiene una invitación pendiente. Reenvíala en su lugar.",
-      "studentAccount": "Esta dirección pertenece a una cuenta de alumno, que no puede ser también personal del equipo. Invita otra dirección.",
+      "noStudentRecord": "Esta persona no tiene un registro de alumno activo aquí, así que no hay nada que conservar. Desactivala en su lugar.",
       "selfChange": "No puedes desactivar ni cambiar tu propio acceso.",
       "lastOwner": "Una academia siempre debe conservar al menos un Dueño activo.",
       "notPending": "Esta invitación ya no está pendiente."

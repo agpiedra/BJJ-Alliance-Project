@@ -27,12 +27,13 @@ vi.mock("@/lib/staff/staff-actions", () => ({
 }));
 
 const actions = await import("@/lib/staff/staff-actions");
-const { InviteForm, InvitationRowActions, LatestInvitationLink, StaffLinkProvider } = await import(
+const { InviteForm, InvitationRowActions, LatestInvitationLink, MemberRowActions, StaffLinkProvider } = await import(
   "../../src/app/[locale]/(staff)/admin/staff/staff-forms"
 );
 
 const inviteStaff = vi.mocked(actions.inviteStaff);
 const resendInvitation = vi.mocked(actions.resendInvitation);
+const updateStaffMember = vi.mocked(actions.updateStaffMember);
 
 const ACADEMIES = [{ id: "academy-1", name: "Alajuela" }];
 
@@ -130,5 +131,63 @@ describe("staff forms", () => {
       expect(screen.getByDisplayValue("http://localhost/accept?token=replacement")).toBeTruthy();
       expect(screen.getAllByTestId("invitation-link-panel")).toHaveLength(1);
     });
+  });
+});
+
+/**
+ * "Student only" — taking staff access away from someone who also trains, and keeping
+ * the training. Only the EDIT form offers it (an invitation makes someone staff; it is
+ * never how a person becomes "student only"), it needs no locations, and a refusal is
+ * said in words (someone with no student record has nothing to keep).
+ */
+describe("Student only", () => {
+  const coach = { membershipId: "m1", userId: "u1", email: "coach@example.com", role: "INSTRUCTOR" as const, active: true, academies: ACADEMIES };
+  const optionsOf = () => [...(screen.getByRole("combobox") as HTMLSelectElement).options].map((option) => option.textContent);
+
+  afterEach(() => {
+    cleanup();
+    updateStaffMember.mockReset();
+  });
+
+  it("REQUIRED: the edit form offers it; the invite form does not", () => {
+    render(withProviders(<InviteForm organizationId="org-1" academies={ACADEMIES} />));
+    expect(optionsOf()).not.toContain("Student only");
+    cleanup();
+
+    render(withProviders(<MemberRowActions organizationId="org-1" member={coach} academies={ACADEMIES} isSelf={false} organizationName="Alliance" />));
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    expect(optionsOf()).toContain("Student only");
+  });
+
+  it("REQUIRED: choosing it hides the locations (it needs none) and saves role STUDENT with no academies", async () => {
+    updateStaffMember.mockResolvedValue({ ok: true });
+    render(withProviders(<MemberRowActions organizationId="org-1" member={coach} academies={ACADEMIES} isSelf={false} organizationName="Alliance" />));
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    expect(screen.getByLabelText("Alajuela")).toBeTruthy(); // an instructor is scoped to locations
+
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "STUDENT" } });
+
+    expect(screen.queryByLabelText("Alajuela")).toBeNull();
+    expect(screen.getByText("Loses the staff app and keeps their own training.")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByText("Saved.");
+    const submitted = updateStaffMember.mock.calls[0][2] as FormData;
+    expect(submitted.get("role")).toBe("STUDENT");
+    expect(submitted.get("membershipId")).toBe("m1");
+    expect(submitted.getAll("academyIds")).toEqual([]);
+  });
+
+  it("a refusal for someone with no student record is said in words", async () => {
+    updateStaffMember.mockResolvedValue({ error: "noStudentRecord" });
+    render(withProviders(<MemberRowActions organizationId="org-1" member={coach} academies={ACADEMIES} isSelf={false} organizationName="Alliance" />));
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "STUDENT" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await screen.findByText("This person has no active student record here, so there is nothing to keep. Deactivate them instead.");
+  });
+
+  it("deactivating tells the Owner that Student only keeps their training", () => {
+    expect(enMessages.staffManagement.deactivate.confirm).toMatch(/Student only/);
   });
 });
