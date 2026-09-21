@@ -108,15 +108,17 @@ describe("approveOrganization", () => {
     expect(academy.slug).toBe(org.slug);
     expect(result.kioskToken).not.toBeNull();
 
+    // The registering owner is an ADMIN (the organization's owner across every
+    // location), never a DIRECTOR — see approved-owner-scope.test.ts for why.
     const director = await prisma.user.findUniqueOrThrow({ where: { email: org.contactEmail! } });
     cleanupUserIds.push(director.id);
     expect(director.active).toBe(false);
-    expect(director.role).toBe("DIRECTOR");
+    expect(director.role).toBe("ADMIN");
 
     const membership = await prisma.organizationMembership.findUniqueOrThrow({
       where: { userId_organizationId: { userId: director.id, organizationId: org.id } },
     });
-    expect(membership.role).toBe("DIRECTOR");
+    expect(membership.role).toBe("ADMIN");
 
     expect(result.invitationLink).toContain("/accept-invitation?token=");
     const invitationCount = await prisma.invitation.count({ where: { organizationId: org.id, usedAt: null } });
@@ -168,7 +170,7 @@ describe("approveOrganization", () => {
     const membership = await prisma.organizationMembership.findUniqueOrThrow({
       where: { userId_organizationId: { userId: existing.id, organizationId: org.id } },
     });
-    expect(membership.role).toBe("DIRECTOR");
+    expect(membership.role).toBe("ADMIN"); // owner of THIS organization, whatever they are elsewhere
   });
 
   it("refuses to approve a SUSPENDED or CANCELLED organization", async () => {

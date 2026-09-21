@@ -129,13 +129,17 @@ together.
 9. **Approve it**: `scripts/approve-organization.ts --slug=alliance-cr --approved-by=<your-email>`.
    Because your `User` row already exists (step 7), `approveOrganization()`'s own "reuse an
    existing user" branch — built for the ordinary multi-organization case, not for this
-   bootstrap, but it applies here identically — finds it and adds a `DIRECTOR` membership
-   rather than creating a second account. You end up as both platform admin and Alliance's
-   own director on one account, already able to sign in with the password from step 7. This
-   also seeds Alliance's belt catalogs and default promotion configs automatically, via
-   `seedOrganizationDefaults` — the real per-organization seeder, not `prisma/seed.ts`. One
-   harmless side effect: this step also emails a redundant invitation link to your own
-   address, since the function has no way to know you don't need one — ignorable.
+   bootstrap, but it applies here identically — finds it and adds an `ADMIN` membership
+   (the organization's **Owner**, across every location — see revision 33 of the spec for why
+   it is `ADMIN`, not `DIRECTOR`) rather than creating a second account. You end up as both
+   platform admin and Alliance's own owner on one account, already able to sign in with the
+   password from step 7. This also seeds Alliance's belt catalogs and default promotion
+   configs automatically, via `seedOrganizationDefaults` — the real per-organization seeder,
+   not `prisma/seed.ts`. One side effect: this step also emails a redundant invitation link to
+   your own address, since the function has no way to know you don't need one. **Do not open
+   it.** Today `acceptInvitation` overwrites the password of an account that already exists
+   (open bug, fixed in the staff-management PR), so following that link would silently replace
+   the password from step 7.
 10. **Create the Supabase Storage bucket for logos**, and confirm it's set **public**, not
     the default-private a freshly created bucket gets. See "Supabase Storage" below for why
     this is easy to miss and where it actually breaks if missed.
@@ -203,7 +207,8 @@ together.
       deployment can't reach the database: read the Vercel function logs; the usual causes are
       `DATABASE_SSL_CA_B64` or `DATABASE_URL` missing in the *Production* environment scope, or
       a certificate error the script's own connection didn't hit.
-12. **Sign in, confirm `/platform` is reachable**, then work through
+12. **Sign in, confirm `/platform` is reachable** — open your user menu (top right) and choose
+    **Plataforma**, or go to `/platform` directly — then work through
     `docs/MULTI_ACADEMY_OPERATIONS.md` for anything else.
 
 ## What breaks in production but never in dev
