@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import { resolveCliDatabaseUrl } from "../../scripts/lib/prisma-cli-url";
 
 const POOLED_SUPABASE = "postgresql://postgres.abcdefgh:pw@aws-0-us-east-1.pooler.supabase.com:6543/postgres";
-const DIRECT_SUPABASE = "postgresql://postgres:pw@db.abcdefgh.supabase.co:5432/postgres";
+// A remote DIRECT_URL must state its certificate handling (see the guard tests below).
+const DIRECT_SUPABASE =
+  "postgresql://postgres:pw@db.abcdefgh.supabase.co:5432/postgres?sslmode=require&sslaccept=strict&sslcert=/certs/supabase-ca.crt";
 
 describe("resolveCliDatabaseUrl — which connection the Prisma CLI (migrations) uses", () => {
   it("falls back to DATABASE_URL when DIRECT_URL is unset — local dev and CI behave exactly as before", () => {
@@ -22,7 +24,7 @@ describe("resolveCliDatabaseUrl — which connection the Prisma CLI (migrations)
 
   it("ignores query strings and a trailing slash when comparing database names", () => {
     const pooled = "postgresql://u:p@pooler.example:6543/appdb?sslmode=require";
-    const direct = "postgresql://u:p@db.example:5432/appdb/";
+    const direct = "postgresql://u:p@db.example:5432/appdb/?sslaccept=strict";
     expect(resolveCliDatabaseUrl({ DATABASE_URL: pooled, DIRECT_URL: direct })).toBe(direct);
   });
 
@@ -51,6 +53,45 @@ describe("resolveCliDatabaseUrl — which connection the Prisma CLI (migrations)
         DIRECT_URL: "postgresql://a:b@localhost:5432/alliance_bjj",
       }),
     ).toThrow(/unset DIRECT_URL for that command/);
+  });
+
+  describe("a remote DIRECT_URL must state its certificate handling", () => {
+    // Verified against a real TLS Postgres with a private CA: on the Prisma
+    // CLI path `sslmode=require` AND `sslmode=verify-full` connected with a
+    // WRONG CA. Only `sslaccept=strict` verifies. A URL that reads as
+    // "verified" and isn't is exactly the silent failure this refuses.
+    const remote = "postgresql://postgres:pw@db.abcdefgh.supabase.co:5432/postgres";
+
+    it("REQUIRED: refuses a remote DIRECT_URL with no sslaccept — even one that says sslmode=verify-full", () => {
+      for (const query of ["", "?sslmode=require", "?sslmode=verify-full", "?sslmode=verify-full&sslcert=/certs/ca.crt"]) {
+        expect(() => resolveCliDatabaseUrl({ DIRECT_URL: `${remote}${query}` }), query).toThrow(/sets no sslaccept/);
+      }
+    });
+
+    it("names the fix: sslaccept=strict with sslcert, and the explicit fallback", () => {
+      expect(() => resolveCliDatabaseUrl({ DIRECT_URL: remote })).toThrow(/sslaccept=strict&sslcert=<path to the database CA file>/);
+      expect(() => resolveCliDatabaseUrl({ DIRECT_URL: remote })).toThrow(/sslaccept=accept_invalid_certs/);
+    });
+
+    it("accepts sslaccept=strict (verification) and accept_invalid_certs (an explicit, knowing fallback)", () => {
+      const strict = `${remote}?sslmode=require&sslaccept=strict&sslcert=/certs/ca.crt`;
+      const lax = `${remote}?sslmode=require&sslaccept=accept_invalid_certs`;
+      expect(resolveCliDatabaseUrl({ DIRECT_URL: strict })).toBe(strict);
+      expect(resolveCliDatabaseUrl({ DIRECT_URL: lax })).toBe(lax);
+    });
+
+    it("applies the same rule when DATABASE_URL is also set", () => {
+      expect(() => resolveCliDatabaseUrl({ DATABASE_URL: POOLED_SUPABASE, DIRECT_URL: remote })).toThrow(/sets no sslaccept/);
+    });
+
+    it("does not apply to a local DIRECT_URL", () => {
+      const local = "postgresql://alliance:pw@localhost:5432/alliance_bjj";
+      expect(resolveCliDatabaseUrl({ DIRECT_URL: local })).toBe(local);
+    });
+
+    it("does not apply to the DATABASE_URL fallback — `prisma generate` loads this file with a remote URL and never connects", () => {
+      expect(resolveCliDatabaseUrl({ DATABASE_URL: POOLED_SUPABASE })).toBe(POOLED_SUPABASE);
+    });
   });
 
   it("reports WHICH variable is malformed rather than a bare 'Invalid URL'", () => {

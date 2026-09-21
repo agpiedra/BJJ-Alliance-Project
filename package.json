@@ -10,6 +10,7 @@
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "check:guard-usage": "tsx scripts/check-guard-usage.ts",
+    "verify:pooling": "tsx scripts/verify-pooling.ts",
     "check:pending-callers": "tsx scripts/pending-callers.ts",
     "db:check-drift": "tsx scripts/check-drift.ts",
     "baseline:alliance": "tsx scripts/alliance-baseline.ts",

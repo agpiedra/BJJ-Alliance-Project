@@ -57,12 +57,23 @@ together.
    `iad1`.
 4. **Set every production environment variable before the first deploy.** Cross-checked
    against every `requireEnv`/`process.env` read in the codebase (re-verified for this
-   runbook, nothing new since Phase 7's own audit): `README.md`'s table is complete. Two
+   runbook, nothing new since Phase 7's own audit): `README.md`'s table is complete. Three
    values need to be set specifically, not just "some Supabase URL":
-   - `DATABASE_URL` — the **pooled** connection string (port 6543), as Supabase gives it,
-     plus an explicit `sslmode` (which one is the open SSL decision below). **No `?pgbouncer=true`** — see "Connection
-     pooling" below for why that flag does nothing in this app. Also read the SSL item there
-     before this first deploy: it is an open decision, not a formality.
+   - `DATABASE_URL` — the **pooled** connection string (port 6543), exactly as Supabase gives
+     it. **Nothing TLS-related and no `?pgbouncer=true` in it**: the app refuses a URL that
+     carries `sslmode`/`ssl…` parameters alongside the CA below (they would silently discard
+     the CA), and `pgbouncer=true` does nothing in this app — see "Connection pooling" below.
+   - `DATABASE_SSL_CA_B64` — Supabase's CA certificate, base64-encoded (Dashboard → Database
+     Settings → SSL Configuration → download the certificate). It is a public certificate, not
+     a secret. Encode the *file*, not its text:
+     `base64 -w0 <file>` (Git Bash/Linux) or
+     `[Convert]::ToBase64String([IO.File]::ReadAllBytes("<file>"))` (PowerShell). Set it for
+     **the same Vercel environments as `DATABASE_URL`, including Build**: in production mode
+     the app refuses to construct a database client for a remote host without it, and
+     `next build` constructs one. Without it every page fails with
+     `Refusing to connect to "…" without TLS configuration in production` — loud, not a
+     silent plaintext connection. Rotating the certificate is a config change: replace this
+     value and redeploy. If verification fails on the first deploy, see "SSL fallback".
    - `NODE_ENV` — Vercel sets this to `production` automatically; don't set it by hand, and
      confirm it's actually `production` after the first deploy (the e2e-auth-bypass route's
      entire defense rests on this evaluating correctly).
@@ -71,10 +82,19 @@ together.
    also not set in Vercel** — it belongs only on the machine that runs step 5.
 5. **Run `prisma migrate deploy` against the direct connection**, from a trusted machine:
    ```
-   DIRECT_URL="<direct connection string, port 5432>" \
+   DIRECT_URL="<direct connection string, port 5432>?sslmode=require&sslaccept=strict&sslcert=<absolute path to the Supabase CA file>" \
    DATABASE_URL="<the pooled string from step 4>" \
    pnpm exec prisma migrate deploy
    ```
+   `sslcert` is the same CA file step 4 base64-encodes — here as a path on the migration
+   machine. **`sslaccept=strict` is what verifies the certificate; `sslmode` does not**:
+   on the Prisma CLI's own connection path (its schema engine, not `pg`), `sslmode=require`
+   and even `sslmode=verify-full` connected against a *wrong* CA in testing. The CLI refuses
+   a remote `DIRECT_URL` that sets no `sslaccept`, so this can't be skipped by accident;
+   `sslaccept=accept_invalid_certs` is the knowing, temporary equivalent of the fallback in
+   "SSL fallback". A migration that fails with `Error opening a TLS connection` here is the
+   same certificate problem as the app's — fix them together.
+
    `prisma7.config.ts` makes the Prisma CLI use `DIRECT_URL` when it is set (and
    `DATABASE_URL` when it isn't — local dev and CI, where no pooler is in front). It refuses
    to run if the two name different databases. Never run migrations through the pooler: it
@@ -119,7 +139,71 @@ together.
 10. **Create the Supabase Storage bucket for logos**, and confirm it's set **public**, not
     the default-private a freshly created bucket gets. See "Supabase Storage" below for why
     this is easy to miss and where it actually breaks if missed.
-11. **Sign in, confirm `/platform` is reachable**, then work through
+11. **Verify pooling and TLS — before Anny (or anyone) touches anything.** The app's pooling
+    was proven against PgBouncer; this is the first time it meets Supavisor. If Supavisor
+    behaves differently, you want to find out from a script you ran on purpose, not from a
+    director mid-class. From your trusted machine, with the same values Vercel has:
+    ```
+    DATABASE_URL="<the pooled string from step 4>" DATABASE_SSL_CA_B64="<the value from step 4>" \
+    pnpm verify:pooling --app-url="https://<your-domain>/es/kiosk/<an-academy-slug>"
+    ```
+    (PowerShell: set `$env:DATABASE_URL` and `$env:DATABASE_SSL_CA_B64` first, then run
+    `pnpm verify:pooling --app-url=...`.) It uses the app's own pool and client factories, so
+    it tests the app's real configuration; it only reads (SELECTs and one count) and never
+    prints credentials. It checks, in order: the TLS session is encrypted and the certificate
+    verified; 360 concurrent queries and transactions through the app's real client all
+    succeed and each returns its *own* answer; a control that opts in to named prepared
+    statements (the one thing that breaks transaction pooling); and — the real production
+    shape, many cold function instances each with their own pool — 90 concurrent requests
+    to the deployed page. **Pass `--app-url` a public page that reads the database**, e.g. an
+    academy's kiosk page. If `DATABASE_URL` is not on the command line, `dotenv` loads your
+    dev `.env` and the script says `NOTE: the target is a LOCAL database` — that run proves
+    nothing about production.
+
+    **Expected output** (the counts and the distinct-backend number will differ):
+    ```
+    Target: aws-0-us-east-1.pooler.supabase.com:6543/postgres   TLS config: DATABASE_SSL_CA_B64 (full verification)
+
+    [1/4] TLS      PASS  encrypted, server certificate verified
+    [2/4] APP LOAD PASS  360/360 concurrent queries and transactions succeeded (4 distinct backend connections seen)
+    [3/4] CONTROL  INFO  named prepared statements DO break this pooler (…) — so [2/4] passing is meaningful.
+    [4/4] APP URL  PASS  90/90 concurrent requests returned 200
+
+    RESULT: PASS
+    ```
+    Exit code 0 is the only go. Lines `[1/4]`, `[2/4]` and `[4/4]` must each be `PASS`.
+    `[3/4]` is information, never a failure: if it says named statements did **not** fail,
+    this pooler tolerates them (the PgBouncer 1.25.2 used to rehearse this did, at its
+    defaults; it failed only with `max_prepared_statements=0`) — the app never uses them,
+    so `[2/4]` holds either way; the control just couldn't demonstrate the failure.
+    `RESULT: PASS, ON THE TEMPORARY no-verify FALLBACK` is not done — see "SSL fallback".
+
+    **If it fails — do not launch; fix, then rerun until `RESULT: PASS`:**
+    - `[1/4] … unable to verify the first certificate` — `DATABASE_SSL_CA_B64` isn't the CA
+      that signed the database's certificate: re-download it, re-encode the *file*, retry.
+    - `[1/4] … does not match certificate's altnames` — the CA is right but the certificate
+      doesn't name the pooler's host. See what it does name:
+      `openssl s_client -starttls postgres -connect <pooler-host>:6543 </dev/null 2>/dev/null | openssl x509 -noout -ext subjectAltName`.
+      This is the case "SSL fallback" exists for; don't work around it any other way.
+    - `[1/4] … Tenant or user not found` — the pooled string's user is `postgres.<project-ref>`,
+      not plain `postgres`. `password authentication failed` — wrong password.
+    - `[1/4] … Refusing to connect … without TLS configuration` — `DATABASE_SSL_CA_B64` isn't
+      set in the shell you ran this from.
+    - `[2/4] the schema is not readable` — step 5 didn't apply migrations to this database.
+    - `[2/4] APP LOAD FAIL … 42P05` or `26000` (prepared statements) — Supavisor is not
+      behaving like PgBouncer. First check nobody added a `statementNameGenerator`
+      (`git grep statementNameGenerator src`; `tests/integration/no-named-prepared-statements.test.ts`
+      pins it). If the app is clean, keep the output and don't launch: the alternative to
+      transaction mode is Supabase's session-mode pooler (port 5432 on the pooler host, per
+      Supabase's docs — not verified here), which gives each client its own backend at the
+      cost of multiplexing.
+    - `[2/4] APP LOAD FAIL … 53300` (too many connections) — the pooler's pool size or client
+      limit is below what the load needs: raise it in Supabase's database settings.
+    - `[4/4] … 404×90` — the `--app-url` is wrong (unknown academy slug). `500×…` — the
+      deployment can't reach the database: read the Vercel function logs; the usual causes are
+      `DATABASE_SSL_CA_B64` or `DATABASE_URL` missing in the *Production* environment scope, or
+      a certificate error the script's own connection didn't hit.
+12. **Sign in, confirm `/platform` is reachable**, then work through
     `docs/MULTI_ACADEMY_OPERATIONS.md` for anything else.
 
 ## What breaks in production but never in dev
@@ -160,8 +244,11 @@ the real fix — checked against the actual code and a real PgBouncer, not docum
 - **The real transaction-pooling hazard is named prepared statements**, and this app is
   already safe from it *by construction*: `@prisma/adapter-pg` only creates named statements
   if you pass `statementNameGenerator`, which this app never does (0 rows in
-  `pg_prepared_statements`). Opting in fails 110 of 120 concurrent queries with
-  `42P05 prepared statement already exists`. `tests/integration/no-named-prepared-statements.test.ts`
+  `pg_prepared_statements`). Opting in fails concurrent queries with
+  `42P05 prepared statement already exists` on a pooler that doesn't track prepared
+  statements (110 of 120 against PgBouncer 1.25.2 with `max_prepared_statements=0`) — but the
+  same PgBouncer at its *defaults* tolerated it, so support varies by pooler and version,
+  which is exactly why the app doesn't depend on it. `tests/integration/no-named-prepared-statements.test.ts`
   pins both halves, so adding a `statementNameGenerator` later fails CI rather than
   production.
 - **`max: 1` on the pool is not recommended.** Vercel's guidance is to avoid it — it limits
@@ -172,32 +259,66 @@ the real fix — checked against the actual code and a real PgBouncer, not docum
   damage is that it leaves Prisma Migrate's session-level advisory lock held by an idle pooled
   backend, and the next deploy times out with `P1002`. See step 5 for the recovery.
 
-**Limits of what was verified.** The pooler tested was PgBouncer 1.25.2 in transaction mode,
-not Supavisor itself — same transaction-pooling semantics, same conclusions, but Supavisor
-has not been exercised. The first deploy is the first real Supavisor test: after step 9, load
-the dashboard and tap the kiosk a few times concurrently and watch the Vercel function logs
-for `prepared statement` or `too many connections` errors.
+**Limits of what was verified.** The pooler tested was PgBouncer 1.25.2 in transaction mode
+with TLS, not Supavisor itself — same transaction-pooling semantics, but Supavisor has not
+been exercised, and neither has a real Supabase certificate. Step 11 is that first real test,
+run before anyone uses the app.
 
-**Open decision — SSL to the pooler (needs Alexis before the first deploy).** With no
-`sslmode` in the URL, `pg` connects **without TLS**, and Supabase accepts that by default
-("to maximize client compatibility") — so a plain `DATABASE_URL` works and silently sends
-credentials and data in cleartext. `pg` (8.23) treats `sslmode=require`, `prefer` and
-`verify-full` all as *strict certificate verification* (and warns that it will change in
-v9), and `sslmode=no-verify` as encrypted-but-unverified. Supabase's certificate chain is
-signed by its own CA, which is not in Node's default trust store, so strict verification
-against Supabase commonly fails with `self-signed certificate in certificate chain` — the
-failure that will appear if this is skipped. The options:
-1. **`sslmode=verify-full` + Supabase's CA certificate** (dashboard → Database Settings → SSL
-   Configuration; Supabase's own recommendation, and required if you turn on "Enforce SSL"):
-   correct, but needs the CA delivered to the Vercel runtime (`NODE_EXTRA_CA_CERTS` or a
-   code change to pass `ssl.ca` to the pool). Not implemented; how to deliver the cert on
-   Vercel has not been verified.
-2. **`sslmode=no-verify`**: encrypted in transit, but does not check who is on the other end.
-   Works with no other changes; a conscious downgrade, not a default.
+### SSL to the pooler
 
-Whichever is chosen, verify it on the *first* deploy: hit any page that reads the database
-and confirm it renders rather than 500s with a TLS error. Nothing has been verified against
-a real Supabase project yet.
+**The mechanism, checked before choosing a value** (against a real TLS Postgres with a
+private CA, asking the server itself via `pg_stat_ssl`/its connection log whether each
+session was encrypted — the same engine-versus-adapter trap as `pgbouncer=true`, and it
+bites in both directions):
+
+- **The URL's `sslmode` is not where TLS is configured on the app's path.** With no
+  `sslmode` and no `ssl` option, `pg` connects in **plaintext** even to a server offering
+  TLS, and Supabase accepts plaintext by default. The authoritative control is the Pool's
+  `ssl` option, which the app now sets from `DATABASE_SSL_CA_B64` (`src/lib/prisma/database-ssl.ts`).
+- **URL parameters override the Pool's option** (`Object.assign({}, config,
+  parse(config.connectionString))` in `pg`): `?sslmode=verify-full` next to `ssl: { ca }`
+  silently discards the CA and fails with `unable to verify the first certificate`. So the
+  app refuses a `DATABASE_URL` carrying TLS parameters whenever the CA is configured, and
+  refuses TLS-less remote hosts outright in production.
+- **With an IP-address host, `pg` validates the certificate against `"localhost"`,** not the
+  IP, so "verified" would be meaningless. The app refuses to verify against an IP host; use
+  the DNS name (Supabase's strings already do). With a DNS host the certificate's name is
+  checked: a certificate signed by the right CA that doesn't name the host is rejected.
+- **The Prisma CLI is a different path** (step 5): there `sslmode` does *not* verify, and
+  only `sslaccept=strict` + `sslcert=<CA file>` does — enforced by the CLI URL resolver for
+  a remote `DIRECT_URL`.
+- Supabase's own docs recommend `verify-full` with its CA (dashboard → Database Settings →
+  SSL Configuration), and it is required if you enable "Enforce SSL".
+
+**Decided:** full verification against Supabase's CA, supplied as `DATABASE_SSL_CA_B64`. The
+certificate is public, so carrying it as an env var has no handling risk; that makes rotation
+a config change plus a redeploy instead of a code change; and it is the only option that
+verifies *who is answering* — encryption without authentication doesn't stop the wrong party
+being on the other end of a connection that carries every tenant's data. Pinned by
+`tests/integration/database-tls.test.ts` (right CA verified; wrong CA refused; right CA but
+wrong hostname refused; the override trap; the real Prisma client over it).
+
+**Not verified until step 11 runs:** that Supabase's *pooler* certificate names the pooler's
+hostname. Supabase publishes one CA and recommends `verify-full`, which implies it does, but
+that has not been checked against a real project.
+
+### SSL fallback — temporary, with an owner and an exit
+
+If step 11 fails on TLS and the cause is not something you can fix quickly (typically the
+`altnames` case above), the fallback is `DATABASE_SSL_MODE=no-verify` **instead of**
+`DATABASE_SSL_CA_B64` in Vercel (and `sslaccept=accept_invalid_certs` on the step 5
+`DIRECT_URL`). That encrypts the connection and authenticates nothing.
+
+- **It is temporary.** The app logs a warning on every start naming it as such, and
+  `pnpm verify:pooling` ends `RESULT: PASS, ON THE TEMPORARY no-verify FALLBACK` — never a
+  plain `PASS` — every time it is run, so it cannot go unnoticed.
+- **Owner:** Alexis. Nothing else removes it.
+- **Exit condition:** find out what the certificate actually names (the `openssl s_client`
+  command in step 11), then make the verified configuration work — the right CA file, or a
+  connection string whose hostname the certificate covers. Then remove
+  `DATABASE_SSL_MODE`, set `DATABASE_SSL_CA_B64`, redeploy, and rerun step 11 until
+  `[1/4] TLS PASS  encrypted, server certificate verified` and a plain `RESULT: PASS`.
+  Until then the launch checklist should treat it as an open item, not a configuration.
 
 ### 2. The weekly digest cron silently never fires
 
