@@ -200,7 +200,7 @@ async function makePaymentPeriod(
 ) {
   const { year, month } = currentCrDateParts();
   await prisma.paymentPeriod.create({
-    data: { studentId, academyId, organizationId, planId, recordedById, year, month, status },
+    data: { studentId, academyId, organizationId, planId, recordedById, currency: "CRC", year, month, status },
   });
 }
 

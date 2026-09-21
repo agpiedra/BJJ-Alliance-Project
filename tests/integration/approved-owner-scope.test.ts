@@ -94,6 +94,7 @@ describe("an owner created exactly as approveOrganization creates one", () => {
     await prisma.invitation.deleteMany({ where: { organizationId: { in: orgIds } } });
     await prisma.staffAssignment.deleteMany({ where: { organizationId: { in: orgIds } } });
     await prisma.organizationMembership.deleteMany({ where: { organizationId: { in: orgIds } } });
+    await prisma.paymentPlan.deleteMany({ where: { organizationId: { in: orgIds } } }); // approval seeds a default plan
     await prisma.academy.deleteMany({ where: { organizationId: { in: orgIds } } });
     await prisma.organization.deleteMany({ where: { id: { in: orgIds } } });
     await prisma.user.deleteMany({ where: { id: { in: userIds } } });

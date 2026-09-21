@@ -7,7 +7,8 @@ import { prisma } from "@/lib/prisma";
 import { isAcademyInTenantScope, resolveActionContext } from "@/lib/tenant/context";
 import { getScopedDb } from "@/lib/tenant/scoped-client";
 import { PaymentMethod, PaymentStatus, Prisma } from "@/generated/prisma/client";
-import { CUSTOM_PROMO_PLAN_NAME } from "@/lib/payments/custom-promo-plan-name";
+import { CUSTOM_PROMO_PLAN_NAMES, isCustomPromoPlanName } from "@/lib/payments/custom-promo-plan-name";
+import { ALL_DEFAULT_PLAN_NAMES } from "@/lib/payments/default-plan-name";
 import { currentCrDateParts } from "@/lib/payments/get-current-period";
 import { isPeriodMoreThanOneMonthInFuture } from "@/lib/payments/period-window";
 import type { ActionState } from "@/lib/action-state";
@@ -95,7 +96,7 @@ export async function recordPayment(
 
   const plan = await prisma.paymentPlan.findUnique({
     where: { id: data.planId, organizationId: student.organizationId },
-    select: { id: true, academyId: true, name: true },
+    select: { id: true, academyId: true, name: true, active: true },
   });
 
   if (!plan || plan.academyId !== student.homeAcademyId) {
@@ -107,7 +108,7 @@ export async function recordPayment(
   // (ADMIN/DIRECTOR only, the whole action) already keeps an INSTRUCTOR from
   // reaching this line at all, promo or not, so no separate role re-check is
   // needed here specifically for the promo path.
-  if (plan.name === CUSTOM_PROMO_PLAN_NAME && !data.promoName?.trim()) {
+  if (isCustomPromoPlanName(plan.name) && !data.promoName?.trim()) {
     return { error: "promoNameRequired", fieldErrors: { promoName: ["promoNameRequired"] } };
   }
 
@@ -121,11 +122,31 @@ export async function recordPayment(
         status: true,
         planId: true,
         amount: true,
+        currency: true,
         method: true,
         promoName: true,
         promoReason: true,
         promoRecurring: true,
       },
+    });
+
+    // A DEACTIVATED plan is gone from every picker, so it must not be
+    // recordable either — a stale form or a hand-built request could otherwise
+    // put a new payment on it. The one exception is a period that ALREADY sits
+    // on that plan: correcting its notes/status must keep working (history is
+    // never orphaned), which is exactly "the plan isn't changing". Checked
+    // here, next to the `existing` read, so it sees the same row the write does.
+    if (!plan.active && existing?.planId !== plan.id) {
+      return { rejected: "planInactive" as const };
+    }
+
+    // Read in the SAME transaction as the write. Only used when this call
+    // CREATES the row: the currency is a snapshot taken at the moment of
+    // recording, so correcting an existing row (the `update` below) deliberately
+    // leaves whatever currency it was recorded in untouched.
+    const { currency: organizationCurrency } = await tx.organization.findUniqueOrThrow({
+      where: { id: student.organizationId },
+      select: { currency: true },
     });
 
     const period = await tx.paymentPeriod.upsert({
@@ -139,6 +160,7 @@ export async function recordPayment(
         planId: data.planId,
         status: data.status,
         amount: data.amount,
+        currency: organizationCurrency,
         notes: data.notes,
         method: data.method,
         promoName: data.promoName,
@@ -191,6 +213,7 @@ export async function recordPayment(
               status: existing.status,
               planId: existing.planId,
               amount: existing.amount?.toNumber() ?? null,
+              currency: existing.currency,
               method: existing.method,
               promoName: existing.promoName,
               promoReason: existing.promoReason,
@@ -201,6 +224,7 @@ export async function recordPayment(
           status: period.status,
           planId: period.planId,
           amount: period.amount?.toNumber() ?? null,
+          currency: period.currency,
           method: period.method,
           promoName: period.promoName,
           promoReason: period.promoReason,
@@ -212,7 +236,11 @@ export async function recordPayment(
     return period;
   });
 
-  void result;
+  // The transaction bailed out before writing anything: the plan is
+  // deactivated and this call would have put a new payment on it.
+  if ("rejected" in result) {
+    return { error: result.rejected };
+  }
 
   // Without this, the payment-history table / Pagos "Estado del mes" table
   // rendered on a SAME-navigation page (both plain Server Components read at
@@ -292,7 +320,14 @@ export async function markPaymentPaid(
   let planId = existing?.planId ?? null;
   if (!planId) {
     const mensualidad = await prisma.paymentPlan.findFirst({
-      where: { organizationId: student.organizationId, academyId: student.homeAcademyId, name: "Mensualidad", active: true },
+      // The academy's ordinary monthly plan, whichever language it was seeded
+      // in ("Mensualidad" / "Monthly" — see default-plan-name.ts).
+      where: {
+        organizationId: student.organizationId,
+        academyId: student.homeAcademyId,
+        name: { in: [...ALL_DEFAULT_PLAN_NAMES] },
+        active: true,
+      },
       select: { id: true },
     });
     planId =
@@ -303,7 +338,7 @@ export async function markPaymentPaid(
             organizationId: student.organizationId,
             academyId: student.homeAcademyId,
             active: true,
-            NOT: { name: CUSTOM_PROMO_PLAN_NAME },
+            NOT: { name: { in: [...CUSTOM_PROMO_PLAN_NAMES] } },
           },
           orderBy: { name: "asc" },
           select: { id: true },
@@ -324,7 +359,7 @@ export async function markPaymentPaid(
   if (existing?.amount != null) fd.set("amount", existing.amount.toString());
   if (existing?.notes) fd.set("notes", existing.notes);
   if (existing?.method) fd.set("method", existing.method);
-  // A custom-promo row (`plan.name === CUSTOM_PROMO_PLAN_NAME`) fails
+  // A custom-promo row (`isCustomPromoPlanName(plan.name)`) fails
   // `recordPayment`'s own "promo name required" guard unless these three are
   // forwarded too — a PENDING/OVERDUE promo row's ONLY working action in the
   // table is this button (Editar is offered only for the PROMO_OR_EXEMPT

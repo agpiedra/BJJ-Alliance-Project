@@ -4,6 +4,7 @@ import { z } from "zod";
 import { resolveSuperAdminActionContext } from "@/lib/auth/require-super-admin";
 import { prisma } from "@/lib/prisma";
 import { formDataToObject } from "@/lib/form-data";
+import { CURRENCIES } from "@/lib/payments/format-money";
 import { seedOrganizationDefaults } from "@/lib/organizations/seed-defaults";
 import { approveOrganization } from "@/lib/organizations/approve-organization";
 import type { ActionState } from "@/lib/action-state";
@@ -30,6 +31,8 @@ const manualCreationSchema = z.strictObject({
   contactPhone: z.string().min(1).max(50),
   studentCountBand: z.string().min(1).max(50),
   preferredLocale: z.enum(["es", "en"]),
+  // Optional: absent means colones, the only currency before revision 34.
+  currency: z.enum(CURRENCIES).optional(),
   promotionMode: z.enum(["ATTENDANCE", "TIME", "MANUAL"]),
 });
 
@@ -73,6 +76,7 @@ export async function createOrganizationManually(
         name: data.organizationName,
         status: "ACTIVE",
         defaultLocale: data.preferredLocale,
+        currency: data.currency ?? "CRC",
         country: data.country,
         city: data.city,
         contactName: data.contactName,

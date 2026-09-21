@@ -10,6 +10,7 @@ import { RecordPaymentForm } from "@/components/payments/record-payment-form";
 import { currentCrDateParts } from "@/lib/payments/get-current-period";
 import { listCurrentPaymentStatus } from "@/lib/payments/list-current-status";
 import { ensureCustomPromoPlan } from "@/lib/payments/ensure-custom-promo-plan";
+import { listSelectablePlans } from "@/lib/payments/list-plans";
 import { formatMonthYear } from "@/lib/format-month";
 import { PaymentsTable } from "./payments-table";
 
@@ -55,13 +56,12 @@ export default async function PaymentsPage() {
     await Promise.all(academies.map((academy) => ensureCustomPromoPlan(context.organizationId, academy.id)));
   }
 
-  const [rows, plans] = await Promise.all([
+  const [rows, plans, organization] = await Promise.all([
     listCurrentPaymentStatus(context, today),
-    prisma.paymentPlan.findMany({
-      where: { organizationId: context.organizationId, academyId: { in: academies.map((a) => a.id) }, active: true },
-      orderBy: { name: "asc" },
-      select: { id: true, name: true, academyId: true },
-    }),
+    listSelectablePlans(context.organizationId, academies.map((a) => a.id)),
+    // What NEW payments are recorded in. An existing payment keeps the currency
+    // it was recorded in (its own snapshot) — see PaymentPeriod.currency.
+    prisma.organization.findUniqueOrThrow({ where: { id: context.organizationId }, select: { currency: true } }),
   ]);
 
   const students = rows.map((row) => ({
@@ -88,6 +88,11 @@ export default async function PaymentsPage() {
         <p className="text-sm text-muted-foreground">
           {t("sub", { month: monthLabel, academy: academyLabel })}
         </p>
+        {canRecordPayments && (
+          <a href={`/${locale}/payments/plans`} className="text-sm underline">
+            {t("plansLink")}
+          </a>
+        )}
       </header>
 
       <StatRow columns={4}>
@@ -131,6 +136,7 @@ export default async function PaymentsPage() {
               students={students}
               plans={plans}
               canManagePromotions={canRecordPayments}
+              currency={organization.currency}
               defaults={{ month: `${today.year}-${String(today.month).padStart(2, "0")}` }}
             />
           </CardContent>

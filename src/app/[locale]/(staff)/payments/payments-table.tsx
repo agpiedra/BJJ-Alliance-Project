@@ -20,8 +20,8 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "
 import { showToast } from "@/components/ui/toast";
 import { RecordPaymentForm, type RecordPaymentPlanOption } from "@/components/payments/record-payment-form";
 import { markPaymentPaid } from "@/lib/payments/payment-actions";
-import { CUSTOM_PROMO_PLAN_NAME } from "@/lib/payments/custom-promo-plan-name";
-import { formatColones } from "@/lib/payments/format-money";
+import { isCustomPromoPlanName } from "@/lib/payments/custom-promo-plan-name";
+import { formatMoney } from "@/lib/payments/format-money";
 import { formatRecordedBy } from "@/lib/payments/format-recorded-by";
 import type { CurrentPaymentRow, PaymentBucket } from "@/lib/payments/list-current-status";
 
@@ -208,7 +208,7 @@ export function PaymentsTable({
           </DataTableHead>
           <DataTableBody>
             {filteredRows.map((row) => {
-              const isCustomPromo = row.period?.planName === CUSTOM_PROMO_PLAN_NAME;
+              const isCustomPromo = isCustomPromoPlanName(row.period?.planName);
               const isPending = pendingStudentIds.has(row.studentId);
               return (
                 <DataTableRow key={row.studentId}>
@@ -225,7 +225,7 @@ export function PaymentsTable({
                     )}
                   </DataTableCell>
                   <DataTableCell className="text-right tabular-nums">
-                    {row.period?.amount != null ? formatColones(row.period.amount, locale) : "—"}
+                    {row.period?.amount != null ? formatMoney(row.period.amount, row.period.currency, locale) : "—"}
                   </DataTableCell>
                   <DataTableCell>{row.period?.method ? tMethod(row.period.method) : "—"}</DataTableCell>
                   <DataTableCell className="text-muted-foreground">
@@ -287,7 +287,7 @@ export function PaymentsTable({
                 <div className="flex items-center justify-between gap-3">
                   <span className="text-muted-foreground">{t("columns.amount")}</span>
                   <span className="tabular-nums">
-                    {receiptRow.period.amount != null ? formatColones(receiptRow.period.amount, locale) : "—"}
+                    {receiptRow.period.amount != null ? formatMoney(receiptRow.period.amount, receiptRow.period.currency, locale) : "—"}
                   </span>
                 </div>
                 <div className="flex items-center justify-between gap-3">
@@ -330,9 +330,27 @@ export function PaymentsTable({
                       academyName: editRow.homeAcademyName,
                     },
                   ]}
-                  plans={plans}
+                  // The picker offers ACTIVE plans only, but this payment may
+                  // already sit on a since-deactivated one; the server allows
+                  // keeping it (history is never orphaned), so the sheet has to
+                  // offer it too — marked — or the plan field would render blank.
+                  plans={
+                    plans.some((p) => p.id === editRow.period!.planId)
+                      ? plans
+                      : [
+                          ...plans,
+                          {
+                            id: editRow.period.planId,
+                            name: `${editRow.period.planName} ${t("inactivePlanSuffix")}`,
+                            academyId: editRow.homeAcademyId,
+                            defaultAmount: null,
+                          },
+                        ]
+                  }
                   lockedStudentId={editRow.studentId}
                   canManagePromotions={canRecordPayments}
+                  // An existing payment is corrected in the currency it was recorded in.
+                  currency={editRow.period.currency}
                   defaults={{
                     month: `${editRow.period.year}-${String(editRow.period.month).padStart(2, "0")}`,
                     planId: editRow.period.planId,

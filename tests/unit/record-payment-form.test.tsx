@@ -26,8 +26,10 @@ const { RecordPaymentForm } = await import("@/components/payments/record-payment
 const recordPaymentMock = vi.mocked(recordPayment);
 
 const PLANS = [
-  { id: "plan-1", name: "Mensualidad", academyId: "academy-1" },
-  { id: "plan-promo", name: "Promoción personalizada", academyId: "academy-1" },
+  { id: "plan-1", name: "Mensualidad", academyId: "academy-1", defaultAmount: null },
+  { id: "plan-promo", name: "Promoción personalizada", academyId: "academy-1", defaultAmount: null },
+  { id: "plan-priced", name: "Promoción Diciembre", academyId: "academy-1", defaultAmount: 45000 },
+  { id: "plan-priced-2", name: "Mensualidad familiar", academyId: "academy-1", defaultAmount: 80000 },
 ];
 
 const STUDENTS = [
@@ -43,6 +45,7 @@ function renderForm(overrides: Partial<React.ComponentProps<typeof RecordPayment
         plans={PLANS}
         lockedStudentId="student-1"
         canManagePromotions={true}
+        currency="CRC"
         defaults={{ month: "2026-03" }}
         {...overrides}
       />
@@ -81,6 +84,29 @@ describe("RecordPaymentForm", () => {
     const submitted = recordPaymentMock.mock.calls[0][2] as FormData;
     expect(submitted.has("amount")).toBe(false);
     expect(submitted.has("notes")).toBe(false);
+  });
+
+  it("REQUIRED: omits `method` when it is left on \"Unspecified\" — the server enum rejects an empty string, so a default submission used to fail with 'check the form'", async () => {
+    recordPaymentMock.mockResolvedValue({ ok: true });
+    renderForm();
+    fireEvent.change(screen.getByLabelText("Plan"), { target: { value: "plan-1" } });
+
+    fireEvent.click(screen.getByRole("button", { name: "Save payment" }));
+
+    await waitFor(() => expect(recordPaymentMock).toHaveBeenCalledTimes(1));
+    expect((recordPaymentMock.mock.calls[0][2] as FormData).has("method")).toBe(false);
+  });
+
+  it("still submits a method the director actually chose", async () => {
+    recordPaymentMock.mockResolvedValue({ ok: true });
+    renderForm();
+    fireEvent.change(screen.getByLabelText("Plan"), { target: { value: "plan-1" } });
+    fireEvent.change(screen.getByLabelText("Method"), { target: { value: "EFECTIVO" } });
+
+    fireEvent.click(screen.getByRole("button", { name: "Save payment" }));
+
+    await waitFor(() => expect(recordPaymentMock).toHaveBeenCalledTimes(1));
+    expect((recordPaymentMock.mock.calls[0][2] as FormData).get("method")).toBe("EFECTIVO");
   });
 
   it("does NOT strip a literal \"0\" typed into Amount — only genuinely blank input counts as unspecified", async () => {
@@ -169,6 +195,52 @@ describe("RecordPaymentForm", () => {
     fireEvent.change(screen.getByLabelText("Plan"), { target: { value: "plan-promo" } });
     expect(screen.getByText("Ask the director to record the promotion.")).toBeInTheDocument();
     expect(screen.queryByLabelText("Promotion name")).not.toBeInTheDocument();
+  });
+
+  describe("a plan's default amount", () => {
+    const amountInput = () => screen.getByLabelText("Amount (₡)") as HTMLInputElement;
+
+    it("pre-fills the amount when a plan with a default price is picked", () => {
+      renderForm();
+      fireEvent.change(screen.getByLabelText("Plan"), { target: { value: "plan-priced" } });
+      expect(amountInput().value).toBe("45000");
+    });
+
+    it("follows the plan while the director hasn't typed an amount, and clears for a plan with no price", () => {
+      renderForm();
+      fireEvent.change(screen.getByLabelText("Plan"), { target: { value: "plan-priced" } });
+      fireEvent.change(screen.getByLabelText("Plan"), { target: { value: "plan-priced-2" } });
+      expect(amountInput().value).toBe("80000");
+      fireEvent.change(screen.getByLabelText("Plan"), { target: { value: "plan-1" } });
+      expect(amountInput().value).toBe("");
+    });
+
+    it("REQUIRED: never overwrites an amount the director typed — it is only a suggestion, editable per payment", async () => {
+      recordPaymentMock.mockResolvedValue({ ok: true });
+      renderForm();
+      fireEvent.change(screen.getByLabelText("Plan"), { target: { value: "plan-priced" } });
+      fireEvent.change(amountInput(), { target: { value: "30000" } });
+      // Switching plan after deciding must NOT replace what was typed.
+      fireEvent.change(screen.getByLabelText("Plan"), { target: { value: "plan-priced-2" } });
+      expect(amountInput().value).toBe("30000");
+
+      fireEvent.click(screen.getByRole("button", { name: "Save payment" }));
+      await waitFor(() => expect(recordPaymentMock).toHaveBeenCalledTimes(1));
+      expect((recordPaymentMock.mock.calls[0][2] as FormData).get("amount")).toBe("30000");
+    });
+
+    it("REQUIRED: never overwrites the amount of a payment being CORRECTED — history is not rewritten by a plan's current price", () => {
+      renderForm({ defaults: { month: "2026-03", planId: "plan-1", amount: 22500 } });
+      expect(amountInput().value).toBe("22500");
+      fireEvent.change(screen.getByLabelText("Plan"), { target: { value: "plan-priced" } });
+      expect(amountInput().value).toBe("22500");
+    });
+  });
+
+  it("labels the amount with the currency it is entered in — dollars for a dollar academy", () => {
+    renderForm({ currency: "USD" });
+    expect(screen.getByLabelText("Amount ($)")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Amount (₡)")).not.toBeInTheDocument();
   });
 
   it("submits the promoRecurring checkbox as present only when checked", async () => {

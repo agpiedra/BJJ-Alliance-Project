@@ -39,6 +39,7 @@ async function cleanup() {
     await prisma.promotionConfig.deleteMany({ where: { organizationId: { in: cleanupOrgIds } } });
     await prisma.beltRank.deleteMany({ where: { organizationId: { in: cleanupOrgIds } } });
     await prisma.organizationBranding.deleteMany({ where: { organizationId: { in: cleanupOrgIds } } });
+    await prisma.paymentPlan.deleteMany({ where: { organizationId: { in: cleanupOrgIds } } }); // approval seeds a default plan
     await prisma.academy.deleteMany({ where: { organizationId: { in: cleanupOrgIds } } });
     await prisma.organization.deleteMany({ where: { id: { in: cleanupOrgIds } } });
   }

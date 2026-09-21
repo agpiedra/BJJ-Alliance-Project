@@ -4,8 +4,9 @@ import { useActionState, useEffect, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { recordPayment } from "@/lib/payments/payment-actions";
-import { CUSTOM_PROMO_PLAN_NAME } from "@/lib/payments/custom-promo-plan-name";
-import { PaymentMethod, PaymentStatus } from "@/generated/prisma/browser";
+import { isCustomPromoPlanName } from "@/lib/payments/custom-promo-plan-name";
+import { currencySymbol } from "@/lib/payments/format-money";
+import { PaymentMethod, PaymentStatus, type Currency } from "@/generated/prisma/browser";
 import type { ActionState } from "@/lib/action-state";
 
 const INITIAL_STATE: ActionState = {};
@@ -24,6 +25,9 @@ export interface RecordPaymentPlanOption {
   id: string;
   name: string;
   academyId: string;
+  /** What this plan normally costs — pre-fills the amount when the plan is
+   * picked, and only when the director hasn't typed one. Null: no standard price. */
+  defaultAmount: number | null;
 }
 
 export interface RecordPaymentDefaults {
@@ -66,6 +70,10 @@ export interface RecordPaymentFormProps {
    * "ask the director" hint instead — the real enforcement is
    * `recordPayment`'s own ADMIN/DIRECTOR-only gate, this is UI-only. */
   canManagePromotions: boolean;
+  /** The currency the amount is entered in. For a NEW payment: the
+   * organization's current currency. When EDITING an existing one: that
+   * period's own snapshot (a correction never changes what it was recorded in). */
+  currency: Currency;
   defaults: RecordPaymentDefaults;
   /** Edit-in-a-Sheet usage (Pagos table's "Editar" on a promo row): closes
    * the sheet once the save succeeds. */
@@ -84,6 +92,7 @@ export function RecordPaymentForm({
   plans,
   lockedStudentId,
   canManagePromotions,
+  currency,
   defaults,
   onSuccess,
   onCancel,
@@ -102,6 +111,21 @@ export function RecordPaymentForm({
   const [selectedStudentId, setSelectedStudentId] = useState(lockedStudentId ?? "");
   const [selectedPlanId, setSelectedPlanId] = useState(defaults.planId ?? "");
 
+  // The amount is controlled so picking a plan can pre-fill its default price —
+  // but ONLY while the director hasn't decided the amount themselves. Editing a
+  // payment that already has an amount starts "decided" (a correction must
+  // never have its recorded amount overwritten by the plan's current default),
+  // and typing in the field marks it decided from then on.
+  const [amount, setAmount] = useState(defaults.amount != null ? String(defaults.amount) : "");
+  const [amountDecided, setAmountDecided] = useState(defaults.amount != null);
+
+  function handlePlanChange(planId: string) {
+    setSelectedPlanId(planId);
+    if (amountDecided) return;
+    const plan = plans.find((p) => p.id === planId);
+    setAmount(plan?.defaultAmount != null ? String(plan.defaultAmount) : "");
+  }
+
   useEffect(() => {
     if (state.ok) onSuccess?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -113,7 +137,7 @@ export function RecordPaymentForm({
     [plans, selectedStudent],
   );
   const selectedPlan = plansForAcademy.find((p) => p.id === selectedPlanId);
-  const isCustomPromoPlan = selectedPlan?.name === CUSTOM_PROMO_PLAN_NAME;
+  const isCustomPromoPlan = isCustomPromoPlanName(selectedPlan?.name);
 
   // `amount`/`notes`/`promoName`/`promoReason` are optional, but a plain
   // HTML <input> always submits its name with an empty-string value when
@@ -137,7 +161,10 @@ export function RecordPaymentForm({
     }
     formData.delete("period");
 
-    for (const field of ["amount", "notes", "promoName", "promoReason"] as const) {
+    // `method` too: its "Unspecified" option submits "", which the action's
+    // `z.nativeEnum(PaymentMethod).optional()` rejects — so leaving the method
+    // at its default made every save fail with a bare "check the form".
+    for (const field of ["amount", "notes", "method", "promoName", "promoReason"] as const) {
       const value = formData.get(field);
       if (typeof value === "string" && value.trim() === "") {
         formData.delete(field);
@@ -182,7 +209,7 @@ export function RecordPaymentForm({
             name="planId"
             required
             value={selectedPlanId}
-            onChange={(e) => setSelectedPlanId(e.target.value)}
+            onChange={(e) => handlePlanChange(e.target.value)}
             className="h-9 rounded-lg border border-input bg-transparent px-2.5 text-sm"
           >
             <option value="" disabled>
@@ -228,13 +255,17 @@ export function RecordPaymentForm({
             would be two inputs writing the same column. */}
         {!isCustomPromoPlan && (
           <label className="flex flex-col gap-1 text-sm">
-            <span>{t("amount")}</span>
+            <span>{t("amount", { currency: currencySymbol(currency) })}</span>
             <input
               type="number"
               name="amount"
               min={0}
               step="0.01"
-              defaultValue={defaults.amount ?? undefined}
+              value={amount}
+              onChange={(e) => {
+                setAmount(e.target.value);
+                setAmountDecided(true);
+              }}
               className="h-9 rounded-lg border border-input bg-transparent px-2.5 text-sm"
             />
           </label>
@@ -285,14 +316,18 @@ export function RecordPaymentForm({
               />
             </label>
             <label className="flex flex-col gap-1 text-sm">
-              <span>{t("promo.amount")}</span>
+              <span>{t("promo.amount", { currency: currencySymbol(currency) })}</span>
               <input
                 type="number"
                 name="amount"
                 min={0}
                 step="0.01"
                 placeholder={t("promo.amountPlaceholder")}
-                defaultValue={defaults.amount ?? undefined}
+                value={amount}
+                onChange={(e) => {
+                  setAmount(e.target.value);
+                  setAmountDecided(true);
+                }}
                 className="h-9 rounded-lg border border-input bg-background px-2.5 text-sm"
               />
             </label>

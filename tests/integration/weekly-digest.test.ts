@@ -195,6 +195,7 @@ async function makePaidCurrentMonth(
       organizationId,
       planId,
       recordedById,
+      currency: "CRC",
       year: nowCr.year,
       month: nowCr.month,
       status: "PAID",
