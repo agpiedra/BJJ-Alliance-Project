@@ -193,6 +193,11 @@ const studentIdSchema = z.object({ studentId: z.string().min(1) });
  * ADMIN/DIRECTOR only. Flips `status` to ARCHIVED — never a `delete()` call.
  * Same independent re-fetch-and-check-scope discipline as `updateStudent`,
  * and the same transaction-wrapped audit row.
+ *
+ * Records the status the student is being archived FROM in `statusBeforeArchive`,
+ * which is what `restoreStudent` returns them to. Archiving an already-archived
+ * student is a quiet no-op: writing again would overwrite that stored status
+ * with ARCHIVED and make the archive unrestorable.
  */
 export async function archiveStudent(
   organizationId: string,
@@ -217,11 +222,15 @@ export async function archiveStudent(
     return { error: "notFound" };
   }
 
+  if (student.status === StudentStatus.ARCHIVED) return { ok: true };
+
   try {
     await prisma.$transaction(async (tx) => {
       const result = await tx.student.updateMany({
-        where: { id: student.id, organizationId: student.organizationId, homeAcademyId: student.homeAcademyId },
-        data: { status: StudentStatus.ARCHIVED },
+        // The status they are archived FROM is re-asserted in the WHERE, so a
+        // concurrent change (an approval) cannot leave the stored value wrong.
+        where: { id: student.id, organizationId: student.organizationId, homeAcademyId: student.homeAcademyId, status: student.status },
+        data: { status: StudentStatus.ARCHIVED, statusBeforeArchive: student.status },
       });
 
       if (result.count === 0) {
@@ -247,6 +256,105 @@ export async function archiveStudent(
   } catch (error) {
     if (error instanceof StudentWriteMissError) {
       return { error: "notFound" };
+    }
+    throw error;
+  }
+
+  return { ok: true };
+}
+
+/**
+ * ADMIN/DIRECTOR only. The reverse of `archiveStudent`: an ARCHIVED student goes
+ * back to the status they had, and their portal access with it.
+ *
+ * "The status they had" is `statusBeforeArchive` — STORED at archive time, read
+ * here, cleared after. It is never read from the audit log: an audit row records
+ * what happened and gets pruned, rotated and exported, so a code path that
+ * depended on one would quietly start doing the wrong thing the day rows are
+ * trimmed (the third application of this codebase's "store what you will need
+ * later" — after the currency snapshot on `PaymentPeriod` and the belt anchor on
+ * a promotion credit).
+ *
+ * A student archived BEFORE that column existed has nothing stored, and comes
+ * back PENDING. Unknown history is never guessed as "approved": a wrong PENDING
+ * shows up in the awaiting-approval queue and is one click from ACTIVE, whereas
+ * a wrong ACTIVE would silently give a rejected applicant a roster place and
+ * portal access with no prompt to anyone. (There are none in production; this is
+ * for development data and anything archived before the column.)
+ *
+ * The membership follows the status: only a student restored to ACTIVE or
+ * INACTIVE — someone who had been approved — gets their `STUDENT` membership back
+ * (via `grantStudentMembership`, which never overwrites a staff role). A PENDING
+ * student gets none, exactly as before they were archived. Only an ARCHIVED
+ * student can be restored; that precondition is re-asserted in the update's own
+ * WHERE, so two concurrent restores cannot both count.
+ */
+export async function restoreStudent(
+  organizationId: string,
+  _prevState: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const auth = await resolveActionContext(organizationId, ["ADMIN", "DIRECTOR"]);
+  if (!auth.ok) return { error: "notFound" };
+  const context = auth.context;
+
+  const parsed = studentIdSchema.safeParse(Object.fromEntries(formData.entries()));
+  if (!parsed.success) {
+    return { error: "notFound" };
+  }
+
+  const student = await getScopedDb(context).student.findUnique({
+    where: { id: parsed.data.studentId },
+    select: { id: true, homeAcademyId: true, organizationId: true, status: true, userId: true, statusBeforeArchive: true },
+  });
+
+  if (!student || !isAcademyInTenantScope(context, student.homeAcademyId)) {
+    return { error: "notFound" };
+  }
+
+  if (student.status !== StudentStatus.ARCHIVED) {
+    return { error: "notArchived" };
+  }
+
+  const stored = student.statusBeforeArchive;
+  const fromStoredStatus = stored !== null && stored !== StudentStatus.ARCHIVED;
+  const target = fromStoredStatus ? stored : StudentStatus.PENDING;
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      const result = await tx.student.updateMany({
+        where: {
+          id: student.id,
+          organizationId: student.organizationId,
+          homeAcademyId: student.homeAcademyId,
+          status: StudentStatus.ARCHIVED,
+        },
+        data: { status: target, statusBeforeArchive: null },
+      });
+
+      if (result.count === 0) {
+        throw new StudentWriteMissError();
+      }
+
+      const membership = target === StudentStatus.PENDING ? ("none" as const) : await grantStudentMembership(tx, student);
+
+      await tx.auditLog.create({
+        data: {
+          actorId: context.actorUserId,
+          organizationId: student.organizationId,
+          academyId: student.homeAcademyId,
+          action: "student.restore",
+          entityType: "Student",
+          entityId: student.id,
+          before: { status: StudentStatus.ARCHIVED },
+          // `fromStoredStatus: false` marks the null case (archived before the column existed).
+          after: { status: target, membership, fromStoredStatus },
+        },
+      });
+    });
+  } catch (error) {
+    if (error instanceof StudentWriteMissError) {
+      return { error: "notArchived" };
     }
     throw error;
   }

@@ -94,6 +94,8 @@
     "noOrganizationAccess": {
       "heading": "Sin acceso a una organización",
       "body": "Tu cuenta no está vinculada a ninguna organización en este momento. Contactá a tu director de academia para que te agreguen.",
+      "pendingHeading": "Pendiente de aprobación",
+      "pendingBody": "Tu registro en {organization} está pendiente de aprobación. Vas a poder ingresar apenas la academia lo apruebe.",
       "signOut": "Cerrar sesión"
     },
     "selectOrganization": {
@@ -647,9 +649,16 @@
       },
       "archive": {
         "button": "Archivar estudiante",
-        "confirm": "¿Archivar este estudiante? Esta acción se puede revertir editando el estado más adelante.",
+        "confirm": "¿Archivar este estudiante? Podés restaurarlo más adelante.",
         "success": "Estudiante archivado.",
         "notFound": "No se pudo archivar este estudiante."
+      },
+      "restore": {
+        "button": "Restaurar estudiante",
+        "confirm": "¿Restaurar este estudiante? Vuelve a la lista con el estado que tenía antes de archivarlo (pendiente de aprobación si no se conoce).",
+        "success": "Estudiante restaurado.",
+        "notFound": "No se pudo restaurar este estudiante.",
+        "notArchived": "Este estudiante no está archivado."
       },
       "regenerateCode": {
         "button": "Regenerar código",

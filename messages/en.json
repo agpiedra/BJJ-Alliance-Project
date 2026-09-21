@@ -94,6 +94,8 @@
     "noOrganizationAccess": {
       "heading": "No organization access",
       "body": "Your account isn't linked to any organization right now. Contact your academy director to be added.",
+      "pendingHeading": "Awaiting approval",
+      "pendingBody": "Your registration at {organization} is awaiting approval. You'll be able to sign in as soon as the academy approves it.",
       "signOut": "Sign out"
     },
     "selectOrganization": {
@@ -647,9 +649,16 @@
       },
       "archive": {
         "button": "Archive student",
-        "confirm": "Archive this student? This can be reversed by editing status later.",
+        "confirm": "Archive this student? You can restore them later.",
         "success": "Student archived.",
         "notFound": "Could not archive this student."
+      },
+      "restore": {
+        "button": "Restore student",
+        "confirm": "Restore this student? They return to the roster with the status they had before they were archived (awaiting approval if that is not known).",
+        "success": "Student restored.",
+        "notFound": "Could not restore this student.",
+        "notArchived": "This student is not archived."
       },
       "regenerateCode": {
         "button": "Regenerate code",
