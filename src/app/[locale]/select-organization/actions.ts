@@ -42,7 +42,7 @@ export async function selectOrganization(
   }
 
   const membership = await prisma.organizationMembership.findFirst({
-    where: { userId, organizationId: parsed.data.organizationId, organization: { status: "ACTIVE" } },
+    where: { userId, organizationId: parsed.data.organizationId, active: true, organization: { status: "ACTIVE" } },
     select: { organizationId: true },
   });
   if (!membership) {

@@ -6,22 +6,6 @@ dev. `README.md`'s own "Environment variables" table is still the source of trut
 every env var's purpose — this doc doesn't repeat it, only says when each one has to
 exist and what to set it to.
 
-> ## ⛔ BLOCKING WARNING — read this before you start, and again at step 9
->
-> **Do NOT open the invitation email that step 9 sends to your own address.**
->
-> Until the staff-management PR (B2) lands, `acceptInvitation` **overwrites the password of an
-> account that already exists**. Step 9 mails a redundant invitation link to *your* address,
-> and you already have an account from step 7. Opening that link would silently replace the
-> password you set in step 7 and lock you out of the platform-admin account — at whatever
-> hour you happen to be following this document.
->
-> If you already opened it: the password you set on that page is now your password; the one
-> from step 7 no longer works. Recover with the normal "forgot password" flow.
->
-> *This warning and its repeat inside step 9 are temporary. B2 removes both, and its PR will
-> say that the hazard is gone.*
-
 ## Stack (decided)
 
 **Vercel Pro + Supabase Pro — $45/month, two providers.**
@@ -164,13 +148,10 @@ together.
    platform admin and Alliance's own owner on one account, already able to sign in with the
    password from step 7. This also seeds Alliance's belt catalogs and default promotion
    configs automatically, via `seedOrganizationDefaults` — the real per-organization seeder,
-   not `prisma/seed.ts`. One side effect: this step also emails a redundant invitation link to
-   your own address, since the function has no way to know you don't need one.
-
-   > ⛔ **Do NOT open that email — see the blocking warning at the top of this document.**
-   > Until B2 lands, `acceptInvitation` overwrites the password of an existing account, so
-   > following the link would silently replace the password from step 7. (Temporary: B2
-   > deletes this note and the warning at the top.)
+   not `prisma/seed.ts`. One side effect: this step also emails an invitation link to your own
+   address, since the function has no way to know you don't need one. It is harmless — an
+   existing account keeps its password and is never signed in by a link — so it can be ignored
+   or opened.
 10. **Create the Supabase Storage bucket for logos**, and confirm it's set **public**, not
     the default-private a freshly created bucket gets. See "Supabase Storage" below for why
     this is easy to miss and where it actually breaks if missed.

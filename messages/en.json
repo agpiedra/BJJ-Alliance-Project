@@ -75,7 +75,16 @@
       "heading": "Set your password",
       "newPassword": "New password",
       "submit": "Continue",
-      "invalidToken": "This invitation link is invalid or has expired."
+      "invalidToken": "This invitation link is invalid or has expired.",
+      "invitedAs": "You've been invited to {organization} as {role}.",
+      "headingJoin": "Join {organization}",
+      "joinBody": "You've been invited to {organization} as {role}. You already have an account, so your password stays exactly as it is.",
+      "joinSubmit": "Join",
+      "joined": "You've joined {organization}",
+      "joinedBody": "Sign in with the password you already have.",
+      "signIn": "Sign in",
+      "invalidPassword": "Your password needs at least 8 characters.",
+      "studentAccount": "This email belongs to a student account, which can't also be staff. Ask the Owner to invite a different address."
     },
     "orgUnavailable": {
       "heading": "Organization unavailable",
@@ -398,6 +407,7 @@
     "adminSchedule": "Schedule",
     "adminKioskTokens": "Kiosk",
     "adminBranding": "Branding",
+    "adminStaff": "Staff",
     "signOut": "Sign out",
     "groups": {
       "operations": "Operations",
@@ -1383,6 +1393,91 @@
           "invalidExtension": "Extension days must be a non-negative whole number."
         }
       }
+    }
+  },
+  "staffManagement": {
+    "eyebrow": "{orgName} · Staff",
+    "heading": "Staff",
+    "sub": "Everyone who works at your academy. Only the Owner can invite, change or remove staff.",
+    "allAcademies": "All locations",
+    "you": "(you)",
+    "selfNote": "You can't change your own access",
+    "columns": {
+      "person": "Person",
+      "role": "Role",
+      "academies": "Locations",
+      "status": "Status",
+      "actions": "Actions",
+      "expires": "Expires"
+    },
+    "status": {
+      "active": "Active",
+      "inactive": "Deactivated"
+    },
+    "roleHint": {
+      "ADMIN": "Every location, and manages staff.",
+      "DIRECTOR": "Runs the locations they're assigned to.",
+      "INSTRUCTOR": "Teaches at the locations they're assigned to."
+    },
+    "fields": {
+      "email": "Email",
+      "role": "Role",
+      "academies": "Locations",
+      "academiesHint": "Choose at least one location. An Owner has every location."
+    },
+    "members": {
+      "heading": "Team"
+    },
+    "invitations": {
+      "heading": "Pending invitations",
+      "empty": "No pending invitations.",
+      "expired": "Expired"
+    },
+    "invite": {
+      "heading": "Invite someone",
+      "submit": "Send invitation",
+      "success": "Invitation created."
+    },
+    "link": {
+      "emailSent": "We emailed the link.",
+      "emailNotSent": "The email couldn't be sent. Copy the link below and send it yourself.",
+      "label": "Invitation link",
+      "copy": "Copy link",
+      "copied": "Copied",
+      "note": "Shown now only. If you lose it, resend the invitation to get a new one."
+    },
+    "edit": {
+      "open": "Edit",
+      "save": "Save",
+      "close": "Close",
+      "success": "Saved."
+    },
+    "deactivate": {
+      "button": "Deactivate",
+      "confirm": "Deactivate this person? They lose access to {organization} on their next request. Their access to any other academy is not affected, and you can reactivate them later."
+    },
+    "reactivate": {
+      "button": "Reactivate"
+    },
+    "resend": {
+      "button": "Resend"
+    },
+    "revoke": {
+      "button": "Revoke",
+      "confirm": "Revoke this invitation? The link stops working."
+    },
+    "error": {
+      "notFound": "That wasn't found.",
+      "invalid": "Please check the form for errors.",
+      "academyRequired": "Choose at least one location for a director or instructor.",
+      "invalidAcademy": "One of the chosen locations isn't part of this academy.",
+      "alreadyMember": "This person is already on your team.",
+      "alreadyMemberInactive": "This person is on your team but deactivated. Reactivate them instead.",
+      "alreadyInvited": "This address already has a pending invitation. Resend it instead.",
+      "studentAccount": "This address belongs to a student account, which can't also be staff. Invite a different address.",
+      "selfChange": "You can't deactivate or change your own access.",
+      "lastOwner": "An academy must always keep at least one active Owner.",
+      "notPending": "This invitation is no longer pending."
     }
   }
 }

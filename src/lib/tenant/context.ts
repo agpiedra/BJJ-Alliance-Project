@@ -52,7 +52,7 @@ async function resolveContext(userId: string, organizationId: string): Promise<R
     prisma.user.findUnique({ where: { id: userId }, select: { active: true } }),
     prisma.organizationMembership.findUnique({
       where: { userId_organizationId: { userId, organizationId } },
-      select: { role: true },
+      select: { role: true, active: true },
     }),
     prisma.organization.findUnique({ where: { id: organizationId }, select: { status: true } }),
   ]);
@@ -64,7 +64,13 @@ async function resolveContext(userId: string, organizationId: string): Promise<R
   // deactivation take effect on the very next request rather than at the end of
   // the token's life (the same guarantee the deleted `getStaffSession()` gave
   // the staff surface alone; this closes it for every `TenantContext` caller).
-  if (!user || !user.active || !membership || !organization) {
+  //
+  // Two different switches, deliberately: `user.active` is the ACCOUNT's (it
+  // ends access to EVERY organization) and `membership.active` is this ONE
+  // organization's. An Owner removing someone from their academy flips only the
+  // second — flipping the first locked the person out of every other academy
+  // they belong to. Both are read here, on every request, never cached.
+  if (!user || !user.active || !membership || !membership.active || !organization) {
     return { status: "NO_MEMBERSHIP" };
   }
   if (organization.status !== "ACTIVE") {

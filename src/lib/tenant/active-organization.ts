@@ -26,7 +26,7 @@ export type ActiveOrganizationResolution =
  */
 export async function resolveActiveOrganizationForSignIn(userId: string): Promise<ActiveOrganizationResolution> {
   const memberships = await prisma.organizationMembership.findMany({
-    where: { userId, organization: { status: "ACTIVE" } },
+    where: { userId, active: true, organization: { status: "ACTIVE" } },
     select: { organizationId: true },
   });
 

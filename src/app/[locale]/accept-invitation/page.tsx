@@ -1,48 +1,32 @@
-"use client";
-
-import { Suspense, useActionState } from "react";
-import { useTranslations } from "next-intl";
-import { useParams, useSearchParams } from "next/navigation";
-import { Button } from "@/components/ui/button";
 import { BrandBanner } from "@/components/brand/brand-banner";
-import { acceptInvitation } from "./actions";
-import { INITIAL_ACTION_STATE } from "@/lib/action-state";
+import { describeInvitation } from "@/lib/staff/describe-invitation";
+import { AcceptInvitationForm } from "./accept-invitation-form";
 
-export default function AcceptInvitationPage() {
+// Depends on the token in the query string and on the invitation's live state
+// (used, revoked, expired) — never statically frozen.
+export const dynamic = "force-dynamic";
+
+/**
+ * A server component so the SERVER decides what the form asks for: a brand-new
+ * account (or an unaccepted owner placeholder) chooses a password; someone who
+ * already has an account is only offered to join, and is never asked for — nor
+ * can this link change — the password they already have.
+ */
+export default async function AcceptInvitationPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ locale: string }>;
+  searchParams: Promise<{ token?: string }>;
+}) {
+  const { locale } = await params;
+  const { token = "" } = await searchParams;
+  const summary = await describeInvitation(token);
+
   return (
     <>
       <BrandBanner />
-      <Suspense fallback={null}>
-        <AcceptInvitationForm />
-      </Suspense>
+      <AcceptInvitationForm locale={locale} token={token} summary={summary} />
     </>
-  );
-}
-
-function AcceptInvitationForm() {
-  const t = useTranslations("auth.acceptInvitation");
-  const params = useParams<{ locale: string }>();
-  const searchParams = useSearchParams();
-  const token = searchParams.get("token") ?? "";
-  const [state, formAction, isPending] = useActionState(
-    acceptInvitation.bind(null, params.locale),
-    INITIAL_ACTION_STATE,
-  );
-
-  return (
-    <main className="flex min-h-[calc(100vh-4rem)] flex-col items-center justify-center gap-4 p-6">
-      <h1 className="text-2xl font-bold">{t("heading")}</h1>
-      <form action={formAction} className="flex w-full max-w-sm flex-col gap-3">
-        <input type="hidden" name="token" value={token} />
-        <label className="flex flex-col gap-1">
-          <span>{t("newPassword")}</span>
-          <input type="password" name="password" required minLength={8} className="rounded border px-3 py-2" />
-        </label>
-        {state.error && <p className="text-sm text-destructive">{t(state.error)}</p>}
-        <Button type="submit" variant="primary" disabled={isPending}>
-          {t("submit")}
-        </Button>
-      </form>
-    </main>
   );
 }

@@ -95,7 +95,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   // as a bare override.
   if (requestedOrganizationId) {
     const membership = await prisma.organizationMembership.findFirst({
-      where: { userId: user.id, organizationId: requestedOrganizationId, organization: { status: "ACTIVE" } },
+      where: { userId: user.id, organizationId: requestedOrganizationId, active: true, organization: { status: "ACTIVE" } },
       select: { organizationId: true },
     });
     if (!membership) {
