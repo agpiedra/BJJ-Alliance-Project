@@ -45,7 +45,7 @@ export default async function SelectOrganizationPage({
   }
 
   const memberships = await prisma.organizationMembership.findMany({
-    where: { userId, organization: { status: "ACTIVE" } },
+    where: { userId, active: true, organization: { status: "ACTIVE" } },
     select: { organization: { select: { id: true, name: true } } },
     orderBy: { organization: { name: "asc" } },
   });

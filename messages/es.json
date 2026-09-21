@@ -75,7 +75,16 @@
       "heading": "Establece tu contraseña",
       "newPassword": "Nueva contraseña",
       "submit": "Continuar",
-      "invalidToken": "Este enlace de invitación no es válido o ya expiró."
+      "invalidToken": "Este enlace de invitación no es válido o ya expiró.",
+      "invitedAs": "Te invitaron a {organization} como {role}.",
+      "headingJoin": "Únete a {organization}",
+      "joinBody": "Te invitaron a {organization} como {role}. Ya tienes una cuenta, así que tu contraseña se queda exactamente como está.",
+      "joinSubmit": "Unirme",
+      "joined": "Te uniste a {organization}",
+      "joinedBody": "Inicia sesión con la contraseña que ya tienes.",
+      "signIn": "Iniciar sesión",
+      "invalidPassword": "Tu contraseña necesita al menos 8 caracteres.",
+      "studentAccount": "Este correo pertenece a una cuenta de alumno, que no puede ser también personal del equipo. Pídele al Dueño que invite otra dirección."
     },
     "orgUnavailable": {
       "heading": "Organización no disponible",
@@ -398,6 +407,7 @@
     "adminSchedule": "Horario",
     "adminKioskTokens": "Kiosco",
     "adminBranding": "Marca",
+    "adminStaff": "Equipo",
     "signOut": "Salir",
     "groups": {
       "operations": "Operación",
@@ -1383,6 +1393,91 @@
           "invalidExtension": "Los días de extensión deben ser un número entero no negativo."
         }
       }
+    }
+  },
+  "staffManagement": {
+    "eyebrow": "{orgName} · Equipo",
+    "heading": "Equipo",
+    "sub": "Todas las personas que trabajan en tu academia. Solo el Dueño puede invitar, cambiar o quitar personal.",
+    "allAcademies": "Todas las sedes",
+    "you": "(tú)",
+    "selfNote": "No puedes cambiar tu propio acceso",
+    "columns": {
+      "person": "Persona",
+      "role": "Rol",
+      "academies": "Sedes",
+      "status": "Estado",
+      "actions": "Acciones",
+      "expires": "Vence"
+    },
+    "status": {
+      "active": "Activo",
+      "inactive": "Desactivado"
+    },
+    "roleHint": {
+      "ADMIN": "Todas las sedes, y administra al equipo.",
+      "DIRECTOR": "Dirige las sedes que tiene asignadas.",
+      "INSTRUCTOR": "Da clases en las sedes que tiene asignadas."
+    },
+    "fields": {
+      "email": "Correo electrónico",
+      "role": "Rol",
+      "academies": "Sedes",
+      "academiesHint": "Elige al menos una sede. Un Dueño tiene todas las sedes."
+    },
+    "members": {
+      "heading": "Equipo"
+    },
+    "invitations": {
+      "heading": "Invitaciones pendientes",
+      "empty": "No hay invitaciones pendientes.",
+      "expired": "Vencida"
+    },
+    "invite": {
+      "heading": "Invitar a alguien",
+      "submit": "Enviar invitación",
+      "success": "Invitación creada."
+    },
+    "link": {
+      "emailSent": "Enviamos el enlace por correo.",
+      "emailNotSent": "No se pudo enviar el correo. Copia el enlace de abajo y envíalo tú.",
+      "label": "Enlace de invitación",
+      "copy": "Copiar enlace",
+      "copied": "Copiado",
+      "note": "Solo se muestra ahora. Si lo pierdes, reenvía la invitación para obtener uno nuevo."
+    },
+    "edit": {
+      "open": "Editar",
+      "save": "Guardar",
+      "close": "Cerrar",
+      "success": "Guardado."
+    },
+    "deactivate": {
+      "button": "Desactivar",
+      "confirm": "¿Desactivar a esta persona? Pierde el acceso a {organization} en su próxima solicitud. Su acceso a cualquier otra academia no se ve afectado, y puedes reactivarla después."
+    },
+    "reactivate": {
+      "button": "Reactivar"
+    },
+    "resend": {
+      "button": "Reenviar"
+    },
+    "revoke": {
+      "button": "Revocar",
+      "confirm": "¿Revocar esta invitación? El enlace deja de funcionar."
+    },
+    "error": {
+      "notFound": "No se encontró.",
+      "invalid": "Revisa el formulario.",
+      "academyRequired": "Elige al menos una sede para un director o instructor.",
+      "invalidAcademy": "Una de las sedes elegidas no forma parte de esta academia.",
+      "alreadyMember": "Esta persona ya está en tu equipo.",
+      "alreadyMemberInactive": "Esta persona está en tu equipo pero desactivada. Reactívala en su lugar.",
+      "alreadyInvited": "Esta dirección ya tiene una invitación pendiente. Reenvíala en su lugar.",
+      "studentAccount": "Esta dirección pertenece a una cuenta de alumno, que no puede ser también personal del equipo. Invita otra dirección.",
+      "selfChange": "No puedes desactivar ni cambiar tu propio acceso.",
+      "lastOwner": "Una academia siempre debe conservar al menos un Dueño activo.",
+      "notPending": "Esta invitación ya no está pendiente."
     }
   }
 }

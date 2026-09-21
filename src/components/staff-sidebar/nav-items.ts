@@ -1,4 +1,4 @@
-import { BarChart3, CalendarClock, KeyRound, LayoutDashboard, Palette, Users, Wallet } from "lucide-react";
+import { BarChart3, CalendarClock, KeyRound, LayoutDashboard, Palette, UserCog, Users, Wallet } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type { MembershipRole, TenantContext } from "@/lib/tenant/types";
 
@@ -93,6 +93,15 @@ export const NAV_ITEMS: StaffNavItem[] = [
     labelKey: "adminBranding",
     icon: Palette,
     visible: (context) => context.organizationRole === "ADMIN" || context.organizationRole === "DIRECTOR",
+    group: "academy",
+  },
+  {
+    // Staff management is OWNER-only — matches admin/staff/page.tsx's own
+    // requireTenantContext(["ADMIN"]) gate exactly, like every other item.
+    href: "/admin/staff",
+    labelKey: "adminStaff",
+    icon: UserCog,
+    visible: (context) => context.organizationRole === "ADMIN",
     group: "academy",
   },
 ];

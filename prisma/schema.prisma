@@ -370,6 +370,14 @@ model OrganizationMembership {
   userId         String
   organizationId String
   role           Role
+  /// Deactivation is PER ORGANIZATION, and this is where it lives. `User.active`
+  /// is the ACCOUNT's switch (false = an invited account that has not yet set a
+  /// password, or a disabled account) — using it to remove someone from one
+  /// organization locks them out of every organization they belong to. Checked
+  /// in `resolveContext` (tenant/context.ts) on every request, so a deactivation
+  /// takes effect on the very next one. Assignments (`StaffAssignment`) are kept
+  /// while inactive, so a reactivation restores the same scope.
+  active         Boolean  @default(true)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
@@ -489,8 +497,19 @@ model Invitation {
   /// Null for a bootstrap/system-issued invitation — mirrors AuditLog.actorId's
   /// own nullability reasoning (Phase 2c-iii): a real absence is not a data gap.
   invitedById    String?
+  /// The academies a DIRECTOR/INSTRUCTOR invitee is assigned to when they
+  /// accept (empty for an ADMIN/Owner, whose scope is every academy). Validated
+  /// against the organization's academies when the invitation is issued AND
+  /// again when it is accepted.
+  academyIds     String[]  @default([])
   expiresAt      DateTime
+  /// Consumed by acceptance, or superseded by a newer invitation to the same
+  /// address (approve/resend). NOT the same as `revokedAt`.
   usedAt         DateTime?
+  /// Withdrawn by the Owner before it was accepted. A revoked link is dead
+  /// exactly like a used one; kept as its own column so the staff page can tell
+  /// "accepted" from "withdrawn" and the audit trail stays honest.
+  revokedAt      DateTime?
   createdAt      DateTime  @default(now())
 
   organization Organization @relation(fields: [organizationId], references: [id])

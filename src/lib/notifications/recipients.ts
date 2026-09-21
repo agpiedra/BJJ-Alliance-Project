@@ -35,11 +35,18 @@ export async function resolveStaffRecipients(academyId: string): Promise<Recipie
   // "unscoped by organization... notifies every ADMIN everywhere").
   const [adminMemberships, assignments] = await Promise.all([
     prisma.organizationMembership.findMany({
-      where: { organizationId: academy.organizationId, role: "ADMIN", user: { active: true } },
+      where: { organizationId: academy.organizationId, role: "ADMIN", active: true, user: { active: true } },
       select: { user: { select: { id: true, email: true, locale: true } } },
     }),
     prisma.staffAssignment.findMany({
-      where: { organizationId: academy.organizationId, academyId, user: { active: true } },
+      // A deactivated membership keeps its assignments (a reactivation restores
+      // the same scope), so the assignment alone is not proof they still work
+      // here — require the membership to be active in THIS organization.
+      where: {
+        organizationId: academy.organizationId,
+        academyId,
+        user: { active: true, organizationMemberships: { some: { organizationId: academy.organizationId, active: true } } },
+      },
       select: { user: { select: { id: true, email: true, locale: true } } },
     }),
   ]);
