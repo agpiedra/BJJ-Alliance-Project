@@ -437,6 +437,7 @@
         "INSTRUCTOR": "Instructor"
       },
       "platform": "Platform",
+      "myTraining": "My training",
       "signOut": "Sign out"
     }
   },
@@ -964,6 +965,7 @@
   "portal": {
     "greeting": "Hi, {name}!",
     "signOut": "Sign out",
+    "staffLink": "Staff",
     "progress": {
       "heading": "Your progress",
       "atBeltCount": "{count, plural, one {# attendance at this belt} other {# attendances at this belt}}",

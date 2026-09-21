@@ -8,6 +8,7 @@ import type { AccessContext, MembershipRole, SystemJobContext, TenantContext, Te
 
 import { resolveContext } from "@/lib/tenant/resolve-context";
 import { tenantRedirectPath } from "@/lib/tenant/redirect-path";
+import { isStaffRole } from "@/lib/auth/route-access";
 
 /**
  * Resolves the current request's tenant context from the session's
@@ -244,7 +245,14 @@ export async function requireTenantContext(allowedRoles?: MembershipRole[]): Pro
     // A member without the page's role is refused exactly as a non-member is
     // on /platform (`requireSuperAdmin`): a real `notFound()`, so the route does
     // not announce that it exists — and not a thrown Error, which is a raw 500.
-    if (allowedRoles && !allowedRoles.includes(result.context.organizationRole)) {
+    //
+    // NO role list means STAFF, not "anyone": the Edge middleware can only refuse on
+    // a session claim, so a stale one (someone demoted to Student only while logged
+    // in) or a forged one gets through to here, and this DATABASE check is the only
+    // thing that stops it. A student-only member is admitted only by naming the
+    // roles explicitly (`requirePortalContext`).
+    const permitted = allowedRoles ? allowedRoles.includes(result.context.organizationRole) : isStaffRole(result.context.organizationRole);
+    if (!permitted) {
       notFound();
     }
     return result.context;
@@ -268,7 +276,7 @@ export async function requireTenantContext(allowedRoles?: MembershipRole[]): Pro
  * under the portal gates on the STUDENT role again.
  */
 export async function requirePortalContext(): Promise<{ context: TenantContext; studentId: string }> {
-  const context = await requireTenantContext();
+  const context = await requireTenantContext(["ADMIN", "DIRECTOR", "INSTRUCTOR", "STUDENT"]);
   if (!context.linkedStudentId) notFound();
   return { context, studentId: context.linkedStudentId };
 }

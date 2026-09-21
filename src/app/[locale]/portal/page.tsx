@@ -2,6 +2,7 @@ import { DateTime } from "luxon";
 import { cn } from "cn";
 import { getTranslations } from "next-intl/server";
 import { requirePortalContext } from "@/lib/tenant/context";
+import { accessFromContext } from "@/lib/auth/derive-access";
 import { prisma } from "@/lib/prisma";
 import { BeltBar } from "@/components/belt-graphic/belt-bar";
 import { ProgressToNextGrade } from "@/components/belt-graphic/progress-to-next-grade";
@@ -216,6 +217,7 @@ export default async function StudentPortalPage({
         locale={locale}
         firstName={student.firstName}
         lastName={student.lastName}
+        hasStaff={accessFromContext(context).staff}
         logo={{
           logoUrl: branding.logoUrl,
           initials: branding.initials,

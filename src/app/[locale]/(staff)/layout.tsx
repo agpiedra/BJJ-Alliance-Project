@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { getLocale, getTranslations } from "next-intl/server";
 import { getTenantContext } from "@/lib/tenant/context";
+import { accessFromContext } from "@/lib/auth/derive-access";
 import { getScopedDb } from "@/lib/tenant/scoped-client";
 import { academyScopeLabel } from "@/lib/staff-shell/academy-choice";
 import { prisma } from "@/lib/prisma";
@@ -212,6 +213,7 @@ export default async function StaffLayout({ children }: { children: ReactNode })
             academyLabel={academyLabel}
             orgName={branding?.displayName}
             isSuperAdmin={isSuperAdmin}
+            hasPortal={accessFromContext(context).portal}
           >
             <NotificationBell organizationId={context.organizationId} initialNotifications={notifications} initialUnreadCount={unreadCount} />
           </StaffTopBar>

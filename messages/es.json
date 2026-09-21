@@ -437,6 +437,7 @@
         "INSTRUCTOR": "Instructor"
       },
       "platform": "Plataforma",
+      "myTraining": "Mi entrenamiento",
       "signOut": "Cerrar sesión"
     }
   },
@@ -964,6 +965,7 @@
   "portal": {
     "greeting": "¡Hola, {name}!",
     "signOut": "Cerrar sesión",
+    "staffLink": "Staff",
     "progress": {
       "heading": "Tu progreso",
       "atBeltCount": "{count, plural, one {# asistencia en este cinturón} other {# asistencias en este cinturón}}",
