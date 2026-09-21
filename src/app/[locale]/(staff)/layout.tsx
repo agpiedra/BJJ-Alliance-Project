@@ -131,7 +131,15 @@ export default async function StaffLayout({ children }: { children: ReactNode })
   // Moved here from dashboard/page.tsx (Phase 8's NotificationBell) — the
   // bell is now part of the persistent shell, not one page's own header, so
   // every staff page shows it, not just /dashboard.
-  const [notifications, unreadCount] = await Promise.all([getMyNotifications(), getUnreadCount()]);
+  //
+  // Only for a resolved staff context, and by the organization that context
+  // names: these are ACTIONS (quiet on refusal), so they no longer redirect an
+  // unauthenticated visitor as a side effect — which this layout's own rule
+  // ("never a second access-control gate") says it must not be doing. The page
+  // underneath enforces access itself, exactly as this layout's doc states.
+  const [notifications, unreadCount] = context
+    ? await Promise.all([getMyNotifications(context.organizationId), getUnreadCount(context.organizationId)])
+    : [[], 0];
 
   // `SidebarProvider`'s own toggle handler (src/components/ui/sidebar.tsx)
   // persists the user's collapse/expand choice to a `sidebar_state` cookie
@@ -200,7 +208,7 @@ export default async function StaffLayout({ children }: { children: ReactNode })
             orgName={branding?.displayName}
             isSuperAdmin={isSuperAdmin}
           >
-            <NotificationBell initialNotifications={notifications} initialUnreadCount={unreadCount} />
+            <NotificationBell organizationId={context.organizationId} initialNotifications={notifications} initialUnreadCount={unreadCount} />
           </StaffTopBar>
         )}
         {billingBanner && <BillingBanner state={billingBanner.state} dueOn={billingBanner.dueOn} deadline={billingBanner.deadline} />}

@@ -8,6 +8,8 @@ import { markAllRead } from "./notification-actions";
 import type { Notification } from "@/generated/prisma/client";
 
 interface NotificationBellProps {
+  /** The organization the shell resolved for this staff member — passed to `markAllRead`, which re-verifies membership in it. */
+  organizationId: string;
   /**
    * Server-rendered initial state (plan's "no live polling" ruling) — the
    * dashboard page fetches these via `getMyNotifications()`/`getUnreadCount()`
@@ -24,7 +26,7 @@ interface NotificationBellProps {
  * ruling) — via the `markAllRead()` server action, always scoped
  * server-side to the calling session.
  */
-export function NotificationBell({ initialNotifications, initialUnreadCount }: NotificationBellProps) {
+export function NotificationBell({ organizationId, initialNotifications, initialUnreadCount }: NotificationBellProps) {
   const t = useTranslations("notifications.bell");
   const [open, setOpen] = useState(false);
   const [unreadCount, setUnreadCount] = useState(initialUnreadCount);
@@ -36,7 +38,7 @@ export function NotificationBell({ initialNotifications, initialUnreadCount }: N
     if (!opening || unreadCount === 0) return;
 
     try {
-      await markAllRead();
+      await markAllRead(organizationId);
       setUnreadCount(0);
       setMarkReadError(false);
     } catch {

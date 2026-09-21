@@ -87,7 +87,7 @@ export async function rejectOrganizationAction(organizationId: string, note: str
 /**
  * Suspending needs no new enforcement mechanism — `resolveContext()`
  * (tenant/context.ts) already re-reads `Organization.status` from the
- * database on every `requireTenantContext()` call, never from the session,
+ * database on every tenant-context resolution, never from the session,
  * and `ORG_NOT_ACTIVE` already redirects every request to
  * `/organization-unavailable`. This action's entire job is to flip the
  * status and audit it; the existing, already-tested guard does the rest —

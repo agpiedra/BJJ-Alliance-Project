@@ -61,7 +61,7 @@ export default async function OnboardingPage({
     getOrganizationBranding(context),
   ]);
   const displayName = raw?.displayName || organization.name;
-  const skipAction = completeOnboarding.bind(null, locale);
+  const skipAction = completeOnboarding.bind(null, context.organizationId, locale);
 
   return (
     <main className="mx-auto flex max-w-md flex-col gap-6 p-6">
@@ -72,6 +72,7 @@ export default async function OnboardingPage({
 
       {step === 1 && (
         <OnboardingStep1Form
+          organizationId={context.organizationId}
           locale={locale}
           organizationName={organization.name}
           displayName={displayName}
@@ -90,7 +91,7 @@ export default async function OnboardingPage({
             uploadAction={uploadBrandingLogo}
             removeAction={removeBrandingLogo}
           />
-          <form action={advanceOnboardingStep.bind(null, locale, 3)}>
+          <form action={advanceOnboardingStep.bind(null, context.organizationId, locale, 3)}>
             <Button type="submit">{t("next")}</Button>
           </form>
         </div>
