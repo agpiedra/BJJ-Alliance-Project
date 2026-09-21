@@ -27,8 +27,10 @@ describe("NAV_ITEMS visibility", () => {
       "/admin/schedule",
       "/admin/kiosk-tokens",
       "/admin/branding",
-      // Staff management is Owner-only — see admin/staff/page.tsx.
+      // Staff management and adding a location are Owner-only — see
+      // admin/staff/page.tsx and admin/locations/page.tsx.
       "/admin/staff",
+      "/admin/locations",
     ]);
   });
 

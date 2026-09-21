@@ -408,6 +408,7 @@
     "adminKioskTokens": "Kiosco",
     "adminBranding": "Marca",
     "adminStaff": "Equipo",
+    "adminLocations": "Sedes",
     "signOut": "Salir",
     "groups": {
       "operations": "Operación",
@@ -1393,6 +1394,44 @@
           "invalidExtension": "Los días de extensión deben ser un número entero no negativo."
         }
       }
+    }
+  },
+  "adminLocations": {
+    "eyebrow": "{orgName} · Sedes",
+    "heading": "Sedes",
+    "sub": "Todos los lugares donde entrena tu academia. Solo el Dueño puede agregar una. Cada sede tiene su propio enlace de kiosco para su tableta.",
+    "columns": {
+      "name": "Nombre",
+      "address": "Dirección",
+      "status": "Estado",
+      "added": "Agregada"
+    },
+    "status": {
+      "active": "Activa",
+      "inactive": "Inactiva"
+    },
+    "noAddress": "—",
+    "add": {
+      "heading": "Agregar una sede",
+      "hint": "Una sede nueva empieza con un plan mensual por defecto y su propio enlace de kiosco. Los directores e instructores solo la verán cuando los asignes a ella.",
+      "submit": "Agregar sede",
+      "success": "Sede agregada."
+    },
+    "fields": {
+      "name": "Nombre",
+      "address": "Dirección (opcional)"
+    },
+    "error": {
+      "notFound": "No se pudo agregar esta sede.",
+      "invalid": "Escribe un nombre (hasta 100 caracteres) y, si quieres, una dirección (hasta 200).",
+      "duplicateName": "Ya tienes una sede con ese nombre."
+    },
+    "token": {
+      "label": "Enlace del kiosco",
+      "warning": "Copia este enlace en la tableta de la sede ahora: no se volverá a mostrar. Si lo pierdes, genera uno nuevo en la página de Kiosco.",
+      "copy": "Copiar enlace",
+      "copied": "Copiado",
+      "dismiss": "Ya lo guardé"
     }
   },
   "staffManagement": {
