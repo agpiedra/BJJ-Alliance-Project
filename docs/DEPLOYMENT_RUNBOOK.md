@@ -66,9 +66,18 @@ together.
    delivers to the Resend account's own verified address. This is the one item on the
    launch checklist that blocks Alliance's own launch outright — see
    `MULTI_ACADEMY_AND_KIDS_BELTS.md`'s own Launch checklist section.
-2. **Create the Supabase project** in `us-east-1` (above). Note both connection strings it
-   gives you — the direct connection and the pooled (Supavisor, transaction-mode, port
-   6543) connection — you need both, for different steps below, not just one.
+2. **Create a NEW Supabase project for production** in `us-east-1` (above) — **not** the
+   project your local `.env` points at. Your local `SUPABASE_URL` points at a real Supabase
+   project, so every dev verification that uploads a logo writes a **real object into that
+   project's bucket** (this happened: a test logo from a verification run landed there and had
+   to be deleted by hand). If production reused that project, test logos would sit in the same
+   bucket as customers' logos and dev and production would share one storage namespace. Keep
+   the existing project as dev; production gets its own project, its own bucket (step 10),
+   its own service-role key, and its own three storage variables in Vercel. (A second project
+   may add to the Supabase bill — check Supabase's current pricing before creating it; that
+   has not been verified here.) Note both connection strings the new project gives you — the
+   direct connection and the pooled (Supavisor, transaction-mode, port 6543) connection — you
+   need both, for different steps below, not just one.
 3. **Create the Vercel project**, connect the GitHub repo, confirm its function region is
    `iad1`.
 4. **Set every production environment variable before the first deploy.** Cross-checked
@@ -90,6 +99,10 @@ together.
      `Refusing to connect to "…" without TLS configuration in production` — loud, not a
      silent plaintext connection. Rotating the certificate is a config change: replace this
      value and redeploy. If verification fails on the first deploy, see "SSL fallback".
+   - `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` / `SUPABASE_LOGO_BUCKET` — the **production**
+     project's values from step 2, **never the values in your local `.env`** (that is the dev
+     project, and copying it here would put production logos in the dev bucket and the dev
+     service-role key in production).
    - `NODE_ENV` — Vercel sets this to `production` automatically; don't set it by hand, and
      confirm it's actually `production` after the first deploy (the e2e-auth-bypass route's
      entire defense rests on this evaluating correctly).

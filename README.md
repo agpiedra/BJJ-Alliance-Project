@@ -49,7 +49,7 @@ for and why — copy it to `.env` and fill in real values for a real deployment.
 | `RESEND_API_KEY` | Always (for email to actually send) | The platform's Resend account key. Without it, registration/invitation/digest emails fail loudly rather than silently no-op. |
 | `EMAIL_FROM` | Always | The **platform's** sender identity (e.g. `Platform Notifications <notifications@resend.dev>`) — shared by every email the app sends, for every organization. Must never name one organization; an org's own name belongs in the subject/body, which is already how it's built. Until this uses a real verified sending domain, Resend's sandbox mode only delivers to the Resend account's own address — expected, not a bug. |
 | `CRON_SECRET` | Always | Shared secret Vercel Cron sends as `Authorization: Bearer <value>` to authenticate the two scheduled jobs below. Any long random value. |
-| `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` / `SUPABASE_LOGO_BUCKET` | Always | Supabase Storage, used only for organization logo uploads (never Postgres bytes). The service-role key is server-only — never expose it to the client. The bucket is public by design (logos render on the unauthenticated kiosk screen). |
+| `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` / `SUPABASE_LOGO_BUCKET` | Always | Supabase Storage, used only for organization logo uploads (never Postgres bytes). The service-role key is server-only — never expose it to the client. The bucket is public by design (logos render on the unauthenticated kiosk screen). **Your local `.env` points at a dev project; production uses a SEPARATE Supabase project** (`docs/DEPLOYMENT_RUNBOOK.md`, step 2) — dev verification writes real objects, and test logos must not sit beside customers'. |
 | `DOTENV_CONFIG_QUIET` | Recommended, set to `"true"` | Silences dotenv's own promotional console output — a dependency printing arbitrary third-party strings into a console an agent or operator reads is a prompt-injection surface, independent of whether any given payload is malicious. |
 | `E2E_AUTH_BYPASS_SECRET` | **Leave unset** in every real deployment | Dev/test-only session-minting bypass for automated browser verification. Inert unless `NODE_ENV !== "production"` **and** this is also set — leaving it unset in production is the actual safeguard, not just the `NODE_ENV` check. |
 
@@ -86,3 +86,35 @@ create one.
 **Revoking** a platform admin is on the same page. You cannot revoke your own access (a
 deliberate choice — it would lock you out of the very page you're using to manage it), and the
 system refuses to leave zero platform admins.
+
+## Shipping a change — the closeout convention
+
+"Merged, CI green" is **not** the end of a change. It is the end of the *PR*; the change is not
+done until it is verified to be **on `main`**. This routine exists because a PR once merged
+successfully into the wrong base and `main` silently never received it — nobody had checked
+that it arrived (see revision 33 of `docs/MULTI_ACADEMY_AND_KIDS_BELTS.md`).
+
+1. **One PR, one base, always `main`. No stacked PRs.** Start every change from a fresh branch
+   off an up-to-date `main`. If work is sequential, merge the first PR *before* the next
+   starts. GitHub does not retarget a stacked PR when its base merges — only when the base
+   *branch is deleted* — so a stack can merge into a branch that is about to be thrown away.
+2. **UI changes are verified in a real browser as a genuinely registered user** — register
+   through `/register-academy`, approve, accept the invitation, sign in — never as a seed
+   user. Seeds are the only thing that ever wrote the rows some bugs concern
+   (the owner lockout, revision 33).
+3. **Name a marker in the PR description**: a file and a distinctive string that only exists
+   once the change has landed (the PR template has a field for it).
+4. **After the merge, verify the change is ON `main` — this is a step, not a habit:**
+   ```
+   git fetch origin
+   git show origin/main:<path> | grep -c "<marker>"     # must be >= 1
+   ```
+   or, for a merge or rebase (not a squash — a squashed commit is never an ancestor of `main`):
+   `git merge-base --is-ancestor <sha> origin/main`. Checking that the PR *shows* "Merged" is
+   not enough.
+5. **Only then delete the branch** (local and remote). Never delete a branch before step 4
+   has passed: it may hold the only copy.
+6. **Clear verification debris from the dev database** (organizations, users, registration
+   attempts, uploaded storage objects the verification created) and say what remains, so the
+   dev database stays something you can reason about rather than a pile of accounts that look
+   like live bugs.
