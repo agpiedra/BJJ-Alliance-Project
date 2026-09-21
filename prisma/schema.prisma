@@ -590,6 +590,15 @@ model Student {
   /// @@unique([organizationId, codeHash]) below. No longer @unique on its own.
   codeHash         String
   status           StudentStatus @default(PENDING)
+  /// What a restore returns this student to. Set when they are archived, read and
+  /// cleared when they are restored; null for everyone not currently archived — and
+  /// for anyone archived before this column existed, whom a restore sends to PENDING
+  /// (unknown history is never guessed as "approved"). STORED, not derived from the
+  /// audit log: an audit row records what happened and gets pruned, rotated and
+  /// exported, so no code path may depend on one. (Same principle as
+  /// PaymentPeriod's currency snapshot and the promotion credit's belt anchor:
+  /// store what you will need later.)
+  statusBeforeArchive StudentStatus?
   joinedAt         DateTime      @default(now())
   notes            String?
   createdAt        DateTime      @default(now())

@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { BrandBanner } from "@/components/brand/brand-banner";
 import { signOutStaff } from "@/lib/auth/sign-out-actions";
+import { resolvePendingApplication } from "@/lib/tenant/platform-lookups";
 
 /**
  * `requireTenantContext`'s redirect target for `NO_MEMBERSHIP` — a
@@ -54,16 +55,24 @@ export default async function NoOrganizationAccessPage({
 
   const t = await getTranslations("auth.noOrganizationAccess");
 
+  // A self-registered student whose application staff have not approved yet has no
+  // membership — that is what approval creates — so they land here too. Tell them
+  // what is actually true (awaiting approval, and by whom) rather than what reads
+  // as an error. Driven by THEIR OWN Student record only.
+  const pending = await resolvePendingApplication(session.user.id);
+
   return (
     <>
       <BrandBanner />
       <main className="flex min-h-[calc(100vh-4rem)] flex-col items-center justify-center bg-background p-6">
         <Card className="w-full max-w-sm">
           <CardHeader>
-            <CardTitle className="text-2xl">{t("heading")}</CardTitle>
+            <CardTitle className="text-2xl">{pending ? t("pendingHeading") : t("heading")}</CardTitle>
           </CardHeader>
           <CardContent className="flex flex-col gap-4">
-            <p className="text-sm text-muted-foreground">{t("body")}</p>
+            <p className="text-sm text-muted-foreground">
+              {pending ? t("pendingBody", { organization: pending.organizationName }) : t("body")}
+            </p>
             <form action={signOutStaff.bind(null, locale)}>
               <Button type="submit" variant="primary">
                 {t("signOut")}

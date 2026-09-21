@@ -97,6 +97,26 @@ export async function resolveOrganizationForSignup(orgSlug: string): Promise<Sig
 }
 
 /**
+ * The signed-in user's OWN pending application, if they have one: a `Student`
+ * record linked to their account that staff have not approved yet, and the name
+ * of the organization reviewing it. This is what lets `/no-organization-access`
+ * tell a self-registered student "your registration is awaiting approval" instead
+ * of the generic "your account isn't linked to any organization" — which is
+ * accurate (approval is what creates the membership) but reads as an error.
+ *
+ * Keyed on the user's id and returns nothing about anyone else; unscoped because
+ * the whole point is that this user has no tenant context yet. `Student.userId`
+ * is globally unique, so at most one row can match.
+ */
+export async function resolvePendingApplication(userId: string): Promise<{ organizationName: string } | null> {
+  const student = await unscopedPrisma.student.findFirst({
+    where: { userId, status: "PENDING" },
+    select: { organization: { select: { name: true } } },
+  });
+  return student ? { organizationName: student.organization.name } : null;
+}
+
+/**
  * Every active Academy's id, for the weekly-digest cron's own per-academy
  * dispatch loop — the one legitimate "iterate every organization on the
  * platform" job in this codebase.

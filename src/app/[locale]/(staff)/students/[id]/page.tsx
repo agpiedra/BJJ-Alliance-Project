@@ -18,6 +18,7 @@ import { getPromotionCreditHistory } from "./get-promotion-credit-history";
 import { getPaymentHistory } from "./get-payment-history";
 import { EditStudentForm } from "./edit-student-form";
 import { ArchiveStudentButton } from "./archive-student-button";
+import { RestoreStudentButton } from "./restore-student-button";
 import { ApproveStudentButton } from "./approve-student-button";
 import { RegenerateCodeButton } from "./regenerate-code-button";
 import { AddAdjustmentForm } from "./add-adjustment-form";
@@ -389,11 +390,14 @@ export default async function StudentDetailPage({
               />
             </div>
           </details>
-          <ArchiveStudentButton
-            organizationId={context.organizationId}
-            studentId={student.id}
-            disabled={student.status === "ARCHIVED"}
-          />
+          {/* An archived student can be restored — that is what the archive
+              dialog's "you can restore them later" refers to. Archive is only
+              offered while there is something to archive. */}
+          {student.status === "ARCHIVED" ? (
+            <RestoreStudentButton organizationId={context.organizationId} studentId={student.id} />
+          ) : (
+            <ArchiveStudentButton organizationId={context.organizationId} studentId={student.id} />
+          )}
         </div>
       )}
     </main>
