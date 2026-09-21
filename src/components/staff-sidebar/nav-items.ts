@@ -1,4 +1,4 @@
-import { BarChart3, CalendarClock, KeyRound, LayoutDashboard, Palette, UserCog, Users, Wallet } from "lucide-react";
+import { BarChart3, CalendarClock, KeyRound, LayoutDashboard, MapPin, Palette, UserCog, Users, Wallet } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type { MembershipRole, TenantContext } from "@/lib/tenant/types";
 
@@ -101,6 +101,15 @@ export const NAV_ITEMS: StaffNavItem[] = [
     href: "/admin/staff",
     labelKey: "adminStaff",
     icon: UserCog,
+    visible: (context) => context.organizationRole === "ADMIN",
+    group: "academy",
+  },
+  {
+    // Adding a location is OWNER-only — matches admin/locations/page.tsx's own
+    // requireTenantContext(["ADMIN"]) gate exactly, like every other item.
+    href: "/admin/locations",
+    labelKey: "adminLocations",
+    icon: MapPin,
     visible: (context) => context.organizationRole === "ADMIN",
     group: "academy",
   },

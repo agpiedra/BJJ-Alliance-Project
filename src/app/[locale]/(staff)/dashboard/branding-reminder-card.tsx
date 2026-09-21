@@ -21,7 +21,7 @@ import { dismissBrandingReminder } from "./branding-reminder-actions";
  * what keeps a later real page load from showing it again, not this
  * component re-rendering.
  */
-export function BrandingReminderCard({ locale }: { locale: string }) {
+export function BrandingReminderCard({ locale, organizationId }: { locale: string; organizationId: string }) {
   const t = useTranslations("dashboard.brandingReminder");
   const [dismissed, setDismissed] = useState(false);
   const [isPending, startTransition] = useTransition();
@@ -31,7 +31,7 @@ export function BrandingReminderCard({ locale }: { locale: string }) {
   function handleDismiss() {
     setDismissed(true);
     startTransition(async () => {
-      await dismissBrandingReminder();
+      await dismissBrandingReminder(organizationId);
     });
   }
 

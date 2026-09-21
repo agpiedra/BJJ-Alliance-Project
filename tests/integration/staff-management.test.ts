@@ -64,8 +64,9 @@ async function accept(token: string, fields: Record<string, string> = {}) {
 /**
  * An organization whose Owner is created exactly the way a real one is —
  * approval, then the invitation accepted — with a second academy added
- * (nothing in the product creates one yet; that is B3), so a DIRECTOR/
- * INSTRUCTOR can be assigned to one and not the other.
+ * directly (this file is about staff, not about locations; adding one through
+ * the product is covered by locations.test.ts), so a DIRECTOR/INSTRUCTOR can
+ * be assigned to one and not the other.
  */
 async function newOrganization() {
   counter += 1;

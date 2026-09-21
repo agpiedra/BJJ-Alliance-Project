@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { getLocale } from "next-intl/server";
-import { requireTenantContext } from "@/lib/tenant/context";
+import { resolveActionContext } from "@/lib/tenant/context";
 import { prisma } from "@/lib/prisma";
 
 /**
@@ -12,13 +12,22 @@ import { prisma } from "@/lib/prisma";
  * identical `prisma.organization.findUnique` pattern for the onboarding
  * redirect), so this writes through the plain guarded `prisma` client,
  * scoped by `context.organizationId` from a verified ADMIN/DIRECTOR
- * session — never a client-supplied id.
+ * membership in the organization the CALLER names (bound from the page at
+ * render time, re-verified here against that organization — never the
+ * session's ambient selector, which a second tab may have moved).
+ *
+ * An action, so it uses the action primitive: a non-member is refused quietly
+ * (nothing written), a member with the wrong role throws `FORBIDDEN`, like
+ * every other action. It must not use the page primitive, whose
+ * `redirect()`/`notFound()` mean nothing to a server-action caller.
  *
  * Per-organization, not per-browser: a director dismissing this on one
  * device must not see it reappear on another.
  */
-export async function dismissBrandingReminder(): Promise<void> {
-  const context = await requireTenantContext(["ADMIN", "DIRECTOR"]);
+export async function dismissBrandingReminder(organizationId: string): Promise<void> {
+  const auth = await resolveActionContext(organizationId, ["ADMIN", "DIRECTOR"]);
+  if (!auth.ok) return;
+  const context = auth.context;
   await prisma.organization.update({
     where: { id: context.organizationId },
     data: { brandingReminderDismissedAt: new Date() },

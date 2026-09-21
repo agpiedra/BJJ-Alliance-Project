@@ -409,7 +409,7 @@ export default async function DashboardPage() {
         </p>
       </header>
 
-      {showBrandingReminder && <BrandingReminderCard locale={locale} />}
+      {showBrandingReminder && <BrandingReminderCard locale={locale} organizationId={context.organizationId} />}
 
       <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
         <span>{t("pendingApprovals", { count: pendingCount })}</span>

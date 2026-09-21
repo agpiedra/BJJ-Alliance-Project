@@ -230,7 +230,7 @@
         "from": "From",
         "to": "To",
         "academy": "Academy",
-        "bothAcademies": "Both",
+        "bothAcademies": "All locations",
         "submit": "Apply",
         "quickRange": {
           "label": "Quick range",
@@ -408,6 +408,7 @@
     "adminKioskTokens": "Kiosk",
     "adminBranding": "Branding",
     "adminStaff": "Staff",
+    "adminLocations": "Locations",
     "signOut": "Sign out",
     "groups": {
       "operations": "Operations",
@@ -418,8 +419,8 @@
   "staffShell": {
     "themeToggle": "Theme",
     "academySwitcher": {
-      "bothLabel": "View both locations",
-      "bothSelected": "Both locations"
+      "bothLabel": "View all locations",
+      "bothSelected": "All locations"
     },
     "userMenu": {
       "role": {
@@ -510,7 +511,7 @@
       "allTracks": "All",
       "trackKids": "Kids",
       "trackAdults": "Adults",
-      "bothAcademies": "Both",
+      "bothAcademies": "All locations",
       "submit": "Filter"
     },
     "columns": {
@@ -915,7 +916,7 @@
         "status": "Filter by status",
         "allStatuses": "All statuses",
         "academy": "Filter by academy",
-        "bothAcademies": "Both academies"
+        "bothAcademies": "All locations"
       },
       "promoOrExempt": "Promotion or exempt",
       "empty": "No student matches these filters.",
@@ -1393,6 +1394,44 @@
           "invalidExtension": "Extension days must be a non-negative whole number."
         }
       }
+    }
+  },
+  "adminLocations": {
+    "eyebrow": "{orgName} · Locations",
+    "heading": "Locations",
+    "sub": "Every place your academy trains. Only the Owner can add one. Each location has its own kiosk link for its tablet.",
+    "columns": {
+      "name": "Name",
+      "address": "Address",
+      "status": "Status",
+      "added": "Added"
+    },
+    "status": {
+      "active": "Active",
+      "inactive": "Inactive"
+    },
+    "noAddress": "—",
+    "add": {
+      "heading": "Add a location",
+      "hint": "A new location starts with a default monthly plan and its own kiosk link. Directors and instructors only see it once you assign them to it.",
+      "submit": "Add location",
+      "success": "Location added."
+    },
+    "fields": {
+      "name": "Name",
+      "address": "Address (optional)"
+    },
+    "error": {
+      "notFound": "Could not add this location.",
+      "invalid": "Enter a name (up to 100 characters) and, if you like, an address (up to 200).",
+      "duplicateName": "You already have a location with that name."
+    },
+    "token": {
+      "label": "Kiosk link",
+      "warning": "Copy this link onto the location's tablet now — it will not be shown again. If you lose it, generate a new one on the Kiosk page.",
+      "copy": "Copy link",
+      "copied": "Copied",
+      "dismiss": "I've saved it"
     }
   },
   "staffManagement": {

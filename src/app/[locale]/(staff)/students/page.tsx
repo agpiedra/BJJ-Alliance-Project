@@ -2,6 +2,7 @@ import { DateTime } from "luxon";
 import { getLocale, getTranslations } from "next-intl/server";
 import { requireTenantContext } from "@/lib/tenant/context";
 import { getScopedDb } from "@/lib/tenant/scoped-client";
+import { hasAcademyChoice } from "@/lib/staff-shell/academy-choice";
 import { getOrganizationBranding } from "@/lib/branding/get-branding";
 import { prisma } from "@/lib/prisma";
 import { Card, CardContent } from "@/components/ui/card";
@@ -371,7 +372,7 @@ export default async function StudentsPage({
               ))}
             </FilterBarSelect>
 
-            {context.organizationRole === "ADMIN" && (
+            {context.organizationRole === "ADMIN" && hasAcademyChoice(academies) && (
               <>
                 <label htmlFor="students-academy" className="sr-only">
                   {t("filters.academy")}

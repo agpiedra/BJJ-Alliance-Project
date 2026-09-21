@@ -21,6 +21,7 @@ import { showToast } from "@/components/ui/toast";
 import { RecordPaymentForm, type RecordPaymentPlanOption } from "@/components/payments/record-payment-form";
 import { markPaymentPaid } from "@/lib/payments/payment-actions";
 import { isCustomPromoPlanName } from "@/lib/payments/custom-promo-plan-name";
+import { hasAcademyChoice } from "@/lib/staff-shell/academy-choice";
 import { formatMoney } from "@/lib/payments/format-money";
 import { formatRecordedBy } from "@/lib/payments/format-recorded-by";
 import type { CurrentPaymentRow, PaymentBucket } from "@/lib/payments/list-current-status";
@@ -171,7 +172,7 @@ export function PaymentsTable({
           <option value="OVERDUE">{tPaymentStatus("overdue")}</option>
           <option value="PROMO_OR_EXEMPT">{t("promoOrExempt")}</option>
         </FilterBarSelect>
-        {academies.length > 1 && (
+        {hasAcademyChoice(academies) && (
           <>
             <label htmlFor="payments-sede" className="sr-only">
               {t("filters.academy")}
