@@ -224,6 +224,26 @@ describe("registerOrganization", () => {
     cleanupOrgIds.push(org.id);
   });
 
+  it("REQUIRED: a $ACTION_-prefixed field is dropped and never processed — it cannot override a real field or trip the honeypot", async () => {
+    const fd = registrationFormData();
+    const slug = fd.get("desiredSlug") as string;
+    const realName = fd.get("organizationName") as string;
+    // The reserved namespace is an allowlisted prefix; it must not become a
+    // smuggling channel. Shadowing a real field, and filling the honeypot's name
+    // under the prefix, must both be inert.
+    fd.set("$ACTION_organizationName", "Smuggled Name");
+    fd.set("$ACTION_website", "i-am-a-bot");
+
+    const result = await registerOrganization({}, fd);
+
+    // A tripped honeypot would ALSO return { ok: true } but write nothing.
+    const org = await prisma.organization.findUnique({ where: { slug } });
+    expect(org, "the honeypot must not have been triggered through the prefix").not.toBeNull();
+    expect(result.ok).toBe(true);
+    expect(org!.name).toBe(realName);
+    cleanupOrgIds.push(org!.id);
+  });
+
   it("still rejects a genuinely unknown field even alongside the framework's own — the fix filters the framework namespace, not strictness", async () => {
     const fd = registrationFormData();
     const slug = fd.get("desiredSlug") as string;
