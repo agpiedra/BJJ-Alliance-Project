@@ -9,6 +9,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { BeltGraphic, type BeltVisualData } from "@/components/belt-graphic/belt-graphic";
 import { enqueueOfflineCheckIn, flushOfflineQueue } from "@/lib/kiosk/offline-queue";
 import { ZONE } from "@/lib/scheduling/zone";
+import type { AtBeltSummary } from "@/lib/students/attendance-summary";
 
 const CODE_LENGTH = 4;
 const SUCCESS_DISPLAY_MS = 6000;
@@ -54,11 +55,13 @@ interface CheckInSuccess {
     currentBeltLabelEn: string;
     currentStripes: number;
   };
-  summary: {
-    atBeltCount: number;
-    remainingToNextStripe: number | null;
-    examEligible: boolean;
-  };
+  /**
+   * The server's own `AtBeltSummary`, narrowed to what this screen reads — NOT a
+   * hand-written copy. This used to declare `remainingToNextStripe` /
+   * `examEligible`, names the API never returned, so every real check-in
+   * rendered "NaN"; deriving the type makes a rename a compile error.
+   */
+  summary: Pick<AtBeltSummary, "atBeltCount" | "remainingAttendance" | "isEligible" | "nextTarget">;
   earnedStripe: boolean;
   isVisitor: boolean;
   homeAcademyName: string;
@@ -674,18 +677,18 @@ function ClassPicker({
   );
 }
 
-function SuccessView({ result, onCorrect }: { result: CheckInSuccess; onCorrect: () => void }) {
+export function SuccessView({ result, onCorrect }: { result: CheckInSuccess; onCorrect: () => void }) {
   const t = useTranslations("kiosk");
   const tDay = useTranslations("dayOfWeek");
   const locale = useLocale();
   const { student, summary, earnedStripe, isVisitor, homeAcademyName, matchedClass } = result;
   const name = `${student.firstName} ${student.lastName}`;
   // Presentation-only derivation from numbers the API already computed
-  // (atBeltCount, remainingToNextStripe) — not a reimplementation of the
+  // (atBeltCount, remainingAttendance) — not a reimplementation of the
   // belt-progression business logic itself (Rule 8), just the arithmetic
   // needed to show "24 / 30" instead of two separate sentences.
   const target =
-    summary.remainingToNextStripe !== null ? summary.atBeltCount + summary.remainingToNextStripe : null;
+    summary.remainingAttendance !== null ? summary.atBeltCount + summary.remainingAttendance : null;
 
   return (
     <div className="flex w-full flex-1 flex-col items-center justify-center gap-6 text-center">
@@ -712,13 +715,14 @@ function SuccessView({ result, onCorrect }: { result: CheckInSuccess; onCorrect:
           {target !== null ? `${summary.atBeltCount} / ${target}` : summary.atBeltCount}
         </p>
 
-        {summary.remainingToNextStripe !== null && (
+        {summary.remainingAttendance !== null && (
           <p className="text-xl text-muted-foreground sm:text-2xl">
-            {t("remainingToNextStripe", { count: summary.remainingToNextStripe })}
+            {t("remainingToNextStripe", { count: summary.remainingAttendance })}
           </p>
         )}
 
-        {summary.remainingToNextStripe === null && summary.examEligible && (
+        {/* Same condition the portal uses: no remaining count only means "eligible for the belt exam" when the next target IS the belt. */}
+        {summary.remainingAttendance === null && summary.nextTarget === "BELT" && summary.isEligible && (
           <p className="text-xl font-medium sm:text-2xl">{t("examEligible")}</p>
         )}
       </div>
