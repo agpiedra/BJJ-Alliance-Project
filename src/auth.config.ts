@@ -15,12 +15,11 @@ export default {
       // available in the Edge runtime middleware defaults to). Real
       // credentials sign-in only ever happens through src/auth.ts's Node
       // instance (middleware has no provider and never calls signIn()), so
-      // `user` here only carries id/role — the DB-backed
+      // `user` here only carries the id — the DB-backed
       // `activeOrganizationId` resolution lives entirely in src/auth.ts's
       // own `jwt` callback override, which wraps this one.
       if (user) {
         token.id = user.id;
-        token.role = (user as { role: string }).role;
       }
       // Set via `unstable_update({ activeOrganizationId })` — today by
       // src/app/[locale]/select-organization/actions.ts (the explicit
@@ -35,7 +34,9 @@ export default {
     },
     async session({ session, token }) {
       session.user.id = token.id as string;
-      session.user.role = token.role as string;
+      // Deliberately NO `role`: the global `User.role` is not an authorization
+      // source. Access is membership (see route-access.ts); the claim below is only
+      // a hint for the Edge middleware.
       session.activeOrganizationId = (token.activeOrganizationId as string | null) ?? null;
       // The `{ staff, portal }` claim (derive-access.ts). Absent on a token issued
       // before it existed — the middleware then FAILS CLOSED and forces a re-login.

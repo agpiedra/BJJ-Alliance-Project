@@ -98,6 +98,13 @@
       "pendingBody": "Tu registro en {organization} está pendiente de aprobación. Vas a poder ingresar apenas la academia lo apruebe.",
       "signOut": "Cerrar sesión"
     },
+    "noAccess": {
+      "heading": "No tenés acceso a esta área",
+      "body": "Tu cuenta no incluye esta parte de la aplicación. Si creés que es un error, pedile al Dueño de tu academia que revise tu rol.",
+      "goStaff": "Ir a la app del equipo",
+      "goPortal": "Ir a mi entrenamiento",
+      "signOut": "Cerrar sesión"
+    },
     "selectOrganization": {
       "heading": "Elegí una organización",
       "body": "Tu cuenta pertenece a más de una organización. Elegí cuál usar para esta sesión.",

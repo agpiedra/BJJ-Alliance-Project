@@ -70,6 +70,18 @@ export function routeAccess(pathWithoutLocale: string, hasSession: boolean, acce
   return allowed ? "allow" : "refresh";
 }
 
+/** Has the token's claim drifted from what the database says? A missing or malformed claim is never "the same". */
+export function sameAccess(claim: unknown, derived: AccessClaim): boolean {
+  return isAccessClaim(claim) && claim.staff === derived.staff && claim.portal === derived.portal;
+}
+
+/** Where someone lands after signing in or switching organization: the staff app if they have it (it links to their training), else the portal. */
+export function landingFor(access: AccessClaim): "/dashboard" | "/portal" | null {
+  if (access.staff) return "/dashboard";
+  if (access.portal) return "/portal";
+  return null;
+}
+
 /** The locale-less path, for a request path that may start with `/es` or `/en`. */
 export function stripLocale(pathname: string): string {
   const match = pathname.match(/^\/(es|en)(\/.*)?$/);

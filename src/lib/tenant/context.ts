@@ -7,6 +7,7 @@ import { resolveActiveOrganizationForSignIn } from "@/lib/tenant/active-organiza
 import type { AccessContext, MembershipRole, SystemJobContext, TenantContext, TenantContextResult } from "./types";
 
 import { resolveContext } from "@/lib/tenant/resolve-context";
+import { tenantRedirectPath } from "@/lib/tenant/redirect-path";
 
 /**
  * Resolves the current request's tenant context from the session's
@@ -249,17 +250,7 @@ export async function requireTenantContext(allowedRoles?: MembershipRole[]): Pro
     return result.context;
   }
 
-  const locale = await getLocale();
-  switch (result.status) {
-    case "UNAUTHENTICATED":
-      redirect(`/${locale}/login`);
-    case "NO_MEMBERSHIP":
-      redirect(`/${locale}/no-organization-access`);
-    case "NEEDS_ORGANIZATION_SELECTION":
-      redirect(`/${locale}/select-organization`);
-    case "ORG_NOT_ACTIVE":
-      redirect(`/${locale}/organization-unavailable`);
-  }
+  redirect(tenantRedirectPath(result.status, await getLocale()));
 }
 
 /**

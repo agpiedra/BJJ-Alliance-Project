@@ -52,7 +52,7 @@ export async function signInJwtCallback(params: JwtCallbackParams): Promise<JWT>
   // The `{ staff, portal }` claim the Edge middleware reads, derived from the
   // DATABASE for the organization the person is now acting in — at sign-in, and on
   // ANY session update: an organization switch (a new organization, a new claim) or
-  // an explicit `{ refreshAccess: true }` (same organization, the database may have
+  // an explicit refresh (`unstable_update` for the same organization — the database may have
   // changed under a live session — a promotion, a demotion). Between updates the
   // claim is only a hint, never authority: every page re-derives access from the
   // database on every request (see route-access.ts).

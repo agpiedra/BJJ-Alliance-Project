@@ -5,6 +5,7 @@ import { z } from "zod";
 import { auth, unstable_update } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { sanitizeCallbackUrl } from "@/lib/callback-url";
+import { landingPathForOrganization } from "@/lib/auth/landing";
 
 const selectOrganizationSchema = z.object({ organizationId: z.string().min(1) });
 
@@ -55,5 +56,7 @@ export async function selectOrganization(
   if (safeCallbackUrl) {
     redirect(safeCallbackUrl);
   }
-  redirect(`/${locale}/${session!.user!.role === "STUDENT" ? "portal" : "dashboard"}`);
+  // The landing for the organization they just chose — from the database, never
+  // the global `User.role`.
+  redirect(`/${locale}${await landingPathForOrganization(userId, membership.organizationId)}`);
 }

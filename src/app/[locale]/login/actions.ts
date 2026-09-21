@@ -6,6 +6,7 @@ import { signIn } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import type { ActionState } from "@/lib/action-state";
 import { sanitizeCallbackUrl } from "@/lib/callback-url";
+import { landingPathForUser } from "@/lib/auth/landing";
 
 const loginSchema = z.object({
   email: z.string().email(),
@@ -38,11 +39,14 @@ export async function login(
   // lands — it never decides whether it succeeds.
   let redirectTarget = safeCallbackUrl;
   if (!redirectTarget) {
+    // Decided from the DATABASE (memberships and the linked student record), never
+    // the global `User.role`: staff — a coach who also trains included — land in the
+    // staff app, everyone else with a portal in the portal.
     const user = await prisma.user.findUnique({
       where: { email: parsed.data.email },
-      select: { role: true },
+      select: { id: true },
     });
-    redirectTarget = `/${locale}/${user?.role === "STUDENT" ? "portal" : "dashboard"}`;
+    redirectTarget = `/${locale}${user ? await landingPathForUser(user.id) : "/dashboard"}`;
   }
 
   try {

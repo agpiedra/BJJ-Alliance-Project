@@ -72,10 +72,10 @@ async function bypassToken(userId: string, organizationId?: string) {
 }
 
 /** Simulates exactly what src/auth.ts's real signIn() flow does: one call to the shared jwt callback with `user` present. */
-async function realLoginToken(user: { id: string; email: string; role: string }) {
+async function realLoginToken(user: { id: string; email: string }) {
   return signInJwtCallback({
     token: { sub: user.id, email: user.email, name: user.email },
-    user: { id: user.id, email: user.email, role: user.role, name: user.email },
+    user: { id: user.id, email: user.email, name: user.email },
     trigger: "signIn",
   } as JwtCallbackParams);
 }
@@ -87,7 +87,6 @@ function meaningfulClaims(token: Record<string, unknown> | null) {
     sub: token?.sub,
     email: token?.email,
     name: token?.name,
-    role: token?.role,
     activeOrganizationId: token?.activeOrganizationId,
     // The `{ staff, portal }` claim the middleware reads — the bypass must mint the SAME one.
     access: token?.access,

@@ -18,10 +18,21 @@ const handleI18nRouting = createMiddleware(routing);
 export default auth((req) => {
   const decision = routeAccess(stripLocale(req.nextUrl.pathname), Boolean(req.auth?.user?.id), req.auth?.access);
 
-  // `login`: no session, or a session with no usable claim (fail closed — forces a
-  // re-login). `refresh` (a well-formed claim that denies this tree) also lands here
-  // until the refresh route exists; the attempted path is preserved as `callbackUrl`.
-  if (decision !== "allow") {
+  // `refresh`: a WELL-FORMED claim that denies this tree. The database may now say
+  // yes (a promotion while logged in), and this Edge code cannot ask it — so hand the
+  // request to the Node refresh route, which re-derives the claim and either
+  // continues here or explains the refusal. Never the login page: someone just
+  // granted access must not be bounced, or told to log out.
+  if (decision === "refresh") {
+    const refreshUrl = new URL("/api/access/refresh", req.nextUrl.origin);
+    refreshUrl.searchParams.set("to", req.nextUrl.pathname + req.nextUrl.search);
+    return NextResponse.redirect(refreshUrl);
+  }
+
+  // `login`: no session, or a session with no usable claim (FAIL CLOSED — a token
+  // from before the claim existed is forced to re-authenticate). The attempted path
+  // is preserved as `callbackUrl`.
+  if (decision === "login") {
     const localeMatch = req.nextUrl.pathname.match(/^\/(es|en)/);
     const locale = localeMatch ? localeMatch[1] : routing.defaultLocale;
     const loginUrl = new URL(`/${locale}/login`, req.nextUrl.origin);

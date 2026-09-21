@@ -68,10 +68,46 @@ describe("login() redirect destination", () => {
     }
   });
 
-  it("a STUDENT login with no callbackUrl lands on /portal", async () => {
-    const { email } = await makeUser("STUDENT", "login-student");
-    const target = await redirectTargetOf(login("en", undefined, {}, formData(email)));
+  // Where a login lands is decided from the DATABASE — memberships and the linked
+  // student record — never the global `User.role`. So these use the seeded Alliance
+  // accounts, which really have them (a bare user with a `role` and no membership is a
+  // world that does not exist: nothing gets created that way).
+  it("a student who really belongs to an academy (membership + an ACTIVE student record) lands on /portal", async () => {
+    const target = await redirectTargetOf(login("en", undefined, {}, formData("student@test.com")));
     expect(target).toBe("/en/portal");
+  });
+
+  it("a coach who also trains lands in the STAFF app — it links to their training — not the portal", async () => {
+    const director = await prisma.user.findUniqueOrThrow({ where: { email: "director@test.com" } });
+    const organizationId = (await prisma.organizationMembership.findFirstOrThrow({ where: { userId: director.id } })).organizationId;
+    const rank = await prisma.beltRank.findFirstOrThrow({ where: { organizationId, track: "ADULT", code: "WHITE" } });
+    const academy = await prisma.academy.findFirstOrThrow({ where: { organizationId } });
+    const student = await prisma.student.create({
+      data: {
+        userId: director.id,
+        organizationId,
+        homeAcademyId: academy.id,
+        firstName: "Director",
+        lastName: "LoginTrains",
+        phone: "0000-0000",
+        email: `director-login-trains-${Date.now()}@example.com`,
+        codeHash: `login-actions-director-trains-${Date.now()}`,
+        currentRankId: rank.id,
+        status: "ACTIVE",
+      },
+    });
+    try {
+      const target = await redirectTargetOf(login("en", undefined, {}, formData("director@test.com")));
+      expect(target).toBe("/en/dashboard");
+    } finally {
+      await prisma.student.delete({ where: { id: student.id } });
+    }
+  });
+
+  it("an account with nothing to derive from lands on the staff path, where the refresh route sends them on to their notice — never a guess from the global role", async () => {
+    const { email } = await makeUser("STUDENT", "login-student-orphan");
+    const target = await redirectTargetOf(login("en", undefined, {}, formData(email)));
+    expect(target).toBe("/en/dashboard");
   });
 
   it("a staff login with no callbackUrl still lands on /dashboard (no regression)", async () => {
@@ -81,8 +117,7 @@ describe("login() redirect destination", () => {
   });
 
   it("an explicit callbackUrl still wins for a STUDENT login", async () => {
-    const { email } = await makeUser("STUDENT", "login-student-cb");
-    const target = await redirectTargetOf(login("en", "/en/students?tab=active", {}, formData(email)));
+    const target = await redirectTargetOf(login("en", "/en/students?tab=active", {}, formData("student@test.com")));
     expect(target).toBe("/en/students?tab=active");
   });
 

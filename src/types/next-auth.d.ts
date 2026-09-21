@@ -4,7 +4,6 @@ declare module "next-auth" {
   interface Session {
     user: {
       id: string;
-      role: string;
     } & DefaultSession["user"];
     /**
      * MULTI_ACADEMY_AND_KIDS_BELTS.md Appendix C decision 4: the selector for
@@ -26,14 +25,12 @@ declare module "next-auth" {
 
   interface User {
     id: string;
-    role: string;
   }
 }
 
 declare module "next-auth/jwt" {
   interface JWT {
     id: string;
-    role: string;
     activeOrganizationId: string | null;
     access?: import("@/lib/auth/route-access").AccessClaim;
   }

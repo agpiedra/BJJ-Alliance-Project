@@ -98,6 +98,13 @@
       "pendingBody": "Your registration at {organization} is awaiting approval. You'll be able to sign in as soon as the academy approves it.",
       "signOut": "Sign out"
     },
+    "noAccess": {
+      "heading": "You don't have access to this area",
+      "body": "Your account doesn't include this part of the app. If you think that's a mistake, ask your academy's Owner to check your role.",
+      "goStaff": "Go to the staff app",
+      "goPortal": "Go to my training",
+      "signOut": "Sign out"
+    },
     "selectOrganization": {
       "heading": "Choose an organization",
       "body": "Your account belongs to more than one organization. Choose which one to use for this session.",

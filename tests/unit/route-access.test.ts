@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { accessFromMembership, isStaffRole, routeAccess } from "../../src/lib/auth/route-access";
+import { accessFromMembership, isStaffRole, landingFor, routeAccess, sameAccess } from "../../src/lib/auth/route-access";
 
 /**
  * The middleware's whole decision, as a pure function with positive controls.
@@ -106,5 +106,29 @@ describe("accessFromMembership — one rule for the claim and for every per-requ
 
   it("isStaffRole names exactly the three staff roles", () => {
     expect(["ADMIN", "DIRECTOR", "INSTRUCTOR", "STUDENT"].filter(isStaffRole)).toEqual(["ADMIN", "DIRECTOR", "INSTRUCTOR"]);
+  });
+});
+
+describe("sameAccess — has the claim drifted from what the database says?", () => {
+  it("is true only for a well-formed claim equal in BOTH fields; a missing or malformed claim is never 'the same'", () => {
+    expect(sameAccess(BOTH, BOTH)).toBe(true);
+    expect(sameAccess(NONE, NONE)).toBe(true);
+    expect(sameAccess(STAFF_ONLY, PORTAL_ONLY)).toBe(false);
+    expect(sameAccess(PORTAL_ONLY, BOTH)).toBe(false);
+    for (const claim of [undefined, null, {}, { staff: true }, "staff", { staff: "true", portal: "true" }]) {
+      expect(sameAccess(claim, NONE), JSON.stringify(claim)).toBe(false);
+    }
+  });
+});
+
+describe("landingFor — where a person lands after signing in or switching organization", () => {
+  it("staff access lands in the staff app — including someone who also trains (the staff app links to their training)", () => {
+    expect(landingFor(STAFF_ONLY)).toBe("/dashboard");
+    expect(landingFor(BOTH)).toBe("/dashboard");
+  });
+
+  it("portal-only access lands in the portal; no access has no landing", () => {
+    expect(landingFor(PORTAL_ONLY)).toBe("/portal");
+    expect(landingFor(NONE)).toBeNull();
   });
 });

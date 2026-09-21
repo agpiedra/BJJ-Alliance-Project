@@ -31,7 +31,8 @@ describe("verifyCredentials", () => {
     const result = await verifyCredentials(TEST_EMAIL, TEST_PASSWORD);
     expect(result).not.toBeNull();
     expect(result?.email).toBe(TEST_EMAIL);
-    expect(result?.role).toBe("INSTRUCTOR");
+    // No `role` on the verified user: nothing authorizes on the global User.role.
+    expect(result).not.toHaveProperty("role");
   });
 
   it("returns null for a wrong password", async () => {
