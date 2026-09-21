@@ -3,6 +3,7 @@
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { generateStudentCode } from "@/lib/students/generate-code";
+import { grantStudentMembership, revokeStudentMembership } from "@/lib/students/student-membership";
 import { isAcademyInTenantScope, resolveActionContext } from "@/lib/tenant/context";
 import { getScopedDb } from "@/lib/tenant/scoped-client";
 import { Prisma, StudentStatus } from "@/generated/prisma/client";
@@ -209,7 +210,7 @@ export async function archiveStudent(
 
   const student = await getScopedDb(context).student.findUnique({
     where: { id: parsed.data.studentId },
-    select: { id: true, homeAcademyId: true, organizationId: true, status: true },
+    select: { id: true, homeAcademyId: true, organizationId: true, status: true, userId: true },
   });
 
   if (!student || !isAcademyInTenantScope(context, student.homeAcademyId)) {
@@ -227,6 +228,9 @@ export async function archiveStudent(
         throw new StudentWriteMissError();
       }
 
+      // They leave the portal with the roster (a STUDENT membership only — never a staff one).
+      const membership = await revokeStudentMembership(tx, student);
+
       await tx.auditLog.create({
         data: {
           actorId: context.actorUserId,
@@ -236,7 +240,7 @@ export async function archiveStudent(
           entityType: "Student",
           entityId: student.id,
           before: { status: student.status },
-          after: { status: StudentStatus.ARCHIVED },
+          after: { status: StudentStatus.ARCHIVED, membership },
         },
       });
     });
@@ -278,7 +282,7 @@ export async function approveStudent(
 
   const student = await getScopedDb(context).student.findUnique({
     where: { id: parsed.data.studentId },
-    select: { id: true, homeAcademyId: true, organizationId: true, status: true },
+    select: { id: true, homeAcademyId: true, organizationId: true, status: true, userId: true },
   });
 
   if (!student || !isAcademyInTenantScope(context, student.homeAcademyId)) {
@@ -305,6 +309,9 @@ export async function approveStudent(
         throw new StudentWriteMissError();
       }
 
+      // Approval is the moment they belong here — and what lets them into /portal.
+      const membership = await grantStudentMembership(tx, student);
+
       await tx.auditLog.create({
         data: {
           actorId: context.actorUserId,
@@ -314,7 +321,7 @@ export async function approveStudent(
           entityType: "Student",
           entityId: student.id,
           before: { status: StudentStatus.PENDING },
-          after: { status: StudentStatus.ACTIVE },
+          after: { status: StudentStatus.ACTIVE, membership },
         },
       });
     });
