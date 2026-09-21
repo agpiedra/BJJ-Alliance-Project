@@ -4,7 +4,7 @@ import { useActionState, useEffect, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { recordPayment } from "@/lib/payments/payment-actions";
-import { CUSTOM_PROMO_PLAN_NAME } from "@/lib/payments/custom-promo-plan-name";
+import { isCustomPromoPlanName } from "@/lib/payments/custom-promo-plan-name";
 import { currencySymbol } from "@/lib/payments/format-money";
 import { PaymentMethod, PaymentStatus, type Currency } from "@/generated/prisma/browser";
 import type { ActionState } from "@/lib/action-state";
@@ -137,7 +137,7 @@ export function RecordPaymentForm({
     [plans, selectedStudent],
   );
   const selectedPlan = plansForAcademy.find((p) => p.id === selectedPlanId);
-  const isCustomPromoPlan = selectedPlan?.name === CUSTOM_PROMO_PLAN_NAME;
+  const isCustomPromoPlan = isCustomPromoPlanName(selectedPlan?.name);
 
   // `amount`/`notes`/`promoName`/`promoReason` are optional, but a plain
   // HTML <input> always submits its name with an empty-string value when

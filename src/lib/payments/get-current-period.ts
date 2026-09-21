@@ -1,7 +1,7 @@
 import { DateTime } from "luxon";
 import { prisma } from "@/lib/prisma";
 import { ZONE } from "@/lib/scheduling/zone";
-import { CUSTOM_PROMO_PLAN_NAME } from "@/lib/payments/custom-promo-plan-name";
+import { isCustomPromoPlanName } from "@/lib/payments/custom-promo-plan-name";
 import { isUniqueConstraintError } from "@/lib/prisma-errors";
 import { Prisma, type Currency, type PaymentMethod, type PaymentStatus } from "@/generated/prisma/client";
 
@@ -152,7 +152,7 @@ async function findCarryForwardCandidate(
 }
 
 function qualifiesForCarryForward(candidate: { promoRecurring: boolean; plan: { name: string } } | null): boolean {
-  return !!candidate && candidate.promoRecurring && candidate.plan.name === CUSTOM_PROMO_PLAN_NAME;
+  return !!candidate && candidate.promoRecurring && isCustomPromoPlanName(candidate.plan.name);
 }
 
 /**

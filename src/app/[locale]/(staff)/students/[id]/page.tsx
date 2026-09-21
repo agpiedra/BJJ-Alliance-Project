@@ -128,7 +128,7 @@ export default async function StudentDetailPage({
   // shown at all (same `canEdit` gate as edit/archive above).
   //
   // `ensureCustomPromoPlan` (REDESIGN_BRIEF.md Phase 6 ruling #2) guarantees
-  // this academy's "Promoción personalizada" plan row exists before the
+  // this academy's custom-promotion plan row exists before the
   // shared `RecordPaymentForm` needs to offer it, same as the new
   // `/payments` route.
   if (canEdit) {

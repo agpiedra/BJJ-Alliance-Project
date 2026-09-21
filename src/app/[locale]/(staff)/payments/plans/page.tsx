@@ -5,7 +5,7 @@ import { getOrganizationBranding } from "@/lib/branding/get-branding";
 import { prisma } from "@/lib/prisma";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { CUSTOM_PROMO_PLAN_NAME } from "@/lib/payments/custom-promo-plan-name";
+import { isCustomPromoPlanName } from "@/lib/payments/custom-promo-plan-name";
 import { formatMoney } from "@/lib/payments/format-money";
 import { listPlansForManagement } from "@/lib/payments/list-plans";
 import { CreatePlanForm, CurrencyForm, PlanRowActions } from "./plan-forms";
@@ -97,7 +97,7 @@ export default async function PaymentPlansPage() {
                                 description: plan.description,
                                 defaultAmount: plan.defaultAmount,
                                 active: plan.active,
-                                isSystem: plan.name === CUSTOM_PROMO_PLAN_NAME,
+                                isSystem: isCustomPromoPlanName(plan.name),
                               }}
                             />
                           </td>

@@ -30,7 +30,10 @@ const { getPaymentHistory } = await import("../../src/app/[locale]/(staff)/stude
 const { getCurrentPaymentPeriod, currentCrDateParts } = await import("../../src/lib/payments/get-current-period");
 const { listCurrentPaymentStatus } = await import("../../src/lib/payments/list-current-status");
 const { requireOrganizationAccess } = await import("../../src/lib/tenant/context");
-const { ensureCustomPromoPlan, CUSTOM_PROMO_PLAN_NAME } = await import("../../src/lib/payments/ensure-custom-promo-plan");
+const { ensureCustomPromoPlan } = await import("../../src/lib/payments/ensure-custom-promo-plan");
+const { customPromoPlanNameFor } = await import("../../src/lib/payments/custom-promo-plan-name");
+// The organizations `newOrganization()` builds default to Spanish.
+const CUSTOM_PROMO_PLAN_NAME = customPromoPlanNameFor("es");
 const { digestLookupSecret, hashSecret } = await import("../../src/lib/crypto");
 const { requireEnv } = await import("../../src/lib/env");
 
@@ -396,6 +399,77 @@ describe("payment plans, default amounts and organization currency", () => {
       expect(await reactivatePlan(org.organizationId, promoPlan.id)).toEqual({ ok: true });
       expect((await listSelectablePlans(org.organizationId, [org.academyId])).map((p) => p.name)).toContain("Promoción Diciembre");
       expect(await getPaymentHistory(alice.id, org.organizationId)).toHaveLength(1);
+    });
+  });
+
+  describe("the system promo plan follows the organization's language", () => {
+    it("REQUIRED: an English organization's is 'Custom promotion', a Spanish one's 'Promoción personalizada' — and asking twice never makes a second", async () => {
+      const spanish = await newOrganization({ locale: "es" });
+      const english = await newOrganization({ locale: "en" });
+
+      const es = await ensureCustomPromoPlan(spanish.organizationId, spanish.academyId);
+      const en = await ensureCustomPromoPlan(english.organizationId, english.academyId);
+      expect(es.name).toBe("Promoción personalizada");
+      expect(en.name).toBe("Custom promotion");
+
+      expect((await ensureCustomPromoPlan(english.organizationId, english.academyId)).id).toBe(en.id);
+      expect(await prisma.paymentPlan.count({ where: { academyId: english.academyId, name: { in: ["Custom promotion", "Promoción personalizada"] } } })).toBe(1);
+    });
+
+    it("an organization that already has the plan under the OTHER language's name keeps it — no second promo plan appears", async () => {
+      const english = await newOrganization({ locale: "en" });
+      // What every English organization created before this change has: the Spanish name.
+      const legacy = await prisma.paymentPlan.create({
+        data: { academyId: english.academyId, organizationId: english.organizationId, name: "Promoción personalizada" },
+      });
+
+      const ensured = await ensureCustomPromoPlan(english.organizationId, english.academyId);
+
+      expect(ensured.id).toBe(legacy.id);
+      expect(await prisma.paymentPlan.count({ where: { academyId: english.academyId, name: { in: ["Custom promotion", "Promoción personalizada"] } } })).toBe(1);
+    });
+
+    it("the English-named plan is still THE system plan: it needs a promo name, and cannot be created, edited or deactivated", async () => {
+      const org = await newOrganization({ locale: "en" });
+      actAs(org.ownerId, org.organizationId);
+      const student = await makeStudent(org.organizationId, org.academyId, "enpromo");
+      const promo = await ensureCustomPromoPlan(org.organizationId, org.academyId);
+      expect(promo.name).toBe("Custom promotion");
+
+      // Recording on it without a promo name is refused, exactly as for the Spanish name.
+      expect(
+        await pay(org.organizationId, { studentId: student.id, year: "2026", month: "1", planId: promo.id, status: "PROMO", amount: "10" }),
+      ).toMatchObject({ error: "promoNameRequired" });
+
+      expect(await createPlan(org.organizationId, {}, form({ academyId: org.academyId, name: "Custom promotion" }))).toMatchObject({ error: "systemPlan" });
+      expect(await updatePlan(org.organizationId, {}, form({ planId: promo.id, name: "Renamed" }))).toMatchObject({ error: "systemPlan" });
+      expect(await deactivatePlan(org.organizationId, promo.id)).toMatchObject({ error: "systemPlan" });
+      // ...and it does not count as "another active plan" for the last-plan guard.
+      const monthly = await prisma.paymentPlan.findFirstOrThrow({ where: { academyId: org.academyId, name: "Monthly" } });
+      expect(await deactivatePlan(org.organizationId, monthly.id)).toMatchObject({ error: "lastActivePlan" });
+    });
+
+    it("a recurring promo on the English-named plan still carries forward into the next month", async () => {
+      const org = await newOrganization({ locale: "en", currency: "USD" });
+      actAs(org.ownerId, org.organizationId);
+      const student = await makeStudent(org.organizationId, org.academyId, "encarry");
+      const promo = await ensureCustomPromoPlan(org.organizationId, org.academyId);
+
+      expect(
+        await pay(org.organizationId, {
+          studentId: student.id,
+          year: "2026",
+          month: "1",
+          planId: promo.id,
+          status: "PROMO",
+          amount: "0",
+          promoName: "Competitor scholarship",
+          promoRecurring: "on",
+        }),
+      ).toEqual({ ok: true });
+
+      const february = await getCurrentPaymentPeriod(student.id, org.organizationId, { year: 2026, month: 2 });
+      expect(february).toMatchObject({ planName: "Custom promotion", promoName: "Competitor scholarship", promoRecurring: true });
     });
   });
 

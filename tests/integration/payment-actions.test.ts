@@ -5,7 +5,11 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vites
 import { requireEnv } from "../../src/lib/env";
 import { digestLookupSecret, hashSecret } from "../../src/lib/crypto";
 import { ZONE } from "../../src/lib/scheduling/zone";
-import { ensureCustomPromoPlan, CUSTOM_PROMO_PLAN_NAME } from "../../src/lib/payments/ensure-custom-promo-plan";
+import { ensureCustomPromoPlan } from "../../src/lib/payments/ensure-custom-promo-plan";
+import { customPromoPlanNameFor } from "../../src/lib/payments/custom-promo-plan-name";
+
+// The seeded Alliance organization is Spanish.
+const CUSTOM_PROMO_PLAN_NAME = customPromoPlanNameFor("es");
 import { adultRankId } from "../helpers/belt-ranks";
 
 // `recordPayment` reaches `requireTenantContext()` -> `getTenantContext()` ->

@@ -20,7 +20,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "
 import { showToast } from "@/components/ui/toast";
 import { RecordPaymentForm, type RecordPaymentPlanOption } from "@/components/payments/record-payment-form";
 import { markPaymentPaid } from "@/lib/payments/payment-actions";
-import { CUSTOM_PROMO_PLAN_NAME } from "@/lib/payments/custom-promo-plan-name";
+import { isCustomPromoPlanName } from "@/lib/payments/custom-promo-plan-name";
 import { formatMoney } from "@/lib/payments/format-money";
 import { formatRecordedBy } from "@/lib/payments/format-recorded-by";
 import type { CurrentPaymentRow, PaymentBucket } from "@/lib/payments/list-current-status";
@@ -208,7 +208,7 @@ export function PaymentsTable({
           </DataTableHead>
           <DataTableBody>
             {filteredRows.map((row) => {
-              const isCustomPromo = row.period?.planName === CUSTOM_PROMO_PLAN_NAME;
+              const isCustomPromo = isCustomPromoPlanName(row.period?.planName);
               const isPending = pendingStudentIds.has(row.studentId);
               return (
                 <DataTableRow key={row.studentId}>

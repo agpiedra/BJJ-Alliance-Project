@@ -6,7 +6,7 @@ import { getLocale } from "next-intl/server";
 import { prisma } from "@/lib/prisma";
 import { isAcademyInTenantScope, resolveActionContext } from "@/lib/tenant/context";
 import { Prisma } from "@/generated/prisma/client";
-import { CUSTOM_PROMO_PLAN_NAME } from "@/lib/payments/custom-promo-plan-name";
+import { CUSTOM_PROMO_PLAN_NAMES, isCustomPromoPlanName } from "@/lib/payments/custom-promo-plan-name";
 import { CURRENCIES } from "@/lib/payments/format-money";
 import type { ActionState } from "@/lib/action-state";
 
@@ -93,7 +93,7 @@ export async function createPlan(organizationId: string, _prevState: ActionState
   const academy = await prisma.academy.findUnique({ where: { id: academyId, organizationId: context.organizationId }, select: { id: true } });
   if (!academy) return { error: "notFound" };
 
-  if (parsed.data.name === CUSTOM_PROMO_PLAN_NAME) return { error: "systemPlan" };
+  if (isCustomPromoPlanName(parsed.data.name)) return { error: "systemPlan" };
 
   // A name is unique per academy, INCLUDING deactivated plans. Say so — and if
   // it is a deactivated one, point at reactivating it instead of a bare error.
@@ -149,7 +149,7 @@ export async function updatePlan(organizationId: string, _prevState: ActionState
   if (!existing || !isAcademyInTenantScope(context, existing.academyId)) return { error: "notFound" };
   // The promo plan is system-managed: every Pagos render upserts it by name, so
   // renaming or hiding it would break the custom-promotion flow.
-  if (existing.name === CUSTOM_PROMO_PLAN_NAME) return { error: "systemPlan" };
+  if (isCustomPromoPlanName(existing.name)) return { error: "systemPlan" };
 
   const parsed = planFieldsSchema.safeParse({
     name: formData.get("name") ?? "",
@@ -160,7 +160,7 @@ export async function updatePlan(organizationId: string, _prevState: ActionState
   const defaultAmount = parseDefaultAmount(parsed.data.defaultAmount);
   if (defaultAmount === "invalid") return { error: "invalid", fieldErrors: { defaultAmount: ["invalid"] } };
 
-  if (parsed.data.name === CUSTOM_PROMO_PLAN_NAME) return { error: "systemPlan" };
+  if (isCustomPromoPlanName(parsed.data.name)) return { error: "systemPlan" };
   if (parsed.data.name !== existing.name) {
     const clash = await prisma.paymentPlan.findUnique({
       where: { academyId_name: { academyId: existing.academyId, name: parsed.data.name }, organizationId: context.organizationId },
@@ -208,7 +208,7 @@ async function setPlanActive(organizationId: string, planId: string, active: boo
 
   const existing = await prisma.paymentPlan.findUnique({ where: { id: planId, organizationId: context.organizationId } });
   if (!existing || !isAcademyInTenantScope(context, existing.academyId)) return { error: "notFound" };
-  if (existing.name === CUSTOM_PROMO_PLAN_NAME) return { error: "systemPlan" };
+  if (isCustomPromoPlanName(existing.name)) return { error: "systemPlan" };
   if (existing.active === active) return { ok: true };
 
   if (!active) {
@@ -221,7 +221,7 @@ async function setPlanActive(organizationId: string, planId: string, active: boo
         academyId: existing.academyId,
         active: true,
         id: { not: existing.id },
-        NOT: { name: CUSTOM_PROMO_PLAN_NAME },
+        NOT: { name: { in: [...CUSTOM_PROMO_PLAN_NAMES] } },
       },
     });
     if (otherActive === 0) return { error: "lastActivePlan" };

@@ -7,7 +7,7 @@ import { prisma } from "@/lib/prisma";
 import { isAcademyInTenantScope, resolveActionContext } from "@/lib/tenant/context";
 import { getScopedDb } from "@/lib/tenant/scoped-client";
 import { PaymentMethod, PaymentStatus, Prisma } from "@/generated/prisma/client";
-import { CUSTOM_PROMO_PLAN_NAME } from "@/lib/payments/custom-promo-plan-name";
+import { CUSTOM_PROMO_PLAN_NAMES, isCustomPromoPlanName } from "@/lib/payments/custom-promo-plan-name";
 import { ALL_DEFAULT_PLAN_NAMES } from "@/lib/payments/default-plan-name";
 import { currentCrDateParts } from "@/lib/payments/get-current-period";
 import { isPeriodMoreThanOneMonthInFuture } from "@/lib/payments/period-window";
@@ -108,7 +108,7 @@ export async function recordPayment(
   // (ADMIN/DIRECTOR only, the whole action) already keeps an INSTRUCTOR from
   // reaching this line at all, promo or not, so no separate role re-check is
   // needed here specifically for the promo path.
-  if (plan.name === CUSTOM_PROMO_PLAN_NAME && !data.promoName?.trim()) {
+  if (isCustomPromoPlanName(plan.name) && !data.promoName?.trim()) {
     return { error: "promoNameRequired", fieldErrors: { promoName: ["promoNameRequired"] } };
   }
 
@@ -338,7 +338,7 @@ export async function markPaymentPaid(
             organizationId: student.organizationId,
             academyId: student.homeAcademyId,
             active: true,
-            NOT: { name: CUSTOM_PROMO_PLAN_NAME },
+            NOT: { name: { in: [...CUSTOM_PROMO_PLAN_NAMES] } },
           },
           orderBy: { name: "asc" },
           select: { id: true },
@@ -359,7 +359,7 @@ export async function markPaymentPaid(
   if (existing?.amount != null) fd.set("amount", existing.amount.toString());
   if (existing?.notes) fd.set("notes", existing.notes);
   if (existing?.method) fd.set("method", existing.method);
-  // A custom-promo row (`plan.name === CUSTOM_PROMO_PLAN_NAME`) fails
+  // A custom-promo row (`isCustomPromoPlanName(plan.name)`) fails
   // `recordPayment`'s own "promo name required" guard unless these three are
   // forwarded too — a PENDING/OVERDUE promo row's ONLY working action in the
   // table is this button (Editar is offered only for the PROMO_OR_EXEMPT
