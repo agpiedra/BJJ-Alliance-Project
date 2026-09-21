@@ -413,10 +413,11 @@
     },
     "userMenu": {
       "role": {
-        "ADMIN": "Admin",
-        "DIRECTOR": "Director",
+        "ADMIN": "Owner",
+        "DIRECTOR": "Location director",
         "INSTRUCTOR": "Instructor"
       },
+      "platform": "Platform",
       "signOut": "Sign out"
     }
   },
@@ -1224,6 +1225,12 @@
         "members": {
           "heading": "{count, plural, one {# member} other {# members}}",
           "inactive": "inactive",
+          "roles": {
+            "ADMIN": "Owner",
+            "DIRECTOR": "Location director",
+            "INSTRUCTOR": "Instructor",
+            "STUDENT": "Student"
+          },
           "resendInvitation": "Resend invitation",
           "confirmResendInvitation": "Resend the invitation? This invalidates any previous invitation link for this organization.",
           "resendInvitationSent": "Invitation resent.",

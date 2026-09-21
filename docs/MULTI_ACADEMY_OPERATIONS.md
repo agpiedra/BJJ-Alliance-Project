@@ -18,7 +18,7 @@ Everything under `/platform/**` requires you to be signed in as a platform admin
 3. Click **Approve**. This immediately:
    - Activates the organization.
    - Creates a default branch (academy) named after the city they gave you.
-   - Creates the director's account (an inactive placeholder password — they can't sign in yet).
+   - Creates the owner's account — an `ADMIN` ("Dueño"/"Owner"), the organization's owner across every location — with an inactive placeholder password, so they can't sign in yet.
    - Emails them an invitation link to set their real password.
 4. If it's not a fit, click **Reject** instead, type a reason (required — it's an internal
    note, the applicant doesn't see it), and confirm. Rejected organizations don't get an
@@ -60,7 +60,7 @@ for you.
 **Issuing one for the first time** happens automatically the moment you approve an organization
 (see above) — you don't do anything extra.
 
-**Resending** — the director lost the email, or the link expired (invitations expire; if
+**Resending** — the owner lost the email, or the link expired (invitations expire; if
 they've had it sitting unused for a while, this is likely why — see the section on running the
 approval CLI, since resending an already-active organization is not exposed as a button in the
 panel today, only from the command line):
@@ -72,7 +72,7 @@ pnpm exec tsx scripts/approve-organization.ts --slug=<their-org-slug> --approved
 This is safe to run on an already-active organization — it's the same idempotent approval
 logic the panel's own **Approve** button calls. It issues a brand-new invitation link and
 invalidates whatever link existed before (so an old, possibly-leaked link stops working the
-moment you resend). It does **not** create a second branch, a second director account, or
+moment you resend). It does **not** create a second branch, a second owner account, or
 duplicate anything.
 
 You can find an organization's exact slug on its detail page in the platform panel (it's part

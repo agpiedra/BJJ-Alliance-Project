@@ -111,6 +111,33 @@ describe("/no-organization-access is not publicly reachable and does not loop", 
     );
     expect(target).toBeNull();
   });
+
+  it("REQUIRED: sends a platform super-admin with no organization to /platform — the only place they have to go, not a dead end", async () => {
+    // The platform admin belongs to no organization by design (isSuperAdmin is
+    // orthogonal to every membership), so login used to land them on a page
+    // whose only button is "sign out" and nothing led to /platform.
+    const user = await prisma.user.create({
+      data: {
+        email: `tenantless-super-${suffix()}@example.com`,
+        passwordHash: await hashSecret("irrelevant"),
+        role: "ADMIN",
+        isSuperAdmin: true,
+      },
+    });
+    cleanupUserIds.push(user.id);
+    currentSession = { user: { id: user.id, role: "ADMIN" } };
+
+    const target = await redirectTargetOf(NoOrganizationAccessPage({ params: Promise.resolve({ locale: "en" }) }));
+    expect(target).toBe("/en/platform");
+  });
+
+  it("does not send someone whose super-admin flag was revoked — the flag is re-read, never trusted from the session", async () => {
+    const { user } = await makeUserWithMemberships(0); // isSuperAdmin defaults to false
+    currentSession = { user: { id: user.id, role: "ADMIN" } };
+
+    const target = await redirectTargetOf(NoOrganizationAccessPage({ params: Promise.resolve({ locale: "en" }) }));
+    expect(target).toBeNull();
+  });
 });
 
 describe("/select-organization is not publicly reachable and does not loop", () => {
