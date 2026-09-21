@@ -38,7 +38,10 @@ function suffix() {
   return `${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
 }
 
-async function makeOrgAndAdmin(status: "PENDING" | "ACTIVE" | "SUSPENDED" | "CANCELLED") {
+async function makeOrgAndAdmin(
+  status: "PENDING" | "ACTIVE" | "SUSPENDED" | "CANCELLED",
+  membershipRole: "ADMIN" | "INSTRUCTOR" = "ADMIN",
+) {
   const s = suffix();
   const organization = await prisma.organization.create({
     data: { slug: `require-ctx-org-${s}`, name: `Require Ctx Org ${s}`, status },
@@ -56,7 +59,7 @@ async function makeOrgAndAdmin(status: "PENDING" | "ACTIVE" | "SUSPENDED" | "CAN
   cleanupUserIds.push(user.id);
 
   await prisma.organizationMembership.create({
-    data: { userId: user.id, organizationId: organization.id, role: "ADMIN" },
+    data: { userId: user.id, organizationId: organization.id, role: membershipRole },
   });
 
   return { organization, user };
@@ -123,5 +126,43 @@ describe("requireTenantContext", () => {
 
     expect(context.organizationId).toBe(organization.id);
     expect(context.organizationRole).toBe("ADMIN");
+  });
+
+  // The wrong-role case used to throw a bare Error("FORBIDDEN") — an unhandled
+  // raw 500 on every Owner-only page. A member without the role is refused the
+  // same way a non-member is refused on /platform: a real notFound() (HTTP 404),
+  // so the route does not announce that it exists.
+  describe("a genuine member without the required role", () => {
+    async function digestOf(promise: Promise<unknown>): Promise<string | undefined> {
+      try {
+        await promise;
+      } catch (error) {
+        return (error as { digest?: string }).digest;
+      }
+      throw new Error("expected requireTenantContext() to refuse, but it resolved");
+    }
+
+    it("gets a real notFound() (404), not a thrown FORBIDDEN error", async () => {
+      const { organization, user } = await makeOrgAndAdmin("ACTIVE", "INSTRUCTOR");
+      currentSession = { user: { id: user.id, role: "INSTRUCTOR" }, activeOrganizationId: organization.id };
+
+      const digest = await digestOf(requireTenantContext(["ADMIN"]));
+
+      expect(digest).toContain("404");
+    });
+
+    it("is still let through when their role IS allowed (control: the refusal is about the role, not the user)", async () => {
+      const { organization, user } = await makeOrgAndAdmin("ACTIVE", "INSTRUCTOR");
+      currentSession = { user: { id: user.id, role: "INSTRUCTOR" }, activeOrganizationId: organization.id };
+
+      const context = await requireTenantContext(["ADMIN", "INSTRUCTOR"]);
+
+      expect(context.organizationRole).toBe("INSTRUCTOR");
+    });
+
+    it("does not turn the other refusals into 404s: an unauthenticated visitor still goes to /login, whatever roles the page asks for", async () => {
+      currentSession = null;
+      expect(await redirectTargetOf(requireTenantContext(["ADMIN"]))).toBe("/en/login");
+    });
   });
 });
