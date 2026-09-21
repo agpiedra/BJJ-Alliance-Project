@@ -103,7 +103,7 @@ function adminContext(admin: { id: string; organizationId: string }): TenantCont
     organizationId: admin.organizationId,
     organizationRole: "ADMIN",
     academyIds: "ALL",
-    selfStudentId: null,
+    selfStudentId: null, linkedStudentId: null,
   };
 }
 
@@ -291,7 +291,7 @@ describe("correctPromotion", () => {
       organizationId: outOfScopeDirector.organizationId,
       organizationRole: "DIRECTOR",
       academyIds: [escalante.id],
-      selfStudentId: null,
+      selfStudentId: null, linkedStudentId: null,
     };
     const result = await correctPromotion(scopedContext, {
       studentId: student.id,

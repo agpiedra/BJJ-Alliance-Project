@@ -89,6 +89,8 @@ function meaningfulClaims(token: Record<string, unknown> | null) {
     name: token?.name,
     role: token?.role,
     activeOrganizationId: token?.activeOrganizationId,
+    // The `{ staff, portal }` claim the middleware reads — the bypass must mint the SAME one.
+    access: token?.access,
   };
 }
 
@@ -103,6 +105,8 @@ describe("e2e-auth-bypass mints a session structurally identical to real login",
     expect(meaningfulClaims(bypass)).toEqual(meaningfulClaims(real));
     expect(real.activeOrganizationId).toBe(organization.id);
     expect(bypass?.activeOrganizationId).toBe(organization.id);
+    expect(real.access).toEqual({ staff: true, portal: false });
+    expect(bypass?.access).toEqual({ staff: true, portal: false });
   });
 
   it("for a user with zero memberships: both resolve activeOrganizationId to null, never to something guessed", async () => {

@@ -20,7 +20,7 @@ function ctx(role: MembershipRole, academyIds: string[] | "ALL", organizationId:
     organizationId,
     organizationRole: role,
     academyIds,
-    selfStudentId: null,
+    selfStudentId: null, linkedStudentId: null,
   };
 }
 

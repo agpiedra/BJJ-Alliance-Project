@@ -135,6 +135,7 @@ describe("getTenantContext", () => {
         organizationRole: "ADMIN",
         academyIds: "ALL",
         selfStudentId: null,
+        linkedStudentId: null, // the seeded Owner has no student record of their own
       },
     });
   });
@@ -193,6 +194,54 @@ describe("getTenantContext", () => {
     } finally {
       await prisma.student.delete({ where: { id: "tenant-context-test-director-self-student" } });
     }
+  });
+
+  it("REQUIRED: linkedStudentId is SEPARATE from selfStudentId — a coach with an ACTIVE student record of their own has a portal (linkedStudentId) yet is not narrowed to self (selfStudentId null), and an ARCHIVED record gives no portal", async () => {
+    const orgId = await getAllianceOrganizationId();
+    const id = "tenant-context-test-director-linked-student";
+    const created = await prisma.student.create({
+      data: {
+        id,
+        userId: DIRECTOR_USER_ID,
+        organizationId: orgId,
+        homeAcademyId: ESCAZU_ID,
+        firstName: "Director",
+        lastName: "Trains",
+        phone: "0000-0000",
+        email: "director-trains@tenant-context-test.example",
+        codeHash: "tenant-context-test-director-linked-student-codehash",
+        currentRankId: adultRankId("WHITE"),
+        status: "ACTIVE",
+      },
+    });
+    try {
+      currentSession = { user: { id: DIRECTOR_USER_ID }, activeOrganizationId: orgId };
+      const active = await getTenantContext();
+      if (active.status !== "OK") throw new Error("unreachable");
+      expect(active.context.organizationRole).toBe("DIRECTOR");
+      expect(active.context.selfStudentId).toBeNull(); // roster scoping is unchanged
+      expect(active.context.linkedStudentId).toBe(created.id);
+
+      await prisma.student.update({ where: { id }, data: { status: "ARCHIVED" } });
+      const archived = await getTenantContext();
+      if (archived.status !== "OK") throw new Error("unreachable");
+      expect(archived.context.linkedStudentId).toBeNull();
+    } finally {
+      await prisma.student.delete({ where: { id } });
+    }
+  });
+
+  it("a pure student's linkedStudentId is their own active record, and an Owner with no student record has none", async () => {
+    const orgId = await getAllianceOrganizationId();
+    currentSession = { user: { id: STUDENT_LOGIN_USER_ID }, activeOrganizationId: orgId };
+    const student = await getTenantContext();
+    if (student.status !== "OK") throw new Error("unreachable");
+    expect(student.context.linkedStudentId).toBe(QA_STUDENT_RECORD_ID);
+
+    currentSession = { user: { id: ADMIN_USER_ID }, activeOrganizationId: orgId };
+    const owner = await getTenantContext();
+    if (owner.status !== "OK") throw new Error("unreachable");
+    expect(owner.context.linkedStudentId).toBeNull();
   });
 
   it("returns ORG_NOT_ACTIVE (not NO_MEMBERSHIP) when the organization is suspended — proposal point 7, revocation takes effect on the very next call", async () => {

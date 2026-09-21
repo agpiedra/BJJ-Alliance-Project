@@ -1,4 +1,5 @@
 import type { NextAuthConfig } from "next-auth";
+import { isAccessClaim } from "@/lib/auth/route-access";
 
 export default {
   providers: [],
@@ -36,6 +37,9 @@ export default {
       session.user.id = token.id as string;
       session.user.role = token.role as string;
       session.activeOrganizationId = (token.activeOrganizationId as string | null) ?? null;
+      // The `{ staff, portal }` claim (derive-access.ts). Absent on a token issued
+      // before it existed — the middleware then FAILS CLOSED and forces a re-login.
+      session.access = isAccessClaim(token.access) ? token.access : null;
       return session;
     },
   },
