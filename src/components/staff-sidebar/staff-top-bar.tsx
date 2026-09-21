@@ -46,6 +46,11 @@ export interface StaffTopBarProps {
   /** Shows a "Platform" entry in the user menu. Display only — `/platform`
    * enforces its own `requireSuperAdmin()` gate; this never grants access. */
   isSuperAdmin?: boolean;
+  /** Shows "My training" — a staff member who also trains has a linked, active student
+   * record, and the portal is their own page. REQUIRED (not defaulted) so a caller cannot
+   * forget it: the layout passes the DATABASE-derived answer for this request, never the
+   * session claim. Display only — the portal enforces its own gate. */
+  hasPortal: boolean;
   /** The rest of the header's right side (notification bell) — kept as a
    * passthrough slot rather than imported directly, since NotificationBell
    * carries its own server-fetched props from (staff)/layout.tsx. */
@@ -66,6 +71,7 @@ export function StaffTopBar({
   academyLabel,
   orgName,
   isSuperAdmin = false,
+  hasPortal,
   children,
 }: StaffTopBarProps) {
   const pathname = usePathname();
@@ -107,6 +113,11 @@ export function StaffTopBar({
               </DropdownMenuLabel>
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
+            {hasPortal && (
+              <DropdownMenuItem onClick={() => router.push(`/${locale}/portal`)}>
+                {t("userMenu.myTraining")}
+              </DropdownMenuItem>
+            )}
             {isSuperAdmin && (
               <DropdownMenuItem onClick={() => router.push(`/${locale}/platform`)}>
                 {t("userMenu.platform")}

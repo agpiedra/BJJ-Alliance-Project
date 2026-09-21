@@ -25,7 +25,7 @@ function ctx(): TenantContext {
     organizationId: ORG,
     organizationRole: "ADMIN",
     academyIds: "ALL",
-    selfStudentId: null,
+    selfStudentId: null, linkedStudentId: null,
   };
 }
 

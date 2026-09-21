@@ -6,92 +6,9 @@ import { prisma } from "@/lib/prisma";
 import { resolveActiveOrganizationForSignIn } from "@/lib/tenant/active-organization";
 import type { AccessContext, MembershipRole, SystemJobContext, TenantContext, TenantContextResult } from "./types";
 
-async function resolveAcademyIds(
-  userId: string,
-  organizationId: string,
-  role: MembershipRole,
-): Promise<string[] | "ALL"> {
-  if (role === "ADMIN") return "ALL";
-  const assignments = await prisma.staffAssignment.findMany({
-    where: { userId, organizationId },
-    select: { academyId: true },
-  });
-  return assignments.map((a) => a.academyId);
-}
-
-/**
- * Gated on ROLE, never on "a linked Student record exists" — staff members
- * train too and can have their own Student row, and must still see the full
- * roster rather than being scoped to themselves. See the required regression
- * test in `context.test.ts`: a DIRECTOR with a linked Student record sees the
- * full roster.
- */
-async function resolveSelfStudentId(
-  userId: string,
-  organizationId: string,
-  role: MembershipRole,
-): Promise<string | null> {
-  if (role !== "STUDENT") return null;
-  // `userId` alone is the real unique key (Student.userId is a plain
-  // `@unique` field, not composite) — `organizationId` is an EXTRA filter
-  // alongside it, same pattern `scoped-client.ts`'s `scopeArgs()` already
-  // relies on for `findUnique`. A cross-org student row now returns null
-  // directly instead of being fetched and discarded in JS.
-  const student = await prisma.student.findUnique({
-    where: { userId, organizationId },
-    select: { id: true },
-  });
-  return student?.id ?? null;
-}
-
-/** `resolveContext` only ever produces these three shapes by construction — narrower than the full `TenantContextResult` union so `TenantAccessError`'s callers don't have to account for statuses this function can never actually return. */
-type ResolveContextResult = Extract<TenantContextResult, { status: "OK" | "NO_MEMBERSHIP" | "ORG_NOT_ACTIVE" }>;
-
-async function resolveContext(userId: string, organizationId: string): Promise<ResolveContextResult> {
-  const [user, membership, organization] = await Promise.all([
-    prisma.user.findUnique({ where: { id: userId }, select: { active: true } }),
-    prisma.organizationMembership.findUnique({
-      where: { userId_organizationId: { userId, organizationId } },
-      select: { role: true, active: true },
-    }),
-    prisma.organization.findUnique({ where: { id: organizationId }, select: { status: true } }),
-  ]);
-
-  // A deactivated (or deleted) user is exactly the case `requireTenantContext`'s
-  // own doc comment already describes NO_MEMBERSHIP as covering ("a deactivated
-  // member") — this check was documented as covered but never actually wired up
-  // until now. The JWT is valid for up to 30 days, so this is what makes a
-  // deactivation take effect on the very next request rather than at the end of
-  // the token's life (the same guarantee the deleted `getStaffSession()` gave
-  // the staff surface alone; this closes it for every `TenantContext` caller).
-  //
-  // Two different switches, deliberately: `user.active` is the ACCOUNT's (it
-  // ends access to EVERY organization) and `membership.active` is this ONE
-  // organization's. An Owner removing someone from their academy flips only the
-  // second — flipping the first locked the person out of every other academy
-  // they belong to. Both are read here, on every request, never cached.
-  if (!user || !user.active || !membership || !membership.active || !organization) {
-    return { status: "NO_MEMBERSHIP" };
-  }
-  if (organization.status !== "ACTIVE") {
-    return { status: "ORG_NOT_ACTIVE", organizationStatus: organization.status };
-  }
-
-  const [academyIds, selfStudentId] = await Promise.all([
-    resolveAcademyIds(userId, organizationId, membership.role),
-    resolveSelfStudentId(userId, organizationId, membership.role),
-  ]);
-
-  const context: TenantContext = {
-    kind: "tenant",
-    actorUserId: userId,
-    organizationId,
-    organizationRole: membership.role,
-    academyIds,
-    selfStudentId,
-  };
-  return { status: "OK", context };
-}
+import { resolveContext } from "@/lib/tenant/resolve-context";
+import { tenantRedirectPath } from "@/lib/tenant/redirect-path";
+import { isStaffRole } from "@/lib/auth/route-access";
 
 /**
  * Resolves the current request's tenant context from the session's
@@ -328,21 +245,38 @@ export async function requireTenantContext(allowedRoles?: MembershipRole[]): Pro
     // A member without the page's role is refused exactly as a non-member is
     // on /platform (`requireSuperAdmin`): a real `notFound()`, so the route does
     // not announce that it exists — and not a thrown Error, which is a raw 500.
-    if (allowedRoles && !allowedRoles.includes(result.context.organizationRole)) {
+    //
+    // NO role list means STAFF, not "anyone": the Edge middleware can only refuse on
+    // a session claim, so a stale one (someone demoted to Student only while logged
+    // in) or a forged one gets through to here, and this DATABASE check is the only
+    // thing that stops it. A student-only member is admitted only by naming the
+    // roles explicitly (`requirePortalContext`).
+    const permitted = allowedRoles ? allowedRoles.includes(result.context.organizationRole) : isStaffRole(result.context.organizationRole);
+    if (!permitted) {
       notFound();
     }
     return result.context;
   }
 
-  const locale = await getLocale();
-  switch (result.status) {
-    case "UNAUTHENTICATED":
-      redirect(`/${locale}/login`);
-    case "NO_MEMBERSHIP":
-      redirect(`/${locale}/no-organization-access`);
-    case "NEEDS_ORGANIZATION_SELECTION":
-      redirect(`/${locale}/select-organization`);
-    case "ORG_NOT_ACTIVE":
-      redirect(`/${locale}/organization-unavailable`);
-  }
+  redirect(tenantRedirectPath(result.status, await getLocale()));
+}
+
+/**
+ * The PORTAL gate: anyone with a linked, ACTIVE student record in the active
+ * organization — whatever their membership role. A coach who also trains holds a
+ * staff membership AND a student record, and must reach both the staff app and
+ * their own training from one account; gating the portal on the STUDENT role (as
+ * this used to) refused them their own training and made a second email address
+ * the only workaround. Someone with no such record (an Owner who does not train)
+ * gets the same 404 an unauthorized admin route gives.
+ *
+ * `studentId` comes from the tenant context itself — re-derived from the database
+ * on every call — never from a route param, so there is no id to substitute.
+ * `tests/unit/portal-gates-on-linked-student.test.ts` fails the build if anything
+ * under the portal gates on the STUDENT role again.
+ */
+export async function requirePortalContext(): Promise<{ context: TenantContext; studentId: string }> {
+  const context = await requireTenantContext(["ADMIN", "DIRECTOR", "INSTRUCTOR", "STUDENT"]);
+  if (!context.linkedStudentId) notFound();
+  return { context, studentId: context.linkedStudentId };
 }

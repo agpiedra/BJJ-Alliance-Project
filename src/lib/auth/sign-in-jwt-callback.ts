@@ -2,6 +2,7 @@ import type { JWT } from "next-auth/jwt";
 import authConfig from "@/auth.config";
 import { prisma } from "@/lib/prisma";
 import { resolveActiveOrganizationForSignIn } from "@/lib/tenant/active-organization";
+import { deriveAccess } from "@/lib/auth/derive-access";
 
 type JwtCallback = NonNullable<NonNullable<typeof authConfig.callbacks>["jwt"]>;
 export type JwtCallbackParams = Parameters<JwtCallback>[0];
@@ -46,6 +47,17 @@ export async function signInJwtCallback(params: JwtCallbackParams): Promise<JWT>
         data: { lastActiveOrganizationId: nextOrgId },
       });
     }
+  }
+
+  // The `{ staff, portal }` claim the Edge middleware reads, derived from the
+  // DATABASE for the organization the person is now acting in — at sign-in, and on
+  // ANY session update: an organization switch (a new organization, a new claim) or
+  // an explicit refresh (`unstable_update` for the same organization — the database may have
+  // changed under a live session — a promotion, a demotion). Between updates the
+  // claim is only a hint, never authority: every page re-derives access from the
+  // database on every request (see route-access.ts).
+  if (params.user || params.trigger === "update") {
+    token.access = await deriveAccess(token.id as string, (token.activeOrganizationId as string | null) ?? null);
   }
 
   return token;

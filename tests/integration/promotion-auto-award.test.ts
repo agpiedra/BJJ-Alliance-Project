@@ -22,7 +22,7 @@ function ctx(organizationId: string): TenantContext {
     organizationId,
     organizationRole: "ADMIN",
     academyIds: "ALL",
-    selfStudentId: null,
+    selfStudentId: null, linkedStudentId: null,
   };
 }
 

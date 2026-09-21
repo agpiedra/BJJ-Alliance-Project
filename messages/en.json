@@ -83,8 +83,7 @@
       "joined": "You've joined {organization}",
       "joinedBody": "Sign in with the password you already have.",
       "signIn": "Sign in",
-      "invalidPassword": "Your password needs at least 8 characters.",
-      "studentAccount": "This email belongs to a student account, which can't also be staff. Ask the Owner to invite a different address."
+      "invalidPassword": "Your password needs at least 8 characters."
     },
     "orgUnavailable": {
       "heading": "Organization unavailable",
@@ -96,6 +95,13 @@
       "body": "Your account isn't linked to any organization right now. Contact your academy director to be added.",
       "pendingHeading": "Awaiting approval",
       "pendingBody": "Your registration at {organization} is awaiting approval. You'll be able to sign in as soon as the academy approves it.",
+      "signOut": "Sign out"
+    },
+    "noAccess": {
+      "heading": "You don't have access to this area",
+      "body": "Your account doesn't include this part of the app. If you think that's a mistake, ask your academy's Owner to check your role.",
+      "goStaff": "Go to the staff app",
+      "goPortal": "Go to my training",
       "signOut": "Sign out"
     },
     "selectOrganization": {
@@ -431,6 +437,7 @@
         "INSTRUCTOR": "Instructor"
       },
       "platform": "Platform",
+      "myTraining": "My training",
       "signOut": "Sign out"
     }
   },
@@ -958,11 +965,7 @@
   "portal": {
     "greeting": "Hi, {name}!",
     "signOut": "Sign out",
-    "statusNotice": {
-      "PENDING": "Your account is pending approval by your academy. Your progress below is up to date, but some features may be limited until you're approved.",
-      "INACTIVE": "Your account is currently marked inactive. Contact your academy if you have questions.",
-      "ARCHIVED": "Your account has been archived. Contact your academy if you believe this is a mistake."
-    },
+    "staffLink": "Staff",
     "progress": {
       "heading": "Your progress",
       "atBeltCount": "{count, plural, one {# attendance at this belt} other {# attendances at this belt}}",
@@ -1465,8 +1468,10 @@
     "roleHint": {
       "ADMIN": "Every location, and manages staff.",
       "DIRECTOR": "Runs the locations they're assigned to.",
-      "INSTRUCTOR": "Teaches at the locations they're assigned to."
+      "INSTRUCTOR": "Teaches at the locations they're assigned to.",
+      "STUDENT": "Loses the staff app and keeps their own training."
     },
+    "roleStudentOnly": "Student only",
     "fields": {
       "email": "Email",
       "role": "Role",
@@ -1502,7 +1507,7 @@
     },
     "deactivate": {
       "button": "Deactivate",
-      "confirm": "Deactivate this person? They lose access to {organization} on their next request. Their access to any other academy is not affected, and you can reactivate them later."
+      "confirm": "Deactivate this person? They lose access to {organization} on their next request. Their access to any other academy is not affected, and you can reactivate them later. If they also train here and should keep their training, choose Student only under Edit instead."
     },
     "reactivate": {
       "button": "Reactivate"
@@ -1522,7 +1527,7 @@
       "alreadyMember": "This person is already on your team.",
       "alreadyMemberInactive": "This person is on your team but deactivated. Reactivate them instead.",
       "alreadyInvited": "This address already has a pending invitation. Resend it instead.",
-      "studentAccount": "This address belongs to a student account, which can't also be staff. Invite a different address.",
+      "noStudentRecord": "This person has no active student record here, so there is nothing to keep. Deactivate them instead.",
       "selfChange": "You can't deactivate or change your own access.",
       "lastOwner": "An academy must always keep at least one active Owner.",
       "notPending": "This invitation is no longer pending."

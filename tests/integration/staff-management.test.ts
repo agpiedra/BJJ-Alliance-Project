@@ -238,16 +238,8 @@ describe("staff management", () => {
       expect(await inviteStaff(org.organizationId, {}, form({ email: "pending@example.com", role: "INSTRUCTOR", academyIds: [org.academyA] }))).toMatchObject({ ok: true });
     });
 
-    it("REQUIRED: an existing student account cannot be invited as staff — the global User.role would lock them out of one side of the app", async () => {
-      const org = await newOrganization();
-      counter += 1;
-      const studentEmail = `staff-student-${counter}-${suffix}@example.com`;
-      const student = await prisma.user.create({ data: { email: studentEmail, passwordHash: await hashSecret("student-password-1"), role: "STUDENT" } });
-      userIds.push(student.id);
-      actAs(org.ownerId, org.organizationId);
-
-      expect(await inviteStaff(org.organizationId, {}, form({ email: studentEmail, role: "INSTRUCTOR", academyIds: [org.academyA] }))).toMatchObject({ error: "studentAccount" });
-    });
+    // An existing student account is no longer refused: inviting it PROMOTES the membership in
+    // place when accepted — see tests/integration/staff-promotion.test.ts.
 
     it("when the email fails to send, the invitation still exists and the link is still handed back to copy", async () => {
       const org = await newOrganization();

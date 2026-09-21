@@ -151,7 +151,9 @@ describe("POST /api/e2e-auth-bypass", () => {
     });
 
     expect(token?.id).toBe(user.id);
-    expect(token?.role).toBe("STUDENT");
+    // No global `role` on the token any more, and a user with no membership has no access claim to speak of.
+    expect(token).not.toHaveProperty("role");
+    expect(token?.access).toEqual({ staff: false, portal: false });
   });
 
   it("auto-selects the user's real organization membership when one exists", async () => {

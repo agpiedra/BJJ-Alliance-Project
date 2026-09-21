@@ -1,6 +1,7 @@
 "use client";
 
 import { useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { BrandBanner } from "@/components/brand/brand-banner";
 import {
@@ -23,6 +24,11 @@ export interface PortalTopBarProps {
   locale: string;
   firstName: string;
   lastName: string;
+  /** Shows "Staff" — someone who works at the academy as well as trains reaches the staff
+   * app from here. REQUIRED (not defaulted) so a caller cannot forget it: the page passes the
+   * DATABASE-derived answer for this request, never the session claim. Display only — the
+   * staff app enforces its own gate. */
+  hasStaff: boolean;
   /** MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 4 — see StaffSidebarProps's own
    * matching field; same shape, passed straight through to BrandBanner. */
   logo?: {
@@ -48,8 +54,9 @@ export interface PortalTopBarProps {
  * action (unchanged) via the same useTransition pattern `StaffTopBar` already
  * established for the three staff portals.
  */
-export function PortalTopBar({ locale, firstName, lastName, logo }: PortalTopBarProps) {
+export function PortalTopBar({ locale, firstName, lastName, hasStaff, logo }: PortalTopBarProps) {
   const t = useTranslations("portal");
+  const router = useRouter();
   const [isSigningOut, startSignOut] = useTransition();
 
   function handleSignOut() {
@@ -77,6 +84,7 @@ export function PortalTopBar({ locale, firstName, lastName, logo }: PortalTopBar
             </DropdownMenuLabel>
           </DropdownMenuGroup>
           <DropdownMenuSeparator />
+          {hasStaff && <DropdownMenuItem onClick={() => router.push(`/${locale}/dashboard`)}>{t("staffLink")}</DropdownMenuItem>}
           <DropdownMenuItem onClick={handleSignOut} disabled={isSigningOut}>
             {t("signOut")}
           </DropdownMenuItem>

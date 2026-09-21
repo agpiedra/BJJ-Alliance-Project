@@ -71,7 +71,7 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    select: { id: true, email: true, role: true, active: true },
+    select: { id: true, email: true, active: true },
   });
   if (!user || !user.active) {
     return notFound();
@@ -83,7 +83,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   // membership, null for zero or an unresolved 2+).
   let token = await signInJwtCallback({
     token: { sub: user.id, email: user.email, name: user.email },
-    user: { id: user.id, email: user.email, role: user.role, name: user.email },
+    user: { id: user.id, email: user.email, name: user.email },
     trigger: "signIn",
   } as JwtCallbackParams);
 

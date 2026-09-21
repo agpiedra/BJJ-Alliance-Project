@@ -24,6 +24,17 @@ export interface TenantContext {
    * record from their own training and must still see the full roster.
    */
   selfStudentId: string | null;
+  /**
+   * The student record linked to this account IN THIS ORGANIZATION, if it is
+   * ACTIVE — whatever the membership role. This is what the portal and
+   * self-check-in serve: a coach who also trains holds a staff membership AND a
+   * linked student record, and must reach both sides of the app from one account.
+   * Deliberately SEPARATE from `selfStudentId`, which is gated on the STUDENT role
+   * and drives roster scoping (a staff member with their own student row must still
+   * see the full roster) — never conflate the two. An archived or pending record is
+   * null here, same as for any archived or pending student.
+   */
+  linkedStudentId: string | null;
   impersonation?: { asSuperAdminUserId: string; startedAt: Date; readOnly: boolean };
 }
 

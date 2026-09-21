@@ -13,7 +13,7 @@ const testPrisma = getTestPrismaClient();
 const pepper = requireEnv("CODE_PEPPER");
 
 function tenantCtx(role: MembershipRole, organizationId: string): TenantContext {
-  return { kind: "tenant", actorUserId: "x", organizationId, organizationRole: role, academyIds: "ALL", selfStudentId: null };
+  return { kind: "tenant", actorUserId: "x", organizationId, organizationRole: role, academyIds: "ALL", selfStudentId: null, linkedStudentId: null };
 }
 
 function kioskCtx(organizationId: string, academyId: string): KioskContext {

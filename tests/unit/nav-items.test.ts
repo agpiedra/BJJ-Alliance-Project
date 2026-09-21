@@ -8,7 +8,7 @@ function session(role: StaffRole): StaffTenantContext {
     organizationId: "org1",
     organizationRole: role,
     academyIds: role === "ADMIN" ? "ALL" : [],
-    selfStudentId: null,
+    selfStudentId: null, linkedStudentId: null,
   };
 }
 

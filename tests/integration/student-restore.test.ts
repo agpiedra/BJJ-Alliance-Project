@@ -24,7 +24,7 @@ const { signup } = await import("../../src/app/[locale]/o/[orgSlug]/signup/actio
 const { approveStudent, archiveStudent, restoreStudent } = await import("../../src/app/[locale]/(staff)/students/[id]/actions");
 const { createStudent } = await import("../../src/app/[locale]/(staff)/students/create-student-action");
 const { createLocation } = await import("../../src/lib/locations/location-actions");
-const { requireOrganizationAccess, requireTenantContext, TenantAccessError } = await import("../../src/lib/tenant/context");
+const { requireOrganizationAccess, requirePortalContext, TenantAccessError } = await import("../../src/lib/tenant/context");
 const { resolveActiveOrganizationForSignIn } = await import("../../src/lib/tenant/active-organization");
 const { hashSecret } = await import("../../src/lib/crypto");
 const { resolvePendingApplication } = await import("../../src/lib/tenant/platform-lookups");
@@ -138,7 +138,7 @@ const membershipOf = (userId: string, organizationId: string) =>
 async function reachesPortal(userId: string, organizationId: string) {
   actAs(userId, organizationId, "STUDENT");
   try {
-    await requireTenantContext(["STUDENT"]);
+    await requirePortalContext();
     return true;
   } catch {
     return false;

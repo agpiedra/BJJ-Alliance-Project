@@ -42,7 +42,7 @@ export type StaffError =
   | "alreadyMember"
   | "alreadyMemberInactive"
   | "alreadyInvited"
-  | "studentAccount"
+  | "noStudentRecord"
   | "selfChange"
   | "lastOwner"
   | "notPending";
@@ -94,10 +94,11 @@ export async function syncStaffAssignments(
   tx: Tx,
   userId: string,
   organizationId: string,
-  role: StaffMembershipRole,
+  role: StaffMembershipRole | "STUDENT",
   academyIds: string[],
 ): Promise<void> {
-  if (role === "ADMIN") {
+  // An Owner has every academy; a student-only member has none — neither keeps assignments.
+  if (role === "ADMIN" || role === "STUDENT") {
     await tx.staffAssignment.deleteMany({ where: { userId, organizationId } });
     return;
   }
@@ -186,20 +187,21 @@ export async function inviteStaffMember(context: TenantContext, input: InviteSta
     // find the account and would create a second identity).
     const existingUser = await tx.user.findFirst({
       where: { email: { equals: input.email, mode: "insensitive" } },
-      select: { id: true, email: true, role: true },
+      select: { id: true, email: true },
     });
-    // The global `User.role` gates whole route trees (a STUDENT session is sent
-    // to the portal, never the staff app), so a student account cannot also be
-    // staff. Refuse plainly rather than produce a login that goes nowhere.
-    if (existingUser?.role === "STUDENT") return { error: "studentAccount" as const };
 
     const email = existingUser?.email ?? input.email;
     if (existingUser) {
       const membership = await tx.organizationMembership.findUnique({
         where: { userId_organizationId: { userId: existingUser.id, organizationId } },
-        select: { active: true },
+        select: { active: true, role: true },
       });
-      if (membership) return { error: membership.active ? ("alreadyMember" as const) : ("alreadyMemberInactive" as const) };
+      // An ACTIVE student membership is not a refusal — in a jiu-jitsu academy
+      // every instructor is a student, and access is membership, so inviting a
+      // student account PROMOTES that membership in place when they accept (see
+      // `acceptInvitation`). Anyone already staff here, or deactivated, is refused.
+      const promotable = membership?.active === true && membership.role === "STUDENT";
+      if (membership && !promotable) return { error: membership.active ? ("alreadyMember" as const) : ("alreadyMemberInactive" as const) };
     }
 
     const pending = await tx.invitation.findFirst({
@@ -311,8 +313,11 @@ export async function updateStaffMembership(
 ): Promise<StaffResult> {
   assertOwner(context);
   const { organizationId } = context;
-  if (!isStaffRole(input.role)) return { error: "invalid" };
-  const role = input.role;
+  // "Student only" is the one non-staff role this accepts: it takes staff access away
+  // and leaves the person's own training (their student record) exactly as it is.
+  const studentOnly = input.role === "STUDENT";
+  if (!studentOnly && !isStaffRole(input.role)) return { error: "invalid" };
+  const role: StaffMembershipRole | "STUDENT" = studentOnly ? "STUDENT" : (input.role as StaffMembershipRole);
 
   return prisma.$transaction(async (tx) => {
     await lockOrganizationStaff(tx, organizationId);
@@ -320,7 +325,17 @@ export async function updateStaffMembership(
     if (!target) return { error: "notFound" as const };
     if (target.userId === context.actorUserId) return { error: "selfChange" as const };
 
-    const academies = await resolveAcademyIds(tx, organizationId, role, input.academyIds);
+    // Student only needs no locations. It DOES need an active student record to keep:
+    // without one the membership would be left with nothing to reach (no staff app, no
+    // portal) — removing someone is what deactivating is for, and it should say so.
+    if (studentOnly) {
+      const training = await tx.student.findUnique({
+        where: { userId: target.userId, organizationId },
+        select: { status: true },
+      });
+      if (!training || training.status !== "ACTIVE") return { error: "noStudentRecord" as const };
+    }
+    const academies = studentOnly ? { academyIds: [] as string[] } : await resolveAcademyIds(tx, organizationId, role as StaffMembershipRole, input.academyIds);
     if ("error" in academies) return academies;
 
     // Demoting the last active Owner would leave the organization with nobody who can manage it.

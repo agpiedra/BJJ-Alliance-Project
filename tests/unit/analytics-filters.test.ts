@@ -12,7 +12,7 @@ const admin: TenantContext = {
   organizationId: ORG_ID,
   organizationRole: "ADMIN",
   academyIds: "ALL",
-  selfStudentId: null,
+  selfStudentId: null, linkedStudentId: null,
 };
 const director: TenantContext = {
   kind: "tenant",
@@ -20,7 +20,7 @@ const director: TenantContext = {
   organizationId: ORG_ID,
   organizationRole: "DIRECTOR",
   academyIds: ["escalante-id"],
-  selfStudentId: null,
+  selfStudentId: null, linkedStudentId: null,
 };
 const multiAcademyDirector: TenantContext = {
   kind: "tenant",
@@ -28,7 +28,7 @@ const multiAcademyDirector: TenantContext = {
   organizationId: ORG_ID,
   organizationRole: "DIRECTOR",
   academyIds: ["academy-a", "academy-b"],
-  selfStudentId: null,
+  selfStudentId: null, linkedStudentId: null,
 };
 
 describe("resolveAnalyticsFilters", () => {

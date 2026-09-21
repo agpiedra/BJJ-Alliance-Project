@@ -23,18 +23,30 @@ export interface AcademyOption {
   name: string;
 }
 
-function RoleSelect({ value, onChange }: { value: StaffMembershipRole; onChange: (role: StaffMembershipRole) => void }) {
+/** "Student only" takes staff access away and keeps the person's own training — offered when EDITING a member, never when inviting (an invitation makes someone staff). */
+type EditableRole = StaffMembershipRole | "STUDENT";
+
+function RoleSelect({
+  value,
+  onChange,
+  allowStudentOnly = false,
+}: {
+  value: EditableRole;
+  onChange: (role: EditableRole) => void;
+  allowStudentOnly?: boolean;
+}) {
   const t = useTranslations("staffManagement");
   const tRole = useTranslations("staffShell.userMenu.role");
   return (
     <label className="flex flex-col gap-1 text-sm">
       <span>{t("fields.role")}</span>
-      <select name="role" value={value} onChange={(event) => onChange(event.target.value as StaffMembershipRole)} className={INPUT}>
+      <select name="role" value={value} onChange={(event) => onChange(event.target.value as EditableRole)} className={INPUT}>
         {STAFF_ROLES.map((role) => (
           <option key={role} value={role}>
             {tRole(role)}
           </option>
         ))}
+        {allowStudentOnly && <option value="STUDENT">{t("roleStudentOnly")}</option>}
       </select>
       <span className="text-xs text-muted-foreground">{t(`roleHint.${value}` as never)}</span>
     </label>
@@ -172,7 +184,7 @@ export function InviteForm({ organizationId, academies }: { organizationId: stri
             <span>{t("fields.email")}</span>
             <input type="email" name="email" required maxLength={200} value={email} onChange={(event) => setEmail(event.target.value)} className={INPUT} />
           </label>
-          <RoleSelect value={role} onChange={setRole} />
+          <RoleSelect value={role} onChange={(next) => setRole(next as StaffMembershipRole)} />
         </div>
         {role !== "ADMIN" && <AcademyCheckboxes academies={academies} selected={academyIds} onChange={setAcademyIds} />}
         {state.error && <p className="text-sm text-bad">{t(`error.${state.error}` as never)}</p>}
@@ -200,14 +212,15 @@ function EditMemberForm({
 }) {
   const t = useTranslations("staffManagement");
   const [state, formAction, isPending] = useActionState(updateStaffMember.bind(null, organizationId), INITIAL_STATE);
-  const [role, setRole] = useState<StaffMembershipRole>(member.role);
+  const [role, setRole] = useState<EditableRole>(member.role);
   const [academyIds, setAcademyIds] = useState<string[]>(member.academies.map((academy) => academy.id));
 
   return (
     <form action={formAction} className="flex flex-col gap-3 rounded-lg border border-border bg-muted/30 p-3">
       <input type="hidden" name="membershipId" value={member.membershipId} />
-      <RoleSelect value={role} onChange={setRole} />
-      {role !== "ADMIN" && <AcademyCheckboxes academies={academies} selected={academyIds} onChange={setAcademyIds} />}
+      <RoleSelect value={role} onChange={setRole} allowStudentOnly />
+      {/* An Owner has every location and a student-only member has none — neither needs a choice. */}
+      {(role === "DIRECTOR" || role === "INSTRUCTOR") && <AcademyCheckboxes academies={academies} selected={academyIds} onChange={setAcademyIds} />}
       {state.error && <p className="text-sm text-bad">{t(`error.${state.error}` as never)}</p>}
       {state.ok && <p className="text-sm text-ok">{t("edit.success")}</p>}
       <div className="flex gap-2">

@@ -23,7 +23,7 @@ const { acceptInvitation } = await import("../../src/app/[locale]/accept-invitat
 const { registerOrganization } = await import("../../src/app/[locale]/register-academy/actions");
 const { signup } = await import("../../src/app/[locale]/o/[orgSlug]/signup/actions");
 const { approveStudent, archiveStudent } = await import("../../src/app/[locale]/(staff)/students/[id]/actions");
-const { requireOrganizationAccess, requireTenantContext, TenantAccessError } = await import("../../src/lib/tenant/context");
+const { requireOrganizationAccess, requirePortalContext, TenantAccessError } = await import("../../src/lib/tenant/context");
 const { resolveActiveOrganizationForSignIn } = await import("../../src/lib/tenant/active-organization");
 const { hashSecret, digestLookupSecret } = await import("../../src/lib/crypto");
 const { requireEnv } = await import("../../src/lib/env");
@@ -40,7 +40,7 @@ const prisma = getTestPrismaClient();
  * fixture standing in for the real flow). So this test never builds the
  * student by hand: it signs one up through the real public action, has staff
  * approve them through the real action, and then does exactly what `/portal`
- * does — `requireTenantContext(["STUDENT"])` as that student.
+ * does — `requirePortalContext()` as that student.
  *
  * The membership is created at APPROVAL, not signup: a membership says "this
  * person belongs here", which a pending applicant does not yet — and it avoids
@@ -172,8 +172,9 @@ describe("a real student can reach the portal", () => {
 
     // Now do exactly what /portal does, as that student.
     actAs(user.id, org.organizationId, "STUDENT");
-    const context = await requireTenantContext(["STUDENT"]);
-    expect(context).toMatchObject({ organizationId: org.organizationId, organizationRole: "STUDENT", selfStudentId: student.id });
+    const { context, studentId } = await requirePortalContext();
+    expect(studentId).toBe(student.id);
+    expect(context).toMatchObject({ organizationId: org.organizationId, organizationRole: "STUDENT", selfStudentId: student.id, linkedStudentId: student.id });
     expect(await prisma.organizationMembership.findUniqueOrThrow({ where: { userId_organizationId: { userId: user.id, organizationId: org.organizationId } } })).toMatchObject({
       role: "STUDENT",
       active: true,

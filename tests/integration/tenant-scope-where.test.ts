@@ -23,7 +23,7 @@ function ctx(
     organizationId,
     organizationRole: role,
     academyIds,
-    selfStudentId: null,
+    selfStudentId: null, linkedStudentId: null,
   };
 }
 

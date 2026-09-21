@@ -85,7 +85,7 @@ async function makeOrgDirector(organizationId: string) {
 }
 
 function tenantContext(organizationId: string) {
-  return { kind: "tenant" as const, organizationId, actorUserId: "irrelevant", organizationRole: "DIRECTOR" as const, academyIds: "ALL" as const, selfStudentId: null };
+  return { kind: "tenant" as const, organizationId, actorUserId: "irrelevant", organizationRole: "DIRECTOR" as const, academyIds: "ALL" as const, selfStudentId: null, linkedStudentId: null };
 }
 
 async function createPastDueInvoice(organizationId: string, _superAdminId: string, daysPastGrace = 0) {

@@ -4,7 +4,6 @@ import { prisma } from "@/lib/prisma";
 export interface VerifiedUser {
   id: string;
   email: string;
-  role: string;
   name: string;
 }
 
@@ -18,5 +17,5 @@ export async function verifyCredentials(
   const valid = await bcrypt.compare(password, user.passwordHash);
   if (!valid) return null;
 
-  return { id: user.id, email: user.email, role: user.role, name: user.email };
+  return { id: user.id, email: user.email, name: user.email };
 }
