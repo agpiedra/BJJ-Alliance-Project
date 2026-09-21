@@ -144,6 +144,15 @@ export default async function StaffLayout({ children }: { children: ReactNode })
   const sidebarDefaultOpen = sidebarState !== "false";
 
   const authSession = await auth();
+
+  // The platform admin who is ALSO a member of an organization (the runbook's
+  // bootstrap makes the first platform admin their own organization's owner)
+  // otherwise has no way into /platform except typing the URL. Re-read fresh,
+  // like `requireSuperAdmin()` — display only, /platform enforces its own gate.
+  const platformUser = authSession?.user?.id
+    ? await prisma.user.findUnique({ where: { id: authSession.user.id }, select: { isSuperAdmin: true, active: true } })
+    : null;
+  const isSuperAdmin = Boolean(platformUser?.isSuperAdmin && platformUser.active);
   const branding = context ? await getOrganizationBranding(context) : null;
 
   const shell = (
@@ -189,6 +198,7 @@ export default async function StaffLayout({ children }: { children: ReactNode })
             role={context.organizationRole}
             academyLabel={academyLabel}
             orgName={branding?.displayName}
+            isSuperAdmin={isSuperAdmin}
           >
             <NotificationBell initialNotifications={notifications} initialUnreadCount={unreadCount} />
           </StaffTopBar>

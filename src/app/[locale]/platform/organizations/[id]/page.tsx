@@ -119,7 +119,7 @@ export default async function OrganizationDetailPage({ params }: { params: Promi
           <ul className="flex flex-col gap-1 text-sm">
             {organization.memberships.map((membership) => (
               <li key={membership.id}>
-                {membership.user.email} — {membership.role} {!membership.user.active && `(${t("members.inactive")})`}
+                {membership.user.email} — {t(`members.roles.${membership.role}`)} {!membership.user.active && `(${t("members.inactive")})`}
               </li>
             ))}
           </ul>

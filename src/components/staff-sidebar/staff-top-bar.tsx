@@ -1,7 +1,7 @@
 "use client";
 
 import { useTransition } from "react";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import {
@@ -43,6 +43,9 @@ export interface StaffTopBarProps {
    * staff pages. Falls back to `PLATFORM_NAME` only in the defensive case
    * where this layout somehow rendered with no resolved branding at all. */
   orgName?: string;
+  /** Shows a "Platform" entry in the user menu. Display only — `/platform`
+   * enforces its own `requireSuperAdmin()` gate; this never grants access. */
+  isSuperAdmin?: boolean;
   /** The rest of the header's right side (notification bell) — kept as a
    * passthrough slot rather than imported directly, since NotificationBell
    * carries its own server-fetched props from (staff)/layout.tsx. */
@@ -62,9 +65,11 @@ export function StaffTopBar({
   role,
   academyLabel,
   orgName,
+  isSuperAdmin = false,
   children,
 }: StaffTopBarProps) {
   const pathname = usePathname();
+  const router = useRouter();
   const t = useTranslations("staffShell");
   const tSidebar = useTranslations("staffSidebar");
   const activeItem = findActiveNavItem(pathname, locale, navItems);
@@ -102,6 +107,11 @@ export function StaffTopBar({
               </DropdownMenuLabel>
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
+            {isSuperAdmin && (
+              <DropdownMenuItem onClick={() => router.push(`/${locale}/platform`)}>
+                {t("userMenu.platform")}
+              </DropdownMenuItem>
+            )}
             <DropdownMenuItem onClick={handleSignOut} disabled={isSigningOut}>
               {t("userMenu.signOut")}
             </DropdownMenuItem>

@@ -17,7 +17,7 @@ export interface ApproveOrganizationResult {
   organizationId: string;
   academySlug: string;
   kioskToken: string | null; // null when the academy already existed (no new token minted)
-  invitationLink: string | null; // null when the director already accepted a prior invitation
+  invitationLink: string | null; // null when the owner already accepted a prior invitation
   invitationEmailSent: boolean;
 }
 
@@ -84,36 +84,47 @@ export async function approveOrganization(orgSlug: string, approvedById: string)
     });
   }
 
-  // Step 2: create or reuse the director identity. "Reuse" (doc): an
+  // Step 2: create or reuse the OWNER identity. "Reuse" (doc): an
   // existing User at this email keeps their password and memberships
   // untouched — only a NEW membership row is added, the Phase 1
-  // multi-organization case. A brand-new director has no password yet (set
+  // multi-organization case. A brand-new owner has no password yet (set
   // during acceptance) — User.passwordHash is NOT NULL, so this creates one
   // with a random, unguessable placeholder hash nobody can authenticate
   // with, and `active: false` so no path (including password reset) can
   // reach this account before the real invitation is accepted.
-  let director = await prisma.user.findUnique({ where: { email: organization.contactEmail } });
-  if (!director) {
-    director = await prisma.user.create({
+  //
+  // The registering owner is an ADMIN, not a DIRECTOR. ADMIN is the
+  // organization's owner across every location: its scope is "ALL" academies
+  // (tenant/context.ts) and it holds the owner-only gates (schedule, kiosk
+  // token, logo). DIRECTOR runs ONE location, and its scope is the academies
+  // in its `staffAssignment` rows — of which nothing outside the seed can
+  // create any. Granting DIRECTOR here made every customer's owner "the
+  // manager of nothing": zero academies in scope and locked out of the
+  // owner-only gates. It stayed invisible because Alliance is seeded (see
+  // tests/integration/approved-owner-scope.test.ts and revision 33 of
+  // docs/MULTI_ACADEMY_AND_KIDS_BELTS.md).
+  let owner = await prisma.user.findUnique({ where: { email: organization.contactEmail } });
+  if (!owner) {
+    owner = await prisma.user.create({
       data: {
         email: organization.contactEmail,
         passwordHash: await hashSecret(generateRandomToken()),
-        role: Role.DIRECTOR,
+        role: Role.ADMIN,
         active: false,
       },
     });
   }
 
   const existingMembership = await prisma.organizationMembership.findUnique({
-    where: { userId_organizationId: { userId: director.id, organizationId: organization.id } },
+    where: { userId_organizationId: { userId: owner.id, organizationId: organization.id } },
   });
   if (!existingMembership) {
     await prisma.organizationMembership.create({
-      data: { userId: director.id, organizationId: organization.id, role: Role.DIRECTOR },
+      data: { userId: owner.id, organizationId: organization.id, role: Role.ADMIN },
     });
   }
 
-  // Step 4: issue the invitation — unless this director already accepted
+  // Step 4: issue the invitation — unless this owner already accepted
   // one for this organization, in which case re-approving must not issue a
   // fresh invite to someone who already has a working account.
   const alreadyAccepted = await prisma.invitation.findFirst({
@@ -139,7 +150,7 @@ export async function approveOrganization(orgSlug: string, approvedById: string)
       tokenHash: digestLookupSecret(rawToken, requireEnv("CODE_PEPPER")),
       email: organization.contactEmail,
       organizationId: organization.id,
-      role: Role.DIRECTOR,
+      role: Role.ADMIN,
       invitedById: approvedById,
       expiresAt: new Date(Date.now() + INVITATION_TTL_MS),
     },

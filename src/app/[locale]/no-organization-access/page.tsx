@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { getTranslations } from "next-intl/server";
 import { auth } from "@/auth";
+import { prisma } from "@/lib/prisma";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { BrandBanner } from "@/components/brand/brand-banner";
@@ -36,6 +37,21 @@ export default async function NoOrganizationAccessPage({
   if (!session?.user?.id) {
     redirect(`/${locale}/login`);
   }
+
+  // A platform super-admin belongs to no organization by design — `isSuperAdmin`
+  // is orthogonal to every membership — so every sign-in, resumed session and
+  // deep link that finds no membership lands HERE, on a page whose only button
+  // is "sign out". Their home is /platform. Re-read fresh from the database,
+  // exactly like `requireSuperAdmin()`, never trusted from the session, so a
+  // revoked flag stops redirecting on the very next request.
+  const user = await prisma.user.findUnique({
+    where: { id: session.user.id },
+    select: { isSuperAdmin: true, active: true },
+  });
+  if (user?.isSuperAdmin && user.active) {
+    redirect(`/${locale}/platform`);
+  }
+
   const t = await getTranslations("auth.noOrganizationAccess");
 
   return (

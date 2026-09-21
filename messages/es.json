@@ -413,10 +413,11 @@
     },
     "userMenu": {
       "role": {
-        "ADMIN": "Admin",
-        "DIRECTOR": "Director",
+        "ADMIN": "Dueño",
+        "DIRECTOR": "Director de sede",
         "INSTRUCTOR": "Instructor"
       },
+      "platform": "Plataforma",
       "signOut": "Cerrar sesión"
     }
   },
@@ -1224,6 +1225,12 @@
         "members": {
           "heading": "{count, plural, one {# miembro} other {# miembros}}",
           "inactive": "inactivo",
+          "roles": {
+            "ADMIN": "Dueño",
+            "DIRECTOR": "Director de sede",
+            "INSTRUCTOR": "Instructor",
+            "STUDENT": "Alumno"
+          },
           "resendInvitation": "Reenviar invitación",
           "confirmResendInvitation": "¿Reenviar la invitación? Esto invalida cualquier enlace de invitación anterior para esta organización.",
           "resendInvitationSent": "Invitación reenviada.",
