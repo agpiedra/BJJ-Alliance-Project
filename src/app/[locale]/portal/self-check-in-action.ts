@@ -26,19 +26,27 @@ export async function selfCheckIn(
   _prevState: SelfCheckInState,
   _formData: FormData,
 ): Promise<SelfCheckInState> {
-  const auth = await resolveActionContext(organizationId, ["STUDENT"]);
+  // Any ACTIVE member — a coach who also trains checks in for THEIR OWN training
+  // like anyone else. What matters is not the membership role but whether this
+  // account has a linked, ACTIVE student record in the organization the caller
+  // NAMES (`resolveActionContext` re-verifies membership in it).
+  const auth = await resolveActionContext(organizationId, ["ADMIN", "DIRECTOR", "INSTRUCTOR", "STUDENT"]);
   if (!auth.ok) return { error: "invalid_code" };
   const context = auth.context;
 
-  // selfStudentId is non-null whenever organizationRole is STUDENT and a
-  // linked Student row genuinely exists for this user in this organization
-  // — "shouldn't happen" given signup's atomic User+Student transaction, but
-  // fails closed with the same generic error the rest of this taxonomy uses
-  // rather than a null assertion.
-  if (!context.selfStudentId) {
-    return { error: "invalid_code" };
+  // `linkedStudentId` is the caller's own record, re-derived from the database —
+  // there is no student id in the input to substitute. When there is none, say
+  // honestly why: a record that EXISTS but is not active (pending, archived) is
+  // `notActive` — the portal is not anonymous, so the honest message beats the
+  // kiosk's generic one — and no record at all is the generic error.
+  const studentId = context.linkedStudentId;
+  if (!studentId) {
+    const own = await prisma.student.findUnique({
+      where: { userId: context.actorUserId, organizationId: context.organizationId },
+      select: { id: true },
+    });
+    return { error: own ? "notActive" : "invalid_code" };
   }
-  const studentId = context.selfStudentId;
 
   // A student acting on their own row, not a staff member acting on someone
   // else's — the tenant context itself (re-verified against the DB inside

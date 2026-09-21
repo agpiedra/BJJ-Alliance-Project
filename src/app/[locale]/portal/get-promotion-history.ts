@@ -33,7 +33,7 @@ export type PromotionHistoryEntry = {
  * `getStudentForStaff`'s academy-scope check first — the safety of that
  * function is coupled to being called only after that check. This portal
  * page has no such check to depend on (and needs none): `studentId` here
- * always comes from `context.selfStudentId` (requireTenantContext(["STUDENT"])),
+ * always comes from `requirePortalContext()`'s `studentId` (`context.linkedStudentId`),
  * i.e. the caller's OWN student row, never a route param an attacker could
  * substitute another student's id into. That is a different, equally-valid
  * safety argument, not a weaker

@@ -261,3 +261,23 @@ export async function requireTenantContext(allowedRoles?: MembershipRole[]): Pro
       redirect(`/${locale}/organization-unavailable`);
   }
 }
+
+/**
+ * The PORTAL gate: anyone with a linked, ACTIVE student record in the active
+ * organization — whatever their membership role. A coach who also trains holds a
+ * staff membership AND a student record, and must reach both the staff app and
+ * their own training from one account; gating the portal on the STUDENT role (as
+ * this used to) refused them their own training and made a second email address
+ * the only workaround. Someone with no such record (an Owner who does not train)
+ * gets the same 404 an unauthorized admin route gives.
+ *
+ * `studentId` comes from the tenant context itself — re-derived from the database
+ * on every call — never from a route param, so there is no id to substitute.
+ * `tests/unit/portal-gates-on-linked-student.test.ts` fails the build if anything
+ * under the portal gates on the STUDENT role again.
+ */
+export async function requirePortalContext(): Promise<{ context: TenantContext; studentId: string }> {
+  const context = await requireTenantContext();
+  if (!context.linkedStudentId) notFound();
+  return { context, studentId: context.linkedStudentId };
+}

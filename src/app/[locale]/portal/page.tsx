@@ -1,8 +1,7 @@
 import { DateTime } from "luxon";
 import { cn } from "cn";
 import { getTranslations } from "next-intl/server";
-import { redirect } from "next/navigation";
-import { requireTenantContext } from "@/lib/tenant/context";
+import { requirePortalContext } from "@/lib/tenant/context";
 import { prisma } from "@/lib/prisma";
 import { BeltBar } from "@/components/belt-graphic/belt-bar";
 import { ProgressToNextGrade } from "@/components/belt-graphic/progress-to-next-grade";
@@ -115,19 +114,12 @@ export default async function StudentPortalPage({
 }: {
   params: Promise<{ locale: string }>;
 }) {
-  const context = await requireTenantContext(["STUDENT"]);
+  // Anyone with a linked, ACTIVE student record — a coach who also trains
+  // included (see requirePortalContext). `studentId` is that record, re-derived
+  // from the database on every request.
+  const { context, studentId } = await requirePortalContext();
   const { locale } = await params;
   const branding = await getOrganizationBranding(context);
-
-  // selfStudentId is non-null whenever organizationRole is STUDENT and a
-  // linked Student row genuinely exists for this user in this organization
-  // (see resolveSelfStudentId's own doc comment) — this "shouldn't happen"
-  // given signup's atomic User+Student transaction, but fails closed rather
-  // than crash on a null assertion if it ever does.
-  if (!context.selfStudentId) {
-    redirect(`/${locale}/login`);
-  }
-  const studentId = context.selfStudentId;
 
   // Safe with no additional scope check: `studentId` came from the tenant
   // context itself (re-verified against the DB on every call), never from a
@@ -207,7 +199,6 @@ export default async function StudentPortalPage({
 
   const t = await getTranslations("portal");
   const tStudents = await getTranslations("students");
-  const tStatusNotice = await getTranslations("portal.statusNotice");
   const tAttendanceType = await getTranslations("portal.attendanceHistory.type");
   const tPaymentStatus = await getTranslations("students.paymentStatus");
   const tAdminSchedule = await getTranslations("adminSchedule");
@@ -235,19 +226,6 @@ export default async function StudentPortalPage({
       />
       <main className="mx-auto flex w-full max-w-md flex-col gap-6 p-4">
         <h1 className="text-2xl font-bold">{t("greeting", { name: student.firstName })}</h1>
-
-        {/* Login itself is not gated on Student.status — a PENDING or
-            ARCHIVED student still sees their full portal, just with an
-            honest notice up top rather than any of the sections below
-            being hidden. */}
-        {student.status !== "ACTIVE" && (
-          <div
-            role="status"
-            className="rounded-lg border border-border bg-secondary px-4 py-3 text-sm text-secondary-foreground"
-          >
-            {tStatusNotice(student.status)}
-          </div>
-        )}
 
         <Card>
           <CardHeader className="border-b">

@@ -958,11 +958,6 @@
   "portal": {
     "greeting": "Hi, {name}!",
     "signOut": "Sign out",
-    "statusNotice": {
-      "PENDING": "Your account is pending approval by your academy. Your progress below is up to date, but some features may be limited until you're approved.",
-      "INACTIVE": "Your account is currently marked inactive. Contact your academy if you have questions.",
-      "ARCHIVED": "Your account has been archived. Contact your academy if you believe this is a mistake."
-    },
     "progress": {
       "heading": "Your progress",
       "atBeltCount": "{count, plural, one {# attendance at this belt} other {# attendances at this belt}}",
