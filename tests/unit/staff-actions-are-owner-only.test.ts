@@ -25,16 +25,26 @@ export function actionsWithoutOwnerGate(text: string): string[] {
     .map(({ name }) => name);
 }
 
-describe("every staff-management action demands the Owner", () => {
-  const source = readFileSync(path.join(process.cwd(), "src/lib/staff/staff-actions.ts"), "utf8");
+// Adding a location is Owner-only too: it mints a device credential and a new
+// tenant-scoped place, so it is held to the same scan.
+const OWNER_ONLY_FILES = [
+  { file: "src/lib/staff/staff-actions.ts", minActions: 6 },
+  { file: "src/lib/locations/location-actions.ts", minActions: 1 },
+];
 
-  it("REQUIRED: no exported action in staff-actions.ts lacks the ADMIN-only gate", () => {
+describe.each(OWNER_ONLY_FILES)("every action in $file demands the Owner", ({ file, minActions }) => {
+  const source = readFileSync(path.join(process.cwd(), file), "utf8");
+
+  it("REQUIRED: no exported action lacks the ADMIN-only gate", () => {
     expect(actionsWithoutOwnerGate(source)).toEqual([]);
   });
 
   it("the file actually exports actions (so the scan cannot pass by finding none)", () => {
-    expect(source.match(/^export async function /gm)?.length ?? 0).toBeGreaterThanOrEqual(6);
+    expect(source.match(/^export async function /gm)?.length ?? 0).toBeGreaterThanOrEqual(minActions);
   });
+});
+
+describe("the Owner-only scanner", () => {
 
   describe("the scanner can actually flag a missing or widened gate (positive controls)", () => {
     it("flags an action that never resolves a context", () => {

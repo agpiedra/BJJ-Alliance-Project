@@ -11,6 +11,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { setSelectedAcademy } from "@/lib/staff-shell/academy-switcher-actions";
+import { hasAcademyChoice } from "@/lib/staff-shell/academy-choice";
 
 export interface AcademySwitcherAcademy {
   id: string;
@@ -35,10 +36,12 @@ export function AcademySwitcher({ academies, selectedAcademyId, readOnly }: Acad
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
 
-  if (readOnly) {
+  // At exactly one location there is nothing to switch between, so an Owner sees
+  // the location's name like a director does — no dropdown, no "all locations".
+  if (readOnly || !hasAcademyChoice(academies)) {
     // Never routes through selectedAcademyId — the layout forces that to
     // null for every non-ADMIN session, which would otherwise make this
-    // always render the "both locations" label instead of the director's
+    // always render the "all locations" label instead of the director's
     // or instructor's actual (usually single) assigned academy.
     const readOnlyLabel = academies.map((a) => a.name).join(", ");
     return (

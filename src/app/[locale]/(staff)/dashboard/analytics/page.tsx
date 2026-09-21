@@ -2,6 +2,7 @@ import { DateTime } from "luxon";
 import { getLocale, getTranslations } from "next-intl/server";
 import { requireTenantContext } from "@/lib/tenant/context";
 import { getScopedDb } from "@/lib/tenant/scoped-client";
+import { hasAcademyChoice } from "@/lib/staff-shell/academy-choice";
 import { getOrganizationBranding } from "@/lib/branding/get-branding";
 import { ZONE } from "@/lib/scheduling/zone";
 import { Button } from "@/components/ui/button";
@@ -296,7 +297,7 @@ export default async function AnalyticsPage({
                 className="w-auto"
               />
             </label>
-            {context.organizationRole === "ADMIN" && (
+            {context.organizationRole === "ADMIN" && hasAcademyChoice(academies) && (
               <label htmlFor="analytics-academy" className="flex flex-col gap-1 text-sm">
                 <span>{t("filters.academy")}</span>
                 <FilterBarSelect id="analytics-academy" name="academy" defaultValue={filters.academyId ?? "ambas"}>

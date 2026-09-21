@@ -1,5 +1,5 @@
 import { cache } from "react";
-import { redirect } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { getLocale } from "next-intl/server";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
@@ -325,8 +325,11 @@ export function isAcademyInTenantScope(context: TenantContext, academyId: string
 export async function requireTenantContext(allowedRoles?: MembershipRole[]): Promise<TenantContext> {
   const result = await getTenantContext();
   if (result.status === "OK") {
+    // A member without the page's role is refused exactly as a non-member is
+    // on /platform (`requireSuperAdmin`): a real `notFound()`, so the route does
+    // not announce that it exists — and not a thrown Error, which is a raw 500.
     if (allowedRoles && !allowedRoles.includes(result.context.organizationRole)) {
-      throw new Error("FORBIDDEN");
+      notFound();
     }
     return result.context;
   }

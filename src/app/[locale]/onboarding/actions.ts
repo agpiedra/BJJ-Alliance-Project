@@ -2,7 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { z } from "zod";
-import { requireTenantContext } from "@/lib/tenant/context";
+import { resolveActionContext } from "@/lib/tenant/context";
 import { prisma } from "@/lib/prisma";
 import { Prisma } from "@/generated/prisma/client";
 import type { ActionState } from "@/lib/action-state";
@@ -42,12 +42,22 @@ async function auditOnboardingEvent(
   });
 }
 
+// The three wizard actions take the organization the CALLER names (bound from the
+// page at render time) and re-verify the caller's membership in it — an action
+// must not read the session's ambient selector, which a second tab may have
+// moved, and a non-member is refused quietly (a redirect or 404 thrown from a
+// server action means nothing to its caller). A member with the wrong role
+// throws `FORBIDDEN`, like every other action.
+
 export async function saveOnboardingStep1(
+  organizationId: string,
   locale: string,
   _prevState: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
-  const context = await requireTenantContext(["ADMIN", "DIRECTOR"]);
+  const auth = await resolveActionContext(organizationId, ["ADMIN", "DIRECTOR"]);
+  if (!auth.ok) return { error: "notFound" };
+  const context = auth.context;
   const parsed = step1Schema.safeParse(Object.fromEntries(formData.entries()));
   if (!parsed.success) {
     return { error: "invalid", fieldErrors: parsed.error.flatten().fieldErrors };
@@ -81,8 +91,10 @@ export async function saveOnboardingStep1(
  * which is exactly what makes "skip this step" and "done with this step"
  * the same action here).
  */
-export async function advanceOnboardingStep(locale: string, toStep: number): Promise<void> {
-  const context = await requireTenantContext(["ADMIN", "DIRECTOR"]);
+export async function advanceOnboardingStep(organizationId: string, locale: string, toStep: number): Promise<void> {
+  const auth = await resolveActionContext(organizationId, ["ADMIN", "DIRECTOR"]);
+  if (!auth.ok) return;
+  const context = auth.context;
   await prisma.organization.update({
     where: { id: context.organizationId },
     data: { onboardingStep: toStep },
@@ -100,8 +112,10 @@ export async function advanceOnboardingStep(locale: string, toStep: number): Pro
  * set, dashboard with defaults intact), so this is deliberately one action,
  * not two indistinguishable copies.
  */
-export async function completeOnboarding(locale: string): Promise<void> {
-  const context = await requireTenantContext(["ADMIN", "DIRECTOR"]);
+export async function completeOnboarding(organizationId: string, locale: string): Promise<void> {
+  const auth = await resolveActionContext(organizationId, ["ADMIN", "DIRECTOR"]);
+  if (!auth.ok) return;
+  const context = auth.context;
   await prisma.organization.update({
     where: { id: context.organizationId },
     data: { onboardingCompletedAt: new Date() },

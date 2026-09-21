@@ -6,11 +6,12 @@ import { useTranslations } from "next-intl";
  * Route-segment error boundary for everything under `/[locale]`.
  *
  * Without one, a thrown error anywhere in this tree falls through to Next's
- * bare global handler — an unstyled, untranslated crash page. The most
- * common way to reach it is not a bug at all but an authorization decision:
- * `requireStaffSession(["ADMIN", "DIRECTOR"])` throws `Error("FORBIDDEN")`
- * when an INSTRUCTOR reaches a director-only action, which is a deliberate,
- * expected rejection that should look like one.
+ * bare global handler — an unstyled, untranslated crash page. A page reached
+ * without the right role is NOT routed here: `requireTenantContext` refuses
+ * it with `notFound()` (a 404). What arrives here is an action's deliberate
+ * `Error("FORBIDDEN")` (a member with the wrong role calling a "use server"
+ * function directly) or a genuine failure — both should look like a refusal,
+ * not a crash.
  *
  * The message is deliberately generic and carries no `error.message` — the
  * thrown text can name internal state, and in production Next redacts it to
