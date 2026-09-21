@@ -3,6 +3,7 @@
 import { z } from "zod";
 import { headers } from "next/headers";
 import { prisma } from "@/lib/prisma";
+import { formDataToObject } from "@/lib/form-data";
 import { seedOrganizationDefaults } from "@/lib/organizations/seed-defaults";
 import { sendTransactionalEmail } from "@/lib/email/send-transactional-email";
 import type { ActionState } from "@/lib/action-state";
@@ -133,7 +134,10 @@ export async function checkSlugAvailability(slug: string): Promise<{ available: 
 }
 
 export async function registerOrganization(_prevState: RegistrationState, formData: FormData): Promise<RegistrationState> {
-  const raw = Object.fromEntries(formData.entries());
+  // Not a raw entries-to-object of the form data: a real browser submission
+  // also carries the framework's own hidden `$ACTION_*` fields, which the
+  // strict schema below would reject as unknown — see lib/form-data.ts.
+  const raw = formDataToObject(formData);
   const parsed = registrationSchema.safeParse(raw);
   if (!parsed.success) {
     return { error: "invalid", fieldErrors: parsed.error.flatten().fieldErrors };

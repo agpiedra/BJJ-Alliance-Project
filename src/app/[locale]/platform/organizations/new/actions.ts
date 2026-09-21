@@ -3,6 +3,7 @@
 import { z } from "zod";
 import { resolveSuperAdminActionContext } from "@/lib/auth/require-super-admin";
 import { prisma } from "@/lib/prisma";
+import { formDataToObject } from "@/lib/form-data";
 import { seedOrganizationDefaults } from "@/lib/organizations/seed-defaults";
 import { approveOrganization } from "@/lib/organizations/approve-organization";
 import type { ActionState } from "@/lib/action-state";
@@ -52,7 +53,9 @@ export async function createOrganizationManually(
   const auth = await resolveSuperAdminActionContext();
   if (!auth.ok) return { error: "notFound" };
 
-  const parsed = manualCreationSchema.safeParse(Object.fromEntries(formData.entries()));
+  // Strips the framework's hidden `$ACTION_*` fields a real browser submission
+  // carries, which the strict schema would reject as unknown — lib/form-data.ts.
+  const parsed = manualCreationSchema.safeParse(formDataToObject(formData));
   if (!parsed.success) {
     return { error: "invalid", fieldErrors: parsed.error.flatten().fieldErrors };
   }

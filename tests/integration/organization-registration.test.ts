@@ -201,6 +201,41 @@ describe("registerOrganization", () => {
     expect(await prisma.organization.findUnique({ where: { slug } })).toBeNull();
   });
 
+  it("REQUIRED: a real browser submission is accepted — it carries the framework's own hidden $ACTION_* fields, which are not 'unknown fields'", async () => {
+    // Captured from a real browser POST of this exact form (docs/
+    // MULTI_ACADEMY_AND_KIDS_BELTS.md, revision 33). `useActionState` binds the
+    // action to its previous state, so Next's runtime submits its own
+    // bound-argument fields alongside the visitor's. Every other test in this
+    // file builds its FormData by hand and so never carried them — which is
+    // how a form that rejected EVERY genuine submission (`error: "invalid"`,
+    // with no field errors, because z.strictObject treated the framework's
+    // plumbing as an attacker's unknown fields) shipped and stayed green.
+    const fd = registrationFormData();
+    const slug = fd.get("desiredSlug") as string;
+    fd.set("$ACTION_REF_1", "");
+    fd.set("$ACTION_1:0", '{"id":"608e4020c6586decca123a6c6987fdc3460758aff1","bound":"$@1"}');
+    fd.set("$ACTION_1:1", "[{}]");
+    fd.set("$ACTION_KEY", "kd393f9b8c3cd078739e53eee33fa2a73");
+
+    const result = await registerOrganization({}, fd);
+
+    expect(result.ok, `expected a genuine submission to succeed, got ${JSON.stringify(result)}`).toBe(true);
+    const org = await prisma.organization.findUniqueOrThrow({ where: { slug } });
+    cleanupOrgIds.push(org.id);
+  });
+
+  it("still rejects a genuinely unknown field even alongside the framework's own — the fix filters the framework namespace, not strictness", async () => {
+    const fd = registrationFormData();
+    const slug = fd.get("desiredSlug") as string;
+    fd.set("$ACTION_KEY", "kd393f9b8c3cd078739e53eee33fa2a73");
+    fd.set("primaryColor", "#FF0000");
+
+    const result = await registerOrganization({}, fd);
+
+    expect(result.error).toBe("invalid");
+    expect(await prisma.organization.findUnique({ where: { slug } })).toBeNull();
+  });
+
   it("checkSlugAvailability reflects real uniqueness, never the final authority", async () => {
     const fd = registrationFormData();
     const slug = fd.get("desiredSlug") as string;
