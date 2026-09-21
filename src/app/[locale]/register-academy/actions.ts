@@ -4,6 +4,7 @@ import { z } from "zod";
 import { headers } from "next/headers";
 import { prisma } from "@/lib/prisma";
 import { formDataToObject } from "@/lib/form-data";
+import { CURRENCIES } from "@/lib/payments/format-money";
 import { seedOrganizationDefaults } from "@/lib/organizations/seed-defaults";
 import { sendTransactionalEmail } from "@/lib/email/send-transactional-email";
 import type { ActionState } from "@/lib/action-state";
@@ -47,6 +48,9 @@ const registrationSchema = z.strictObject({
   studentCountBand: z.string().min(1).max(50),
   referralSource: z.string().max(200).optional(),
   preferredLocale: z.enum(["es", "en"]),
+  // What the academy prices in. Optional so an older client that never sends it
+  // still registers; absent means colones, the only currency before revision 34.
+  currency: z.enum(CURRENCIES).optional(),
   termsAccepted: z.literal("on", { message: "termsRequired" }),
   // Honeypot — real visitors never see or fill this field (hidden via CSS
   // in the form, never `type="hidden"`, which some bots skip). Checked
@@ -188,6 +192,7 @@ export async function registerOrganization(_prevState: RegistrationState, formDa
         name: data.organizationName,
         status: "PENDING",
         defaultLocale: data.preferredLocale,
+        currency: data.currency ?? "CRC",
         country: data.country,
         city: data.city,
         contactName: data.contactName,

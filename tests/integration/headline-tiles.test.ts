@@ -154,7 +154,7 @@ async function makePaymentPeriod(
   status: "PAID" | "PENDING" | "PROMO" | "EXEMPT",
 ) {
   await prisma.paymentPeriod.create({
-    data: { studentId, academyId, organizationId, planId, recordedById, year, month, status },
+    data: { studentId, academyId, organizationId, planId, recordedById, currency: "CRC", year, month, status },
   });
 }
 

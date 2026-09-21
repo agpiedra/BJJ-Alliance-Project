@@ -100,6 +100,16 @@ enum PaymentMethod {
   TARJETA
 }
 
+/// The currency an ORGANIZATION prices in — one per organization, the same way
+/// `timezone` sits on Organization. Amounts are stored as bare decimals with no
+/// unit, so every stored amount is only meaningful next to one of these:
+/// `PaymentPeriod.currency` records which, per row. Adding a value is an
+/// additive migration; every place that formats money takes a `Currency`.
+enum Currency {
+  CRC
+  USD
+}
+
 enum DayOfWeek {
   MONDAY
   TUESDAY
@@ -142,6 +152,12 @@ model Organization {
   status        OrganizationStatus @default(PENDING)
   timezone      String             @default("America/Costa_Rica")
   defaultLocale String             @default("es")
+  /// What this organization prices in. The same "assumes Costa Rica" family as
+  /// `timezone` — a currency was hardcoded ("₡") in the UI until revision 34.
+  /// Changing it later is allowed and never rewrites history: every recorded
+  /// payment carries its own `PaymentPeriod.currency`, and plan default
+  /// amounts are NOT converted (they are bare numbers in whatever this was).
+  currency      Currency           @default(CRC)
   contactName   String?
   contactEmail  String?
   contactPhone  String?
@@ -840,6 +856,16 @@ model PaymentPlan {
   organizationId String
   name           String
   description    String?
+  /// What this plan normally costs, in the ORGANIZATION's currency at the time
+  /// it was set. Only a suggestion: it pre-fills the amount when a plan is
+  /// picked, and the amount actually recorded is always the director's own
+  /// (`PaymentPeriod.amount`), editable per payment. Changing it never
+  /// touches a payment already recorded. Not converted if the organization's
+  /// currency later changes. Null = no standard price (e.g. a scholarship).
+  defaultAmount  Decimal? @db.Decimal(10, 2)
+  /// Plans are DEACTIVATED, never deleted: historical `PaymentPeriod` rows
+  /// reference them and deleting one would orphan the record of money that
+  /// actually changed hands. No code deletes a plan; a test enforces that.
   active         Boolean  @default(true)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
@@ -863,6 +889,24 @@ model PaymentPeriod {
   planId         String
   status         PaymentStatus
   amount         Decimal?       @db.Decimal(10, 2)
+  /// The currency `amount` is in — SNAPSHOTTED from `Organization.currency` at
+  /// the moment the payment is recorded and never rewritten afterwards (the
+  /// same precedent as `OrganizationInvoice.graceDaysApplied`): an academy can
+  /// move from colones to dollars, and a record of money that changed hands
+  /// must never be retroactively relabelled. A carried-forward promo copies
+  /// its source row's currency along with its amount.
+  ///
+  /// !!! NEVER SUM, AVERAGE OR COMPARE `amount` ACROSS ROWS WITHOUT GROUPING
+  /// BY `currency` FIRST. `amount` is a bare decimal: 45 (USD) and 45 (CRC) are
+  /// not the same number. Any revenue total, average or threshold must be a
+  /// `groupBy` on `currency` (or filtered to one) — a single un-grouped sum is
+  /// silently wrong the day an organization changes currency, and nothing
+  /// will error. tests/unit/payment-amounts-are-currency-aware.test.ts fails
+  /// if a query aggregates PaymentPeriod amounts without mentioning currency.
+  ///
+  /// No database default, on purpose: a code path that forgets to set it must
+  /// fail to compile, not silently record colones for a dollar academy.
+  currency       Currency
   notes          String?
   recordedById   String
   recordedAt     DateTime       @default(now())

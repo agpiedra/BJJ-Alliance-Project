@@ -4,6 +4,7 @@ import { useActionState, useState, useTransition } from "react";
 import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { slugify } from "@/lib/organizations/slug";
+import { CURRENCIES } from "@/lib/payments/format-money";
 import { registerOrganization, checkSlugAvailability, type RegistrationState } from "./actions";
 
 const INITIAL_STATE: RegistrationState = {};
@@ -128,6 +129,16 @@ export function RegistrationForm() {
           <select name="preferredLocale" required defaultValue="es" className="rounded border px-3 py-2">
             <option value="es">Español</option>
             <option value="en">English</option>
+          </select>
+        </label>
+        <label className="flex flex-col gap-1">
+          <span>{t("currency")}</span>
+          <select name="currency" required defaultValue="CRC" className="rounded border px-3 py-2">
+            {CURRENCIES.map((currency) => (
+              <option key={currency} value={currency}>
+                {t(`currencyOption.${currency}`)}
+              </option>
+            ))}
           </select>
         </label>
         <label className="flex items-center gap-2">

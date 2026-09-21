@@ -461,6 +461,8 @@
     "studentCountBandPlaceholder": "Selecciona un rango",
     "referralSource": "¿Cómo te enteraste de nosotros? (opcional)",
     "preferredLocale": "Idioma preferido",
+    "currency": "Moneda",
+    "currencyOption": { "CRC": "Colones (₡)", "USD": "Dólares ($)" },
     "termsAccepted": "Acepto los términos",
     "submit": "Enviar para revisión",
     "successHeading": "Solicitud recibida",
@@ -597,7 +599,7 @@
         "method": "Método",
         "methodPlaceholder": "Sin especificar",
         "status": "Estado",
-        "amount": "Monto (₡)",
+        "amount": "Monto ({currency})",
         "notes": "Notas (opcional)",
         "submit": "Guardar pago",
         "cancel": "Cancelar",
@@ -605,6 +607,7 @@
         "invalid": "Por favor revisa el formulario.",
         "notFound": "No se pudo registrar este pago.",
         "invalidPlan": "Ese plan no pertenece a la academia de este estudiante.",
+        "planInactive": "Ese plan fue desactivado, así que no se puede registrar un pago nuevo en él. Elige un plan activo.",
         "periodTooFarInFuture": "El período no puede ser más de un mes en el futuro.",
         "promoNameRequired": "El nombre de la promoción es obligatorio.",
         "footerHint": "Marcar «Pagado» actualiza de inmediato el estado del alumno en el roster, el portal y los reportes.",
@@ -612,7 +615,7 @@
           "heading": "Promoción personalizada",
           "name": "Nombre de la promoción",
           "namePlaceholder": "Ej.: Beca competidor, 2×1 hermanos",
-          "amount": "Monto acordado (₡)",
+          "amount": "Monto acordado ({currency})",
           "amountPlaceholder": "0 para exonerar por completo",
           "reason": "Motivo",
           "reasonPlaceholder": "Ej.: compite por la academia en el Open de noviembre",
@@ -846,7 +849,56 @@
       "EFECTIVO": "Efectivo",
       "TARJETA": "Tarjeta"
     },
+    "plansLink": "Administrar planes",
+    "plans": {
+      "eyebrow": "{orgName} · Planes de pago",
+      "heading": "Planes de pago",
+      "sub": "Lo que cobra cada academia. Un plan se desactiva, nunca se elimina: los pagos ya registrados en él lo conservan.",
+      "backToPayments": "Volver a pagos",
+      "empty": "Esta academia aún no tiene planes.",
+      "columns": {
+        "name": "Plan",
+        "defaultAmount": "Monto por defecto",
+        "status": "Estado",
+        "payments": "Pagos",
+        "actions": "Acciones"
+      },
+      "status": { "active": "Activo", "inactive": "Inactivo" },
+      "systemPlanNote": "Plan del sistema, se administra solo",
+      "create": {
+        "heading": "Nuevo plan",
+        "name": "Nombre",
+        "description": "Descripción (opcional)",
+        "defaultAmount": "Monto por defecto ({currency})",
+        "defaultAmountHint": "Opcional. Rellena el monto al elegir este plan en un pago; puedes cambiarlo en cada pago. Déjalo vacío si no tiene precio estándar.",
+        "submit": "Crear plan",
+        "success": "Plan creado."
+      },
+      "edit": { "open": "Editar", "save": "Guardar", "close": "Cerrar", "success": "Plan actualizado." },
+      "deactivate": {
+        "button": "Desactivar",
+        "confirm": "¿Desactivar este plan? Dejará de aparecer al registrar un pago. Los pagos ya registrados en él no se ven afectados."
+      },
+      "reactivate": { "button": "Reactivar" },
+      "currency": {
+        "heading": "Moneda",
+        "body": "Esta academia cobra en {current}. Cambiarla afecta solo a los pagos NUEVOS: los pagos ya registrados conservan la moneda en la que se registraron, y los montos por defecto de los planes no se convierten.",
+        "label": "Moneda",
+        "submit": "Guardar moneda",
+        "success": "Moneda actualizada."
+      },
+      "currencyOption": { "CRC": "Colones (₡)", "USD": "Dólares ($)" },
+      "error": {
+        "invalid": "Revisa el nombre y el monto del plan.",
+        "notFound": "No se encontró esa academia o ese plan.",
+        "nameTaken": "Ya existe un plan con ese nombre en esta academia.",
+        "nameTakenInactive": "Un plan desactivado ya tiene ese nombre — reactívalo desde la lista.",
+        "systemPlan": "Este es un plan del sistema y no se puede cambiar ni ocultar.",
+        "lastActivePlan": "Este es el último plan activo de la academia. Crea o reactiva otro primero, o no se podría registrar ningún pago."
+      }
+    },
     "table": {
+      "inactivePlanSuffix": "(inactivo)",
       "filters": {
         "search": "Buscar alumno",
         "searchPlaceholder": "Buscar alumno…",
@@ -1190,8 +1242,10 @@
           "contactPhone": "Teléfono",
           "studentCountBand": "Cantidad de alumnos",
           "preferredLocale": "Idioma preferido",
+          "currency": "Moneda",
           "promotionMode": "Modo de promoción"
         },
+        "currencyOption": { "CRC": "Colones (₡)", "USD": "Dólares ($)" },
         "promotionModes": {
           "ATTENDANCE": "Por asistencia",
           "TIME": "Por tiempo",

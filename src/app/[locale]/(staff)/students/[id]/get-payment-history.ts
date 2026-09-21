@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import type { PaymentStatus } from "@/generated/prisma/client";
+import type { Currency, PaymentStatus } from "@/generated/prisma/client";
 
 export type PaymentHistoryEntry = {
   id: string;
@@ -8,6 +8,8 @@ export type PaymentHistoryEntry = {
   status: PaymentStatus;
   planName: string;
   amount: number | null;
+  /** The currency `amount` was recorded in (the row's own snapshot). */
+  currency: Currency;
   notes: string | null;
 };
 
@@ -36,7 +38,10 @@ export async function getPaymentHistory(
       month: true,
       status: true,
       amount: true,
+      currency: true,
       notes: true,
+      // Read through the payment's own planId, with NO `active` filter: a
+      // deactivated plan must stay fully readable on every past record.
       plan: { select: { name: true } },
     },
   });
@@ -50,6 +55,7 @@ export async function getPaymentHistory(
     // Same Decimal->number conversion Task 1's recordPayment established
     // for this field — a plain JS number, not a decimal.js instance.
     amount: period.amount?.toNumber() ?? null,
+    currency: period.currency,
     notes: period.notes,
   }));
 }

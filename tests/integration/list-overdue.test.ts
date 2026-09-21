@@ -106,7 +106,7 @@ async function makePaymentPeriod(
   status: PaymentStatus,
 ) {
   return prisma.paymentPeriod.create({
-    data: { studentId, academyId, organizationId, planId, recordedById, year, month, status },
+    data: { studentId, academyId, organizationId, planId, recordedById, currency: "CRC", year, month, status },
   });
 }
 

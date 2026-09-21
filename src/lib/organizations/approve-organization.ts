@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { digestLookupSecret, generateRandomToken, hashSecret } from "@/lib/crypto";
 import { requireEnv } from "@/lib/env";
 import { sendTransactionalEmail } from "@/lib/email/send-transactional-email";
+import { ensureDefaultPlan } from "@/lib/payments/ensure-default-plan";
 import { Role } from "@/generated/prisma/client";
 
 const INVITATION_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
@@ -82,6 +83,12 @@ export async function approveOrganization(orgSlug: string, approvedById: string)
         kioskTokenHash: digestLookupSecret(kioskToken, requireEnv("CODE_PEPPER")),
       },
     });
+    // Only when the academy is CREATED, never on a re-approval: an organization
+    // that can't record a single payment on day one is the owner lockout's
+    // cousin, but a re-approval (resend) must not resurrect a plan the
+    // director deliberately deactivated or grow a duplicate of one they renamed.
+    // Named from the language the registrant chose (`defaultLocale`).
+    await ensureDefaultPlan(organization.id, academy.id, organization.defaultLocale);
   }
 
   // Step 2: create or reuse the OWNER identity. "Reuse" (doc): an

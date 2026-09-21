@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { ZONE } from "@/lib/scheduling/zone";
 import { CUSTOM_PROMO_PLAN_NAME } from "@/lib/payments/custom-promo-plan-name";
 import { isUniqueConstraintError } from "@/lib/prisma-errors";
-import { Prisma, type PaymentMethod, type PaymentStatus } from "@/generated/prisma/client";
+import { Prisma, type Currency, type PaymentMethod, type PaymentStatus } from "@/generated/prisma/client";
 
 export type CurrentPaymentPeriod = {
   id: string;
@@ -13,6 +13,9 @@ export type CurrentPaymentPeriod = {
   planId: string;
   planName: string;
   amount: number | null;
+  /** The currency `amount` is in — the row's own snapshot, NOT the
+   * organization's current currency. Always format with this. */
+  currency: Currency;
   method: PaymentMethod | null;
   notes: string | null;
   promoName: string | null;
@@ -32,6 +35,7 @@ const CURRENT_PERIOD_SELECT = {
   academyId: true,
   organizationId: true,
   amount: true,
+  currency: true,
   method: true,
   notes: true,
   promoName: true,
@@ -52,6 +56,7 @@ type RawPeriod = {
   academyId: string;
   organizationId: string;
   amount: { toNumber(): number } | null;
+  currency: Currency;
   method: PaymentMethod | null;
   notes: string | null;
   promoName: string | null;
@@ -75,6 +80,7 @@ function toCurrentPeriod(period: RawPeriod): CurrentPaymentPeriod {
     // established for this field — a plain JS number is what every caller
     // here (roster badge, portal card) wants, not a decimal.js instance.
     amount: period.amount?.toNumber() ?? null,
+    currency: period.currency,
     method: period.method,
     notes: period.notes,
     promoName: period.promoName,
@@ -195,6 +201,12 @@ async function materializeCarryForward(
           planId: candidate.planId,
           status,
           amount: candidate.amount?.toNumber() ?? null,
+          // The amount is copied, so its currency MUST be copied with it — the
+          // SOURCE row's snapshot, never the organization's current currency.
+          // If the academy moved from colones to dollars since, this month's
+          // carried ₡22,500 is still colones; re-reading the current currency
+          // here would silently relabel it as dollars.
+          currency: candidate.currency,
           method: candidate.method,
           notes: candidate.notes,
           promoName: candidate.promoName,
@@ -222,6 +234,7 @@ async function materializeCarryForward(
             status: created.status,
             planId: created.planId,
             amount: created.amount?.toNumber() ?? null,
+            currency: created.currency,
             method: created.method,
             promoName: created.promoName,
             promoReason: created.promoReason,

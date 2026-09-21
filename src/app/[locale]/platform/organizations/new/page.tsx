@@ -6,6 +6,7 @@ import { useParams, useRouter } from "next/navigation";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { INITIAL_ACTION_STATE } from "@/lib/action-state";
+import { CURRENCIES } from "@/lib/payments/format-money";
 import { createOrganizationManually, type ManualOrganizationCreationState } from "./actions";
 
 export default function NewOrganizationPage() {
@@ -69,6 +70,16 @@ export default function NewOrganizationPage() {
           <select name="preferredLocale" defaultValue="es" className="h-9 rounded-lg border border-input bg-transparent px-3">
             <option value="es">Español</option>
             <option value="en">English</option>
+          </select>
+        </label>
+        <label className="flex flex-col gap-1">
+          <span>{t("fields.currency")}</span>
+          <select name="currency" defaultValue="CRC" className="h-9 rounded-lg border border-input bg-transparent px-3">
+            {CURRENCIES.map((currency) => (
+              <option key={currency} value={currency}>
+                {t(`currencyOption.${currency}`)}
+              </option>
+            ))}
           </select>
         </label>
         <label className="flex flex-col gap-1">

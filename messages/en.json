@@ -461,6 +461,8 @@
     "studentCountBandPlaceholder": "Select a range",
     "referralSource": "How did you hear about us? (optional)",
     "preferredLocale": "Preferred language",
+    "currency": "Currency",
+    "currencyOption": { "CRC": "Colones (₡)", "USD": "US dollars ($)" },
     "termsAccepted": "I agree to the terms",
     "submit": "Submit for review",
     "successHeading": "Request received",
@@ -597,7 +599,7 @@
         "method": "Method",
         "methodPlaceholder": "Unspecified",
         "status": "Status",
-        "amount": "Amount (₡)",
+        "amount": "Amount ({currency})",
         "notes": "Notes (optional)",
         "submit": "Save payment",
         "cancel": "Cancel",
@@ -605,6 +607,7 @@
         "invalid": "Please check the form for errors.",
         "notFound": "Could not record this payment.",
         "invalidPlan": "That plan does not belong to this student's academy.",
+        "planInactive": "That plan has been deactivated, so no new payment can be recorded on it. Choose an active plan.",
         "periodTooFarInFuture": "The period cannot be more than one month in the future.",
         "promoNameRequired": "The promotion name is required.",
         "footerHint": "Marking \"Paid\" immediately updates the student's status on the roster, portal, and reports.",
@@ -612,7 +615,7 @@
           "heading": "Custom promotion",
           "name": "Promotion name",
           "namePlaceholder": "E.g.: Competitor scholarship, 2-for-1 siblings",
-          "amount": "Agreed amount (₡)",
+          "amount": "Agreed amount ({currency})",
           "amountPlaceholder": "0 for a full waiver",
           "reason": "Reason",
           "reasonPlaceholder": "E.g.: competes for the academy at the November Open",
@@ -846,7 +849,56 @@
       "EFECTIVO": "Cash",
       "TARJETA": "Card"
     },
+    "plansLink": "Manage plans",
+    "plans": {
+      "eyebrow": "{orgName} · Payment plans",
+      "heading": "Payment plans",
+      "sub": "What each academy charges. A plan is deactivated, never deleted: payments already recorded on it keep it.",
+      "backToPayments": "Back to payments",
+      "empty": "No plans yet for this academy.",
+      "columns": {
+        "name": "Plan",
+        "defaultAmount": "Default amount",
+        "status": "Status",
+        "payments": "Payments",
+        "actions": "Actions"
+      },
+      "status": { "active": "Active", "inactive": "Inactive" },
+      "systemPlanNote": "System plan, managed automatically",
+      "create": {
+        "heading": "New plan",
+        "name": "Name",
+        "description": "Description (optional)",
+        "defaultAmount": "Default amount ({currency})",
+        "defaultAmountHint": "Optional. Pre-fills the amount when this plan is picked for a payment; you can change it on every payment. Leave blank for no standard price.",
+        "submit": "Create plan",
+        "success": "Plan created."
+      },
+      "edit": { "open": "Edit", "save": "Save", "close": "Close", "success": "Plan updated." },
+      "deactivate": {
+        "button": "Deactivate",
+        "confirm": "Deactivate this plan? It will disappear from the payment picker. Payments already recorded on it are not affected."
+      },
+      "reactivate": { "button": "Reactivate" },
+      "currency": {
+        "heading": "Currency",
+        "body": "This academy prices in {current}. Changing it affects NEW payments only: payments already recorded keep the currency they were recorded in, and plans' default amounts are not converted.",
+        "label": "Currency",
+        "submit": "Save currency",
+        "success": "Currency updated."
+      },
+      "currencyOption": { "CRC": "Colones (₡)", "USD": "US dollars ($)" },
+      "error": {
+        "invalid": "Check the plan's name and amount.",
+        "notFound": "That academy or plan wasn't found.",
+        "nameTaken": "A plan with that name already exists at this academy.",
+        "nameTakenInactive": "A deactivated plan already has that name — reactivate it from the list instead.",
+        "systemPlan": "This is a system plan and can't be changed or hidden.",
+        "lastActivePlan": "This is the academy's last active plan. Create or reactivate another one first, or no payment could be recorded."
+      }
+    },
     "table": {
+      "inactivePlanSuffix": "(inactive)",
       "filters": {
         "search": "Search student",
         "searchPlaceholder": "Search student…",
@@ -1190,8 +1242,10 @@
           "contactPhone": "Phone",
           "studentCountBand": "Student count",
           "preferredLocale": "Preferred language",
+          "currency": "Currency",
           "promotionMode": "Promotion mode"
         },
+        "currencyOption": { "CRC": "Colones (₡)", "USD": "US dollars ($)" },
         "promotionModes": {
           "ATTENDANCE": "Attendance-based",
           "TIME": "Time-based",

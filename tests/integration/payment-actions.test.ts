@@ -722,6 +722,7 @@ describe("markPaymentPaid", () => {
         planId: plan.id,
         status: "PENDING",
         amount: 45000,
+        currency: "CRC",
         recordedById: admin.id,
       },
     });
@@ -787,6 +788,7 @@ describe("markPaymentPaid", () => {
         promoName: "2x1 hermanos",
         promoReason: "Dos hermanos entrenan juntos",
         promoRecurring: true,
+        currency: "CRC",
         recordedById: admin.id,
       },
     });

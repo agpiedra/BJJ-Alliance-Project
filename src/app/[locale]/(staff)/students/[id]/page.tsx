@@ -8,6 +8,8 @@ import { getAtBeltSummary } from "@/lib/students/attendance-summary";
 import { resolvePromotionConfigMap } from "@/lib/promotion/config";
 import { formatTimestampInAcademyZone } from "@/lib/format-date";
 import { formatMonthYear } from "@/lib/format-month";
+import { formatMoney } from "@/lib/payments/format-money";
+import { listSelectablePlans } from "@/lib/payments/list-plans";
 import { currentCrDateParts } from "@/lib/payments/get-current-period";
 import { ensureCustomPromoPlan } from "@/lib/payments/ensure-custom-promo-plan";
 import { getStudentForStaff } from "./get-student";
@@ -132,13 +134,12 @@ export default async function StudentDetailPage({
   if (canEdit) {
     await ensureCustomPromoPlan(context.organizationId, student.homeAcademyId);
   }
-  const paymentPlans = canEdit
-    ? await prisma.paymentPlan.findMany({
-        where: { organizationId: context.organizationId, academyId: student.homeAcademyId, active: true },
-        orderBy: { name: "asc" },
-        select: { id: true, name: true, academyId: true },
-      })
-    : [];
+  const paymentPlans = canEdit ? await listSelectablePlans(context.organizationId, [student.homeAcademyId]) : [];
+  // What a NEW payment on this page is recorded in; recorded ones keep their own.
+  const { currency: organizationCurrency } = await prisma.organization.findUniqueOrThrow({
+    where: { id: context.organizationId },
+    select: { currency: true },
+  });
   const { year: currentYear, month: currentMonth } = currentCrDateParts();
 
   function formatPeriodMonth(year: number, month: number): string {
@@ -327,7 +328,7 @@ export default async function StudentDetailPage({
                         <Badge variant="outline">{tPaymentStatus(period.status)}</Badge>
                       </td>
                       <td className="py-2 pr-4 align-top whitespace-nowrap">
-                        {period.amount ?? "—"}
+                        {period.amount != null ? formatMoney(period.amount, period.currency, locale) : "—"}
                       </td>
                       <td className="py-2 align-top whitespace-pre-wrap">{period.notes ?? "—"}</td>
                     </tr>
@@ -381,6 +382,7 @@ export default async function StudentDetailPage({
                   },
                 ]}
                 plans={paymentPlans}
+                currency={organizationCurrency}
                 lockedStudentId={student.id}
                 canManagePromotions={canEdit}
                 defaults={{ month: `${currentYear}-${String(currentMonth).padStart(2, "0")}` }}

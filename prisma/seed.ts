@@ -848,6 +848,7 @@ async function seedPayments() {
       status: p.status,
       amount: p.amount,
       recordedById: p.recordedById,
+      currency: "CRC" as const,
       recordedAt: SEED_NOW.toJSDate(),
     };
     await prisma.paymentPeriod.upsert({
