@@ -230,7 +230,7 @@
         "from": "From",
         "to": "To",
         "academy": "Academy",
-        "bothAcademies": "Both",
+        "bothAcademies": "All locations",
         "submit": "Apply",
         "quickRange": {
           "label": "Quick range",
@@ -419,8 +419,8 @@
   "staffShell": {
     "themeToggle": "Theme",
     "academySwitcher": {
-      "bothLabel": "View both locations",
-      "bothSelected": "Both locations"
+      "bothLabel": "View all locations",
+      "bothSelected": "All locations"
     },
     "userMenu": {
       "role": {
@@ -511,7 +511,7 @@
       "allTracks": "All",
       "trackKids": "Kids",
       "trackAdults": "Adults",
-      "bothAcademies": "Both",
+      "bothAcademies": "All locations",
       "submit": "Filter"
     },
     "columns": {
@@ -916,7 +916,7 @@
         "status": "Filter by status",
         "allStatuses": "All statuses",
         "academy": "Filter by academy",
-        "bothAcademies": "Both academies"
+        "bothAcademies": "All locations"
       },
       "promoOrExempt": "Promotion or exempt",
       "empty": "No student matches these filters.",

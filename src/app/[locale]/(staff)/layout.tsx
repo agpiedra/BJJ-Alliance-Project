@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { getLocale, getTranslations } from "next-intl/server";
 import { getTenantContext } from "@/lib/tenant/context";
 import { getScopedDb } from "@/lib/tenant/scoped-client";
+import { academyScopeLabel } from "@/lib/staff-shell/academy-choice";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/auth";
 import { SidebarProvider } from "@/components/ui/sidebar";
@@ -97,10 +98,14 @@ export default async function StaffLayout({ children }: { children: ReactNode })
       : null;
 
   const tShell = await getTranslations("staffShell");
-  const academyLabel =
-    context?.organizationRole === "ADMIN"
-      ? (academies.find((a) => a.id === selectedAcademyId)?.name ?? tShell("academySwitcher.bothSelected"))
-      : academies.map((a) => a.name).join(", ");
+  // "All locations" only when an Owner actually has a choice — at exactly one
+  // location the shell says that location's name (see academy-choice.ts).
+  const academyLabel = academyScopeLabel({
+    isOwner: context?.organizationRole === "ADMIN",
+    academies,
+    selectedAcademyId,
+    allLabel: tShell("academySwitcher.bothSelected"),
+  });
 
   // Active-student count for the "Alumnos" nav badge — same ACTIVE +
   // home-academy scoping students/page.tsx's own query already uses,
