@@ -29,7 +29,7 @@ export function resolveCliDatabaseUrl(env: Record<string, string | undefined> = 
   const pooled = env.DATABASE_URL?.trim() || undefined;
 
   if (!direct) return pooled;
-  if (!pooled) return direct;
+  if (!pooled) return requireExplicitCertificateHandling(direct);
 
   const directDatabase = databaseNameOf("DIRECT_URL", direct);
   const pooledDatabase = databaseNameOf("DATABASE_URL", pooled);
@@ -39,6 +39,44 @@ export function resolveCliDatabaseUrl(env: Record<string, string | undefined> = 
         `"${pooledDatabase}". DIRECT_URL and DATABASE_URL must be the SAME database reached two ways (direct vs. ` +
         `through the pooler). If you are pointing DATABASE_URL at a different database on purpose (for example the ` +
         `test database), unset DIRECT_URL for that command — otherwise the CLI would silently target DIRECT_URL.`,
+    );
+  }
+  return requireExplicitCertificateHandling(direct);
+}
+
+const LOCAL_HOSTNAMES = new Set(["localhost", "127.0.0.1", "::1"]);
+
+/**
+ * Only for `DIRECT_URL` — the URL an operator deliberately points at a real
+ * database to migrate it.
+ *
+ * On the Prisma CLI's own connection path, `sslmode` does NOT verify the
+ * server's certificate: verified against a real TLS Postgres with a private
+ * CA, `sslmode=require` and even `sslmode=verify-full` connected with a WRONG
+ * CA (encrypted, unauthenticated). Only `sslaccept=strict` checks the chain and
+ * the hostname (accepts the right CA via `sslcert=<file>`, refuses a wrong one
+ * or a certificate that doesn't name the host). That is the same engine-vs-
+ * driver trap as `pgbouncer=true`, reversed: a URL that reads as "verified"
+ * and isn't. So a remote DIRECT_URL must state its certificate handling
+ * explicitly instead of inheriting the silent default. (The `DATABASE_URL`
+ * fallback is exempt: it is the local/CI path, and `prisma generate` — which
+ * never connects — also loads this file, e.g. on Vercel with a remote URL.)
+ */
+function requireExplicitCertificateHandling(direct: string): string {
+  let url: URL;
+  try {
+    url = new URL(direct);
+  } catch {
+    throw new Error("DIRECT_URL is not a valid connection URL.");
+  }
+  const hostname = url.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  const accept = url.searchParams.get("sslaccept");
+  if (!LOCAL_HOSTNAMES.has(hostname) && accept !== "strict" && accept !== "accept_invalid_certs") {
+    throw new Error(
+      `DIRECT_URL points at "${hostname}" but sets no sslaccept, so the Prisma CLI would connect without verifying the ` +
+        "server's certificate — sslmode alone does not verify it, even sslmode=verify-full. Add " +
+        "`sslaccept=strict&sslcert=<path to the database CA file>` to verify (see docs/DEPLOYMENT_RUNBOOK.md, step 5), or " +
+        "`sslaccept=accept_invalid_certs` to skip verification knowingly (temporary fallback).",
     );
   }
   return direct;
