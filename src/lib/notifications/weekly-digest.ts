@@ -36,10 +36,21 @@ import { getRetentionList } from "@/lib/analytics/retention";
  * the analytics module already established, applied here to the digest's
  * per-academy dispatch.
  */
+/** C1: what one academy's digest actually did — the counts `run-scheduled-job.ts` (via the
+ * cron route) needs for the JobRun row and the Healthchecks.io heartbeat. `skipped: 1`
+ * means nothing was owed to anyone here (no staff on file, or the organization is no
+ * longer active) — that must never register as a failure on the dead-man's switch. */
+export interface DigestResult {
+  organizationId: string;
+  sent: number;
+  failed: number;
+  skipped: number;
+}
+
 export async function sendWeeklyDigestForAcademy(
   academyId: string,
   resendClient: ResendClient = new Resend(requireEnv("RESEND_API_KEY")),
-): Promise<void> {
+): Promise<DigestResult> {
   // See platform-lookups.ts's resolveAcademyByIdOrThrow for why this
   // org-identity resolution can't itself be organization-scoped.
   const academy = await resolveAcademyByIdOrThrow(academyId);
@@ -48,8 +59,9 @@ export async function sendWeeklyDigestForAcademy(
   // dispatch loop and this call — skip, per spec: "Skip non-active
   // organizations." The route's own loop is expected to filter by active
   // organizations too; this is the same fail-closed check repeated at the
-  // point where it actually matters, not trusted away.
-  if (!jobContext) return;
+  // point where it actually matters, not trusted away. A SKIP (C1 decision
+  // #2), never a failure: nothing was owed to anyone here.
+  if (!jobContext) return { organizationId: academy.organizationId, sent: 0, failed: 0, skipped: 1 };
 
   // Trailing 7 real days, inclusive of today: [today - 6 days, today] against
   // `AttendanceRecord.date` (the pre-computed CR-calendar-day column, not a
@@ -82,6 +94,12 @@ export async function sendWeeklyDigestForAcademy(
     resolveStaffRecipients(academyId),
   ]);
 
+  // C1 decision #2: no staff email on file is a SKIP, not a failure — distinct from an
+  // email that was attempted and bounced (dispatchNotification's own failure path below).
+  if (recipients.length === 0) {
+    return { organizationId: academy.organizationId, sent: 0, failed: 0, skipped: 1 };
+  }
+
   const channel = new EmailChannel(resendClient);
 
   // Routed through dispatchToRecipients/dispatchNotification (same as the
@@ -92,7 +110,7 @@ export async function sendWeeklyDigestForAcademy(
   // applies here for free, with no separate error-handling logic needed.
   // `channels: [channel]` (never ALL_CHANNELS) is what keeps this EMAIL-ONLY
   // per the plan's ruling — it must never write an in-app Notification row.
-  await dispatchToRecipients(
+  const delivery = await dispatchToRecipients(
     recipients,
     "WEEKLY_DIGEST",
     {
@@ -103,4 +121,5 @@ export async function sendWeeklyDigestForAcademy(
     },
     [channel],
   );
+  return { organizationId: academy.organizationId, sent: delivery.sent, failed: delivery.failed, skipped: 0 };
 }
