@@ -1,5 +1,7 @@
 "use server";
 
+import { revalidatePath } from "next/cache";
+import { getLocale } from "next-intl/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { generateStudentCode } from "@/lib/students/generate-code";
@@ -41,6 +43,27 @@ const updateStudentSchema = z
     },
     { message: "guardianRequiredForMinor", path: ["guardianName"] },
   );
+
+/**
+ * A server action does not re-render the page it was called from unless it says that page is
+ * stale. Approve, archive, restore and edit change the student's status or details, which the
+ * detail page shows (the badge, and which of Approve / Archive / Restore is offered) and the
+ * roster lists — so without this "Student approved." appeared next to a badge that still read
+ * Pending, with the Approve button still there to be clicked a second time.
+ *
+ * Best-effort, never the reason a committed change reports failure: `revalidatePath` needs
+ * Next's request-scoped store, which does not exist when an action is called directly (the
+ * integration tests do), and the change has already been committed by now.
+ */
+async function refreshStudentPages(studentId: string): Promise<void> {
+  try {
+    const locale = await getLocale();
+    revalidatePath(`/${locale}/students/${studentId}`);
+    revalidatePath(`/${locale}/students`);
+  } catch (error) {
+    console.error("[students] failed to revalidate the student pages", { studentId, error });
+  }
+}
 
 /** `Date | null` -> a JSON-safe value for an `AuditLog.before`/`after` snapshot. */
 function isoOrNull(date: Date | null | undefined): string | null {
@@ -184,6 +207,7 @@ export async function updateStudent(
     throw error;
   }
 
+  await refreshStudentPages(parsed.data.studentId);
   return { ok: true };
 }
 
@@ -260,6 +284,7 @@ export async function archiveStudent(
     throw error;
   }
 
+  await refreshStudentPages(parsed.data.studentId);
   return { ok: true };
 }
 
@@ -359,6 +384,7 @@ export async function restoreStudent(
     throw error;
   }
 
+  await refreshStudentPages(parsed.data.studentId);
   return { ok: true };
 }
 
@@ -440,6 +466,7 @@ export async function approveStudent(
     throw error;
   }
 
+  await refreshStudentPages(parsed.data.studentId);
   return { ok: true };
 }
 
@@ -466,7 +493,7 @@ export async function regenerateStudentCode(
   _prevState: RegenerateCodeState,
   formData: FormData,
 ): Promise<RegenerateCodeState> {
-  const auth = await resolveActionContext(organizationId);
+  const auth = await resolveActionContext(organizationId, ["ADMIN", "DIRECTOR", "INSTRUCTOR"]);
   if (!auth.ok) return { error: "notFound" };
   const context = auth.context;
 
