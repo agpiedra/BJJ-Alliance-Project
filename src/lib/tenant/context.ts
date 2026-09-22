@@ -110,7 +110,7 @@ export type ActionAuthResult = { ok: true; context: TenantContext } | { ok: fals
  */
 export async function resolveActionContext(
   organizationId: string,
-  allowedRoles?: MembershipRole[],
+  allowedRoles: MembershipRole[],
 ): Promise<ActionAuthResult> {
   const session = await auth();
   const userId = session?.user?.id;
@@ -239,20 +239,27 @@ export function isAcademyInTenantScope(context: TenantContext, academyId: string
  * All four fail closed (decision 6); only the destination differs, and each
  * destination's copy is honest about which of these four it is.
  */
-export async function requireTenantContext(allowedRoles?: MembershipRole[]): Promise<TenantContext> {
+export async function requireTenantContext(allowedRoles: MembershipRole[]): Promise<TenantContext> {
   const result = await getTenantContext();
   if (result.status === "OK") {
-    // A member without the page's role is refused exactly as a non-member is
-    // on /platform (`requireSuperAdmin`): a real `notFound()`, so the route does
-    // not announce that it exists — and not a thrown Error, which is a raw 500.
-    //
-    // NO role list means STAFF, not "anyone": the Edge middleware can only refuse on
-    // a session claim, so a stale one (someone demoted to Student only while logged
-    // in) or a forged one gets through to here, and this DATABASE check is the only
-    // thing that stops it. A student-only member is admitted only by naming the
-    // roles explicitly (`requirePortalContext`).
-    const permitted = allowedRoles ? allowedRoles.includes(result.context.organizationRole) : isStaffRole(result.context.organizationRole);
-    if (!permitted) {
+    // The role list is REQUIRED — there is no no-argument form, so a permissive gate
+    // cannot be had by omission (tests/unit/tenant-gate-has-no-default.test.ts). The
+    // Edge middleware can only refuse on a session claim, so a stale one (someone
+    // moved to Student only while logged in) or a forged one gets through to here, and
+    // this DATABASE check is the only thing that stops it. A student-only member is
+    // admitted only by a page that names STUDENT (`requirePortalContext`).
+    if (!allowedRoles.includes(result.context.organizationRole)) {
+      // A member who is not staff at all was refused a page that excludes students: the
+      // stale-claim case. A bare 404 looks like a broken site to someone who was just
+      // moved to Student only, so they are TOLD — sent to the refresh route, which
+      // corrects the claim from the database and lands on /no-access. (`to` only
+      // carries the locale and a staff tree; it is never somewhere they are then sent.)
+      if (!isStaffRole(result.context.organizationRole)) {
+        redirect(`/api/access/refresh?to=${encodeURIComponent(`/${await getLocale()}/dashboard`)}`);
+      }
+      // A STAFF member without this page's role knows the app exists; they are refused
+      // exactly as a non-member is on /platform (`requireSuperAdmin`): a real `notFound()`,
+      // not a thrown Error, which is a raw 500.
       notFound();
     }
     return result.context;

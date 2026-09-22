@@ -26,6 +26,8 @@ const { registerOrganization } = await import("../../src/app/[locale]/register-a
 const { signup } = await import("../../src/app/[locale]/o/[orgSlug]/signup/actions");
 const { approveStudent } = await import("../../src/app/[locale]/(staff)/students/[id]/actions");
 const { hashSecret } = await import("../../src/lib/crypto");
+const { GET: refreshAccess } = await import("../../src/app/api/access/refresh/route");
+const { unstable_update: updateSession } = await import("@/auth");
 const { default: DashboardPage } = await import("../../src/app/[locale]/(staff)/dashboard/page");
 const { default: PaymentsPage } = await import("../../src/app/[locale]/(staff)/payments/page");
 const { default: StudentsPage } = await import("../../src/app/[locale]/(staff)/students/page");
@@ -53,6 +55,8 @@ let counter = 0;
 let approverId: string;
 
 const FORGED = { staff: true, portal: true };
+/** Where a page sends a refused student-only member: the route that corrects the claim from the database and explains. */
+const REFRESH = "/api/access/refresh?to=%2Fen%2Fdashboard";
 
 function form(fields: Record<string, string>): FormData {
   const fd = new FormData();
@@ -186,10 +190,28 @@ describe("a forged or stale staff claim is stopped by the page, not the middlewa
   });
 
   describe.each(STAFF_PAGES)("%s", (_label, renderPage) => {
-    it("REQUIRED: refuses a student-only member whose session CLAIMS staff access", async () => {
+    it("REQUIRED: refuses a student-only member whose session CLAIMS staff access — sent to the refresh, not a bare 404", async () => {
       currentSession = { user: { id: studentUserId }, activeOrganizationId: org.organizationId, access: FORGED };
-      expect(await outcomeOf(renderPage())).toEqual({ notFound: true });
+      expect(await outcomeOf(renderPage())).toEqual({ redirect: REFRESH });
     });
+  });
+
+  it("REQUIRED: following that redirect corrects the stale claim from the database and lands on the no-access page", async () => {
+    currentSession = { user: { id: studentUserId }, activeOrganizationId: org.organizationId, access: FORGED };
+    vi.mocked(updateSession).mockClear();
+    const hop = await outcomeOf(refreshAccess(new Request(`http://localhost${REFRESH}`)));
+    expect(hop).toEqual({ redirect: "/en/no-access" });
+    expect(updateSession).toHaveBeenCalledWith({ activeOrganizationId: org.organizationId });
+  });
+
+  it("control: a staff member refused an Owner-only page is NOT sent to the refresh — they still get the 404", async () => {
+    const instructor = await approvedStudent(org);
+    await prisma.organizationMembership.update({
+      where: { userId_organizationId: { userId: instructor.id, organizationId: org.organizationId } },
+      data: { role: "INSTRUCTOR" },
+    });
+    currentSession = { user: { id: instructor.id }, activeOrganizationId: org.organizationId, access: { staff: true, portal: true } };
+    expect(await outcomeOf(StaffManagementPage())).toEqual({ notFound: true });
   });
 
   it("REQUIRED: a claim cannot name an organization the person does not belong to", async () => {

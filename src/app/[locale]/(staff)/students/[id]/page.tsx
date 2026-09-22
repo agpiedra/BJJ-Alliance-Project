@@ -46,7 +46,7 @@ export default async function StudentDetailPage({
 }: {
   params: Promise<{ locale: string; id: string }>;
 }) {
-  const context = await requireTenantContext();
+  const context = await requireTenantContext(["ADMIN", "DIRECTOR", "INSTRUCTOR"]);
   const { locale, id } = await params;
 
   // MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 2d: this staff route previously had

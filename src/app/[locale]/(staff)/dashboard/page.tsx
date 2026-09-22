@@ -121,7 +121,7 @@ function paymentStatusLabel(status: ContactPaymentStatus, tPaymentStatus: (key: 
 }
 
 export default async function DashboardPage() {
-  const context = await requireTenantContext();
+  const context = await requireTenantContext(["ADMIN", "DIRECTOR", "INSTRUCTOR"]);
   const t = await getTranslations("dashboard");
   const tBelt = await getTranslations("belt");
   const tPaymentStatus = await getTranslations("students.paymentStatus");

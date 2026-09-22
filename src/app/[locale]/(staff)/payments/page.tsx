@@ -30,7 +30,7 @@ function joinNames(names: string[], max = 3): string {
 }
 
 export default async function PaymentsPage() {
-  const context = await requireTenantContext();
+  const context = await requireTenantContext(["ADMIN", "DIRECTOR", "INSTRUCTOR"]);
   const t = await getTranslations("payments");
   const branding = await getOrganizationBranding(context);
   const locale = await getLocale();
