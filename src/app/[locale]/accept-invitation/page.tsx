@@ -1,3 +1,4 @@
+import { auth } from "@/auth";
 import { BrandBanner } from "@/components/brand/brand-banner";
 import { describeInvitation } from "@/lib/staff/describe-invitation";
 import { AcceptInvitationForm } from "./accept-invitation-form";
@@ -21,7 +22,10 @@ export default async function AcceptInvitationPage({
 }) {
   const { locale } = await params;
   const { token = "" } = await searchParams;
-  const summary = await describeInvitation(token);
+  // The visitor's own session decides only which words follow a successful join (offer the app,
+  // or ask them to sign in) — it never lets a link change anything about the account.
+  const session = await auth();
+  const summary = await describeInvitation(token, session?.user?.email);
 
   return (
     <>

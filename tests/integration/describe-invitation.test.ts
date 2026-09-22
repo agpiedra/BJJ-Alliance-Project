@@ -5,7 +5,8 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/email/send-transactional-email", () => ({
   sendTransactionalEmail: vi.fn(async () => ({ success: true })),
 }));
-vi.mock("@/auth", () => ({ auth: () => Promise.resolve(null), signIn: vi.fn() }));
+let currentSession: { user: { email: string } } | null = null;
+vi.mock("@/auth", () => ({ auth: () => Promise.resolve(currentSession), signIn: vi.fn() }));
 
 const { approveOrganization } = await import("../../src/lib/organizations/approve-organization");
 const { describeInvitation } = await import("../../src/lib/staff/describe-invitation");
@@ -87,6 +88,66 @@ describe("describeInvitation tells the accept page whether a password is needed"
 
     expect(summary).toMatchObject({ valid: true, mode: "join" });
     expect((summary as { organizationName: string }).organizationName).toContain("Describe");
+  });
+
+  // After joining, the page used to say "Sign in with the password you already have" — nonsense
+  // for someone who is ALREADY signed in as the invitee (the usual case: a student promoted to
+  // instructor, holding the link in the session they are using). The server, which has the
+  // invitation's email, says whether the visitor's own session is the invitee's — without ever
+  // putting the email on the wire.
+  describe("whether the visitor is already signed in as the person invited", () => {
+    it("REQUIRED: true only when the session's email IS the invited email (case-insensitively)", async () => {
+      const email = `describe-signed-in-${suffix}@example.com`;
+      const user = await prisma.user.create({ data: { email, passwordHash: await hashSecret("already-mine-pass-1"), role: "INSTRUCTOR", active: true } });
+      userIds.push(user.id);
+      const token = await issue(email);
+
+      expect(await describeInvitation(token, email)).toMatchObject({ valid: true, alreadySignedIn: true });
+      expect(await describeInvitation(token, email.toUpperCase())).toMatchObject({ alreadySignedIn: true });
+    });
+
+    it("REQUIRED: false for a different signed-in account, and for nobody signed in (they still need to sign in as the invitee)", async () => {
+      const email = `describe-not-them-${suffix}@example.com`;
+      const user = await prisma.user.create({ data: { email, passwordHash: await hashSecret("already-mine-pass-1"), role: "INSTRUCTOR", active: true } });
+      userIds.push(user.id);
+      const token = await issue(email);
+
+      expect(await describeInvitation(token, `someone-else-${suffix}@example.com`)).toMatchObject({ valid: true, alreadySignedIn: false });
+      expect(await describeInvitation(token, null)).toMatchObject({ alreadySignedIn: false });
+      expect(await describeInvitation(token)).toMatchObject({ alreadySignedIn: false });
+    });
+
+    // The wiring, not just the function: the page reads the visitor's session and hands its email
+    // to describeInvitation. Without this a correct function could sit unused (a page that never
+    // passes the session says "sign in" to everyone, exactly as before).
+    it("REQUIRED: the accept PAGE passes the visitor's session to it", async () => {
+      const { default: AcceptInvitationPage } = await import("../../src/app/[locale]/accept-invitation/page");
+      const email = `describe-page-${suffix}@example.com`;
+      const user = await prisma.user.create({ data: { email, passwordHash: await hashSecret("already-mine-pass-1"), role: "INSTRUCTOR", active: true } });
+      userIds.push(user.id);
+      const token = await issue(email);
+      const render = async () => {
+        const tree = (await AcceptInvitationPage({
+          params: Promise.resolve({ locale: "en" }),
+          searchParams: Promise.resolve({ token }),
+        })) as { props: { children: Array<{ props: { summary: { alreadySignedIn?: boolean } } }> } };
+        return tree.props.children[1].props.summary.alreadySignedIn;
+      };
+
+      currentSession = { user: { email } };
+      expect(await render()).toBe(true);
+      currentSession = { user: { email: `someone-else-${suffix}@example.com` } };
+      expect(await render()).toBe(false);
+      currentSession = null;
+      expect(await render()).toBe(false);
+    });
+
+    it("never reveals the invited email, and an invalid link still says nothing", async () => {
+      const email = `describe-private-${suffix}@example.com`;
+      const summary = await describeInvitation(await issue(email), email);
+      expect(JSON.stringify(summary)).not.toContain(email);
+      expect(await describeInvitation("not-a-real-token", email)).toEqual({ valid: false });
+    });
   });
 
   it("a used, revoked, expired or unknown link is just invalid — with no hint which", async () => {

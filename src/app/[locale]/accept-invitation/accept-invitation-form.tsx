@@ -27,14 +27,20 @@ export function AcceptInvitationForm({ locale, token, summary }: { locale: strin
 
   const params = { organization: summary.organizationName, role: tRole(summary.role as never) };
 
-  // An existing account just joined: no session is minted from a link, so send them to sign in.
+  // An existing account just joined. No session is minted from a link, so someone who is NOT signed
+  // in as the invitee is sent to sign in. Someone who already is (a student promoted to instructor,
+  // in the very session holding the link) is offered the app instead — telling them to sign in with
+  // the password they already have is nonsense. Their next click refreshes their access from the
+  // database (/api/access/refresh), so the old session needs nothing from them.
   if (state.ok) {
     return (
       <main className="flex min-h-[calc(100vh-4rem)] flex-col items-center justify-center gap-4 p-6">
         <h1 className="text-2xl font-bold">{t("joined", { organization: summary.organizationName })}</h1>
-        <p className="max-w-sm text-center text-sm text-muted-foreground">{t("joinedBody")}</p>
-        <a href={`/${locale}/login`} className="underline">
-          {t("signIn")}
+        <p className="max-w-sm text-center text-sm text-muted-foreground">
+          {summary.alreadySignedIn ? t("joinedBodySignedIn") : t("joinedBody")}
+        </p>
+        <a href={summary.alreadySignedIn ? `/${locale}/dashboard` : `/${locale}/login`} className="underline">
+          {summary.alreadySignedIn ? t("openApp") : t("signIn")}
         </a>
       </main>
     );

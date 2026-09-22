@@ -82,6 +82,8 @@
       "joinSubmit": "Unirme",
       "joined": "Te uniste a {organization}",
       "joinedBody": "Inicia sesión con la contraseña que ya tienes.",
+      "joinedBodySignedIn": "Ya iniciaste sesión. Abre la app para empezar.",
+      "openApp": "Abrir la app",
       "signIn": "Iniciar sesión",
       "invalidPassword": "Tu contraseña necesita al menos 8 caracteres."
     },
