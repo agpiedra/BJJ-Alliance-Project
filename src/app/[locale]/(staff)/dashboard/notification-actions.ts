@@ -9,7 +9,7 @@ import type { Notification } from "@/generated/prisma/client";
 // `getStaffSession()`'s `academyIds` fed real cross-tenant query scoping
 // with no organizationId anywhere, which `Notification` (organizationId
 // NOT NULL) inherited via this file's raw `prisma.notification` calls.
-const STAFF_ROLES = ["ADMIN", "DIRECTOR", "INSTRUCTOR"] as const;
+// Each action below names the roles explicitly (there is no default list).
 
 // All three take the organization the CALLER names and re-verify the caller's
 // membership in it (`resolveActionContext`), rather than trusting the session's
@@ -19,7 +19,7 @@ const STAFF_ROLES = ["ADMIN", "DIRECTOR", "INSTRUCTOR"] as const;
 
 /** The signed-in staff member's own 20 most recent notifications, newest first. */
 export async function getMyNotifications(organizationId: string): Promise<Notification[]> {
-  const auth = await resolveActionContext(organizationId, [...STAFF_ROLES]);
+  const auth = await resolveActionContext(organizationId, ["ADMIN", "DIRECTOR", "INSTRUCTOR"]);
   if (!auth.ok) return [];
   const context = auth.context;
   return getScopedDb(context).notification.findMany({
@@ -31,7 +31,7 @@ export async function getMyNotifications(organizationId: string): Promise<Notifi
 
 /** The signed-in staff member's own unread count — for the bell's badge. */
 export async function getUnreadCount(organizationId: string): Promise<number> {
-  const auth = await resolveActionContext(organizationId, [...STAFF_ROLES]);
+  const auth = await resolveActionContext(organizationId, ["ADMIN", "DIRECTOR", "INSTRUCTOR"]);
   if (!auth.ok) return 0;
   const context = auth.context;
   return getScopedDb(context).notification.count({ where: { userId: context.actorUserId, readAt: null } });
@@ -46,7 +46,7 @@ export async function getUnreadCount(organizationId: string): Promise<number> {
  * touch."
  */
 export async function markAllRead(organizationId: string): Promise<void> {
-  const auth = await resolveActionContext(organizationId, [...STAFF_ROLES]);
+  const auth = await resolveActionContext(organizationId, ["ADMIN", "DIRECTOR", "INSTRUCTOR"]);
   if (!auth.ok) return;
   const context = auth.context;
   await getScopedDb(context).notification.updateMany({

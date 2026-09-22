@@ -75,12 +75,32 @@ describe("a stale or forged access claim, through real HTTP", () => {
       }
     });
 
-    it("REQUIRED: the same student with a claim of staff access sails through the middleware and is stopped by the page: exactly 404", async () => {
+    it("REQUIRED: the same student with a claim of staff access sails through the middleware — and the PAGE sends them to the refresh, not to a bare 404", async () => {
       const forged = await withAccessClaim(studentCookie, FORGED);
-      for (const path of STAFF_TREES) {
+      // The middleware would send them to the refresh with `to` = the path they asked for (the control above).
+      // A `to` of the dashboard for these other paths can only have come from the page's own database check.
+      for (const path of ["/en/students", "/en/admin/staff"]) {
         const response = await get(path, forged);
-        expect(response.status, `${path} — the middleware passed the forged claim, so only the page's database check can refuse it`).toBe(404);
+        expect(redirectTarget(response), `${path} — the middleware passed the forged claim, so only the page's database check can have redirected`).toBe(
+          `/api/access/refresh?to=${encodeURIComponent("/en/dashboard")}`,
+        );
       }
+    });
+
+    it("REQUIRED: that redirect, followed, corrects the session and explains — and the very next request is refused at the middleware", async () => {
+      const forged = await withAccessClaim(studentCookie, FORGED);
+      const fromPage = redirectTarget(await get("/en/students", forged));
+      const refresh = await get(fromPage, forged);
+      expect(redirectTarget(refresh)).toBe("/en/no-access");
+      const healed = sessionCookieSetBy(refresh);
+      expect(healed, "the refresh did not write the corrected claim back into the session cookie").not.toBeNull();
+      expect((await readSessionCookie(healed!)).access).toEqual({ staff: false, portal: true });
+      expect(redirectTarget(await get("/en/students", healed!))).toBe(`/api/access/refresh?to=${encodeURIComponent("/en/students")}`);
+    });
+
+    it("control: a STAFF member refused an Owner-only page is not sent anywhere — exactly 404 (they know the app exists)", async () => {
+      const response = await get("/en/admin/staff", instructorCookie);
+      expect(response.status).toBe(404);
     });
 
     it("REQUIRED: following the honest student's refusal ends on a plain 'no access' page, not the login page and not a crash", async () => {

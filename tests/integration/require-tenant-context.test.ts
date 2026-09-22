@@ -21,6 +21,9 @@ const { requireTenantContext } = await import("../../src/lib/tenant/context");
 
 const prisma = getTestPrismaClient();
 
+/** What a staff page names. Every call names its roles: there is no no-argument form (tests/unit/tenant-gate-has-no-default.test.ts). */
+const STAFF_PAGE: Array<"ADMIN" | "DIRECTOR" | "INSTRUCTOR"> = ["ADMIN", "DIRECTOR", "INSTRUCTOR"];
+
 const cleanupUserIds: string[] = [];
 const cleanupOrganizationIds: string[] = [];
 
@@ -40,7 +43,7 @@ function suffix() {
 
 async function makeOrgAndAdmin(
   status: "PENDING" | "ACTIVE" | "SUSPENDED" | "CANCELLED",
-  membershipRole: "ADMIN" | "INSTRUCTOR" = "ADMIN",
+  membershipRole: "ADMIN" | "INSTRUCTOR" | "STUDENT" = "ADMIN",
 ) {
   const s = suffix();
   const organization = await prisma.organization.create({
@@ -85,7 +88,7 @@ describe("requireTenantContext", () => {
 
   it("redirects to /login when there is no session at all (the genuinely UNAUTHENTICATED case)", async () => {
     currentSession = null;
-    expect(await redirectTargetOf(requireTenantContext())).toBe("/en/login");
+    expect(await redirectTargetOf(requireTenantContext(STAFF_PAGE))).toBe("/en/login");
   });
 
   it("redirects to /select-organization when a signed-in user has 2+ active memberships and no resolved selector", async () => {
@@ -98,13 +101,13 @@ describe("requireTenantContext", () => {
     await prisma.organizationMembership.create({ data: { userId: user.id, organizationId: orgB.id, role: "ADMIN" } });
 
     currentSession = { user: { id: user.id, role: "ADMIN" }, activeOrganizationId: undefined };
-    expect(await redirectTargetOf(requireTenantContext())).toBe("/en/select-organization");
+    expect(await redirectTargetOf(requireTenantContext(STAFF_PAGE))).toBe("/en/select-organization");
   });
 
   it("redirects to /no-organization-access (NOT /login) when the session's active organization has no membership row — the user IS authenticated, this is a different failure", async () => {
     const { user } = await makeOrgAndAdmin("ACTIVE");
     currentSession = { user: { id: user.id, role: "ADMIN" }, activeOrganizationId: "no-such-organization-id" };
-    expect(await redirectTargetOf(requireTenantContext())).toBe("/en/no-organization-access");
+    expect(await redirectTargetOf(requireTenantContext(STAFF_PAGE))).toBe("/en/no-organization-access");
   });
 
   // 1e: the exact fix — ORG_NOT_ACTIVE must NOT fall into the same /login
@@ -114,7 +117,7 @@ describe("requireTenantContext", () => {
     for (const status of ["PENDING", "SUSPENDED", "CANCELLED"] as const) {
       const { organization, user } = await makeOrgAndAdmin(status);
       currentSession = { user: { id: user.id, role: "ADMIN" }, activeOrganizationId: organization.id };
-      expect(await redirectTargetOf(requireTenantContext())).toBe("/en/organization-unavailable");
+      expect(await redirectTargetOf(requireTenantContext(STAFF_PAGE))).toBe("/en/organization-unavailable");
     }
   });
 
@@ -122,7 +125,7 @@ describe("requireTenantContext", () => {
     const { organization, user } = await makeOrgAndAdmin("ACTIVE");
     currentSession = { user: { id: user.id, role: "ADMIN" }, activeOrganizationId: organization.id };
 
-    const context = await requireTenantContext();
+    const context = await requireTenantContext(STAFF_PAGE);
 
     expect(context.organizationId).toBe(organization.id);
     expect(context.organizationRole).toBe("ADMIN");
@@ -163,6 +166,36 @@ describe("requireTenantContext", () => {
     it("does not turn the other refusals into 404s: an unauthenticated visitor still goes to /login, whatever roles the page asks for", async () => {
       currentSession = null;
       expect(await redirectTargetOf(requireTenantContext(["ADMIN"]))).toBe("/en/login");
+    });
+  });
+
+  // Moved to Student only while logged in: the session still carries a staff claim, the
+  // Edge middleware can only refuse (it has no database) so it lets them through, and this
+  // check is what stops them. It used to stop them with a bare 404 — which looks like a
+  // broken site to someone who was just changed to student-only. They are TOLD instead:
+  // sent to the refresh route, which corrects the claim from the database and lands them
+  // on /no-access. (A STAFF member refused an Owner-only page is different — they know the
+  // app exists — and still gets the 404 above.)
+  describe("a student-only member on a page that excludes students", () => {
+    async function studentSession() {
+      const { organization, user } = await makeOrgAndAdmin("ACTIVE", "STUDENT");
+      currentSession = { user: { id: user.id, role: "ADMIN" }, activeOrganizationId: organization.id };
+    }
+
+    it("REQUIRED: is sent to the refresh route, which corrects the claim and explains — not a bare 404", async () => {
+      await studentSession();
+      expect(await redirectTargetOf(requireTenantContext(STAFF_PAGE))).toBe("/api/access/refresh?to=%2Fen%2Fdashboard");
+    });
+
+    it("REQUIRED: the same on an Owner-only page", async () => {
+      await studentSession();
+      expect(await redirectTargetOf(requireTenantContext(["ADMIN"]))).toBe("/api/access/refresh?to=%2Fen%2Fdashboard");
+    });
+
+    it("control: a page that NAMES students (the portal) admits them, so this is about the page's list, not the person", async () => {
+      await studentSession();
+      const context = await requireTenantContext(["ADMIN", "DIRECTOR", "INSTRUCTOR", "STUDENT"]);
+      expect(context.organizationRole).toBe("STUDENT");
     });
   });
 });

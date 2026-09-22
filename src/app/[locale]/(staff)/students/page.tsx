@@ -144,7 +144,7 @@ export default async function StudentsPage({
 }: {
   searchParams: Promise<StudentsSearchParams>;
 }) {
-  const context = await requireTenantContext();
+  const context = await requireTenantContext(["ADMIN", "DIRECTOR", "INSTRUCTOR"]);
   const params = await searchParams;
 
   const students = await listStudents(context, {

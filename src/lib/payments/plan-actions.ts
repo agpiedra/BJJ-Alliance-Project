@@ -27,8 +27,6 @@ import type { ActionState } from "@/lib/action-state";
  * `planId` or `academyId` is never trusted as already in scope.
  */
 
-const STAFF = ["ADMIN", "DIRECTOR"] as const;
-
 /** `decimal(10,2)` holds up to 99,999,999.99. */
 const MAX_AMOUNT = 99_999_999.99;
 
@@ -70,7 +68,7 @@ async function refreshPlanPages(): Promise<void> {
 }
 
 export async function createPlan(organizationId: string, _prevState: ActionState, formData: FormData): Promise<ActionState> {
-  const auth = await resolveActionContext(organizationId, [...STAFF]);
+  const auth = await resolveActionContext(organizationId, ["ADMIN", "DIRECTOR"]);
   if (!auth.ok) return { error: "notFound" };
   const context = auth.context;
 
@@ -138,7 +136,7 @@ export async function createPlan(organizationId: string, _prevState: ActionState
 }
 
 export async function updatePlan(organizationId: string, _prevState: ActionState, formData: FormData): Promise<ActionState> {
-  const auth = await resolveActionContext(organizationId, [...STAFF]);
+  const auth = await resolveActionContext(organizationId, ["ADMIN", "DIRECTOR"]);
   if (!auth.ok) return { error: "notFound" };
   const context = auth.context;
 
@@ -202,7 +200,7 @@ export async function updatePlan(organizationId: string, _prevState: ActionState
  * touches a single payment already recorded on the plan.
  */
 async function setPlanActive(organizationId: string, planId: string, active: boolean): Promise<ActionState> {
-  const auth = await resolveActionContext(organizationId, [...STAFF]);
+  const auth = await resolveActionContext(organizationId, ["ADMIN", "DIRECTOR"]);
   if (!auth.ok) return { error: "notFound" };
   const context = auth.context;
 

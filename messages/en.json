@@ -82,6 +82,8 @@
       "joinSubmit": "Join",
       "joined": "You've joined {organization}",
       "joinedBody": "Sign in with the password you already have.",
+      "joinedBodySignedIn": "You are already signed in. Open the app to get started.",
+      "openApp": "Open the app",
       "signIn": "Sign in",
       "invalidPassword": "Your password needs at least 8 characters."
     },

@@ -11,6 +11,9 @@ export type InvitationSummary =
       mode: "setPassword" | "join";
       organizationName: string;
       role: string;
+      /** The visitor's own session belongs to the person invited. Decided here, where the invitation's
+       * email is known, so the email itself never goes to the page. */
+      alreadySignedIn: boolean;
     };
 
 /**
@@ -24,7 +27,7 @@ export type InvitationSummary =
  * (`!user || !user.active`) is stated in both places and pinned by
  * tests/integration/describe-invitation.test.ts.
  */
-export async function describeInvitation(token: string): Promise<InvitationSummary> {
+export async function describeInvitation(token: string, sessionEmail?: string | null): Promise<InvitationSummary> {
   if (!token) return { valid: false };
   const invitation = await prisma.invitation.findUnique({
     where: { tokenHash: digestLookupSecret(token, requireEnv("CODE_PEPPER")) },
@@ -47,5 +50,6 @@ export async function describeInvitation(token: string): Promise<InvitationSumma
     mode: !user || !user.active ? "setPassword" : "join",
     organizationName: invitation.organization.name,
     role: invitation.role,
+    alreadySignedIn: Boolean(sessionEmail) && sessionEmail!.toLowerCase() === invitation.email.toLowerCase(),
   };
 }
