@@ -1,10 +1,30 @@
 import "dotenv/config";
 import { getTestPrismaClient } from "../helpers/test-db";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { requireEnv } from "../../src/lib/env";
 import { digestLookupSecret } from "../../src/lib/crypto";
 import { toAttendanceDate } from "../../src/lib/scheduling/zone";
 import type { TenantContext } from "../../src/lib/tenant/types";
+
+// C1: lets exactly one test (below) direct one real organization id to throw from
+// runAutomaticStripeAwardsForOrganization, without touching production code — every other
+// organization id (including every test in this file that calls it directly) still runs
+// the REAL implementation, forwarded to `actual`. Same shape as
+// tests/integration/weekly-digest.test.ts's own `digestFailureState`.
+const autoAwardFailureState = vi.hoisted(() => ({ failOrganizationId: null as string | null }));
+
+vi.mock("../../src/lib/promotion/automation", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../src/lib/promotion/automation")>();
+  return {
+    ...actual,
+    runAutomaticStripeAwardsForOrganization: vi.fn(async (organizationId: string, batchSize?: number) => {
+      if (organizationId === autoAwardFailureState.failOrganizationId) {
+        throw new Error("SIMULATED_AUTO_AWARD_FAILURE_FOR_TEST");
+      }
+      return actual.runAutomaticStripeAwardsForOrganization(organizationId, batchSize);
+    }),
+  };
+});
 
 const { GET } = await import("../../src/app/api/cron/promotion-auto-award/route");
 const { runAutomaticStripeAwardsForOrganization } = await import("../../src/lib/promotion/automation");
@@ -114,6 +134,21 @@ async function addAttendances(studentId: string, academyId: string, organization
 }
 
 describe("GET /api/cron/promotion-auto-award", () => {
+  // These tests call the REAL route, which (C1) writes a real JobRun row on every call —
+  // cleaned up here so a leftover row doesn't outrank a deliberately old fixture row in
+  // tests/integration/health-jobs-endpoint.test.ts's own "most recent run" query. Cleanup
+  // is by ID SET (snapshot before, delete whatever's new after), not by `startedAt` — a
+  // wall-clock comparison between this process and the database server is vulnerable to
+  // clock skew between the two.
+  let jobRunIdsBeforeSuite: Set<string>;
+  beforeAll(async () => {
+    jobRunIdsBeforeSuite = new Set(
+      (await prisma.jobRun.findMany({ where: { jobName: "promotion-auto-award" }, select: { id: true } })).map((r) => r.id),
+    );
+  });
+  afterAll(async () => {
+    await prisma.jobRun.deleteMany({ where: { jobName: "promotion-auto-award", id: { notIn: [...jobRunIdsBeforeSuite] } } });
+  });
   afterEach(() => {
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
@@ -143,6 +178,9 @@ describe("GET /api/cron/promotion-auto-award", () => {
       expect(response.status).toBe(200);
       const body = await response.json();
       expect(body.ok).toBe(true);
+      // C1: the route surfaces real counts, not just an opaque `results` array.
+      expect(body.sent).toBeGreaterThanOrEqual(1);
+      expect(body.failed).toBe(0);
 
       const promotions = await prisma.promotion.findMany({ where: { studentId: student.id } });
       expect(promotions).toHaveLength(1);
@@ -152,8 +190,48 @@ describe("GET /api/cron/promotion-auto-award", () => {
       expect(after.currentStripes).toBe(1);
       // Stripe award — the anchor is untouched (the 47 -> 17 rule).
       expect(after.beltAwardedAt.getTime()).toBe(beltAwardedAt.getTime());
+
+      // C1: the run is recorded on JobRun, SUCCEEDED, with the same sent count the response
+      // reported — this is the row the health endpoint and Healthchecks.io heartbeat rely on.
+      const run = await prisma.jobRun.findFirst({ where: { jobName: "promotion-auto-award" }, orderBy: { startedAt: "desc" } });
+      expect(run).toMatchObject({ status: "SUCCEEDED", sent: body.sent, failed: 0 });
+      expect(run!.finishedAt).not.toBeNull();
     } finally {
       await cleanupOrg(orgId, academyId);
+    }
+  });
+
+  it("REQUIRED (C1): one organization throwing doesn't block the others, and is recorded — PARTIAL, not SUCCEEDED", async () => {
+    vi.stubEnv("CRON_SECRET", "test-cron-secret");
+    const good = await makeApprovalOffOrg("c1-good");
+    const bad = await makeApprovalOffOrg("c1-bad");
+    autoAwardFailureState.failOrganizationId = bad.orgId;
+    try {
+      const beltAwardedAt = new Date("2026-01-01T12:00:00Z");
+      const student = await makeStudent(good.academyId, good.orgId, good.whiteId, 0, beltAwardedAt);
+      await addAttendances(student.id, good.academyId, good.orgId, 30, new Date(beltAwardedAt.getTime() + DAY_MS));
+
+      const response = await GET(request("test-cron-secret"));
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.ok).toBe(false);
+      expect(body.sent).toBeGreaterThanOrEqual(1);
+      expect(body.failed).toBeGreaterThanOrEqual(1);
+      const failedEntry = body.errors.find((e: { organizationId: string }) => e.organizationId === bad.orgId);
+      expect(failedEntry?.error).toContain("SIMULATED_AUTO_AWARD_FAILURE_FOR_TEST");
+
+      // The good organization still got its award — one organization's failure never blocks another.
+      expect(await prisma.promotion.count({ where: { studentId: student.id, source: "AUTO" } })).toBe(1);
+
+      // C1: PARTIAL because something both succeeded (the good org) and failed (the bad
+      // org) in the same run — never silently reported as SUCCEEDED.
+      const run = await prisma.jobRun.findFirst({ where: { jobName: "promotion-auto-award" }, orderBy: { startedAt: "desc" } });
+      expect(run!.status).toBe("PARTIAL");
+      expect(run!.failed).toBeGreaterThanOrEqual(1);
+    } finally {
+      autoAwardFailureState.failOrganizationId = null;
+      await cleanupOrg(good.orgId, good.academyId);
+      await cleanupOrg(bad.orgId, bad.academyId);
     }
   });
 

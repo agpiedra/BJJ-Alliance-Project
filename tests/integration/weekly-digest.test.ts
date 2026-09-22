@@ -1,6 +1,6 @@
 import "dotenv/config";
 import { getTestPrismaClient } from "../helpers/test-db";
-import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { DateTime } from "luxon";
 import { requireEnv } from "../../src/lib/env";
 import { digestLookupSecret, hashSecret } from "../../src/lib/crypto";
@@ -34,8 +34,9 @@ vi.mock("../../src/lib/notifications/weekly-digest", async (importOriginal) => {
       if (digestFailureState.okAcademyIds.has(academyId)) {
         // Succeeds without touching the real DB/email path — resolving
         // staff recipients for real would email every real ADMIN user in
-        // the shared dev DB, which this test has no business doing.
-        return;
+        // the shared dev DB, which this test has no business doing. Still a
+        // real-shaped DigestResult (C1): the route destructures it.
+        return { organizationId: `fake-org-for-${academyId}`, sent: 1, failed: 0, skipped: 0 };
       }
       return actual.sendWeeklyDigestForAcademy(academyId, resendClient as never);
     }),
@@ -277,7 +278,13 @@ describe("sendWeeklyDigestForAcademy", () => {
     const notificationCountBefore = await prisma.notification.count({ where: { type: "WEEKLY_DIGEST" } });
 
     const clientA = new RecordingResendClient();
-    await sendWeeklyDigestForAcademy(academyA.id, clientA);
+    const resultA = await sendWeeklyDigestForAcademy(academyA.id, clientA);
+    // C1: real recipients exist (there's always at least the seeded ADMIN), so this must
+    // never be reported as skipped, and nothing failed. Not an exact `sent` count — other
+    // ADMIN users may pre-exist in the shared dev DB, same reasoning as the presence
+    // checks below.
+    expect(resultA).toMatchObject({ organizationId: academyA.organizationId, failed: 0, skipped: 0 });
+    expect(resultA.sent).toBeGreaterThanOrEqual(2);
 
     // Recipients: ADMIN + academy A's DIRECTOR are both emailed; academy B's
     // DIRECTOR never is. Checked by presence, not exact array equality/length
@@ -353,7 +360,12 @@ describe("sendWeeklyDigestForAcademy", () => {
 
     const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
-      await sendWeeklyDigestForAcademy(academy.id, new FailingResendClient());
+      const result = await sendWeeklyDigestForAcademy(academy.id, new FailingResendClient());
+      // C1: this is the exact gap that motivated real counts — before, a digest where
+      // EVERY email failed still reported `ok: true` to the cron dashboard.
+      expect(result.failed).toBeGreaterThan(0);
+      expect(result.sent).toBe(0);
+      expect(result.skipped).toBe(0);
 
       const loggedDeliveryFailure = consoleErrorSpy.mock.calls.some(
         ([message, details]) =>
@@ -367,10 +379,66 @@ describe("sendWeeklyDigestForAcademy", () => {
       consoleErrorSpy.mockRestore();
     }
   });
+
+  // C1 decision #2: an academy with no staff email on file is not the same problem as an
+  // email that was sent and bounced — it must count as SKIPPED, never FAILED, so it can
+  // never trip the dead-man's switch's /fail ping on its own.
+  it("REQUIRED: an academy with zero staff recipients counts as skipped, not failed — and no email is attempted", async () => {
+    const s = suffix();
+    const organization = await prisma.organization.create({
+      data: { slug: `weekly-digest-no-staff-${s}`, name: `No Staff Org ${s}`, status: "ACTIVE" },
+    });
+    const academy = await prisma.academy.create({
+      data: { name: `No Staff Academy ${s}`, slug: `no-staff-academy-${s}`, kioskTokenHash: `no-staff-hash-${s}`, organizationId: organization.id },
+    });
+    try {
+      const client = new RecordingResendClient();
+      const result = await sendWeeklyDigestForAcademy(academy.id, client);
+
+      expect(result).toEqual({ organizationId: organization.id, sent: 0, failed: 0, skipped: 1 });
+      expect(client.calls).toHaveLength(0);
+    } finally {
+      await prisma.academy.deleteMany({ where: { id: academy.id } });
+      await prisma.organization.deleteMany({ where: { id: organization.id } });
+    }
+  });
+
+  it("REQUIRED: an organization that is no longer ACTIVE (suspended between the cron loop and this call) also counts as skipped, not failed", async () => {
+    const s = suffix();
+    const organization = await prisma.organization.create({
+      data: { slug: `weekly-digest-suspended-${s}`, name: `Suspended Org ${s}`, status: "SUSPENDED" },
+    });
+    const academy = await prisma.academy.create({
+      data: { name: `Suspended Academy ${s}`, slug: `suspended-academy-${s}`, kioskTokenHash: `suspended-hash-${s}`, organizationId: organization.id },
+    });
+    try {
+      const client = new RecordingResendClient();
+      const result = await sendWeeklyDigestForAcademy(academy.id, client);
+
+      expect(result).toEqual({ organizationId: organization.id, sent: 0, failed: 0, skipped: 1 });
+      expect(client.calls).toHaveLength(0);
+    } finally {
+      await prisma.academy.deleteMany({ where: { id: academy.id } });
+      await prisma.organization.deleteMany({ where: { id: organization.id } });
+    }
+  });
 });
 
 describe("GET /api/cron/weekly-digest", () => {
-  afterAll(cleanup);
+  // These tests call the REAL route, which (C1) writes a real JobRun row on every call —
+  // cleaned up here so a leftover row doesn't outrank a deliberately old fixture row in
+  // tests/integration/health-jobs-endpoint.test.ts's own "most recent run" query. Cleanup
+  // is by ID SET (snapshot before, delete whatever's new after), not by `startedAt` — a
+  // wall-clock comparison between this process and the database server is vulnerable to
+  // clock skew between the two.
+  let jobRunIdsBeforeSuite: Set<string>;
+  beforeAll(async () => {
+    jobRunIdsBeforeSuite = new Set((await prisma.jobRun.findMany({ where: { jobName: "weekly-digest" }, select: { id: true } })).map((r) => r.id));
+  });
+  afterAll(async () => {
+    await cleanup();
+    await prisma.jobRun.deleteMany({ where: { jobName: "weekly-digest", id: { notIn: [...jobRunIdsBeforeSuite] } } });
+  });
   beforeEach(() => vi.stubEnv("CRON_SECRET", "test-cron-secret"));
   afterEach(() => vi.unstubAllEnvs());
 
@@ -420,6 +488,14 @@ describe("GET /api/cron/weekly-digest", () => {
   it("one academy's failure doesn't block others: a rejecting academy is reported as an error while a succeeding one still gets processed", async () => {
     const academyFail = await makeAcademy("weekly-digest-cron-fail");
     const academyOk = await makeAcademy("weekly-digest-cron-ok");
+    // The real seeded academies are ALSO processed by this route call (it iterates every
+    // real Academy row) — protected here too, same as the "processes real academies" test
+    // above, so `body.ok`/`body.failed` reflect ONLY academyFail's deliberate failure, not
+    // a coincidental real Resend failure against seed data that would mask it either way.
+    const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+    const escalante = await prisma.academy.findUniqueOrThrow({ where: { slug: "escalante" } });
+    digestFailureState.okAcademyIds.add(escazu.id);
+    digestFailureState.okAcademyIds.add(escalante.id);
 
     digestFailureState.failAcademyId = academyFail.id;
     digestFailureState.okAcademyIds.add(academyOk.id);
@@ -438,6 +514,11 @@ describe("GET /api/cron/weekly-digest", () => {
       expect(response.status).toBe(200);
       const body = await response.json();
       expect(body.ok).toBe(false);
+      // C1: one whole academy erroring counts as exactly one failed UNIT toward the
+      // dead-man's-switch tally (every other academy here is protected and succeeds
+      // cleanly) — not silently dropped from the count the way `errors` alone would miss
+      // if something ever stopped pushing to it.
+      expect(body.failed).toBe(1);
 
       // The failing academy is reported in `errors` with its real thrown
       // message, proving the per-iteration try/catch actually caught it
