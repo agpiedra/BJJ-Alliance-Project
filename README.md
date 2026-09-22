@@ -48,7 +48,8 @@ for and why — copy it to `.env` and fill in real values for a real deployment.
 | `APP_URL` | Always | The deployment's own public URL (used to build links in emails). |
 | `RESEND_API_KEY` | Always (for email to actually send) | The platform's Resend account key. Without it, registration/invitation/digest emails fail loudly rather than silently no-op. |
 | `EMAIL_FROM` | Always | The **platform's** sender identity (e.g. `Platform Notifications <notifications@resend.dev>`) — shared by every email the app sends, for every organization. Must never name one organization; an org's own name belongs in the subject/body, which is already how it's built. Until this uses a real verified sending domain, Resend's sandbox mode only delivers to the Resend account's own address — expected, not a bug. |
-| `CRON_SECRET` | Always | Shared secret Vercel Cron sends as `Authorization: Bearer <value>` to authenticate the two scheduled jobs below. Any long random value. |
+| `CRON_SECRET` | Always | Shared secret Vercel Cron sends as `Authorization: Bearer <value>` to authenticate the two scheduled jobs below. Also gates `GET /api/health/jobs` (job freshness — see below). Any long random value. |
+| `HEALTHCHECK_DIGEST_URL` / `HEALTHCHECK_PROMOTION_URL` | Production, once Healthchecks.io is set up (`docs/DEPLOYMENT_RUNBOOK.md` "Set up the Healthchecks.io dead-man's switch") | Each cron's own Healthchecks.io ping URL — a plain GET means success, `<url>/fail` means failure. Unset in dev/CI on purpose: a missing URL is reported as `heartbeatStatus: "not_configured"` on the `JobRun` row (visible via `/api/health/jobs`), never silently treated as success. |
 | `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` / `SUPABASE_LOGO_BUCKET` | Always | Supabase Storage, used only for organization logo uploads (never Postgres bytes). The service-role key is server-only — never expose it to the client. The bucket is public by design (logos render on the unauthenticated kiosk screen). **Your local `.env` points at a dev project; production uses a SEPARATE Supabase project** (`docs/DEPLOYMENT_RUNBOOK.md`, step 2) — dev verification writes real objects, and test logos must not sit beside customers'. |
 | `DOTENV_CONFIG_QUIET` | Recommended, set to `"true"` | Silences dotenv's own promotional console output — a dependency printing arbitrary third-party strings into a console an agent or operator reads is a prompt-injection surface, independent of whether any given payload is malicious. |
 | `E2E_AUTH_BYPASS_SECRET` | **Leave unset** in every real deployment | Dev/test-only session-minting bypass for automated browser verification. Inert unless `NODE_ENV !== "production"` **and** this is also set — leaving it unset in production is the actual safeguard, not just the `NODE_ENV` check. |
@@ -59,6 +60,13 @@ Two scheduled jobs run on Vercel Cron (`vercel.json`), authenticated by `CRON_SE
 |---|---|---|
 | `/api/cron/weekly-digest` | Monday 07:00 America/Costa_Rica (`0 13 * * 1` UTC) | Emails every organization's staff a weekly summary (attendance, inactive students, overdue payments). Email-only — never writes an in-app notification. |
 | `/api/cron/promotion-auto-award` | Daily 06:00 America/Costa_Rica (`0 12 * * *` UTC) | Auto-awards promotions for organizations using attendance-based tracks. |
+
+Both crons go through `runScheduledJob` (`src/lib/jobs/run-scheduled-job.ts`), which writes a `JobRun` row (real sent/failed/skipped counts, never masked as `ok: true` when something failed) and pings a Healthchecks.io dead-man's switch — see `docs/DEPLOYMENT_RUNBOOK.md` for the one-time account setup. Two health endpoints:
+
+| Route | Auth | What it checks |
+|---|---|---|
+| `GET /api/health` | Public | The database only — for an uptime monitor, cached briefly (see `src/lib/health/database-check.ts`) so a leaked URL can't hammer Postgres. |
+| `GET /api/health/jobs` | `CRON_SECRET` | Per-job freshness — the last `JobRun`, whether it's stale (past its own expected cadence) or stuck (a `RUNNING` row that never finished). |
 
 ## Platform admin bootstrap
 

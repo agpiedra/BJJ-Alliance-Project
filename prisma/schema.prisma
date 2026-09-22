@@ -1065,3 +1065,42 @@ model Notification {
   @@index([userId, readAt])
   @@index([organizationId])
 }
+
+enum JobStatus {
+  RUNNING
+  SUCCEEDED
+  PARTIAL
+  FAILED
+}
+
+/// C1 (docs/MULTI_ACADEMY_AND_KIDS_BELTS.md): platform-level, like Organization/User —
+/// deliberately NOT in tenant-guard.ts's TENANT_SCOPED_MODELS (a scheduled job spans every
+/// organization, it does not belong to one). One row per invocation of a scheduled job
+/// (weekly-digest, promotion-auto-award), written by src/lib/jobs/run-scheduled-job.ts.
+/// This is JobRun's OWN state — nothing reads AuditLog to know when a job last ran or how
+/// it went ("an audit log records what happened; it must never be what a code path depends
+/// on" — the same rule Student.statusBeforeArchive follows).
+model JobRun {
+  id                     String    @id @default(cuid())
+  jobName                String
+  status                 JobStatus @default(RUNNING)
+  startedAt              DateTime  @default(now())
+  finishedAt             DateTime?
+  sent                   Int       @default(0)
+  failed                 Int       @default(0)
+  skipped                Int       @default(0)
+  organizationsProcessed Int       @default(0)
+  /// Capped array of { organizationId, sent, failed, skipped } (MAX_BREAKDOWN_ENTRIES in
+  /// run-scheduled-job.ts) — ids and counts only, never a name, email or other detail a
+  /// wider, un-tenant-scoped audience shouldn't see just by reading this table.
+  organizationBreakdown  Json?
+  /// Truncated join of the run's own caught/thrown error messages (MAX_ERROR_SUMMARY_LENGTH)
+  /// — a diagnostic breadcrumb, not a parseable structure.
+  errorSummary           String?
+  /// The Healthchecks.io ping's own outcome ("ok" | "failed" | "not_configured"). Written in
+  /// a SEPARATE update AFTER the fields above are already committed — see
+  /// run-scheduled-job.ts's own comment for why that ordering is deliberate.
+  heartbeatStatus        String?
+
+  @@index([jobName, startedAt])
+}

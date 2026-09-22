@@ -87,15 +87,18 @@ describe("dispatchNotification", () => {
     const channel1 = new RecordingChannel();
     const channel2 = new RecordingChannel();
 
-    await dispatchNotification(recipients, message, [channel1, channel2]);
+    const counts = await dispatchNotification(recipients, message, [channel1, channel2]);
 
     expect(channel1.calls).toHaveLength(2);
     expect(channel2.calls).toHaveLength(2);
     expect(channel1.calls.map((c) => c.to.userId).sort()).toEqual([userA.id, userB.id].sort());
     expect(channel2.calls.map((c) => c.to.userId).sort()).toEqual([userA.id, userB.id].sort());
+    // C1: sent/failed counts plumbed out of the dispatcher — 2 recipients x 2 channels,
+    // both channels succeed for both recipients.
+    expect(counts).toEqual({ attempted: 4, sent: 4, failed: 0 });
   });
 
-  it("one channel throwing for one recipient doesn't prevent other recipients/channels from being attempted (settles via Promise.allSettled)", async () => {
+  it("one channel throwing for one recipient doesn't prevent other recipients/channels from being attempted (settles via Promise.allSettled), and both are counted as failed", async () => {
     const userA = await makeUser();
     const userB = await makeUser();
     const recipients: Recipient[] = [
@@ -108,11 +111,34 @@ describe("dispatchNotification", () => {
 
     // Must resolve (not reject) even though `throwing` always throws for
     // every recipient.
-    await expect(dispatchNotification(recipients, message, [throwing, recording])).resolves.toBeUndefined();
+    const counts = await dispatchNotification(recipients, message, [throwing, recording]);
 
     // The healthy channel was still attempted for both recipients despite
     // the other channel's failures.
     expect(recording.calls).toHaveLength(2);
+    // REQUIRED (C1): a throwing channel counts as a FAILED attempt, never silently dropped
+    // from the totals a dead-man's switch relies on — attempted = 2 recipients x 2 channels,
+    // 2 succeed (the recording channel) and 2 fail (the throwing one).
+    expect(counts).toEqual({ attempted: 4, sent: 2, failed: 2 });
+  });
+
+  it("REQUIRED: a channel that returns { success: false } (no throw) is counted as failed too", async () => {
+    const userA = await makeUser();
+    const message: RenderedMessage = { type: "NEW_SIGNUP", title: "t", body: "b" };
+    class RejectingChannel implements NotificationChannel {
+      supportsInboundReplies = false;
+      async send(): Promise<DeliveryResult> {
+        return { success: false, error: "bounced" };
+      }
+    }
+
+    const counts = await dispatchNotification(
+      [{ userId: userA.id, email: userA.email, locale: userA.locale, organizationId: escazu.organizationId }],
+      message,
+      [new RejectingChannel()],
+    );
+
+    expect(counts).toEqual({ attempted: 1, sent: 0, failed: 1 });
   });
 
   it("a real InAppChannel writes a Notification row for each recipient even when dispatched alongside a throwing channel", async () => {
