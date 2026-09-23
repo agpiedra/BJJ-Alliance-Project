@@ -144,6 +144,39 @@ describe("uploadLogo — never throws", () => {
     const result = await uploadLogo("org-1", Buffer.from("bytes"), "image/png");
     expect(result).toEqual({ ok: false, error: "storageUnavailable" });
   });
+
+  it("REQUIRED: the deadline still applies to a slow/hanging ERROR body, not only to fetch() itself", async () => {
+    // Headers arrive immediately (fetch resolves right away with a non-ok
+    // response) but reading the error body hangs — exactly what a slow or
+    // stalled response stream looks like. This reproduces a real regression:
+    // storageFetch returning classifyResponse(response) WITHOUT awaiting it
+    // let `finally`'s clearTimeout run before the body-read promise settled,
+    // permanently disarming the abort timer for a request whose headers had
+    // already arrived — the deadline no longer bounded the operation at all.
+    // Under that bug this test hangs until Vitest's own test timeout kills
+    // it; it only resolves once storageFetch awaits the classification
+    // before returning.
+    vi.useFakeTimers();
+    const fetchMock = vi.fn((_url: string, init?: RequestInit) => {
+      const response = {
+        ok: false,
+        status: 500,
+        json: () =>
+          new Promise((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () => reject(new DOMException("The operation was aborted", "AbortError")));
+          }),
+      } as unknown as Response;
+      return Promise.resolve(response);
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const pending = uploadLogo("org-1", Buffer.from("bytes"), "image/png");
+    await vi.advanceTimersByTimeAsync(15_000);
+    const result = await pending;
+
+    expect(result).toEqual({ ok: false, error: "storageUnavailable", status: 500 });
+    vi.useRealTimers();
+  });
 });
 
 describe("uploadLogo — success path", () => {
