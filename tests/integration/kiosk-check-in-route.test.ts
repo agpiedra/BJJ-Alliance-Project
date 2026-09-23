@@ -287,7 +287,7 @@ describe("POST /api/kiosk/check-in", () => {
     const { status, json } = await post({ academySlug: academy.slug, token, code });
 
     expect(status).toBe(200);
-    expect(json.earnedStripe).toBe(true);
+    expect(json.thresholdReached).toBe(true);
     expect(notifyEligibilityState.spy).toHaveBeenCalledWith(student.id, academy.organizationId, "STRIPE_THRESHOLD");
   });
 
@@ -303,7 +303,7 @@ describe("POST /api/kiosk/check-in", () => {
       student: { firstName: "KioskRouteTest", lastName: "Student", currentBelt: "WHITE", currentStripes: 0 },
       isVisitor: false,
       homeAcademyName: academy.name,
-      earnedStripe: false,
+      thresholdReached: false,
     });
     expect((json.summary as Record<string, unknown>).atBeltCount).toBe(1);
 

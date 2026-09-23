@@ -54,6 +54,28 @@ enum PromotionMode {
   MANUAL
 }
 
+/// How attendance progress toward the next stripe/degree/belt is accounted
+/// (docs/PROMOTION_PROGRESS_PROPOSAL.md). CUMULATIVE is the pre-decision rule
+/// (sum since Student.beltAwardedAt, stripe N needs N x threshold) and stays the
+/// default so a deploy changes nothing for an existing organization.
+/// PER_INTERVAL is the academy's decided rule: at most one qualifying day per
+/// America/Costa_Rica calendar day, and progress resets to 0 at every award. An
+/// existing organization moves to PER_INTERVAL only through
+/// scripts/promotion-accounting.ts, after its read-only impact report.
+enum StripeAccounting {
+  CUMULATIVE
+  PER_INTERVAL
+}
+
+/// Where Student.progressBaselineAt came from. SYSTEM_BASELINE = the moment the
+/// system began tracking the student (creation, or the activation script for an
+/// existing student) - NEVER a historical promotion. AWARD = the exact instant a
+/// coach recorded a promotion.
+enum ProgressBaselineKind {
+  SYSTEM_BASELINE
+  AWARD
+}
+
 /// MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 2. MANUAL/AUTO distinguish a
 /// human confirm from a scheduled job (spec: "do not invent a human
 /// awardedBy user" for automatic awards — see Promotion.awardedById below).
@@ -256,15 +278,15 @@ model Organization {
 /// fields below — see src/lib/billing/deadline.ts — never stored, so a
 /// grace-days or extension change is instantly reflected without a backfill.
 model OrganizationInvoice {
-  id             String    @id @default(cuid())
-  organizationId String
-  periodStart    DateTime
-  periodEnd      DateTime
+  id                 String   @id @default(cuid())
+  organizationId     String
+  periodStart        DateTime
+  periodEnd          DateTime
   /// A calendar date, not an instant — compared against
   /// `DateTime.now().setZone(organization.timezone)`, never UTC or the
   /// server's local zone (deadline.ts's own doc comment has the exact
   /// precision rules).
-  dueOn          DateTime
+  dueOn              DateTime
   /// Snapshot of `Organization.graceDays` AT ISSUE TIME, never read live —
   /// a deadline a customer has already been told must never move silently
   /// when the platform default later changes. Changing `graceDays` affects
@@ -275,12 +297,12 @@ model OrganizationInvoice {
   /// explicit per-invoice extension").
   graceExtensionDays Int      @default(0)
 
-  paidAt        DateTime?
-  paidNote      String?
-  recordedById  String?
+  paidAt       DateTime?
+  paidNote     String?
+  recordedById String?
 
-  voidedAt      DateTime?
-  voidReason    String?
+  voidedAt   DateTime?
+  voidReason String?
 
   /// Scoped to ONE expiration episode — set to the `flaggedFrom` date that
   /// was current when acknowledged. If a later extension pushes the
@@ -298,9 +320,9 @@ model OrganizationInvoice {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  organization Organization @relation(fields: [organizationId], references: [id])
-  recordedBy   User?        @relation("OrganizationInvoiceRecordedBy", fields: [recordedById], references: [id])
-  reviewAcknowledgedBy User? @relation("OrganizationInvoiceReviewAcknowledgedBy", fields: [reviewAcknowledgedById], references: [id])
+  organization         Organization @relation(fields: [organizationId], references: [id])
+  recordedBy           User?        @relation("OrganizationInvoiceRecordedBy", fields: [recordedById], references: [id])
+  reviewAcknowledgedBy User?        @relation("OrganizationInvoiceReviewAcknowledgedBy", fields: [reviewAcknowledgedById], references: [id])
 
   @@index([organizationId])
 }
@@ -466,11 +488,11 @@ model User {
   organizationsApproved   Organization[]           @relation("OrganizationApprovedBy")
   lastActiveOrganization  Organization?            @relation("UserLastActiveOrganization", fields: [lastActiveOrganizationId], references: [id])
 
-  attendanceRecordsCreated   AttendanceRecord[]   @relation("AttendanceCreatedBy")
-  attendanceRecordsCorrected AttendanceRecord[]   @relation("AttendanceCorrectedBy")
-  passwordResetTokens        PasswordResetToken[]
-  invitationsSent            Invitation[]         @relation("InvitationInvitedBy")
-  organizationInvoicesRecorded         OrganizationInvoice[] @relation("OrganizationInvoiceRecordedBy")
+  attendanceRecordsCreated               AttendanceRecord[]    @relation("AttendanceCreatedBy")
+  attendanceRecordsCorrected             AttendanceRecord[]    @relation("AttendanceCorrectedBy")
+  passwordResetTokens                    PasswordResetToken[]
+  invitationsSent                        Invitation[]          @relation("InvitationInvitedBy")
+  organizationInvoicesRecorded           OrganizationInvoice[] @relation("OrganizationInvoiceRecordedBy")
   organizationInvoicesReviewAcknowledged OrganizationInvoice[] @relation("OrganizationInvoiceReviewAcknowledgedBy")
 }
 
@@ -567,39 +589,52 @@ model StaffAssignment {
 }
 
 model Student {
-  id               String        @id @default(cuid())
-  userId           String?       @unique
-  homeAcademyId    String
-  organizationId   String
-  firstName        String
-  lastName         String
-  phone            String
-  email            String
-  dateOfBirth      DateTime?
-  guardianName     String?
-  guardianPhone    String?
-  emergencyContact String?
-  currentStripes   Int           @default(0)
-  beltAwardedAt    DateTime      @default(now())
+  id                   String               @id @default(cuid())
+  userId               String?              @unique
+  homeAcademyId        String
+  organizationId       String
+  firstName            String
+  lastName             String
+  phone                String
+  email                String
+  dateOfBirth          DateTime?
+  guardianName         String?
+  guardianPhone        String?
+  emergencyContact     String?
+  currentStripes       Int                  @default(0)
+  beltAwardedAt        DateTime             @default(now())
   /// MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 2. ADULT for every pre-Phase-3
   /// student — Phase 3 adds the KIDS onboarding flow.
-  track            Track         @default(ADULT)
+  track                Track                @default(ADULT)
   /// Replaces the old `currentBelt` enum column (dropped in this same
   /// constrain migration) — backfilled from it by
   /// scripts/backfill-belt-ranks.ts, verified equal by
   /// scripts/verify-belt-migration.ts before this column was made required.
-  currentRankId    String
-  /// TIME/HYBRID mode only. Deliberately separate from beltAwardedAt (spec:
-  /// "keep time anchors separate from cumulative attendance accounting") —
-  /// every awarded promotion (stripe OR belt) resets this, unlike
-  /// beltAwardedAt, which resets only on a belt award. Null for a student
-  /// whose track has never used TIME/HYBRID mode.
-  timeAnchorAt     DateTime?
+  currentRankId        String
+  /// The instant of this student's LAST promotion, for time-based ranks (black
+  /// belt degrees): the next degree is due timeAnchorAt + the rank's interval.
+  /// Written by every award with the exact award instant (stripe, belt, track
+  /// change), and by a coach's explicit correction when the actual last-award
+  /// date of an existing student is supplied. Null = "last-award date needed":
+  /// no due date is shown and one is never invented. Deliberately separate from
+  /// beltAwardedAt (spec: "keep time anchors separate from cumulative attendance
+  /// accounting").
+  timeAnchorAt         DateTime?
+  /// Start of the CURRENT progress interval under StripeAccounting.PER_INTERVAL:
+  /// only qualifying days whose first qualifying attendance is at or after this
+  /// instant count toward the next stripe/degree/belt. Set to the exact award
+  /// instant by every promotion; otherwise the moment the system began tracking
+  /// the student. Deliberately separate from beltAwardedAt (the historical belt
+  /// date, possibly typed by staff and possibly unknown) - a missing historical
+  /// date never blocks attendance progress, and a historical promotion is never
+  /// invented. The default fills it for every writer, old code included.
+  progressBaselineAt   DateTime             @default(now())
+  progressBaselineKind ProgressBaselineKind @default(SYSTEM_BASELINE)
   /// MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 1: "Replace global student
   /// code-hash uniqueness with organization-scoped uniqueness" — see the
   /// @@unique([organizationId, codeHash]) below. No longer @unique on its own.
-  codeHash         String
-  status           StudentStatus @default(PENDING)
+  codeHash             String
+  status               StudentStatus        @default(PENDING)
   /// What a restore returns this student to. Set when they are archived, read and
   /// cleared when they are restored; null for everyone not currently archived — and
   /// for anyone archived before this column existed, whom a restore sends to PENDING
@@ -608,11 +643,11 @@ model Student {
   /// exported, so no code path may depend on one. (Same principle as
   /// PaymentPeriod's currency snapshot and the promotion credit's belt anchor:
   /// store what you will need later.)
-  statusBeforeArchive StudentStatus?
-  joinedAt         DateTime      @default(now())
-  notes            String?
-  createdAt        DateTime      @default(now())
-  updatedAt        DateTime      @updatedAt
+  statusBeforeArchive  StudentStatus?
+  joinedAt             DateTime             @default(now())
+  notes                String?
+  createdAt            DateTime             @default(now())
+  updatedAt            DateTime             @updatedAt
 
   user              User?              @relation(fields: [userId], references: [id])
   homeAcademy       Academy            @relation("HomeAcademy", fields: [organizationId, homeAcademyId], references: [organizationId, id])
@@ -791,7 +826,7 @@ model PromotionCredit {
 /// migration, not a reason to carry a dead fallback path into two new
 /// tables the way BeltRequirement's own academyId column sat unused.
 model BeltRank {
-  id                   String   @id @default(cuid())
+  id                   String         @id @default(cuid())
   organizationId       String
   track                Track
   /// Stable string key, e.g. "WHITE" — doubles as the belt.<code> i18n
@@ -827,11 +862,20 @@ model BeltRank {
   /// preserve-on-switch contract as the attendance fields above.
   monthsPerStripe      Int?
   monthsForExam        Int?
+  /// Optional per-rank override of the track's PromotionConfig.mode. Null =
+  /// use the track's mode. Lets adult white-brown stay attendance-based while
+  /// black is time-based (docs/PROMOTION_PROGRESS_PROPOSAL.md).
+  progressionMode      PromotionMode?
+  /// Months required to reach degree i+1 from degree i on this rank (index =
+  /// the student's CURRENT degree count). Empty = fall back to monthsPerStripe.
+  /// An entry beyond the array (while currentStripes < maxStripes) means "that
+  /// degree is not configured yet" - never "impossible".
+  stripeIntervalMonths Int[]          @default([])
   /// Spec: "Terminal ranks may award remaining degrees if configured to do
   /// so. After their final degree, nextTarget is NONE." True on exactly the
   /// highest-`order` rank in the track — validated, not inferred from
   /// `order` alone.
-  isTerminal           Boolean  @default(false)
+  isTerminal           Boolean        @default(false)
   /// One entry per stripe slot, length == maxStripes. Phase 3 renders these
   /// as tape colors; Phase 2 seeds and validates but nothing reads them yet.
   stripeColors         String[]
@@ -839,7 +883,7 @@ model BeltRank {
   /// most 4 tapes ... while the counter climbs to maxStripes") — independent
   /// of maxStripes so a rank with more degrees than visible slots stays
   /// representable.
-  visibleStripeSlots   Int      @default(4)
+  visibleStripeSlots   Int            @default(4)
   /// Phase 3b: real per-row color data, replacing the hardcoded adult-only
   /// BELT_FILL_CLASS/TIP_FILL_CLASS Tailwind-token maps — same "data, not a
   /// fixed enum" reasoning as labelEs/labelEn (rev 19). Hex strings, not
@@ -855,8 +899,8 @@ model BeltRank {
   /// The rank bar's own color — spec: "never hardcode black: a black belt's
   /// bar is red, and coral belts differ again."
   barColor             String
-  createdAt            DateTime @default(now())
-  updatedAt            DateTime @updatedAt
+  createdAt            DateTime       @default(now())
+  updatedAt            DateTime       @updatedAt
 
   organization    Organization @relation(fields: [organizationId], references: [id])
   currentStudents Student[]    @relation("CurrentRank")
@@ -874,13 +918,17 @@ model BeltRank {
 }
 
 model PromotionConfig {
-  id                    String        @id @default(cuid())
+  id                    String           @id @default(cuid())
   organizationId        String
   track                 Track
   mode                  PromotionMode
-  requiresCoachApproval Boolean       @default(true)
-  createdAt             DateTime      @default(now())
-  updatedAt             DateTime      @updatedAt
+  /// Always true: promotions are manual only (academy decision). Kept as a
+  /// column so historical rows and old readers stay valid; a raw CHECK
+  /// constraint in migration 20260923214031_promotion_reset_accounting rejects false.
+  requiresCoachApproval Boolean          @default(true)
+  stripeAccounting      StripeAccounting @default(CUMULATIVE)
+  createdAt             DateTime         @default(now())
+  updatedAt             DateTime         @updatedAt
 
   organization Organization @relation(fields: [organizationId], references: [id])
 
@@ -1009,10 +1057,9 @@ model KioskAttempt {
 model AuditLog {
   id             String   @id @default(cuid())
   /// MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 2c-iii: null for an automated
-  /// system action (e.g. the promotion auto-award job) — "record automatic
-  /// awards with an explicit system actor/source, do not invent a human
-  /// awardedBy user" applies to the audit trail too, not just
-  /// Promotion.awardedById. Same nullability reasoning as organizationId
+  /// system action - "do not invent a human actor" applies to the audit trail
+  /// too, not just Promotion.awardedById. (No promotion is automatic any more;
+  /// historical AUTO promotion rows are kept.) Same nullability reasoning as organizationId
   /// below: a real absence, not a data gap.
   actorId        String?
   academyId      String?
@@ -1076,7 +1123,7 @@ enum JobStatus {
 /// C1 (docs/MULTI_ACADEMY_AND_KIDS_BELTS.md): platform-level, like Organization/User —
 /// deliberately NOT in tenant-guard.ts's TENANT_SCOPED_MODELS (a scheduled job spans every
 /// organization, it does not belong to one). One row per invocation of a scheduled job
-/// (weekly-digest, promotion-auto-award), written by src/lib/jobs/run-scheduled-job.ts.
+/// (weekly-digest), written by src/lib/jobs/run-scheduled-job.ts.
 /// This is JobRun's OWN state — nothing reads AuditLog to know when a job last ran or how
 /// it went ("an audit log records what happened; it must never be what a code path depends
 /// on" — the same rule Student.statusBeforeArchive follows).

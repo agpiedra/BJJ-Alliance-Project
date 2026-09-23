@@ -21,12 +21,12 @@ import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { BeltBar } from "@/components/belt-graphic/belt-bar";
 import { ProgressToNextGrade } from "@/components/belt-graphic/progress-to-next-grade";
+import { buildProgressView } from "@/lib/promotion/progress-view";
 import { listStudents } from "./actions";
 import { CreateStudentForm } from "./create-student-form";
 import { StudentStatus, Track } from "@/generated/prisma/client";
 import { getAtBeltSummary } from "@/lib/students/attendance-summary";
 import { resolvePromotionConfigMap } from "@/lib/promotion/config";
-import type { NextTarget } from "@/lib/promotion/engine";
 import { promotionDistance, compareByPromotion } from "@/lib/students/promotion-distance";
 import { formatTimestampInAcademyZone } from "@/lib/format-date";
 import { currentCrDateParts, getCurrentPaymentPeriod } from "@/lib/payments/get-current-period";
@@ -99,35 +99,6 @@ function paymentStatusLabel(
   if (status === "OVERDUE") return t("paymentStatus.overdue");
   if (status === "NOT_RECORDED") return t("paymentStatus.notRecorded");
   return tPaymentStatus(status);
-}
-
-/**
- * Progreso column's current/target pair. Purely a display-side read of
- * `getAtBeltSummary`'s already-computed fields (Rule 8: never reimplement
- * belt math) — mirrors the exam-row target formula dashboard/page.tsx's
- * "Cola de promociones" panel already uses
- * (`maxStripes * attendancesPerStripe + attendancesForExam`). `null` means
- * no further computable progress at all (e.g. a maxed-out belt with no exam
- * threshold configured), which the Progreso cell renders as "—".
- */
-function resolveProgressTarget(summary: {
-  atBeltCount: number;
-  currentStripes: number;
-  nextTarget: NextTarget;
-  maxStripes: number;
-  attendancesPerStripe: number;
-  attendancesForExam: number;
-}): { current: number; target: number } | null {
-  if (summary.nextTarget === "STRIPE") {
-    return { current: summary.atBeltCount, target: (summary.currentStripes + 1) * summary.attendancesPerStripe };
-  }
-  if (summary.nextTarget === "BELT" && summary.attendancesForExam > 0) {
-    return {
-      current: summary.atBeltCount,
-      target: summary.maxStripes * summary.attendancesPerStripe + summary.attendancesForExam,
-    };
-  }
-  return null;
 }
 
 type StudentsSearchParams = {
@@ -415,7 +386,13 @@ export default async function StudentsPage({
               <DataTableBody>
                 {sortedStudents.map((student) => {
                   const extra = rosterExtrasByStudentId.get(student.id)!;
-                  const progress = resolveProgressTarget(extra.summary);
+                  // One display shaping for every surface (buildProgressView): an eligible student shows a full
+                  // bar with the count capped at the target - never 42 / 30. A time-based degree has no fraction.
+                  const progressView = buildProgressView(extra.summary);
+                  const progress =
+                    progressView.current !== null && progressView.target !== null
+                      ? { current: progressView.current, target: progressView.target }
+                      : null;
                   const daysSinceLastAttendance = extra.daysSinceLastAttendance;
                   const stale = daysSinceLastAttendance !== null && daysSinceLastAttendance >= STALE_ATTENDANCE_DAYS;
 

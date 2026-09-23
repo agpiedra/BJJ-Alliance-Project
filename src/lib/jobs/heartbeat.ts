@@ -10,7 +10,6 @@ import { JOB_NAMES, type JobName } from "@/lib/jobs/job-names";
  */
 const HEALTHCHECK_ENV: Record<JobName, string> = {
   "weekly-digest": "HEALTHCHECK_DIGEST_URL",
-  "promotion-auto-award": "HEALTHCHECK_PROMOTION_URL",
 };
 
 /** "not_configured" is a real, expected state until the runbook's Healthchecks.io setup step is

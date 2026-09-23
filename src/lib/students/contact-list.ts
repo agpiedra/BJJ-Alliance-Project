@@ -5,6 +5,7 @@ import { getScopedDb } from "@/lib/tenant/scoped-client";
 import type { TenantContext } from "@/lib/tenant/types";
 import { ZONE } from "@/lib/scheduling/zone";
 import { getAtBeltSummary } from "@/lib/students/attendance-summary";
+import { buildProgressView } from "@/lib/promotion/progress-view";
 import { resolvePromotionConfigMap } from "@/lib/promotion/config";
 import { currentCrDateParts, getCurrentPaymentPeriod } from "@/lib/payments/get-current-period";
 import { isOverdue } from "@/lib/payments/overdue";
@@ -128,6 +129,7 @@ export async function listStudentsToContact(
           ? currentPeriod.status
           : "NOT_RECORDED";
 
+      const progress = buildProgressView(summary);
       return {
         studentId: student.id,
         firstName: student.firstName,
@@ -138,9 +140,9 @@ export async function listStudentsToContact(
         currentBeltLabelEs: summary.currentBeltLabelEs,
         currentBeltLabelEn: summary.currentBeltLabelEn,
         currentBeltVisual: summary.currentBeltVisual,
-        atBeltCount: summary.atBeltCount,
-        nextStripeAt:
-          summary.nextTarget === "STRIPE" ? (summary.currentStripes + 1) * summary.attendancesPerStripe : null,
+        // The shared display shaping: the count is capped at the target (an eligible student is "30 / 30").
+        atBeltCount: progress.current ?? progress.actualCount,
+        nextStripeAt: summary.nextTarget === "STRIPE" ? progress.target : null,
         lastAttendanceAt,
         daysAbsent,
         paymentStatus,

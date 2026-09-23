@@ -338,7 +338,7 @@ describe("performCheckIn", () => {
     expect(record.academyId).not.toBe(escalante.id);
   });
 
-  it("reports earnedStripe: true when a check-in crosses the belt's attendances-per-stripe threshold", async () => {
+  it("reports thresholdReached: true when a check-in crosses the belt's attendances-per-stripe threshold", async () => {
     const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
     const beltAwardedAt = new Date("2025-12-01T00:00:00Z");
     const { student, code } = await makeStudent({
@@ -364,7 +364,7 @@ describe("performCheckIn", () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.summary.atBeltCount).toBe(30);
-      expect(result.earnedStripe).toBe(true);
+      expect(result.thresholdReached).toBe(true);
     }
   });
 
@@ -852,7 +852,7 @@ describe("performCheckIn", () => {
       if (result.ok) {
         expect(result.summary.atBeltCount).toBe(0);
         expect(result.summary.lifetimeCount).toBe(1);
-        expect(result.earnedStripe).toBe(false);
+        expect(result.thresholdReached).toBe(false);
       }
 
       // ...and once the schedule is fixed and the row is reassigned to a real

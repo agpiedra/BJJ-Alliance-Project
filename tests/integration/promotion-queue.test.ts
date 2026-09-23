@@ -1,6 +1,6 @@
 import "dotenv/config";
 import { getTestPrismaClient } from "../helpers/test-db";
-import { afterAll, describe, expect, it, vi } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import { requireEnv } from "../../src/lib/env";
 import { digestLookupSecret } from "../../src/lib/crypto";
 import { toAttendanceDate } from "../../src/lib/scheduling/zone";
@@ -429,7 +429,7 @@ describe("promotion queue", () => {
     expect(queryCount).toBe(1);
   });
 
-  it("a TIME-mode student with no time anchor is excluded from the queue and logged with its student id, without sinking a valid sibling in the same batch", async () => {
+  it("a TIME-mode student with no last-award date is simply not eligible (no due date, nothing thrown), and does not sink a valid sibling in the same batch", async () => {
     const suffix = `${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
     const orgId = `promotion-queue-time-test-org-${suffix}`;
     const academyId = `promotion-queue-time-test-academy-${suffix}`;
@@ -490,7 +490,6 @@ describe("promotion queue", () => {
       },
     });
 
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
       const timeOrgAdmin = ctx("ADMIN", "ALL", orgId);
       const queue = await listPromotionQueue(timeOrgAdmin);
@@ -502,16 +501,7 @@ describe("promotion queue", () => {
       const validCandidate = findCandidate(queue, validStudent.id);
       expect(validCandidate).toBeDefined();
       expect(validCandidate?.status).toBe("stripe-eligible");
-
-      // Not silently dropped: the skip is traceable to a cause (2c-i
-      // amendment 2) — logged with the specific student id, not just a
-      // generic message.
-      const loggedWithStudentId = warnSpy.mock.calls.some((call) =>
-        call.some((arg) => typeof arg === "string" && arg.includes(missingAnchorStudent.id)),
-      );
-      expect(loggedWithStudentId).toBe(true);
     } finally {
-      warnSpy.mockRestore();
       await prisma.student.deleteMany({ where: { id: { in: [missingAnchorStudent.id, validStudent.id] } } });
       await prisma.promotionConfig.deleteMany({ where: { organizationId: orgId } });
       await prisma.beltRank.deleteMany({ where: { organizationId: orgId } });

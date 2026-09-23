@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { buildProgressView } from "@/lib/promotion/progress-view";
 import { selfCheckIn, type SelfCheckInState } from "./self-check-in-action";
 
 const INITIAL_STATE: SelfCheckInState = {};
@@ -27,7 +28,7 @@ function errorMessageKey(error: string): string {
 }
 
 // Matches the kiosk's own SuccessView conventions (heading swap on
-// earnedStripe, remainingToNextStripe / examEligible copy) so a student sees
+// thresholdReached, remainingToNextStripe / eligibleForReview copy) so a student sees
 // the same shape of feedback whether they tapped a kiosk or checked in from
 // their phone — just without the kiosk's belt graphic, which the page
 // already renders once above this card. Unlike the kiosk, this component has
@@ -65,27 +66,11 @@ export function SelfCheckInButton({ organizationId }: { organizationId: string }
   return (
     <Card>
       <CardHeader>
-        <CardTitle>{state.ok && state.earnedStripe ? t("earnedStripeHeading") : t("heading")}</CardTitle>
+        <CardTitle>{state.ok && state.thresholdReached ? t("thresholdReachedHeading") : t("heading")}</CardTitle>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
         {state.ok && state.student && state.summary && (
-          <div className="flex flex-col gap-2 text-sm">
-            <p className="font-medium text-foreground">{t("successMessage")}</p>
-
-            <p className="text-muted-foreground">
-              {t("atBeltCount", { count: state.summary.atBeltCount })}
-            </p>
-
-            {state.summary.remainingAttendance !== null && (
-              <p className="text-muted-foreground">
-                {t("remainingToNextStripe", { count: state.summary.remainingAttendance })}
-              </p>
-            )}
-
-            {state.summary.remainingAttendance === null &&
-              state.summary.nextTarget === "BELT" &&
-              state.summary.isEligible && <p className="font-medium">{t("examEligible")}</p>}
-          </div>
+          <SelfCheckInResult summary={state.summary} progressOutcome={state.progressOutcome} t={t} />
         )}
 
         {state.error && <p className="text-sm text-destructive">{t(errorMessageKey(state.error))}</p>}
@@ -97,5 +82,45 @@ export function SelfCheckInButton({ organizationId }: { organizationId: string }
         </form>
       </CardContent>
     </Card>
+  );
+}
+
+/**
+ * What this check-in did for the student progress, said truthfully: an extra class the same day is recorded
+ * but is not another progress day, and a class that does not count toward promotion says so. The numbers come
+ * from the shared `buildProgressView` - an eligible student sees "eligible for instructor review", never 42 / 30.
+ */
+function SelfCheckInResult({
+  summary,
+  progressOutcome,
+  t,
+}: {
+  summary: NonNullable<SelfCheckInState["summary"]>;
+  progressOutcome: SelfCheckInState["progressOutcome"];
+  t: ReturnType<typeof useTranslations>;
+}) {
+  const view = buildProgressView({ ...summary, dueDate: null });
+  return (
+    <div className="flex flex-col gap-2 text-sm">
+      <p className="font-medium text-foreground">{t("successMessage")}</p>
+
+      {progressOutcome === "already_counted_today" && (
+        <p className="text-muted-foreground">{t("progressAlreadyCounted")}</p>
+      )}
+      {progressOutcome === "not_promotion_class" && (
+        <p className="text-muted-foreground">{t("progressNotPromotionClass")}</p>
+      )}
+      {progressOutcome === "before_last_promotion" && (
+        <p className="text-muted-foreground">{t("progressBeforeLastPromotion")}</p>
+      )}
+
+      <p className="text-muted-foreground">{t("atBeltCount", { count: view.actualCount })}</p>
+
+      {view.state === "in_progress" && (
+        <p className="text-muted-foreground">{t("remainingToNextStripe", { count: view.remaining ?? 0 })}</p>
+      )}
+
+      {view.state === "eligible" && <p className="font-medium">{t("eligibleForReview")}</p>}
+    </div>
   );
 }

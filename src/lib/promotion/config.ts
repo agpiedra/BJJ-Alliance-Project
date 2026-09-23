@@ -1,10 +1,12 @@
 import { prisma } from "@/lib/prisma";
 import { getScopedDb } from "@/lib/tenant/scoped-client";
 import type { AccessContext, TenantContext } from "@/lib/tenant/types";
-import type { PromotionMode, Track } from "@/generated/prisma/client";
+import type { PromotionMode, StripeAccounting, Track } from "@/generated/prisma/client";
 
 export interface ResolvedTrackConfig {
   mode: PromotionMode;
+  /** PER_INTERVAL = the academy's decided accounting; CUMULATIVE = the pre-activation rule (see PromotionConfig.stripeAccounting). */
+  accounting: StripeAccounting;
 }
 
 /**
@@ -52,9 +54,9 @@ export async function resolveNextRank(
 export async function resolvePromotionConfigMap(organizationId: string): Promise<Map<Track, ResolvedTrackConfig>> {
   const rows = await prisma.promotionConfig.findMany({
     where: { organizationId },
-    select: { track: true, mode: true },
+    select: { track: true, mode: true, stripeAccounting: true },
   });
-  return new Map(rows.map((row) => [row.track, { mode: row.mode }]));
+  return new Map(rows.map((row) => [row.track, { mode: row.mode, accounting: row.stripeAccounting }]));
 }
 
 /**
@@ -75,6 +77,10 @@ export interface RankForValidation {
   attendancesForExam: number | null;
   monthsPerStripe: number | null;
   monthsForExam: number | null;
+  /** Optional per-rank override of the track's mode (black belt: TIME). */
+  progressionMode: PromotionMode | null;
+  /** Months per degree (index = current degree count); fewer entries than maxStripes = later degrees not configured yet. */
+  stripeIntervalMonths: number[];
   stripeColors: string[];
   visibleStripeSlots: number;
 }
@@ -105,10 +111,14 @@ export function validateTrackConfig(ranks: RankForValidation[], mode: PromotionM
   const sorted = [...ranks].sort((a, b) => a.order - b.order);
   const seenOrders = new Set<number>();
   const seenCodes = new Set<string>();
-  const needsAttendance = mode === "ATTENDANCE" || mode === "HYBRID";
-  const needsTime = mode === "TIME" || mode === "HYBRID";
 
   sorted.forEach((rank, index) => {
+    // A rank may override the track's mode (adult black belt is time-based
+    // while white-brown stay attendance-based).
+    const rankMode = rank.progressionMode ?? mode;
+    const needsAttendance = rankMode === "ATTENDANCE" || rankMode === "HYBRID";
+    const needsTime = rankMode === "TIME" || rankMode === "HYBRID";
+
     if (seenCodes.has(rank.code)) {
       errors.push(`Duplicate rank code "${rank.code}".`);
     }
@@ -152,23 +162,34 @@ export function validateTrackConfig(ranks: RankForValidation[], mode: PromotionM
 
     if (needsAttendance && needsStripeField) {
       if (rank.attendancesPerStripe === null || rank.attendancesPerStripe <= 0) {
-        errors.push(`${rank.code}: attendancesPerStripe must be a positive number when mode is ${mode}.`);
+        errors.push(`${rank.code}: attendancesPerStripe must be a positive number when mode is ${rankMode}.`);
       }
     }
     if (needsAttendance && needsExamField) {
       if (rank.attendancesForExam === null || rank.attendancesForExam <= 0) {
-        errors.push(`${rank.code}: attendancesForExam must be a positive number when mode is ${mode}.`);
+        errors.push(`${rank.code}: attendancesForExam must be a positive number when mode is ${rankMode}.`);
       }
     }
 
+    if (rank.stripeIntervalMonths.length > rank.maxStripes) {
+      errors.push(`${rank.code}: stripeIntervalMonths has more entries (${rank.stripeIntervalMonths.length}) than maxStripes (${rank.maxStripes}).`);
+    }
+    if (rank.stripeIntervalMonths.some((months) => !Number.isInteger(months) || months <= 0)) {
+      errors.push(`${rank.code}: every stripeIntervalMonths entry must be a positive whole number of months.`);
+    }
+
     if (needsTime && needsStripeField) {
-      if (rank.monthsPerStripe === null || rank.monthsPerStripe <= 0) {
-        errors.push(`${rank.code}: monthsPerStripe must be a positive number when mode is ${mode}.`);
+      // Per-degree intervals satisfy the stripe requirement on their own; a
+      // shorter list than maxStripes is valid ("later degrees not configured
+      // yet" is a state, never an error).
+      const hasPerDegreeIntervals = rank.stripeIntervalMonths.length > 0;
+      if (!hasPerDegreeIntervals && (rank.monthsPerStripe === null || rank.monthsPerStripe <= 0)) {
+        errors.push(`${rank.code}: monthsPerStripe (or stripeIntervalMonths) must be a positive number when mode is ${rankMode}.`);
       }
     }
     if (needsTime && needsExamField) {
       if (rank.monthsForExam === null || rank.monthsForExam <= 0) {
-        errors.push(`${rank.code}: monthsForExam must be a positive number when mode is ${mode}.`);
+        errors.push(`${rank.code}: monthsForExam must be a positive number when mode is ${rankMode}.`);
       }
     }
   });
@@ -197,12 +218,19 @@ export interface RankUpdate {
   attendancesForExam?: number | null;
   monthsPerStripe?: number | null;
   monthsForExam?: number | null;
+  progressionMode?: PromotionMode | null;
+  stripeIntervalMonths?: number[];
   stripeColors?: string[];
   visibleStripeSlots?: number;
 }
 
 export interface TrackConfigUpdate {
   mode?: PromotionMode;
+  /**
+   * Promotions are manual only (academy decision) - `false` is refused here, and
+   * a database CHECK on PromotionConfig refuses it for every other writer. The
+   * field remains only so a caller that still sends `true` keeps working.
+   */
   requiresCoachApproval?: boolean;
   ranks?: RankUpdate[];
 }
@@ -259,12 +287,17 @@ export async function updateTrackConfig(
         patch && "attendancesForExam" in patch ? (patch.attendancesForExam ?? null) : rank.attendancesForExam,
       monthsPerStripe: patch && "monthsPerStripe" in patch ? (patch.monthsPerStripe ?? null) : rank.monthsPerStripe,
       monthsForExam: patch && "monthsForExam" in patch ? (patch.monthsForExam ?? null) : rank.monthsForExam,
+      progressionMode: patch && "progressionMode" in patch ? (patch.progressionMode ?? null) : rank.progressionMode,
+      stripeIntervalMonths: patch?.stripeIntervalMonths ?? rank.stripeIntervalMonths,
       stripeColors: patch?.stripeColors ?? rank.stripeColors,
       visibleStripeSlots: patch?.visibleStripeSlots ?? rank.visibleStripeSlots,
     };
   });
 
   const errors = validateTrackConfig(resolvedRanks, resolvedMode);
+  if (update.requiresCoachApproval === false) {
+    errors.push("Automatic promotions are not supported: every promotion is awarded by an instructor.");
+  }
   if (errors.length > 0) {
     throw new TrackConfigError(errors);
   }
@@ -294,6 +327,8 @@ export async function updateTrackConfig(
           attendancesForExam: rank.attendancesForExam,
           monthsPerStripe: rank.monthsPerStripe,
           monthsForExam: rank.monthsForExam,
+          progressionMode: rank.progressionMode,
+          stripeIntervalMonths: rank.stripeIntervalMonths,
           stripeColors: rank.stripeColors,
           visibleStripeSlots: rank.visibleStripeSlots,
         },

@@ -394,6 +394,9 @@ async function seedBeltRanks() {
       // never took effect on the dev database twice before this fix.
       stripeColors: Array.from({ length: rank.maxStripes }, () => "#FFFFFF"),
       visibleStripeSlots: 4,
+      // Black belt is time-based with per-degree intervals (default-belt-ranks.ts).
+      progressionMode: rank.progressionMode ?? null,
+      stripeIntervalMonths: rank.stripeIntervalMonths ?? [],
     };
     await prisma.beltRank.upsert({
       where: { id },
@@ -402,8 +405,10 @@ async function seedBeltRanks() {
     });
   }
 
-  // Preserves current behavior exactly: ATTENDANCE mode, ADMIN/DIRECTOR
-  // confirm required — no automatic job exists yet.
+  // ATTENDANCE mode; every promotion is awarded by an instructor (no automatic
+  // job exists). `stripeAccounting` is deliberately NOT in `data`: Alliance's dev
+  // organization stays CUMULATIVE until scripts/promotion-accounting.ts moves it
+  // over, and a reseed must never flip (or un-flip) that decision.
   {
     const data = { mode: "ATTENDANCE" as const, requiresCoachApproval: true };
     await prisma.promotionConfig.upsert({

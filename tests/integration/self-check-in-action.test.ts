@@ -257,7 +257,7 @@ describe("selfCheckIn", () => {
     const state = await selfCheckIn(user.organizationId, {}, new FormData());
 
     expect(state.ok).toBe(true);
-    expect(state.earnedStripe).toBe(true);
+    expect(state.thresholdReached).toBe(true);
     expect(notifyEligibilityState.spy).toHaveBeenCalledWith(student.id, user.organizationId, "STRIPE_THRESHOLD");
   });
 

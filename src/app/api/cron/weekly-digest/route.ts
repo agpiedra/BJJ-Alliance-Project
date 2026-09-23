@@ -13,7 +13,7 @@ import { runScheduledJob, type JobOrgBreakdown } from "@/lib/jobs/run-scheduled-
  * `Authorization: Bearer <CRON_SECRET>` (Vercel's documented mechanism), not
  * session cookies — there is no staff session in a cron-triggered request.
  * That check, plus the JobRun row and Healthchecks.io heartbeat (C1), live
- * once in `runScheduledJob` — shared with the promotion-auto-award route.
+ * once in `runScheduledJob` — shared by every scheduled job.
  *
  * Every real `Academy` row is processed (never a hardcoded Escazú/Escalante
  * list, matching the locations panel's precedent) — one academy's digest

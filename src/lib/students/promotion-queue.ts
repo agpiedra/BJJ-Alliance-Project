@@ -4,7 +4,6 @@ import { getScopedDb } from "@/lib/tenant/scoped-client";
 import type { TenantContext } from "@/lib/tenant/types";
 import { getAtBeltSummary } from "@/lib/students/attendance-summary";
 import { resolvePromotionConfigMap } from "@/lib/promotion/config";
-import { MissingTimeAnchorError } from "@/lib/promotion/engine";
 import { isNotFoundError } from "@/lib/prisma-errors";
 
 export interface PromotionCandidate {
@@ -21,6 +20,10 @@ export interface PromotionCandidate {
   status: "stripe-eligible" | "exam-eligible" | "approaching";
   atBeltCount: number;
   remainingAttendance: number | null;
+  /** Which accounting produced these numbers - the planning projection windows differently for each. */
+  accounting: "CUMULATIVE" | "PER_INTERVAL";
+  /** The attendance target from the engine (null for a time-based degree) - consumers never rebuild it as count + remaining. */
+  target: number | null;
 }
 
 type QueueStatus = "stripe-eligible" | "exam-eligible" | "approaching" | "none";
@@ -62,8 +65,6 @@ async function classifyActiveStudents(context: TenantContext): Promise<
   // inside getAtBeltSummary would be an N+1 (see resolvePromotionConfigMap's
   // own doc comment).
   const configByTrack = await resolvePromotionConfigMap(context.organizationId);
-
-  let skippedForMissingTimeAnchor = 0;
 
   const results = await Promise.all(
     students.map(async (student) => {
@@ -120,24 +121,11 @@ async function classifyActiveStudents(context: TenantContext): Promise<
             status: status as "stripe-eligible" | "exam-eligible" | "approaching",
             atBeltCount: summary.atBeltCount,
             remainingAttendance: summary.remainingAttendance,
+            accounting: summary.accounting,
+            target: summary.target,
           },
         };
       } catch (error) {
-        // A TIME/HYBRID student with no timeAnchorAt is a per-student data
-        // gap (e.g. a mode switch that missed backfilling an anchor), not an
-        // org config bug — excluding just this row is right (2b's own
-        // design: "strict engine, caller decides handling"), but excluding
-        // it SILENTLY would let the director see a shorter list with no
-        // reason why — the exact failure shape this project keeps finding.
-        // Logged loudly instead, with the student id, so "the queue looks
-        // short" is traceable to a cause.
-        if (error instanceof MissingTimeAnchorError) {
-          skippedForMissingTimeAnchor++;
-          console.warn(
-            `listPromotionQueue: skipped student ${student.id} (org ${context.organizationId}, homeAcademyId ${student.homeAcademyId}) — ${error.message}`,
-          );
-          return null;
-        }
         // Any other P2025 here can only mean the student itself vanished
         // (getAtBeltSummary's internal findUniqueOrThrow) — benign, exclude
         // it from the batch. Anything else (including
@@ -151,12 +139,6 @@ async function classifyActiveStudents(context: TenantContext): Promise<
       }
     }),
   );
-
-  if (skippedForMissingTimeAnchor > 0) {
-    console.warn(
-      `listPromotionQueue: ${skippedForMissingTimeAnchor} student(s) skipped for org ${context.organizationId} — missing time anchor.`,
-    );
-  }
 
   return results.filter((r): r is { candidate: PromotionCandidate; status: QueueStatus } => r !== null);
 }

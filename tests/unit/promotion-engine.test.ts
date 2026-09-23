@@ -3,7 +3,6 @@ import { DateTime } from "luxon";
 import {
   evaluatePromotion,
   InvalidPromotionConfigError,
-  MissingTimeAnchorError,
   type EngineInput,
 } from "@/lib/promotion/engine";
 
@@ -94,8 +93,9 @@ describe("TIME mode", () => {
     expect(result.isEligible).toBe(true);
   });
 
-  it("throws MissingTimeAnchorError when the student has no time anchor", () => {
-    expect(() => evaluatePromotion(baseInput({ mode: "TIME", timeAnchorAt: null }))).toThrow(MissingTimeAnchorError);
+  it("a student with no last-award date is reported as such - no due date, never eligible, no throw", () => {
+    const result = evaluatePromotion(baseInput({ mode: "TIME", timeAnchorAt: null }));
+    expect(result).toMatchObject({ dueDate: null, isEligible: false, timeAnchorMissing: true });
   });
 
   it("throws InvalidPromotionConfigError when monthsPerStripe is missing", () => {

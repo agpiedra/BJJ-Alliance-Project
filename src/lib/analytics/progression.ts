@@ -81,7 +81,9 @@ export interface ProgressionPlanningRow {
 async function computeRecentAttendanceRates(
   organizationId: string,
   candidateIds: string[],
-  beltAwardedAtByStudentId: Map<string, Date>,
+  windowStartByStudentId: Map<string, Date>,
+  /** PER_INTERVAL students train "days": several classes on one Costa Rica day are one day of progress. */
+  perIntervalStudentIds: Set<string>,
   today: DateTime,
 ): Promise<Map<string, number>> {
   const windowFloor = today.minus({ days: RECENT_WINDOW_DAYS });
@@ -108,9 +110,9 @@ async function computeRecentAttendanceRates(
 
   const rateByStudentId = new Map<string, number>();
   for (const studentId of candidateIds) {
-    const beltAwardedAt = beltAwardedAtByStudentId.get(studentId);
-    const windowStart = beltAwardedAt
-      ? DateTime.max(windowFloor, DateTime.fromJSDate(beltAwardedAt, { zone: ZONE }))
+    const intervalStart = windowStartByStudentId.get(studentId);
+    const windowStart = intervalStart
+      ? DateTime.max(windowFloor, DateTime.fromJSDate(intervalStart, { zone: ZONE }))
       : windowFloor;
 
     const windowDays = today.diff(windowStart, "days").days;
@@ -119,7 +121,10 @@ async function computeRecentAttendanceRates(
       continue;
     }
 
-    const count = (datesByStudentId.get(studentId) ?? []).filter((date) => date >= windowStart).length;
+    const inWindow = (datesByStudentId.get(studentId) ?? []).filter((date) => date >= windowStart);
+    const count = perIntervalStudentIds.has(studentId)
+      ? new Set(inWindow.map((date) => date.setZone(ZONE).toISODate())).size
+      : inWindow.length;
     rateByStudentId.set(studentId, count / (windowDays / 7));
   }
 
@@ -164,14 +169,20 @@ export async function getProgressionPlanningList(
 
   const students = await getScopedDb(context).student.findMany({
     where: { id: { in: candidates.map((c) => c.studentId) } },
-    select: { id: true, beltAwardedAt: true },
+    select: { id: true, beltAwardedAt: true, progressBaselineAt: true },
   });
-  const beltAwardedAtByStudentId = new Map(students.map((s) => [s.id, s.beltAwardedAt]));
+  // The recent-rate window starts where the student's CURRENT progress interval starts: the
+  // last award (or system tracking start) under PER_INTERVAL, the belt date under the old rule.
+  const perIntervalStudentIds = new Set(candidates.filter((c) => c.accounting === "PER_INTERVAL").map((c) => c.studentId));
+  const windowStartByStudentId = new Map(
+    students.map((s) => [s.id, perIntervalStudentIds.has(s.id) ? s.progressBaselineAt : s.beltAwardedAt]),
+  );
 
   const rateByStudentId = await computeRecentAttendanceRates(
     context.organizationId,
     candidates.map((c) => c.studentId),
-    beltAwardedAtByStudentId,
+    windowStartByStudentId,
+    perIntervalStudentIds,
     today,
   );
 

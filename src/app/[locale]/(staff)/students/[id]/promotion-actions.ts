@@ -4,6 +4,7 @@ import { z } from "zod";
 import { resolveActionContext } from "@/lib/tenant/context";
 import { awardPromotion } from "@/lib/promotion/award";
 import { correctPromotion } from "@/lib/promotion/correction";
+import { refreshPromotionPages } from "@/lib/promotion/refresh-pages";
 import type { ActionState } from "@/lib/action-state";
 
 const awardSchema = z.object({ studentId: z.string().min(1) });
@@ -33,6 +34,7 @@ export async function awardFromStudentPage(
   if (!result.ok) {
     return { error: result.error };
   }
+  await refreshPromotionPages(parsed.data.studentId);
   return { ok: true };
 }
 
@@ -91,5 +93,6 @@ export async function correctPromotionAction(
   if (!result.ok) {
     return { error: result.error };
   }
+  await refreshPromotionPages(data.studentId);
   return { ok: true };
 }

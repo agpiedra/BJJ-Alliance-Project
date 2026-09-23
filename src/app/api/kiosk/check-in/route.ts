@@ -14,7 +14,7 @@ import type { KioskContext } from "@/lib/tenant/types";
 /**
  * Response contract for Tasks 6 (kiosk page) and 7 (offline-replay queue):
  *
- *   200  { ok: true; student: {...}; summary: AtBeltSummary; earnedStripe: boolean; isVisitor: boolean }
+ *   200  { ok: true; student: {...}; summary: AtBeltSummary; thresholdReached: boolean; progressOutcome: "counted" | "already_counted_today" | "not_promotion_class"; isVisitor: boolean }
  *   400  { ok: false; error: "invalid_code" | "no_active_class" | "already_checked_in" }
  *   401  { ok: false; error: "invalid_token" }               (bad kiosk token — same generic
  *                                                              shape as academy-not-found, see below)

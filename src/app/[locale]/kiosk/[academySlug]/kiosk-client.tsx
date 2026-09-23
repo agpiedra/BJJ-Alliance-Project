@@ -10,6 +10,8 @@ import { BeltGraphic, type BeltVisualData } from "@/components/belt-graphic/belt
 import { enqueueOfflineCheckIn, flushOfflineQueue } from "@/lib/kiosk/offline-queue";
 import { ZONE } from "@/lib/scheduling/zone";
 import type { AtBeltSummary } from "@/lib/students/attendance-summary";
+import { buildProgressView } from "@/lib/promotion/progress-view";
+import type { ProgressOutcome } from "@/lib/kiosk/perform-check-in";
 
 const CODE_LENGTH = 4;
 const SUCCESS_DISPLAY_MS = 6000;
@@ -61,8 +63,23 @@ interface CheckInSuccess {
    * `examEligible`, names the API never returned, so every real check-in
    * rendered "NaN"; deriving the type makes a rename a compile error.
    */
-  summary: Pick<AtBeltSummary, "atBeltCount" | "remainingAttendance" | "isEligible" | "nextTarget">;
-  earnedStripe: boolean;
+  summary: Pick<
+    AtBeltSummary,
+    | "atBeltCount"
+    | "remainingAttendance"
+    | "isEligible"
+    | "nextTarget"
+    | "mode"
+    | "target"
+    | "percent"
+    | "timeAnchorMissing"
+    | "notConfigured"
+    | "reachedOn"
+  >;
+  /** This check-in reached the threshold: eligible for instructor review (a check-in never awards anything). */
+  thresholdReached: boolean;
+  /** What this check-in did for promotion progress - an extra same-day class is recorded but adds nothing. */
+  progressOutcome: ProgressOutcome;
   isVisitor: boolean;
   homeAcademyName: string;
   attendanceRecordId: string;
@@ -681,21 +698,19 @@ export function SuccessView({ result, onCorrect }: { result: CheckInSuccess; onC
   const t = useTranslations("kiosk");
   const tDay = useTranslations("dayOfWeek");
   const locale = useLocale();
-  const { student, summary, earnedStripe, isVisitor, homeAcademyName, matchedClass } = result;
+  const { student, summary, thresholdReached, progressOutcome, isVisitor, homeAcademyName, matchedClass } = result;
   const name = `${student.firstName} ${student.lastName}`;
-  // Presentation-only derivation from numbers the API already computed
-  // (atBeltCount, remainingAttendance) — not a reimplementation of the
-  // belt-progression business logic itself (Rule 8), just the arithmetic
-  // needed to show "24 / 30" instead of two separate sentences.
-  const target =
-    summary.remainingAttendance !== null ? summary.atBeltCount + summary.remainingAttendance : null;
+  // The shared display shaping (buildProgressView) - the same one every other surface reads. An eligible
+  // student sees the capped "30 / 30" and "eligible for instructor review", never an overflowing 42 / 30.
+  // (The kiosk shows no due date, so none is passed.)
+  const view = buildProgressView({ ...summary, dueDate: null });
 
   return (
     <div className="flex w-full flex-1 flex-col items-center justify-center gap-6 text-center">
       <CheckCircle2 className="size-20 text-ok sm:size-28" aria-hidden="true" />
 
       <h2 className="font-heading text-4xl font-semibold text-balance sm:text-6xl">
-        {earnedStripe ? t("earnedStripeHeading", { name }) : t("successHeading", { name })}
+        {thresholdReached ? t("thresholdReachedHeading", { name }) : t("successHeading", { name })}
       </h2>
 
       <BeltGraphic
@@ -712,18 +727,27 @@ export function SuccessView({ result, onCorrect }: { result: CheckInSuccess; onC
 
       <div className="flex flex-col items-center gap-2">
         <p className="font-mono text-3xl tabular-nums sm:text-5xl">
-          {target !== null ? `${summary.atBeltCount} / ${target}` : summary.atBeltCount}
+          {view.current !== null && view.target !== null ? `${view.current} / ${view.target}` : view.actualCount}
         </p>
 
-        {summary.remainingAttendance !== null && (
+        {view.state === "in_progress" && (
           <p className="text-xl text-muted-foreground sm:text-2xl">
-            {t("remainingToNextStripe", { count: summary.remainingAttendance })}
+            {t("remainingToNextStripe", { count: view.remaining ?? 0 })}
           </p>
         )}
 
-        {/* Same condition the portal uses: no remaining count only means "eligible for the belt exam" when the next target IS the belt. */}
-        {summary.remainingAttendance === null && summary.nextTarget === "BELT" && summary.isEligible && (
-          <p className="text-xl font-medium sm:text-2xl">{t("examEligible")}</p>
+        {view.state === "eligible" && <p className="text-xl font-medium sm:text-2xl">{t("eligibleForReview")}</p>}
+
+        {/* Truthful about what this tap did for progress: recorded either way, but only the first
+            qualifying class of the day is a progress day. */}
+        {progressOutcome === "already_counted_today" && (
+          <p className="text-lg text-muted-foreground sm:text-xl">{t("progressAlreadyCounted")}</p>
+        )}
+        {progressOutcome === "not_promotion_class" && (
+          <p className="text-lg text-muted-foreground sm:text-xl">{t("progressNotPromotionClass")}</p>
+        )}
+        {progressOutcome === "before_last_promotion" && (
+          <p className="text-lg text-muted-foreground sm:text-xl">{t("progressBeforeLastPromotion")}</p>
         )}
       </div>
 

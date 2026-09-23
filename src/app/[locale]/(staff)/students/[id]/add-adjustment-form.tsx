@@ -13,12 +13,21 @@ const INITIAL_STATE: ActionState = {};
 // `RegenerateCodeButton`. The server-side `addAttendanceAdjustment`
 // (requireTenantContext(["ADMIN", "DIRECTOR", "INSTRUCTOR"]) + a fresh
 // isAcademyInTenantScope check) is the real enforcement.
+//
+// A coach records ONE attendance day for the student (never a number of
+// classes and never a negative correction - the academy has no head-start or
+// arbitrary progress credit). The day defaults to today in Costa Rica; the
+// server owns "today", so the date input only carries a `max` when the page
+// gives it one, and the server refuses a future day either way.
 export function AddAdjustmentForm({
   organizationId,
   studentId,
+  todayCr,
 }: {
   organizationId: string;
   studentId: string;
+  /** Today's Costa Rica date (`YYYY-MM-DD`), resolved on the server; caps the date input. */
+  todayCr?: string;
 }) {
   const t = useTranslations("students.detail.adjustment");
   const [state, formAction, isPending] = useActionState(
@@ -26,31 +35,24 @@ export function AddAdjustmentForm({
     INITIAL_STATE,
   );
   const reasonErrors = state.fieldErrors?.reason;
-  const deltaErrors = state.fieldErrors?.delta;
+  const dateErrors = state.fieldErrors?.date;
 
   return (
     <details className="rounded border p-4">
       <summary className="cursor-pointer font-medium">{t("toggle")}</summary>
 
       {state.ok && <p className="mt-4 text-sm text-green-700">{t("success")}</p>}
+      {state.ok && state.info && <p className="mt-2 text-sm text-muted-foreground">{t(state.info)}</p>}
 
       <form action={formAction} className="mt-4 flex w-full max-w-sm flex-col gap-3">
         <input type="hidden" name="studentId" value={studentId} />
 
         <label className="flex flex-col gap-1">
-          <span>{t("delta")}</span>
-          <input
-            type="number"
-            name="delta"
-            step="1"
-            required
-            className="rounded border px-3 py-2"
-          />
-          <span className="text-sm text-muted-foreground">{t("deltaHint")}</span>
+          <span>{t("date")}</span>
+          <input type="date" name="date" defaultValue={todayCr} max={todayCr} className="rounded border px-3 py-2" />
+          <span className="text-sm text-muted-foreground">{t("dateHint")}</span>
         </label>
-        {deltaErrors && deltaErrors.length > 0 && (
-          <p className="text-sm text-red-600">{t("deltaInvalid")}</p>
-        )}
+        {dateErrors && dateErrors.length > 0 && <p className="text-sm text-red-600">{t("dateInvalid")}</p>}
 
         <label className="flex flex-col gap-1">
           <span>{t("reason")}</span>
