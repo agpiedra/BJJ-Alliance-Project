@@ -402,6 +402,22 @@ completely fine in every test you'd think to run" bug: the upload succeeds, the 
 preview (also authenticated) shows it fine, and only the actual kiosk — which nobody but
 a real student in front of a real tablet ever looks at — shows the broken image.
 
+**Related gap, found during PR review (branding logo upload, revision 44): nothing validates
+that `SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY`/the bucket are present and usable, at startup
+or on any health check.** `logo-storage.ts`'s functions read these lazily, on first real use,
+by deliberate design (see that module's own comment on why) — but that same laziness means a
+missing or misspelled env var in production degrades into a director seeing "There's a problem
+with logo storage. Contact an administrator." (revision 44's own error taxonomy) instead of
+anything you'd notice at deploy time. Confirmed directly: `SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY`/`SUPABASE_LOGO_BUCKET`
+appear nowhere outside `logo-storage.ts` — no startup check, and neither `/api/health`
+(deliberately database-only, per C1's own decision #3) nor `/api/health/jobs` (deliberately
+scoped to `JobRun` freshness) touches storage at all. **Not built here — report only, per the
+review that found it.** Before relying on logo uploads in production: either add a one-time
+manual verification step to this runbook's first-deploy checklist (step 3 above, "confirm
+storage config" alongside "confirm the bucket is public"), or extend `/api/health` to also
+ping Storage's own `/storage/v1/status` endpoint the way `checkDatabaseHealth` already pings
+Postgres — a decision for whoever picks this up, not made here.
+
 ### 4. Email deliverability (already tracked, repeated here because it fits this pattern exactly)
 
 Already the one launch-blocking item on the Launch checklist, but worth naming here for
