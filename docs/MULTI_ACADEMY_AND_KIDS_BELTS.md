@@ -567,7 +567,7 @@ Branding, signup, approval and SaaS administration operate on **Organization**. 
 
 ### Briefs are not ground truth
 
-The reviewer who writes these briefs cannot read this repository. Every statement in a brief about what the code currently does — a function's behaviour, a role gate, an ordering, whether a test or harness exists — is a **hypothesis, not a fact**. Only instructions ("do X", "don't build Y", "this is the acceptance bar") are authoritative.
+A brief's view of this repository may be incomplete or out of date. Every statement in a brief about what the code currently does — a function's behaviour, a role gate, an ordering, whether a test or harness exists — is a **hypothesis, not a fact**, and must be checked against the current checkout before anything is built on it. Only instructions ("do X", "don't build Y", "this is the acceptance bar") are authoritative.
 
 Therefore, before building on any statement about current behaviour:
 
