@@ -555,10 +555,10 @@ describe("student detail actions", () => {
       const record = await prisma.attendanceRecord.findFirstOrThrow({
         where: { studentId: student.id, type: "ADJUSTMENT" },
       });
-      // The ledger day is the CR day recorded (Mar 10), attributed to the END of that CR day (23:59:59 = 05:59:59Z
-      // the next UTC day), never "now" and never an invented earlier hour.
+      // The ledger day is the CR day recorded (Mar 10), attributed to midday CR of that unambiguous day
+      // (18:00Z), never "now".
       expect(record.date.toISOString().slice(0, 10)).toBe("2026-03-10");
-      expect(record.occurredAt.toISOString()).toBe("2026-03-11T05:59:59.000Z");
+      expect(record.occurredAt.toISOString()).toBe("2026-03-10T18:00:00.000Z");
       expect(record.delta).toBe(1);
 
       const audits = await auditRowsFor(record.id, "attendance.adjustment");
@@ -664,6 +664,62 @@ describe("student detail actions", () => {
       expect(result).toEqual({ ok: true, info: "alreadyCountedThatDay" });
       const after = await getAtBeltSummary(student.id, student.organizationId, ALLIANCE_PER_INTERVAL_CONFIG);
       expect(after.atBeltCount).toBe(1); // still counted in the current interval
+    });
+
+    describe("the day of a promotion: only the day is known, so no after-award time is invented", () => {
+      // Awarded at 14:00 CR on Tue 2026-03-10 (20:00Z). A coach-recorded entry for that day cannot be placed
+      // before or after the award.
+      const AWARD = new Date("2026-03-10T20:00:00Z");
+
+      async function awardedStudent(label: string) {
+        const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+        const admin = await makeStaffUser("ADMIN", `adj-${label}-admin`);
+        const student = await makeStudent(escazu.id, escazu.organizationId, { lastName: label });
+        await prisma.student.update({ where: { id: student.id }, data: { progressBaselineAt: AWARD, progressBaselineKind: "AWARD" } });
+        currentSession = { user: { id: admin.id, role: "ADMIN" }, activeOrganizationId: admin.organizationId };
+        return { escazu, admin, student };
+      }
+      const record = (studentId: string, academyId: string, organizationId: string, occurredAt: string) =>
+        prisma.attendanceRecord.create({
+          data: { studentId, academyId, organizationId, occurredAt: new Date(occurredAt), date: new Date("2026-03-10T00:00:00Z"), type: "CHECKIN", delta: 1, source: "KIOSK" },
+        });
+      const count = (student: { id: string; organizationId: string }) =>
+        getAtBeltSummary(student.id, student.organizationId, ALLIANCE_PER_INTERVAL_CONFIG).then((s) => s.atBeltCount);
+
+      it("a late entry for the promotion day is history only: it adds nothing after the reset and says why", async () => {
+        const { admin, student } = await awardedStudent("PromoDayAlone");
+        const result = await addAttendanceAdjustment(admin.organizationId, {}, formData({ studentId: student.id, date: "2026-03-10", reason: "was at the ceremony class" }));
+        expect(result).toEqual({ ok: true, info: "promotionDayHistoryOnly" });
+        expect(await count(student)).toBe(0);
+        const row = await prisma.attendanceRecord.findFirstOrThrow({ where: { studentId: student.id } });
+        expect(row.occurredAt.getTime()).toBeLessThan(AWARD.getTime()); // before the award instant, never after it
+      });
+
+      it("it never displaces a real class after the award: that day's contribution stays in the new interval", async () => {
+        const { escazu, admin, student } = await awardedStudent("PromoDayAfter");
+        await record(student.id, escazu.id, escazu.organizationId, "2026-03-11T00:00:00Z"); // 18:00 CR, after the award
+        expect(await count(student)).toBe(1);
+        const result = await addAttendanceAdjustment(admin.organizationId, {}, formData({ studentId: student.id, date: "2026-03-10", reason: "late entry" }));
+        expect(result.ok).toBe(true);
+        expect(await count(student)).toBe(1);
+      });
+
+      it("it never pulls a pre-award class forward: a real class before the award stays in the completed interval", async () => {
+        const { escazu, admin, student } = await awardedStudent("PromoDayBefore");
+        await record(student.id, escazu.id, escazu.organizationId, "2026-03-10T12:00:00Z"); // 06:00 CR, before the award
+        expect(await count(student)).toBe(0);
+        await addAttendanceAdjustment(admin.organizationId, {}, formData({ studentId: student.id, date: "2026-03-10", reason: "second class that day" }));
+        expect(await count(student)).toBe(0);
+      });
+
+      it("the day after the promotion counts; the day before does not", async () => {
+        const { admin, student } = await awardedStudent("PromoDayNeighbours");
+        await addAttendanceAdjustment(admin.organizationId, {}, formData({ studentId: student.id, date: "2026-03-11", reason: "next day" }));
+        expect(await count(student)).toBe(1);
+        const before = await addAttendanceAdjustment(admin.organizationId, {}, formData({ studentId: student.id, date: "2026-03-09", reason: "day before" }));
+        expect(before).toEqual({ ok: true, info: "beforeLastPromotion" });
+        expect(await count(student)).toBe(1);
+      });
     });
 
     it("a day recorded for a date before the last promotion is kept but belongs to the completed interval", async () => {

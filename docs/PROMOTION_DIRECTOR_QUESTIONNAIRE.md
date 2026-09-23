@@ -366,11 +366,11 @@ ________________________________________________________________________________
 ## Still open (PENDING)
 
 1. **The roster of existing black belts** (question 6c): which degree each holds and the date of the last award.
-2. **How to remove an attendance day that was counted by mistake.** The decisions remove free-form
-   negative adjustments and a promotion correction does not give back the days an award consumed, so
-   there is currently no way to void one wrongly recorded day (for example a coach-added day entered for
-   the wrong student). Should a coach be able to void a single day, with a reason, audited - or should
-   the history and the count stand?
+2. **How to remove an attendance day that was counted by mistake - RESOLVED in the PR 2 review.** An
+   ADMIN or DIRECTOR can void a single entry with a reason: it stays in the history (never deleted), the day
+   is recomputed from the remaining valid entries, and no promotion is revoked. Still worth a quick answer:
+   may an INSTRUCTOR void an entry they made themselves, and is an "un-void" wanted (today a day is restored
+   by recording it again)?
 
 Also to decide before an **existing** organization is moved to the new rule: students who are eligible
 under the old rule on that day will read 0 after the change. The owner decides whether to award those

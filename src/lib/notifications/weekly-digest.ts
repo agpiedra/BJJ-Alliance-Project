@@ -79,6 +79,7 @@ export async function sendWeeklyDigestForAcademy(
         organizationId: jobContext.organizationId,
         academyId,
         type: "CHECKIN",
+        voidedAt: null,
         date: { gte: windowStart, lte: windowEnd },
       },
     }),

@@ -599,6 +599,31 @@
       "attendanceHistory": {
         "heading": "Historial de asistencia"
       },
+      "attendanceEntries": {
+        "empty": "Todavía no hay asistencias registradas.",
+        "voidExplainer": "Si un registro fue un error (estudiante equivocado, una clase que no ocurrió), anúlalo. El registro se queda en el historial marcado como anulado, la asistencia de ese día se recalcula con los registros válidos restantes y no se cambia ninguna promoción.",
+        "voided": "Anulado",
+        "voidedReason": "Motivo: {reason}",
+        "void": "Anular este registro",
+        "reason": "Motivo (obligatorio)",
+        "reasonRequired": "Escribe un motivo.",
+        "submit": "Anular registro",
+        "success": "Registro anulado. Se queda en el historial y no se cambió ninguna promoción.",
+        "type": {
+          "CHECKIN": "Asistencia a clase",
+          "ADJUSTMENT": "Agregado por el personal"
+        },
+        "source": {
+          "KIOSK": "Kiosco",
+          "PORTAL": "Portal",
+          "STAFF": "Personal"
+        },
+        "error": {
+          "notFound": "No se encontró ese registro.",
+          "invalid": "Revisa el formulario.",
+          "alreadyVoided": "Ese registro ya estaba anulado."
+        }
+      },
       "paymentHistory": {
         "heading": "Historial de pagos",
         "empty": "Todavía no hay pagos registrados.",
@@ -761,6 +786,7 @@
         "success": "Día de asistencia guardado.",
         "alreadyCountedThatDay": "Se guardó en el historial, pero ese día ya había contado para el progreso, así que no se agregó nada.",
         "beforeLastPromotion": "Se guardó en el historial, pero ese día es anterior a la última promoción, así que no cuenta para la siguiente.",
+        "promotionDayHistoryOnly": "Guardado solo en el historial. Es el día de una promoción y no se puede saber si la clase fue antes o después de otorgarla, así que no suma para la siguiente. Una clase posterior cuenta al registrarse en el kiosco o el portal.",
         "invalid": "Por favor revisa el formulario.",
         "notFound": "No se pudo agregar este día de asistencia.",
         "archived": "Este estudiante está archivado — no se puede agregar asistencia."

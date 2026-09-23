@@ -98,7 +98,7 @@ export async function listStudentsToContact(
   const studentIds = students.map((student) => student.id);
   const lastAttendances = await prisma.attendanceRecord.groupBy({
     by: ["studentId"],
-    where: { studentId: { in: studentIds }, organizationId: context.organizationId, type: "CHECKIN" },
+    where: { studentId: { in: studentIds }, organizationId: context.organizationId, type: "CHECKIN", voidedAt: null },
     _max: { occurredAt: true },
   });
   const lastAttendanceByStudentId = new Map(lastAttendances.map((a) => [a.studentId, a._max.occurredAt ?? null]));

@@ -107,6 +107,7 @@ export async function getFranjaHeatmap(
             classSessionId: { in: sessionIds },
             organizationId: context.organizationId,
             type: "CHECKIN",
+            voidedAt: null,
             occurredAt: { gte: windowStart.toJSDate(), lte: now.toJSDate() },
           },
           select: { classSessionId: true },

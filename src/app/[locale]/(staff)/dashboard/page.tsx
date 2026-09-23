@@ -190,6 +190,7 @@ export default async function DashboardPage() {
     AND: [
       branchScopeWhere(context),
       { type: "CHECKIN" },
+      { voidedAt: null },
       { occurredAt: { gte: from.toJSDate(), lte: to.toJSDate() } },
     ],
   });

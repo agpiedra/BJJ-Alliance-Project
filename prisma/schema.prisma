@@ -490,6 +490,7 @@ model User {
 
   attendanceRecordsCreated               AttendanceRecord[]    @relation("AttendanceCreatedBy")
   attendanceRecordsCorrected             AttendanceRecord[]    @relation("AttendanceCorrectedBy")
+  attendanceRecordsVoided                AttendanceRecord[]    @relation("AttendanceVoidedBy")
   passwordResetTokens                    PasswordResetToken[]
   invitationsSent                        Invitation[]          @relation("InvitationInvitedBy")
   organizationInvoicesRecorded           OrganizationInvoice[] @relation("OrganizationInvoiceRecordedBy")
@@ -716,6 +717,14 @@ model AttendanceRecord {
   /// raw instant of the original tap even after a correction.
   correctedById  String?
   correctedAt    DateTime?
+  /// Set when an ADMIN/DIRECTOR invalidates a mistaken entry (wrong student, wrong day, a tap that never
+  /// happened). The row is NEVER deleted and never edited otherwise: it stays in the history, marked, with who
+  /// and why. A voided row counts for nothing - not toward promotion progress, not toward lifetime attendance -
+  /// and the day's single contribution is recomputed from the remaining valid rows. Voiding never touches a
+  /// promotion: a coach explicitly corrects an award if one was wrongly earned.
+  voidedAt       DateTime?
+  voidedById     String?
+  voidReason     String?
 
   student      Student       @relation(fields: [organizationId, studentId], references: [organizationId, id])
   academy      Academy       @relation(fields: [organizationId, academyId], references: [organizationId, id])
@@ -724,6 +733,7 @@ model AttendanceRecord {
   // requires an explicit name on each to tell them apart.
   createdBy    User?         @relation("AttendanceCreatedBy", fields: [createdById], references: [id])
   correctedBy  User?         @relation("AttendanceCorrectedBy", fields: [correctedById], references: [id])
+  voidedBy     User?         @relation("AttendanceVoidedBy", fields: [voidedById], references: [id])
   organization Organization  @relation(fields: [organizationId], references: [id])
 
   @@unique([studentId, classSessionId, date])

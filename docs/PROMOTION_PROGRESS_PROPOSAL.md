@@ -80,9 +80,10 @@ except where section 6 says so.
 
 | Table | Column | Meaning |
 |---|---|---|
-| `PromotionConfig` | `stripeAccounting` (`CUMULATIVE` default, `PER_INTERVAL`) | The accounting per track. `CUMULATIVE` is the old rule, so a deploy changes nothing for an existing organization. New organizations are created `PER_INTERVAL`. |
+| `PromotionConfig` | `stripeAccounting` (`CUMULATIVE` default, `PER_INTERVAL`) | The accounting per track. `CUMULATIVE` is the old counting rule, so a deploy does not change how an existing organization's progress is COUNTED (it does change other things immediately: see section 5). New organizations are created `PER_INTERVAL`. |
 | `PromotionConfig` | CHECK `requiresCoachApproval = true` | The database refuses automatic approval for every writer. |
 | `Student` | `progressBaselineAt` (default now), `progressBaselineKind` (`SYSTEM_BASELINE` default, `AWARD`) | Start of the current interval, and whether it is the system's tracking start or a real award instant. Defaults fill for old writers. |
+| `AttendanceRecord` | `voidedAt`, `voidedById`, `voidReason` (nullable) | An ADMIN/DIRECTOR invalidated this entry as a mistake (section 4.7). The row is never deleted; every reader ignores a voided row. |
 | `BeltRank` | `progressionMode` (nullable), `stripeIntervalMonths` (int array, default empty) | Per-rank mode override (black belt = TIME) and months per degree, indexed by the current degree count. |
 
 `Student.timeAnchorAt` now means "the instant of this student's last promotion" for time-based ranks:
@@ -160,47 +161,99 @@ endpoint, heartbeat); `writeAward` refuses `AUTO`; `updateTrackConfig` refuses
 `requiresCoachApproval: false`; and the database CHECK refuses it for any other writer. Historical
 `AUTO` promotion rows are kept.
 
-### 4.7 Coach-added attendance
+### 4.7 Coach-added attendance, and correcting a mistaken entry
 
-The coach records one Costa Rica day (default today, never a future day) with a required reason. An entry
-for an earlier day is stamped at the end of that day, so it can add a day that had none but can never
-become that day's earliest row and pull an already-counted day out of the interval it was counted in. The
-form no longer accepts a number: a posted `delta` is refused. It shares the daily limit, and the coach
-is told when an entry was recorded but added nothing (`alreadyCountedThatDay`) or belongs to the
-completed interval (`beforeLastPromotion`). Head-start credit entry (student creation form, credit
-correction action) is removed; the `PromotionCredit` table and its history are kept, unread by
-`PER_INTERVAL`.
+**Adding a day.** The coach records one Costa Rica day (default today, never a future day) with a required
+reason; the form has no number field and a posted `delta` is refused. The entry shares the daily limit, and
+the coach is told when it was recorded but added nothing. Because interval membership follows the day's
+earliest qualifying row, and a coach supplies only a DAY, no after-award time is ever invented:
+
+- a day AFTER the promotion's day counts (stamped at the moment for today, midday for a past day);
+- a day BEFORE it belongs to the completed interval and adds nothing;
+- **the promotion's own day** cannot be placed before or after the award, so it is history only
+  (`promotionDayHistoryOnly`): stamped just before the award instant, or, if that day already has a valid
+  row, just after that row, so it can never become the day's earliest row and displace a real class. A
+  class after the award counts when checked in at the kiosk or portal.
+
+**Correcting a mistaken entry (void).** "No arbitrary credit" never meant "a mistake cannot be corrected".
+An ADMIN or DIRECTOR (scoped to the entry's academy) can void ONE entry, with a required reason
+(`voidAttendanceEntry`, audited as `attendance.void`). The row is never deleted and never edited beyond the
+void marker (who, when, why); there is no number to enter, so it cannot become a progress balance. Every
+reader ignores a voided row (progress, lifetime attendance, the attendance history, analytics, the weekly
+digest). Because the daily contribution is derived from the remaining valid rows, voiding recomputes it
+correctly: if another valid entry exists that day it becomes the day's contribution (which can move the day
+into the current interval), and if none exists the day stops counting. **A void never revokes a promotion or
+changes a rank**; a coach explicitly corrects an award. The staff student page lists recent entries with the
+void control (ADMIN/DIRECTOR only). There is no "un-void": to restore a day, record it again.
+
+Head-start credit entry (student creation form, credit correction action) is removed; the `PromotionCredit`
+table and its history are kept, unread by `PER_INTERVAL`.
 
 ### 4.8 Moving an existing organization
 
-An existing organization stays `CUMULATIVE` after deploy. It moves only through
-`pnpm promotion:accounting`:
+An existing organization stays `CUMULATIVE` after deploy (its progress is still counted the old way). It
+moves only through `pnpm promotion:accounting`:
 
-1. `report --org=<slug>`: read-only. Per student it shows what they see today and after; the totals list
-   students eligible today who will read 0, legacy credits (kept, ignored), arbitrary adjustments and
-   extra same-day rows (kept as history, adding 0), black belts without a last-award date, and
-   historical automatic promotions (kept). It prints a `reportId`.
-2. `activate --org=<slug> --report=<id> --activated-by=<email>` is a dry run; `--apply` writes. It
-   refuses unless the report is still true, and in one transaction sets both tracks to `PER_INTERVAL`,
-   records a system tracking baseline for every student at the activation instant, completes the
-   black-belt catalog if it is still the old shape, and writes one audit row. It never edits
-   attendance, promotions, credits or belt dates, and never invents a promotion.
+1. `report --org=<slug>`: read-only. Per student it shows what they see today and what they WILL see after
+   activation, computed by the same engine with the proposed configuration (not assumed): attendance ranks
+   start at 0; a time-based black belt is evaluated from its known last-award date (eligible, pending with a
+   due date, or "date needed"); a track already on `PER_INTERVAL` is reported exactly as it is now, not reset.
+   The totals list students eligible today who will not be after, students eligible after (for example a
+   black belt already past due), legacy credits (kept, ignored), arbitrary adjustments and extra same-day rows
+   (kept as history, adding 0), black belts with and without a due date, and historical automatic promotions.
+   It prints a `reportId`: a hash of those material outcomes (who, before, after, target, due date, the
+   configuration being applied), so approval is bound to what was reported.
+2. `activate --org=<slug> --report=<id> --activated-by=<email>` is a dry run; `--apply` writes. **Validation
+   and application are one serializable transaction.** An advisory lock keyed by the organization serializes
+   activations (a second waits, then finds the tracks already flipped and refuses); row locks on the
+   organization's students, promotion configs and belt ranks make any award, correction, track change or
+   configuration edit in flight finish first or wait; the report is REBUILT inside the transaction and its id
+   compared with the approved one; only then are the legacy tracks flipped, every student of a flipped track
+   baselined at the activation instant, the black-belt catalog completed (kept manual under a MANUAL adult
+   track), and one audit row written. A concurrent change the locks do not cover (new attendance) makes the
+   transaction fail as `conflict`: re-run the report. It never edits attendance, promotions, credits or belt
+   dates, never invents a promotion, and never re-baselines a track that is already `PER_INTERVAL`.
 
-## 5. Deployment compatibility and rollback
+## 5. Deployment: what changes immediately, what changes only at activation
 
-- The migration is additive with defaults; old code inserting students or ranks still works, and old
-  award and correction writes do not touch the new columns beyond their defaults.
-- With every track `CUMULATIVE`, behavior is the old behavior except: automatic awarding is gone, a
-  time-based student with no date no longer crashes check-in, and coach-added attendance is one day.
-- **Rolling back behavior.** Switching a track from `PER_INTERVAL` back to `CUMULATIVE` keeps every row
-  but changes progress and eligibility (a student at 0 of 30 reads their cumulative total again,
-  possibly eligible, possibly not). Reverting the deploy while a track is `PER_INTERVAL` is the same
-  behavior change, because older code has no such accounting. It is therefore a decision, not a switch:
-  pause awards, run the report both ways, decide with the owner, set `CUMULATIVE` (audited), and only
-  then revert code. Schema compatibility is separate: additive columns are retained and dropped only in
-  a later, separately approved step.
-- The database CHECK on `requiresCoachApproval` would refuse an older writer that tried to turn
-  approval off; none exists.
+The migration is additive (new columns with defaults, one CHECK), and old code inserting students, ranks or
+attendance still works. Beyond that, "deploying" and "activating" are different events with different effects.
+
+**Changes immediately on deploy, for EVERY organization (including existing ones still on `CUMULATIVE`):**
+
+- Automatic promotion is gone: the scheduled route, the automation module, the job registration and its
+  health/heartbeat entries are removed; `writeAward` refuses `AUTO`; a database CHECK refuses turning approval
+  off. The migration first sets any `requiresCoachApproval = false` row to `true`.
+- Head-start credit entry is removed (student creation form and the credit correction action). Existing
+  credits stay in the table.
+- Coach-added attendance becomes one day with a reason (no number), with the promotion-day rule above.
+- A mistaken attendance entry can be voided (ADMIN/DIRECTOR); voided rows are ignored by every reader.
+- Every award now locks the student, saves the exact award instant as the promotion time and the new progress
+  baseline / last-promotion date, re-verifies eligibility inside the transaction and audits the evidence.
+- The shared progress display and its wording ("Ready for review", capped bars, the recalculated threshold date,
+  the same-day and pre-award explanations) replaces the old per-page arithmetic and copy.
+- A time-based student with no last-award date no longer crashes check-in.
+- The staff pages refresh after an award, correction, track change or attendance entry.
+- **Not changed on deploy:** how progress is counted (still cumulative since the belt date, credits still read),
+  the daily limit, the reset at every award, and the black-belt catalog of an existing organization
+  (`maxStripes` stays as it is).
+
+**New organizations (created after deploy):** start on `PER_INTERVAL` with the decided black-belt catalog.
+
+**Changes only at activation, per organization (reviewed report, then `--apply`):** the one-attendance-per-day
+rule and reset-to-0 counting for that organization's legacy tracks; a system tracking baseline for every
+student of those tracks (so everyone starts at 0, and a student eligible under the old rule that day reads
+0); legacy credits and arbitrary adjustments stop counting; extra same-day rows stop counting; and the
+black-belt catalog is completed (degrees 1-6, time-based).
+
+**Rolling back behavior.** Switching a track from `PER_INTERVAL` back to `CUMULATIVE` keeps every row but
+changes progress and eligibility (a student at 0 of 30 reads their cumulative total again, possibly eligible,
+possibly not). Reverting the deploy while a track is `PER_INTERVAL` is the same behavior change, because older
+code has no such accounting - and reverting the deploy also brings back the removed workflows. It is therefore
+a decision, not a switch: pause awards, run the report both ways, decide with the owner, set `CUMULATIVE`
+(audited), and only then revert code. Schema compatibility is separate: additive columns are retained and
+dropped only in a later, separately approved step. The database CHECK on `requiresCoachApproval` would refuse
+an older writer that tried to turn approval off; none exists.
 
 ## 6. Verification
 
@@ -217,11 +270,10 @@ Policy items are **PENDING** until the academy answers; the rest are limitations
 
 1. **Roster of existing black belts (PENDING).** Which degree each holds and the date of the last award.
    Until supplied, each shows rank and attendance and no due date. Nothing is estimated.
-2. **Undoing a wrongly counted day (PENDING policy).** The decisions remove negative adjustments, and a
-   promotion correction changes rank and stripes but does not give back the days an award consumed.
-   There is therefore no way to remove an attendance day that should not have counted (for example a
-   coach-added day entered for the wrong student). What should happen needs a decision: void the row
-   (audited, with a reason), or leave the history and accept the count.
+2. **Correcting a mistaken attendance entry - implemented (owner's review of PR 2).** An ADMIN/DIRECTOR can
+   void one entry with a reason (section 4.7). Still open, small: whether an INSTRUCTOR should also be able to
+   void an entry they made themselves (today only ADMIN/DIRECTOR), and whether an "un-void" is wanted (today a
+   day is restored by recording it again).
 3. **Activation on a live organization (PENDING decision before running it).** Students who are
    eligible today under the old rule read 0 after activation (3 in the development data). The owner must
    decide whether to award those promotions first or accept the reset.

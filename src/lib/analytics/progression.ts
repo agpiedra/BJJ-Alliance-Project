@@ -96,6 +96,7 @@ async function computeRecentAttendanceRates(
             studentId: { in: candidateIds },
             organizationId,
             type: "CHECKIN",
+            voidedAt: null,
             occurredAt: { gte: windowFloor.toJSDate(), lte: today.toJSDate() },
           },
           select: { studentId: true, occurredAt: true },

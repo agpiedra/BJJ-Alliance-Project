@@ -154,6 +154,7 @@ export async function getRetentionList(
         studentId: { in: studentIds },
         organizationId: context.organizationId,
         type: "CHECKIN",
+        voidedAt: null,
         occurredAt: { lte: filters.to.toJSDate() },
       },
       _max: { occurredAt: true },
@@ -236,6 +237,7 @@ export async function getWeeklyAttendanceTrend(
   const conditions: Prisma.AttendanceRecordWhereInput[] = [
     branchScopeWhere(context),
     { type: "CHECKIN" },
+    { voidedAt: null },
     { occurredAt: { gte: filters.from.toJSDate(), lte: filters.to.toJSDate() } },
   ];
   if (filters.academyId) {

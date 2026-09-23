@@ -287,6 +287,7 @@ export async function performCheckIn(input: PerformCheckInInput): Promise<CheckI
         classSessionId: null,
         date: attendanceDate,
         type: AttendanceType.CHECKIN,
+        voidedAt: null,
       },
       select: { id: true },
     });

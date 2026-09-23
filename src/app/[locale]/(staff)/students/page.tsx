@@ -140,7 +140,7 @@ export default async function StudentsPage({
       const [summary, lastAttendance, currentPeriod] = await Promise.all([
         getAtBeltSummary(student.id, context.organizationId, configByTrack),
         prisma.attendanceRecord.findFirst({
-          where: { studentId: student.id, organizationId: context.organizationId },
+          where: { studentId: student.id, organizationId: context.organizationId, voidedAt: null },
           orderBy: { occurredAt: "desc" },
           select: { occurredAt: true },
         }),

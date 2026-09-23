@@ -599,6 +599,31 @@
       "attendanceHistory": {
         "heading": "Attendance history"
       },
+      "attendanceEntries": {
+        "empty": "No attendance recorded yet.",
+        "voidExplainer": "If an entry was a mistake (wrong student, a class that did not happen), void it. The entry stays in the history marked as voided, that day's attendance is recalculated from the remaining valid entries, and no promotion is changed.",
+        "voided": "Voided",
+        "voidedReason": "Reason: {reason}",
+        "void": "Void this entry",
+        "reason": "Reason (required)",
+        "reasonRequired": "Enter a reason.",
+        "submit": "Void entry",
+        "success": "Entry voided. It stays in the history and no promotion was changed.",
+        "type": {
+          "CHECKIN": "Class check-in",
+          "ADJUSTMENT": "Added by staff"
+        },
+        "source": {
+          "KIOSK": "Kiosk",
+          "PORTAL": "Portal",
+          "STAFF": "Staff"
+        },
+        "error": {
+          "notFound": "That entry could not be found.",
+          "invalid": "Please check the form.",
+          "alreadyVoided": "That entry was already voided."
+        }
+      },
       "paymentHistory": {
         "heading": "Payment history",
         "empty": "No payment records yet.",
@@ -761,6 +786,7 @@
         "success": "Attendance day saved.",
         "alreadyCountedThatDay": "Saved to the history, but that day had already counted toward progress, so nothing was added.",
         "beforeLastPromotion": "Saved to the history, but that day is before the last promotion, so it does not count toward the next one.",
+        "promotionDayHistoryOnly": "Saved to the history only. This is the day of a promotion and it cannot be told whether the class was before or after the award, so it adds nothing toward the next one. A class after the award counts when checked in at the kiosk or portal.",
         "invalid": "Please check the form for errors.",
         "notFound": "Could not add this attendance day.",
         "archived": "This student is archived — attendance can't be added."

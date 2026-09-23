@@ -362,12 +362,12 @@ export async function listOrganizationsForPlatformAdmin(
     }),
     unscopedPrisma.attendanceRecord.groupBy({
       by: ["organizationId"],
-      where: { organizationId: { in: organizationIds }, occurredAt: { gte: windowStart } },
+      where: { organizationId: { in: organizationIds }, voidedAt: null, occurredAt: { gte: windowStart } },
       _count: { _all: true },
     }),
     unscopedPrisma.attendanceRecord.groupBy({
       by: ["organizationId"],
-      where: { organizationId: { in: organizationIds } },
+      where: { organizationId: { in: organizationIds }, voidedAt: null },
       _max: { occurredAt: true },
     }),
   ]);
@@ -460,7 +460,7 @@ export async function getPlatformWeeklyAttendanceTrend(weeks: number): Promise<P
   const from = new Date(now.getTime() - weeks * 7 * 24 * 60 * 60 * 1000);
 
   const attendances = await unscopedPrisma.attendanceRecord.findMany({
-    where: { type: "CHECKIN", occurredAt: { gte: from, lte: now } },
+    where: { type: "CHECKIN", voidedAt: null, occurredAt: { gte: from, lte: now } },
     select: { occurredAt: true },
   });
 

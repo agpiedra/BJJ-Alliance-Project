@@ -23,6 +23,8 @@ import { RestoreStudentButton } from "./restore-student-button";
 import { ApproveStudentButton } from "./approve-student-button";
 import { RegenerateCodeButton } from "./regenerate-code-button";
 import { AddAdjustmentForm } from "./add-adjustment-form";
+import { AttendanceEntriesCard } from "./attendance-entries-card";
+import { getRecentAttendanceEntries } from "@/lib/students/recent-attendance-entries";
 import { RecordPaymentForm } from "@/components/payments/record-payment-form";
 import { PromocionesCard, type PromocionesHistoryRow, type PromotionCreditHistoryRow } from "./promociones-card";
 import { resolveDefaultTrackChangeRankId } from "@/lib/promotion/track-change";
@@ -80,6 +82,7 @@ export default async function StudentDetailPage({
   const promotionHistory = await getPromotionHistory(student.id, context.organizationId);
   const creditHistoryRaw = await getPromotionCreditHistory(student.id, context.organizationId, student.beltAwardedAt);
   const paymentHistory = await getPaymentHistory(student.id, context.organizationId);
+  const attendanceEntries = await getRecentAttendanceEntries(student.id, context.organizationId);
 
   const t = await getTranslations("students");
   const tDetail = await getTranslations("students.detail");
@@ -286,16 +289,14 @@ export default async function StudentDetailPage({
         </CardContent>
       </Card>
 
-      {/* Real data as of Task 5 — the attendance-history card immediately
-          below is still a genuine `comingLater` placeholder — this
-          staff-facing attendance ledger view was never in scope (the
-          student's own portal already has one via `getAttendanceHistory`). */}
+      {/* The latest attendance entries with the ADMIN/DIRECTOR correction control (void a mistaken entry).
+          Deliberately small: not the full accessible attendance history, which is separate work. */}
       <Card>
         <CardHeader>
           <CardTitle>{tDetail("attendanceHistory.heading")}</CardTitle>
         </CardHeader>
         <CardContent>
-          <p className="text-muted-foreground">{tDetail("comingLater")}</p>
+          <AttendanceEntriesCard organizationId={context.organizationId} entries={attendanceEntries} canVoid={canEdit} />
         </CardContent>
       </Card>
       {/* Real data as of Task 2 — every PaymentPeriod row for this student,

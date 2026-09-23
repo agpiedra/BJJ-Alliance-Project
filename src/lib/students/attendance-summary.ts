@@ -130,6 +130,8 @@ export interface AtBeltSummary {
  * attendance fact.
  */
 const PROMOTION_RELEVANT: Prisma.AttendanceRecordWhereInput = {
+  // A voided (mistaken) entry counts for nothing.
+  voidedAt: null,
   OR: [
     { classSessionId: null, NOT: { matchSource: AttendanceMatchSource.UNMATCHED } },
     { classSession: { countsTowardPromotion: true } },
@@ -254,7 +256,7 @@ export async function evaluateStudentProgress(
   // or not (see PROMOTION_RELEVANT's comment). Never touches PromotionCredit —
   // a real, physical-attendance total, per this field's own doc comment.
   const lifetimeAgg = await client.attendanceRecord.aggregate({
-    where: { studentId, organizationId },
+    where: { studentId, organizationId, voidedAt: null },
     _sum: { delta: true },
   });
   const lifetimeCount = lifetimeAgg._sum.delta ?? 0;
