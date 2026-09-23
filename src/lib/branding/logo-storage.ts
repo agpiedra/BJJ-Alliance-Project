@@ -167,7 +167,13 @@ async function storageFetch(
   try {
     const { url, init } = buildRequest();
     const response = await fetch(url, { ...init, signal: controller.signal });
-    if (!response.ok) return classifyResponse(response);
+    // Awaited deliberately, not returned bare: `classifyResponse` reads the
+    // response body (`readErrorBody`'s `response.json()`), which is still
+    // in-flight I/O the deadline above must cover. Returning the bare
+    // promise would let `finally`'s `clearTimeout` run the instant this
+    // line is reached — before that read finishes — permanently disarming
+    // the abort timer for a request whose headers had already arrived.
+    if (!response.ok) return await classifyResponse(response);
     return { ok: true, response };
   } catch {
     // Network failure, DNS failure, our own timeout above, or `buildRequest`
