@@ -565,6 +565,21 @@ Branding, signup, approval and SaaS administration operate on **Organization**. 
 - **A guard is not tested until something takes the unguarded path and fails.** Every guard needs, alongside its own unit tests, a test that reaches the protected resource WITHOUT going through the guard and asserts that this is impossible or rejected. "The guard works when called" is not evidence that the guard is reachable, is called, or cannot be gone around. Three tenant-isolation findings in this project (1f, revision 22, the layout leak) were all invisible to full green test suites for exactly this reason.
 - **Claims need evidence, not assertions.** When reporting a phase complete, cite the test or file that proves each criterion. A guard described in prose is not a guard — the read-only transaction check in Phase 0 was wrong in one script and right in another for exactly as long as nobody demanded a test that attempts a write.
 
+### Briefs are not ground truth
+
+A brief's view of this repository may be incomplete or out of date. Every statement in a brief about what the code currently does — a function's behaviour, a role gate, an ordering, whether a test or harness exists — is a **hypothesis, not a fact**, and must be checked against the current checkout before anything is built on it. Only instructions ("do X", "don't build Y", "this is the acceptance bar") are authoritative.
+
+Therefore, before building on any statement about current behaviour:
+
+1. Verify it against the code and cite file:line for what you actually find.
+2. If the brief is wrong, say so explicitly and quote both — what the brief claimed and what the code does. Do not silently build the corrected version; the reviewer needs to know the premise was wrong, because other parts of the brief may rest on it.
+3. If a brief assigns a cause to an observed symptom (a screenshot, an error message), treat the cause as unverified. A screenshot establishes what was displayed, never why. Reproduce it and identify the sequence before accepting the diagnosis.
+4. If a brief asserts that the user has already done something — pasted a config, added a credential, merged a PR — check it rather than assuming it. This has been wrong twice.
+
+Record in this doc every instance where a brief's premise turned out to be wrong, the same way the "built it, never wired it" tally is kept. The count tells us whether the review loop is catching them or whether they are reaching the code.
+
+**Tally: kept from this revision forward.** No instances logged yet under this heading — see each future revision's own section for entries as they're found.
+
 ### Verification commands
 
 Add to `package.json`:
