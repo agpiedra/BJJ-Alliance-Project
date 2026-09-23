@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { deriveForeground, deriveInitials } from "@/lib/theme";
@@ -36,12 +36,11 @@ export interface LogoUploaderProps {
 
 /**
  * Standalone and reusable (see theme-picker.tsx's own doc comment — Phase
- * 5's onboarding wizard renders this same component). Only ADMIN sessions
- * can actually submit either action successfully (item 2) — this form is
- * still shown to a DIRECTOR viewing the settings page (consistent with the
- * rest of the page being ADMIN/DIRECTOR-visible), and the server's real
- * `resolveActionContext(organizationId, ["ADMIN"])` is what actually
- * enforces it, never a hidden button.
+ * 5's onboarding wizard renders this same component). ADMIN and DIRECTOR
+ * sessions can both submit either action successfully (PR 1 — widened from
+ * ADMIN-only, matching the page's own ADMIN/DIRECTOR gate); the server's
+ * real `resolveActionContext(organizationId, ["ADMIN", "DIRECTOR"])` is
+ * what actually enforces it, never a hidden button.
  */
 export function LogoUploader({
   organizationId,
@@ -62,6 +61,34 @@ export function LogoUploader({
   );
   const [previewFile, setPreviewFile] = useState<string | null>(null);
   const [clientError, setClientError] = useState<"tooLarge" | "invalidFormat" | null>(null);
+  // A submission's server result belongs to the file that was selected when
+  // it was sent. Picking a DIFFERENT file afterwards — whether the previous
+  // submission already resolved (a stale error/success sitting under the
+  // now-irrelevant new selection) or hasn't resolved yet (an in-flight
+  // result that would otherwise land under a file the director already
+  // moved past) — retires that old result immediately. Cleared right
+  // before a submission actually goes out, so that submission's own result
+  // is shown once it arrives.
+  const [dismissServerFeedback, setDismissServerFeedback] = useState(false);
+  const previewUrlRef = useRef<string | null>(null);
+
+  function setPreview(url: string | null) {
+    // Revoke the previous object URL before replacing or clearing it —
+    // otherwise every file selection leaks the last one's blob URL for the
+    // life of the page.
+    if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
+    previewUrlRef.current = url;
+    setPreviewFile(url);
+  }
+
+  useEffect(() => {
+    return () => {
+      if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
+    };
+  }, []);
+
+  const displayedError = clientError ?? (dismissServerFeedback ? undefined : uploadState.error);
+  const displayedSuccess = !clientError && !dismissServerFeedback && uploadState.ok;
 
   const initials = deriveInitials(displayName);
   const initialsForeground = deriveForeground(previewBackground);
@@ -93,7 +120,10 @@ export function LogoUploader({
             e.preventDefault();
             return;
           }
-          setPreviewFile(null);
+          setPreview(null);
+          // This submission's own result should render once it arrives —
+          // see the field's own doc comment for why it was set otherwise.
+          setDismissServerFeedback(false);
         }}
       >
         <input
@@ -102,25 +132,25 @@ export function LogoUploader({
           accept="image/png,image/jpeg,image/webp"
           onChange={(e) => {
             const file = e.target.files?.[0];
+            // A different selection retires any result tied to the previous
+            // one, whether it already arrived (stale) or hasn't yet
+            // (in-flight) — see the field's own doc comment.
+            setDismissServerFeedback(true);
             if (!file) {
-              setPreviewFile(null);
+              setPreview(null);
               setClientError(null);
               return;
             }
             const error = clientValidationError(file);
             setClientError(error);
-            setPreviewFile(error ? null : URL.createObjectURL(file));
+            setPreview(error ? null : URL.createObjectURL(file));
           }}
         />
         <p className="text-sm text-muted-foreground">{t("hint")}</p>
-        {(clientError ?? uploadState.error) && (
-          <p className="text-sm text-bad">
-            {t.has(`error.${clientError ?? uploadState.error}`)
-              ? t(`error.${clientError ?? uploadState.error}` as never)
-              : t("error.generic")}
-          </p>
+        {displayedError && (
+          <p className="text-sm text-bad">{t.has(`error.${displayedError}`) ? t(`error.${displayedError}` as never) : t("error.generic")}</p>
         )}
-        {!clientError && uploadState.ok && <p className="text-sm text-ok">{t("uploaded")}</p>}
+        {displayedSuccess && <p className="text-sm text-ok">{t("uploaded")}</p>}
         <Button type="submit" disabled={isUploading || !!clientError} size="sm">
           {t("upload")}
         </Button>
