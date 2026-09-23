@@ -819,11 +819,16 @@
       "uploaded": "Logo uploaded.",
       "remove": "Remove logo",
       "error": {
+        "invalid": "Choose a file to upload.",
         "invalidFormat": "That file isn't a PNG, JPEG or WebP image.",
         "tooLarge": "That file is larger than 512 KB.",
         "invalidImage": "Could not read that file as an image.",
         "extremeAspectRatio": "That image is too wide or too tall to use as a logo.",
         "rateLimited": "Too many uploads in a short time — try again in a few minutes.",
+        "permissionDenied": "There's a problem with logo storage. Contact an administrator. (LOGO-PERM)",
+        "bucketMissing": "There's a problem with logo storage. Contact an administrator. (LOGO-BUCKET)",
+        "storageUnavailable": "Try again shortly. If this continues, contact an administrator. (LOGO-DOWN)",
+        "storageRateLimited": "Storage is busy right now — try again in a moment.",
         "generic": "Something went wrong."
       }
     },

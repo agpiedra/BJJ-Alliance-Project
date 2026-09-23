@@ -145,10 +145,11 @@ async function isLogoUploadRateLimited(actorUserId: string, organizationId: stri
 }
 
 /**
- * ADMIN only (item 2) — enforced here, not by hiding the upload button;
- * the settings page still shows the control to a DIRECTOR (who can see
- * everything else on this page), but submitting it lands here and is
- * refused.
+ * ADMIN/DIRECTOR (PR 1 — widened from ADMIN-only: a DIRECTOR who can
+ * already change the theme on this exact page but not the logo was an
+ * arbitrary gap, not a deliberate one, and the page-level gate below was
+ * the one that was right). The settings page shows this control to both
+ * roles; the server enforces it here, not by hiding either control.
  *
  * Upload -> DB write -> delete-old-object, in that exact order (item 1):
  * deleting the old object FIRST would leave a committed row pointing at a
@@ -161,7 +162,7 @@ export async function uploadBrandingLogo(
   _prevState: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
-  const auth = await resolveActionContext(organizationId, ["ADMIN"]);
+  const auth = await resolveActionContext(organizationId, ["ADMIN", "DIRECTOR"]);
   if (!auth.ok) return { error: "notFound" };
   const context = auth.context;
 
@@ -189,6 +190,14 @@ export async function uploadBrandingLogo(
   });
 
   const uploaded = await uploadLogo(context.organizationId, validated.result.bytes, validated.result.mimeType);
+  if (!uploaded.ok) {
+    console.error("[branding] logo upload failed", {
+      organizationId: context.organizationId,
+      error: uploaded.error,
+      status: uploaded.status,
+    });
+    return { error: uploaded.error };
+  }
   const uploadedAt = new Date();
 
   await prisma.$transaction(async (tx) => {
@@ -196,11 +205,11 @@ export async function uploadBrandingLogo(
       where: { organizationId: context.organizationId },
       create: {
         organizationId: context.organizationId,
-        logoUrl: uploaded.url,
+        logoUrl: uploaded.result.url,
         logoMimeType: validated.result.mimeType,
         logoUpdatedAt: uploadedAt,
       },
-      update: { logoUrl: uploaded.url, logoMimeType: validated.result.mimeType, logoUpdatedAt: uploadedAt },
+      update: { logoUrl: uploaded.result.url, logoMimeType: validated.result.mimeType, logoUpdatedAt: uploadedAt },
     });
 
     await tx.auditLog.create({
@@ -212,29 +221,39 @@ export async function uploadBrandingLogo(
         entityType: "OrganizationBranding",
         entityId: context.organizationId,
         before: before?.logoUrl ? { logoUrl: before.logoUrl } : Prisma.DbNull,
-        after: { logoUrl: uploaded.url },
+        after: { logoUrl: uploaded.result.url },
       },
     });
   });
 
   // Only after the new row has committed — see this function's own doc
-  // comment for why the ordering matters.
+  // comment for why the ordering matters. A failure here is cleanup debris
+  // (one orphaned object), never the upload itself failing — the director
+  // already has their new logo — so it's logged with the context this
+  // module's own log line can't have, never returned as an error.
   if (before?.logoUrl) {
-    await deleteLogoByUrl(before.logoUrl);
+    const cleanup = await deleteLogoByUrl(before.logoUrl);
+    if (!cleanup.ok) {
+      console.error("[branding] old logo object left orphaned after a successful replace", {
+        organizationId: context.organizationId,
+        previousLogoUrl: before.logoUrl,
+      });
+    }
   }
 
   revalidateBranding(context.organizationId);
   return { ok: true };
 }
 
-/** ADMIN only, same risk profile as upload (item 2). "A director must be
- * able to delete a logo and return to the initials fallback" (item 1). */
+/** ADMIN/DIRECTOR, same widening and reasoning as upload above. "A director
+ * must be able to delete a logo and return to the initials fallback"
+ * (item 1). */
 export async function removeBrandingLogo(
   organizationId: string,
   _prevState: ActionState,
   _formData: FormData,
 ): Promise<ActionState> {
-  const auth = await resolveActionContext(organizationId, ["ADMIN"]);
+  const auth = await resolveActionContext(organizationId, ["ADMIN", "DIRECTOR"]);
   if (!auth.ok) return { error: "notFound" };
   const context = auth.context;
 
@@ -266,7 +285,19 @@ export async function removeBrandingLogo(
     });
   });
 
-  await deleteLogoByUrl(before.logoUrl);
+  // The reference is already cleared and committed above — from the
+  // director's point of view the logo is gone, successfully, regardless of
+  // what happens next. A failure here is an orphaned object in storage,
+  // reported for an operator to clean up, never surfaced as the removal
+  // itself having failed.
+  const cleanup = await deleteLogoByUrl(before.logoUrl);
+  if (!cleanup.ok) {
+    console.error("[branding] logo object left orphaned after a successful removal", {
+      organizationId: context.organizationId,
+      previousLogoUrl: before.logoUrl,
+    });
+  }
+
   revalidateBranding(context.organizationId);
   return { ok: true };
 }

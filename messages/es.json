@@ -819,11 +819,16 @@
       "uploaded": "Logo subido.",
       "remove": "Eliminar logo",
       "error": {
+        "invalid": "Elegí un archivo para subir.",
         "invalidFormat": "Ese archivo no es una imagen PNG, JPEG o WebP.",
         "tooLarge": "Ese archivo pesa más de 512 KB.",
         "invalidImage": "No se pudo leer ese archivo como imagen.",
         "extremeAspectRatio": "Esa imagen es demasiado ancha o alta para usarla como logo.",
         "rateLimited": "Demasiadas subidas en poco tiempo — intenta de nuevo en unos minutos.",
+        "permissionDenied": "Hay un problema con el almacenamiento del logo. Contactá a un administrador. (LOGO-PERM)",
+        "bucketMissing": "Hay un problema con el almacenamiento del logo. Contactá a un administrador. (LOGO-BUCKET)",
+        "storageUnavailable": "Intentá de nuevo en un momento. Si esto continúa, contactá a un administrador. (LOGO-DOWN)",
+        "storageRateLimited": "El almacenamiento está ocupado ahora mismo — intentá de nuevo en un momento.",
         "generic": "Ocurrió un error."
       }
     },

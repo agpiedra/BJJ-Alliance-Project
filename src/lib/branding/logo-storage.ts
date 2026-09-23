@@ -61,54 +61,94 @@ export interface UploadedLogo {
 }
 
 /**
+ * Every way this module's two Supabase Storage calls can fail, narrow
+ * enough for the branding actions to give distinct (if intentionally
+ * shared-copy, per the approved PR 1 design) user feedback without leaking
+ * infrastructure details. Classified from the HTTP response the same way
+ * `src/lib/kiosk/offline-queue.ts` classifies its own external-response
+ * statuses — status code decides the category, not string-matching a body.
+ */
+export type LogoStorageError = "permissionDenied" | "bucketMissing" | "storageRateLimited" | "storageUnavailable";
+
+const REQUEST_TIMEOUT_MS = 15_000;
+
+function classifyStatus(status: number): LogoStorageError {
+  if (status === 401 || status === 403) return "permissionDenied";
+  if (status === 404) return "bucketMissing";
+  if (status === 429) return "storageRateLimited";
+  return "storageUnavailable";
+}
+
+async function storageFetch(
+  url: string,
+  init: RequestInit,
+): Promise<{ ok: true; response: Response } | { ok: false; error: LogoStorageError; status?: number }> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    const response = await fetch(url, { ...init, signal: controller.signal });
+    if (!response.ok) {
+      return { ok: false, error: classifyStatus(response.status), status: response.status };
+    }
+    return { ok: true, response };
+  } catch {
+    // Network failure, DNS failure, or our own timeout above — none of
+    // these produce an HTTP status to classify, and all three mean the
+    // same thing to a caller: storage could not be reached right now.
+    return { ok: false, error: "storageUnavailable" };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+/**
  * Uploads validated logo bytes and returns the object's path (stored
- * nowhere itself — callers persist `url`) and its public URL. Throws on any
- * non-2xx response; the caller (the server action) is responsible for the
- * upload -> DB-write -> delete-old-object ordering that keeps a row from
- * ever pointing at a deleted file (never delete-then-upload).
+ * nowhere itself — callers persist `url`) and its public URL, or a
+ * classified `LogoStorageError` on any non-2xx response or unreachable
+ * storage. Never throws. The caller (the server action) is responsible for
+ * the upload -> DB-write -> delete-old-object ordering that keeps a row
+ * from ever pointing at a deleted file (never delete-then-upload).
  */
 export async function uploadLogo(
   organizationId: string,
   bytes: Buffer,
   mimeType: string,
-): Promise<UploadedLogo> {
+): Promise<{ ok: true; result: UploadedLogo } | { ok: false; error: LogoStorageError; status?: number }> {
   const path = objectPath(organizationId, mimeType, new Date());
-  const response = await fetch(`${storageBase()}/object/${bucket()}/${path}`, {
+  const result = await storageFetch(`${storageBase()}/object/${bucket()}/${path}`, {
     method: "POST",
     headers: { ...authHeaders(), "Content-Type": mimeType, "x-upsert": "false" },
     // `fetch`'s BodyInit overloads don't include Node's Buffer type
     // directly even though Buffer IS a Uint8Array at runtime.
     body: new Uint8Array(bytes),
   });
-  if (!response.ok) {
-    throw new Error(`Supabase logo upload failed: ${response.status} ${await response.text()}`);
-  }
-  return { path, url: publicLogoUrl(path) };
+  if (!result.ok) return result;
+  return { ok: true, result: { path, url: publicLogoUrl(path) } };
 }
 
 /**
- * Best-effort: called only AFTER the new logo's DB row has already
- * committed (see the save action), to remove the now-orphaned previous
- * object. A failure here leaks one storage object rather than breaking the
- * save the director is waiting on — logged, never thrown, matching
+ * Best-effort: called only AFTER the DB row that referenced this object has
+ * already committed its own change (new logo written, or `logoUrl` cleared
+ * — see the two call sites), to remove the now-orphaned object. Never
+ * throws — a failure here leaks one storage object rather than breaking
+ * the save/removal the director is waiting on, matching
  * `finalizeKioskAttempt`'s own "must not fail the caller's real success
- * over metadata cleanup" reasoning.
+ * over metadata cleanup" reasoning. Returns whether the delete actually
+ * succeeded so the CALLER can log it with the domain context (organization
+ * id, upload-vs-remove) this module doesn't have — see PR 1's investigation
+ * for why: a cleanup failure must be reported as its own thing, never as
+ * "the operation failed," since the operation the user asked for (upload a
+ * new logo, or remove one) already committed successfully.
  */
-export async function deleteLogoByUrl(url: string): Promise<void> {
+export async function deleteLogoByUrl(url: string): Promise<{ ok: boolean }> {
   const marker = `/object/public/${bucket()}/`;
   const index = url.indexOf(marker);
-  if (index === -1) return;
+  if (index === -1) return { ok: false };
   const path = url.slice(index + marker.length);
 
-  try {
-    const response = await fetch(`${storageBase()}/object/${bucket()}/${path}`, {
-      method: "DELETE",
-      headers: authHeaders(),
-    });
-    if (!response.ok) {
-      console.error("[logo-storage] failed to delete old logo object", { path, status: response.status });
-    }
-  } catch (error) {
-    console.error("[logo-storage] failed to delete old logo object", { path, error });
-  }
+  const result = await storageFetch(`${storageBase()}/object/${bucket()}/${path}`, {
+    method: "DELETE",
+    headers: authHeaders(),
+  });
+  return { ok: result.ok };
 }
