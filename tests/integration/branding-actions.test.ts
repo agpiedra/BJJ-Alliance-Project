@@ -3,9 +3,10 @@ import { getTestPrismaClient } from "../helpers/test-db";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import sharp from "sharp";
 import { hashSecret } from "../../src/lib/crypto";
-import type { LogoStorageError, UploadedLogo } from "../../src/lib/branding/logo-storage";
+import type { StorageFailure, UploadedLogo } from "../../src/lib/branding/logo-storage";
 
-type UploadLogoResult = { ok: true; result: UploadedLogo } | { ok: false; error: LogoStorageError; status?: number };
+type UploadLogoResult = { ok: true; result: UploadedLogo } | StorageFailure;
+type DeleteLogoResult = { ok: true } | StorageFailure;
 
 let currentSession: { user: { id: string; role: string } | null; activeOrganizationId?: string } | null = null;
 vi.mock("@/auth", () => ({
@@ -28,7 +29,7 @@ const uploadLogoMock = vi.fn<(organizationId: string, bytes: Buffer, mimeType: s
     },
   }),
 );
-const deleteLogoByUrlMock = vi.fn<(url: string) => Promise<{ ok: boolean }>>(async () => ({ ok: true }));
+const deleteLogoByUrlMock = vi.fn<(url: string) => Promise<DeleteLogoResult>>(async () => ({ ok: true }));
 vi.mock("@/lib/branding/logo-storage", () => ({
   uploadLogo: (...args: [string, Buffer, string]) => uploadLogoMock(...args),
   deleteLogoByUrl: (...args: [string]) => deleteLogoByUrlMock(...args),
@@ -352,7 +353,13 @@ describe("uploadBrandingLogo / removeBrandingLogo", () => {
       data: { organizationId: org.id, logoUrl: "https://fake.supabase.co/storage/v1/object/public/org-branding/old.png" },
     });
     currentSession = { user: { id: admin.id, role: "ADMIN" }, activeOrganizationId: org.id };
-    deleteLogoByUrlMock.mockResolvedValueOnce({ ok: false });
+    deleteLogoByUrlMock.mockResolvedValueOnce({
+      ok: false,
+      error: "permissionDenied",
+      status: 403,
+      providerCode: "AccessDenied",
+      providerMessage: "Access to the specified resource is denied.",
+    });
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
     const result = await uploadBrandingLogo(org.id, {}, fileFormData({}, { name: "logo.png", bytes: await tinyPng(), type: "image/png" }));
@@ -362,7 +369,12 @@ describe("uploadBrandingLogo / removeBrandingLogo", () => {
     expect(row.logoUrl).not.toBe("https://fake.supabase.co/storage/v1/object/public/org-branding/old.png");
     expect(errorSpy).toHaveBeenCalledWith(
       "[branding] old logo object left orphaned after a successful replace",
-      expect.objectContaining({ organizationId: org.id }),
+      expect.objectContaining({
+        organizationId: org.id,
+        error: "permissionDenied",
+        status: 403,
+        providerCode: "AccessDenied",
+      }),
     );
     errorSpy.mockRestore();
   });
@@ -413,7 +425,13 @@ describe("uploadBrandingLogo / removeBrandingLogo", () => {
       data: { organizationId: org.id, logoUrl: "https://fake.supabase.co/storage/v1/object/public/org-branding/existing.png" },
     });
     currentSession = { user: { id: admin.id, role: "ADMIN" }, activeOrganizationId: org.id };
-    deleteLogoByUrlMock.mockResolvedValueOnce({ ok: false });
+    deleteLogoByUrlMock.mockResolvedValueOnce({
+      ok: false,
+      error: "bucketMissing",
+      status: 404,
+      providerCode: "NoSuchBucket",
+      providerMessage: "The specified bucket does not exist.",
+    });
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
     const result = await removeBrandingLogo(org.id, {}, formData({}));
@@ -423,7 +441,12 @@ describe("uploadBrandingLogo / removeBrandingLogo", () => {
     expect(row.logoUrl).toBeNull();
     expect(errorSpy).toHaveBeenCalledWith(
       "[branding] logo object left orphaned after a successful removal",
-      expect.objectContaining({ organizationId: org.id }),
+      expect.objectContaining({
+        organizationId: org.id,
+        error: "bucketMissing",
+        status: 404,
+        providerCode: "NoSuchBucket",
+      }),
     );
     errorSpy.mockRestore();
   });

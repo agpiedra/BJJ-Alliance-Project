@@ -195,6 +195,8 @@ export async function uploadBrandingLogo(
       organizationId: context.organizationId,
       error: uploaded.error,
       status: uploaded.status,
+      providerCode: uploaded.providerCode,
+      providerMessage: uploaded.providerMessage,
     });
     return { error: uploaded.error };
   }
@@ -237,6 +239,10 @@ export async function uploadBrandingLogo(
       console.error("[branding] old logo object left orphaned after a successful replace", {
         organizationId: context.organizationId,
         previousLogoUrl: before.logoUrl,
+        error: cleanup.error,
+        status: cleanup.status,
+        providerCode: cleanup.providerCode,
+        providerMessage: cleanup.providerMessage,
       });
     }
   }
@@ -295,6 +301,10 @@ export async function removeBrandingLogo(
     console.error("[branding] logo object left orphaned after a successful removal", {
       organizationId: context.organizationId,
       previousLogoUrl: before.logoUrl,
+      error: cleanup.error,
+      status: cleanup.status,
+      providerCode: cleanup.providerCode,
+      providerMessage: cleanup.providerMessage,
     });
   }
 
