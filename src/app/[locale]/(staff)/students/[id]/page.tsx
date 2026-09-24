@@ -350,7 +350,12 @@ export default async function StudentDetailPage({
           marking/correction to INSTRUCTOR too) — deliberately NOT inside the
           canEdit gate below, which is ADMIN/DIRECTOR only. The server-side
           addAttendanceAdjustment is the real enforcement either way. */}
-      <AddAdjustmentForm organizationId={context.organizationId} studentId={student.id} todayCr={todayCr} />
+      <AddAdjustmentForm
+        organizationId={context.organizationId}
+        studentId={student.id}
+        todayCr={todayCr}
+        accounting={summary.accounting}
+      />
 
       {canEdit && (
         <div className="flex flex-col gap-4">

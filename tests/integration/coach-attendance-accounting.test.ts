@@ -94,6 +94,12 @@ describe("coach attendance feedback follows the student's accounting: PER_INTERV
     expect((await summary(fx, student.id)).atBeltCount).toBe(0);
   });
 
+  it("a day before progress TRACKING started (a system baseline, no promotion involved) says so, not 'before the last promotion'", async () => {
+    const student = await makeStudent(fx, "per-beforetracking", { baselineKind: "SYSTEM_BASELINE" });
+    expect(await coach(fx, student.id, "2026-03-09")).toEqual({ ok: true, info: "beforeTrackingStart" });
+    expect((await summary(fx, student.id)).atBeltCount).toBe(0);
+  });
+
   it("the tracking-start day (a system baseline, not an award) is history only with its own message", async () => {
     const student = await makeStudent(fx, "per-trackstart", { baselineKind: "SYSTEM_BASELINE" });
     expect(await coach(fx, student.id, "2026-03-10")).toEqual({ ok: true, info: "trackingStartDayHistoryOnly" });

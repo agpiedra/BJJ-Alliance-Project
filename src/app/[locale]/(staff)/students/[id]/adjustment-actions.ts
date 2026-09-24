@@ -65,8 +65,9 @@ const adjustmentSchema = z.object({
  *
  * Returns `info` when the entry was recorded but added nothing to progress, so the coach is told,
  * never left to assume it counted - and the message follows the student's OWN track accounting:
- *  - PER_INTERVAL: `alreadyCountedThatDay`, `beforeLastPromotion` for a day that belongs to the
- *    completed interval, or `promotionDayHistoryOnly` / `trackingStartDayHistoryOnly` for the day of
+ *  - PER_INTERVAL: `alreadyCountedThatDay`, `beforeLastPromotion` (or `beforeTrackingStart` when the
+ *    baseline is a system tracking start, not a promotion) for a day that belongs to the completed
+ *    interval, or `promotionDayHistoryOnly` / `trackingStartDayHistoryOnly` for the day of
  *    a promotion or of the tracking start, whose class cannot be placed before or after the boundary;
  *  - CUMULATIVE (legacy): no daily limit and no history-only, so none of those; the only reason an
  *    entry adds nothing is a date before the belt was awarded (`beforeBeltDate`), measured by the
@@ -205,6 +206,10 @@ export async function addAttendanceAdjustment(
     recordId: record.id,
   });
   if (!contributes) return { ok: true, info: "alreadyCountedThatDay" };
-  if (occurredAt < student.progressBaselineAt) return { ok: true, info: "beforeLastPromotion" };
+  if (occurredAt < student.progressBaselineAt) {
+    // "Before the last promotion" is only true when the baseline IS a promotion; a system baseline is the start of
+    // progress tracking (registration, or an activation), and no promotion is involved.
+    return { ok: true, info: student.progressBaselineKind === "AWARD" ? "beforeLastPromotion" : "beforeTrackingStart" };
+  }
   return { ok: true };
 }

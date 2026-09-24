@@ -778,7 +778,8 @@
       "adjustment": {
         "toggle": "Add an attendance day",
         "date": "Day attended",
-        "dateHint": "One day counts once toward progress, however many classes were attended. Defaults to today.",
+        "dateHintPerInterval": "A day counts once toward progress, however many classes or entries it has. The day of a promotion is kept in the history only. Defaults to today.",
+        "dateHintCumulative": "Every entry counts toward progress, even when the student already has attendance that day. An entry dated before this belt was awarded does not count. Defaults to today.",
         "dateInvalid": "Choose a day that is not in the future.",
         "reason": "Reason",
         "reasonRequired": "A reason is required.",
@@ -786,6 +787,7 @@
         "success": "Attendance day saved.",
         "alreadyCountedThatDay": "Saved to the history, but that day had already counted toward progress, so nothing was added.",
         "beforeLastPromotion": "Saved to the history, but that day is before the last promotion, so it does not count toward the next one.",
+        "beforeTrackingStart": "Saved to the history, but that day is before progress tracking started, so it does not count toward the next promotion.",
         "promotionDayHistoryOnly": "Saved to the history only. This is the day of a promotion and it cannot be told whether the class was before or after the award, so it adds nothing toward the next one. A class after the award counts when checked in at the kiosk or portal.",
         "trackingStartDayHistoryOnly": "Saved to the history only. Progress tracking started on this day and it cannot be told whether the class was before or after, so it adds nothing toward the next promotion. A class after that counts when checked in at the kiosk or portal.",
         "beforeBeltDate": "Saved to the history, but that day is before this belt was awarded, so it does not count toward the next promotion.",

@@ -778,7 +778,8 @@
       "adjustment": {
         "toggle": "Agregar un día de asistencia",
         "date": "Día asistido",
-        "dateHint": "Un día cuenta una sola vez para el progreso, sin importar cuántas clases se asistieron. Por defecto es hoy.",
+        "dateHintPerInterval": "Un día cuenta una sola vez para el progreso, sin importar cuántas clases o registros tenga. El día de una promoción se guarda solo en el historial. Por defecto es hoy.",
+        "dateHintCumulative": "Cada registro cuenta para el progreso, aunque el estudiante ya tenga asistencia ese día. Un registro con fecha anterior a la entrega de este cinturón no cuenta. Por defecto es hoy.",
         "dateInvalid": "Elige un día que no sea futuro.",
         "reason": "Motivo",
         "reasonRequired": "El motivo es obligatorio.",
@@ -786,6 +787,7 @@
         "success": "Día de asistencia guardado.",
         "alreadyCountedThatDay": "Se guardó en el historial, pero ese día ya había contado para el progreso, así que no se agregó nada.",
         "beforeLastPromotion": "Se guardó en el historial, pero ese día es anterior a la última promoción, así que no cuenta para la siguiente.",
+        "beforeTrackingStart": "Se guardó en el historial, pero ese día es anterior al inicio del seguimiento del progreso, así que no cuenta para la siguiente promoción.",
         "promotionDayHistoryOnly": "Guardado solo en el historial. Es el día de una promoción y no se puede saber si la clase fue antes o después de otorgarla, así que no suma para la siguiente. Una clase posterior cuenta al registrarse en el kiosco o el portal.",
         "trackingStartDayHistoryOnly": "Guardado solo en el historial. El seguimiento del progreso empezó este día y no se puede saber si la clase fue antes o después, así que no suma para la siguiente promoción. Una clase posterior cuenta al registrarse en el kiosco o el portal.",
         "beforeBeltDate": "Guardado en el historial, pero ese día es anterior a la entrega de este cinturón, así que no cuenta para la siguiente promoción.",

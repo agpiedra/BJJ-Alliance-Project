@@ -5,6 +5,7 @@ import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { addAttendanceAdjustment } from "./adjustment-actions";
 import type { ActionState } from "@/lib/action-state";
+import type { StripeAccounting } from "@/generated/prisma/client";
 
 const INITIAL_STATE: ActionState = {};
 
@@ -19,15 +20,23 @@ const INITIAL_STATE: ActionState = {};
 // arbitrary progress credit). The day defaults to today in Costa Rica; the
 // server owns "today", so the date input only carries a `max` when the page
 // gives it one, and the server refuses a future day either way.
+//
+// The help text explains the counting rule of the student's OWN track accounting (from the page's
+// already-resolved progress summary): PER_INTERVAL counts a day once, the legacy CUMULATIVE rule counts every
+// entry. It must agree with the response the action gives for the same mode. Required, with no default: a caller
+// that omitted it would silently show one mode's rule for the other.
 export function AddAdjustmentForm({
   organizationId,
   studentId,
   todayCr,
+  accounting,
 }: {
   organizationId: string;
   studentId: string;
   /** Today's Costa Rica date (`YYYY-MM-DD`), resolved on the server; caps the date input. */
   todayCr?: string;
+  /** The student's track accounting, from `AtBeltSummary.accounting`. */
+  accounting: StripeAccounting;
 }) {
   const t = useTranslations("students.detail.adjustment");
   const [state, formAction, isPending] = useActionState(
@@ -50,7 +59,9 @@ export function AddAdjustmentForm({
         <label className="flex flex-col gap-1">
           <span>{t("date")}</span>
           <input type="date" name="date" defaultValue={todayCr} max={todayCr} className="rounded border px-3 py-2" />
-          <span className="text-sm text-muted-foreground">{t("dateHint")}</span>
+          <span className="text-sm text-muted-foreground">
+            {t(accounting === "PER_INTERVAL" ? "dateHintPerInterval" : "dateHintCumulative")}
+          </span>
         </label>
         {dateErrors && dateErrors.length > 0 && <p className="text-sm text-red-600">{t("dateInvalid")}</p>}
 
