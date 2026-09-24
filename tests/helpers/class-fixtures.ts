@@ -65,6 +65,7 @@ export async function makeClassStudent(academyId: string, organizationId: string
 
 export async function cleanupClassFixtures() {
   if (created.students.length) {
+    await prisma.queuedCheckIn.deleteMany({ where: { studentId: { in: created.students } } });
     await prisma.attendanceRecord.deleteMany({ where: { studentId: { in: created.students } } });
     await prisma.auditLog.deleteMany({ where: { entityId: { in: created.students } } });
     await prisma.promotionCredit.deleteMany({ where: { studentId: { in: created.students } } });

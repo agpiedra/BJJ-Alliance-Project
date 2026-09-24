@@ -14,7 +14,8 @@ import { cleanupClassFixtures, makeClassAcademy, makeClassStudent } from "../hel
  *  2. Explicit selection when windows overlap: one open class -> selected automatically; several -> the student is asked
  *     BEFORE anything is written; the selection is validated again on submission and a valid selection always wins.
  * Offline recovery (a queued replay) is separate: it is evaluated at its ORIGINAL instant, is never refused, and is kept
- * for staff review as UNMATCHED (never counted) whenever it cannot be attributed unambiguously.
+ * for staff review as untrusted EVIDENCE (never an attendance, never counted) whenever it cannot be attributed
+ * unambiguously (see kiosk-replay-recovery.test.ts for the recovery matrix).
  *
  * Time is Costa Rica (UTC-6, no DST). Only `Date` is faked (the routes read the clock); the database is real.
  */
@@ -343,6 +344,7 @@ describe("offline recovery: a queued attendance is evaluated at its ORIGINAL ins
   // verifiable (the bound is tested separately); nothing but D is open at this moment.
   const REPLAYED_AT = mon(26, 0);
   const replay = (f: Fixture, body: Json, queuedAt: unknown, now: Date = REPLAYED_AT) => f.checkIn({ ...body, queuedAt }, now);
+  const evidence = (studentId: string) => prisma.queuedCheckIn.findMany({ where: { studentId }, orderBy: { receivedAt: "asc" } });
 
   it("exactly one class was open at the original instant -> attributed to it (AUTO), stamped with the ORIGINAL instant and day, not the replay time", async () => {
     const f = await fixture();
@@ -365,17 +367,18 @@ describe("offline recovery: a queued attendance is evaluated at its ORIGINAL ins
     expect((await f.rows(student.id))[0].classSessionId).toBe(f.byName.A.id);
   });
 
-  it("SEVERAL classes were open and no selection was recorded -> retained as UNMATCHED for staff review, never counted toward promotion", async () => {
+  it("SEVERAL classes were open and no selection was recorded -> retained as EVIDENCE for staff (never an attendance), never counted toward promotion", async () => {
     const f = await fixture();
     const { student, code } = await f.student("replay ambiguous");
     const { status, json } = await replay(f, { code }, mon(18, 40).getTime());
     expect(status).toBe(200); // never refused, never asked (nobody is at the tablet)
-    expect(json.matchedClass).toBeNull();
-    const [row] = await f.rows(student.id);
-    expect([row.classSessionId, row.matchSource]).toEqual([null, "UNMATCHED"]);
-    expect(row.occurredAt.toISOString()).toBe(mon(18, 40).toISOString());
-    expect(row.voidedAt).toBeNull(); // kept, not voided
+    expect(json).toMatchObject({ ok: true, retained: true });
+    expect(await f.rows(student.id)).toHaveLength(0);
+    const [kept] = await evidence(student.id);
+    expect([kept.reason, kept.status, kept.claimedAtVerified]).toEqual(["SEVERAL_CLASSES_OPEN", "PENDING", true]);
+    expect(kept.claimedAt?.toISOString()).toBe(mon(18, 40).toISOString());
   });
+
 
   it("a recorded selection that was valid at the original instant is honored (STUDENT_PICKED)", async () => {
     const f = await fixture();
@@ -386,27 +389,30 @@ describe("offline recovery: a queued attendance is evaluated at its ORIGINAL ins
     expect([row.classSessionId, row.matchSource]).toEqual([f.byName.B.id, "STUDENT_PICKED"]);
   });
 
-  it("a recorded selection that was NOT valid at the original instant is not discarded and not forced onto the class: it is retained UNMATCHED", async () => {
+  it("a recorded selection that was NOT valid at the original instant is not discarded and not forced onto the class: it is retained as evidence", async () => {
     const f = await fixture();
     const { student, code } = await f.student("replay bad selection");
     // A had closed at 19:30; at 19:40 only B was open, but the recorded choice was A.
     const { status } = await replay(f, { code, pickedClassSessionId: f.byName.A.id }, mon(19, 40).getTime());
     expect(status).toBe(200);
-    const [row] = await f.rows(student.id);
-    expect([row.classSessionId, row.matchSource]).toEqual([null, "UNMATCHED"]);
+    expect(await f.rows(student.id)).toHaveLength(0);
+    expect((await evidence(student.id))[0]).toMatchObject({ reason: "SELECTION_NOT_OPEN", claimedClassSessionId: f.byName.A.id });
   });
 
-  it("NO class was open at the original instant (a legacy or unresolvable tap) -> retained UNMATCHED for staff review, not dropped", async () => {
+
+  it("NO class was open at the original instant (a legacy or unresolvable tap) -> retained as evidence for staff, not dropped", async () => {
     const f = await fixture();
     const { student, code } = await f.student("replay none");
     const { status } = await replay(f, { code }, mon(15, 0).getTime());
     expect(status).toBe(200);
-    const [row] = await f.rows(student.id);
-    expect([row.classSessionId, row.matchSource]).toEqual([null, "UNMATCHED"]);
-    expect(row.occurredAt.toISOString()).toBe(mon(15, 0).toISOString());
+    expect(await f.rows(student.id)).toHaveLength(0);
+    const [kept] = await evidence(student.id);
+    expect(kept.reason).toBe("NO_CLASS_OPEN");
+    expect(kept.claimedAt?.toISOString()).toBe(mon(15, 0).toISOString());
   });
 
-  it("an instant that cannot be verified (malformed, in the future, older than 12 hours) is still KEPT - as UNMATCHED at the server clock, and is not attributed to whatever class is open now", async () => {
+
+  it("an instant that cannot be verified (malformed, in the future, older than 12 hours) is still KEPT - as unverified evidence exactly as claimed - and is not attributed to whatever class is open now", async () => {
     const f = await fixture();
     const now = mon(18, 40); // two classes are open right now
     for (const [label, queuedAt] of [
@@ -417,15 +423,18 @@ describe("offline recovery: a queued attendance is evaluated at its ORIGINAL ins
       const { student, code } = await f.student(`replay ${label}`);
       const { status } = await replay(f, { code }, queuedAt, now);
       expect(status, label).toBe(200);
-      const [row] = await f.rows(student.id);
-      expect([row.classSessionId, row.matchSource], label).toEqual([null, "UNMATCHED"]);
-      expect(row.occurredAt.toISOString(), label).toBe(now.toISOString());
+      expect(await f.rows(student.id), label).toHaveLength(0);
+      const [kept] = await evidence(student.id);
+      expect([kept.reason, kept.claimedAtVerified], label).toEqual(["TIMESTAMP_NOT_VERIFIED", false]);
+      expect(kept.claimedAtRaw, label).toBe(String(queuedAt));
     }
     // ...and with ONE class open right now, an unverifiable instant still does not pick it.
     const { student, code } = await f.student("replay stale, one open");
     expect((await replay(f, { code }, "garbage", mon(17, 40))).status).toBe(200);
-    expect((await f.rows(student.id))[0].matchSource).toBe("UNMATCHED");
+    expect(await f.rows(student.id)).toHaveLength(0);
+    expect((await evidence(student.id))[0].claimedAtRaw).toBe("garbage");
   });
+
 
   it("a replay is never refused for its class: it never returns no_open_class / class_selection_required / class_not_open / invalid_class", async () => {
     const f = await fixture();
@@ -441,36 +450,27 @@ describe("offline recovery: a queued attendance is evaluated at its ORIGINAL ins
       const { status, json } = await replay(f, { code, ...body }, queuedAt, mon(18, 40));
       expect(status, `case ${i}`).toBe(200);
       expect(json.ok, `case ${i}`).toBe(true);
-      expect(await f.rows(student.id), `case ${i}`).toHaveLength(1);
+      expect((await f.rows(student.id)).length + (await evidence(student.id)).length, `case ${i}`).toBe(1); // attributed OR kept
     }
   });
 
-  it("one unmatched attendance per student per Costa Rica day: a second unmatched replay the same day is already_checked_in (a definitive answer, not a loss)", async () => {
+
+  it("two distinct unresolved replays on the same day are TWO evidence records (the one-unmatched-per-day rule no longer discards the second)", async () => {
     const f = await fixture();
     const { student, code } = await f.student("replay twice");
     expect((await replay(f, { code }, mon(15, 0).getTime())).status).toBe(200);
     const again = await replay(f, { code }, mon(15, 5).getTime());
-    expect(again.json.error).toBe("already_checked_in");
-    expect(await f.rows(student.id)).toHaveLength(1);
+    expect(again.status).toBe(200);
+    expect(again.json).toMatchObject({ ok: true, retained: true, duplicate: false });
+    expect(await evidence(student.id)).toHaveLength(2);
+    expect(await f.rows(student.id)).toHaveLength(0);
   });
+
 
   it("a wrong code in a replay is still invalid_code (a real verdict about the code, and the only kind that counts toward the lockout)", async () => {
     const f = await fixture();
     const { status, json } = await replay(f, { code: "not-a-code" }, mon(17, 40).getTime());
     expect(status).toBe(400);
     expect(json.error).toBe("invalid_code");
-  });
-
-  it("an UNMATCHED replay can be resolved by the student at the kiosk within the window, or by a coach", async () => {
-    const f = await fixture();
-    const { student, code } = await f.student("resolve");
-    const { json } = await replay(f, { code }, mon(18, 40).getTime());
-    const recordId = json.attendanceRecordId as string;
-    // The picklist for the record offers the classes open at ITS instant (both A and B), since it has no class yet.
-    const list = await f.reassign({ attendanceRecordId: recordId }, mon(33, 5));
-    expect((list.json.picklist as Array<{ name: string }>).map((c) => c.name)).toEqual(["A", "B"]);
-    expect((await f.reassign({ attendanceRecordId: recordId, classSessionId: f.byName.C.id }, mon(33, 6))).json.error).toBe("classNotOpen");
-    expect((await f.reassign({ attendanceRecordId: recordId, classSessionId: f.byName.B.id }, mon(33, 7))).status).toBe(200);
-    expect((await f.rows(student.id))[0].classSessionId).toBe(f.byName.B.id);
   });
 });

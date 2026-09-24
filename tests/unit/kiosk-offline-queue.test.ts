@@ -201,9 +201,31 @@ describe("offline-queue", () => {
     expect(second.pickedClassSessionId).toBeUndefined();
   });
 
-  it("an UNMATCHED save (200) is a success: the entry is removed and nothing is reported as dropped", async () => {
+  it("gives every queued event its own id, and sends the SAME id again when the same event is retried", async () => {
+    await enqueueOfflineCheckIn({ academySlug: "demo", token: "tok", code: "1111" });
+    await enqueueOfflineCheckIn({ academySlug: "demo", token: "tok", code: "1111" }); // the same student tapping twice: two events
+
+    // First flush: the connection drops on the first entry, so nothing is deleted and the same events are replayed later.
+    const failing = vi.fn().mockRejectedValue(new TypeError("Failed to fetch"));
+    vi.stubGlobal("fetch", failing);
+    await flushOfflineQueue();
+    const firstAttempt = JSON.parse(failing.mock.calls[0][1].body);
+
+    const working = vi.fn().mockResolvedValue(jsonResponse(200, { ok: true }));
+    vi.stubGlobal("fetch", working);
+    await flushOfflineQueue();
+    const [first, second] = working.mock.calls.map(([, init]) => JSON.parse(init.body));
+
+    expect(typeof first.eventId).toBe("string");
+    expect(first.eventId.length).toBeGreaterThan(8);
+    expect(second.eventId).not.toBe(first.eventId); // two taps, two events
+    expect(firstAttempt.eventId).toBe(first.eventId); // a retry of the same event carries the same id
+    expect(firstAttempt.queuedAt).toBe(first.queuedAt); // ...and the same claimed instant
+  });
+
+  it("an event kept as evidence (200 with retained: true) is a success: the entry is removed and nothing is reported as dropped", async () => {
     await enqueueOfflineCheckIn({ academySlug: "demo", token: "tok", code: "1234" });
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(200, { ok: true, matchedClass: null })));
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(200, { ok: true, retained: true, reviewId: "rv-1", duplicate: false })));
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
     expect(await flushOfflineQueue()).toEqual({ dropped: 0 });

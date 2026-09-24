@@ -42,6 +42,16 @@ export interface OfflineCheckInPayload {
 interface StoredCheckIn extends OfflineCheckInPayload {
   id: number;
   queuedAt: number;
+  /**
+   * Identifies THIS queued event (generated when it was queued), so the server can tell a retry of the same event from
+   * a different one. Absent on entries queued before this existed; the server then falls back to the claimed timestamp.
+   */
+  eventId?: string;
+}
+
+function newEventId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
 }
 
 function isIndexedDbAvailable(): boolean {
@@ -110,7 +120,7 @@ export async function enqueueOfflineCheckIn(payload: OfflineCheckInPayload): Pro
   try {
     await new Promise<void>((resolve, reject) => {
       const tx = db.transaction(STORE_NAME, "readwrite");
-      tx.objectStore(STORE_NAME).add({ ...payload, queuedAt: Date.now() });
+      tx.objectStore(STORE_NAME).add({ ...payload, queuedAt: Date.now(), eventId: newEventId() });
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
     });
@@ -169,6 +179,9 @@ async function replayEntry(entry: StoredCheckIn): Promise<ReplayResult> {
         // the tap is still kept, but it is not used to pick a class.
         queuedAt: entry.queuedAt,
         pickedClassSessionId: entry.pickedClassSessionId,
+        // Which queued EVENT this is: a retry of it (a lost response, a second flush) is recognized by the server, and a
+        // different event is never mistaken for it.
+        eventId: entry.eventId,
       }),
     });
   } catch {
@@ -204,12 +217,16 @@ async function replayEntry(entry: StoredCheckIn): Promise<ReplayResult> {
     //
     // A REPLAY IS NEVER REFUSED FOR ITS CLASS. Every request below carries `queuedAt`, which the API route reads as
     // "this attendance already happened": it is evaluated at its original instant and is either attributed (a valid
-    // recorded selection, or exactly one open class) or SAVED as `matchSource: UNMATCHED` for staff to resolve from
-    // the Kiosco page "Marcajes de hoy" table (zero or several eligible classes, no usable selection, an unverifiable
-    // instant) - and comes back 200. So no_open_class / class_selection_required / class_not_open / invalid_class
-    // (and the legacy no_active_class) are unreachable here. If one still arrives (an older server, mid-deploy) nothing
-    // can make it succeed - retrying sends the identical body - so it is dropped, LOGGED and COUNTED, which raises the
-    // persistent "sync dropped" banner for staff: never silent, because that would cost the student the attendance.
+    // recorded selection, or exactly one open class) or kept as untrusted EVIDENCE for staff (zero or several eligible
+    // classes, no usable selection, an instant that cannot be verified) - and comes back 200 either way, so a 200 means
+    // the event is safely held server-side and this device may delete it. Evidence is keyed by `eventId`, so a retry of
+    // the same event is a 200 too and two DIFFERENT events are never collapsed into one. `already_checked_in` therefore
+    // only ever means "this student already has an attendance for that class and day", i.e. the event's attendance
+    // already exists - never "another unresolved event took the slot". So no_open_class / class_selection_required /
+    // class_not_open / invalid_class (and the legacy no_active_class) are unreachable here. If one still arrives (an
+    // older server, mid-deploy) nothing can make it succeed - retrying sends the identical body - so it is dropped,
+    // LOGGED and COUNTED, which raises the persistent "sync dropped" banner for staff: never silent, because that would
+    // cost the student the attendance.
     //
     // invalid_request (or an unrecognized/malformed failure body) would mean our own request body was malformed —
     // enqueueOfflineCheckIn only ever stores well-formed strings, so this would indicate a bug, not a transient state;

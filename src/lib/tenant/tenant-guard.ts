@@ -28,6 +28,7 @@ export const TENANT_SCOPED_MODELS = new Set([
   "PaymentPlan",
   "PaymentPeriod",
   "KioskAttempt",
+  "QueuedCheckIn",
   "StaffAssignment",
   "Notification",
   "OrganizationBranding",

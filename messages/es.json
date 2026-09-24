@@ -1134,6 +1134,49 @@
       "invalidRecord": "Solo se pueden reasignar marcajes de asistencia.",
       "invalidClass": "Esa clase no corresponde a esta academia o a este día.",
       "alreadyRecorded": "El alumno ya tiene asistencia en esa clase."
+    },
+    "queued": {
+      "heading": "Registros en cola pendientes de revisión",
+      "description": "Estos registros se guardaron en una tableta sin conexión, pero el sistema no pudo saber a qué clase pertenecen o no pudo confiar en la hora que informó la tableta. TODAVÍA NO son asistencias y no cuentan para nada hasta que los registres en el día correcto.",
+      "empty": "No hay nada pendiente de revisión.",
+      "student": "Alumno",
+      "claimedTime": "Hora que informó la tableta",
+      "claimedClass": "Clase que la tableta dice que se eligió",
+      "reason": "Por qué necesita revisión",
+      "received": "Recibido",
+      "actions": "Acciones",
+      "unverified": "No verificada",
+      "plausible": "Plausible",
+      "noValidTime": "Sin hora válida",
+      "sentAs": "Enviada como: {raw}",
+      "noClassChosen": "Ninguna elegida",
+      "unknownClass": "Una clase que no está en esta academia",
+      "reasons": {
+        "TIMESTAMP_NOT_VERIFIED": "No se pudo confiar en la hora de la tableta",
+        "NO_CLASS_OPEN": "No había ninguna clase abierta a esa hora",
+        "SEVERAL_CLASSES_OPEN": "Había varias clases abiertas y no se eligió ninguna",
+        "SELECTION_NOT_OPEN": "La clase elegida no estaba abierta a esa hora"
+      },
+      "dateLabel": "Día de la clase",
+      "classLabel": "Clase",
+      "chooseDayFirst": "Elegí primero el día.",
+      "noClassesThatDay": "No hay clases activas ese día.",
+      "record": "Registrar asistencia en este día",
+      "recorded": "Asistencia registrada.",
+      "dismissSummary": "Descartar",
+      "dismissReasonLabel": "Motivo",
+      "dismissSubmit": "Descartar",
+      "dismissed": "Descartado. Queda en el registro.",
+      "errors": {
+        "notFound": "No se encontró este registro en cola.",
+        "notPending": "Este registro en cola ya fue atendido.",
+        "invalidDate": "Elegí un día válido.",
+        "futureDate": "Ese día es futuro.",
+        "invalidClass": "Esa clase no pertenece a esta academia.",
+        "classNotOnThatDay": "Esa clase no está programada ese día.",
+        "alreadyRecorded": "El alumno ya tiene asistencia en esa clase ese día.",
+        "reasonRequired": "Escribí un motivo (al menos 3 caracteres)."
+      }
     }
   },
   "adminSchedule": {

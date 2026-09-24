@@ -317,22 +317,28 @@ describe("duplicates are refused server-side, including concurrent attempts", ()
     expect(await prisma.attendanceRecord.count({ where: { studentId: student.id } })).toBe(1);
   });
 
-  it("concurrent queued replays that cannot be attributed (no class open) retain exactly one unmatched row; the database itself refuses a second", async () => {
+  it("concurrent deliveries of the SAME queued event that cannot be attributed keep exactly one evidence record; the rest are recognized as retries", async () => {
     const { academy: emptyDay } = await makeClassAcademy([{ dayOfWeek: "TUESDAY", startTime: "18:00", name: "Tuesday only" }]);
     const { student, code } = await makeClassStudent(emptyDay.id, emptyDay.organizationId);
-    const replay = () => performCheckIn({ academyId: emptyDay.id, context: ctx(emptyDay), code, source: "KIOSK", now: MON_1330, replay: { timestampVerified: true } });
+    const event = { key: "id:evt-concurrent", claimedAtRaw: String(MON_1330.getTime()), claimedAt: MON_1330 };
+    const replay = () => performCheckIn({ academyId: emptyDay.id, context: ctx(emptyDay), code, source: "KIOSK", now: MON_1330, replay: { timestampVerified: true, event } });
     const results = await Promise.all(Array.from({ length: 8 }, replay));
-    expect(results.filter((r) => r.ok)).toHaveLength(1);
-    expect(results.filter((r) => !r.ok && r.error === "already_checked_in")).toHaveLength(7);
-    const rows = await prisma.attendanceRecord.findMany({ where: { studentId: student.id } });
-    expect(rows).toHaveLength(1);
-    expect(rows[0].matchSource).toBe("UNMATCHED");
-    await expect(
-      prisma.attendanceRecord.create({
-        data: { studentId: student.id, academyId: emptyDay.id, organizationId: emptyDay.organizationId, occurredAt: MON_1330, date: rows[0].date, type: "CHECKIN", delta: 1, source: "PORTAL", matchSource: "UNMATCHED" },
-      }),
-    ).rejects.toMatchObject({ code: "P2002" });
+    expect(results.every((r) => !r.ok && r.error === "queued_for_review")).toBe(true);
+    expect(results.filter((r) => !r.ok && r.duplicate === false)).toHaveLength(1);
+    expect(results.filter((r) => !r.ok && r.duplicate === true)).toHaveLength(7);
+    expect(await prisma.queuedCheckIn.count({ where: { studentId: student.id } })).toBe(1);
+    expect(await prisma.attendanceRecord.count({ where: { studentId: student.id } })).toBe(0); // evidence is not an attendance
+    await prisma.queuedCheckIn.deleteMany({ where: { studentId: student.id } });
   });
+
+  it("the database itself still refuses a second class-less check-in for one student and day (legacy and coach rows)", async () => {
+    const { academy: emptyDay } = await makeClassAcademy([{ dayOfWeek: "TUESDAY", startTime: "18:00", name: "Tuesday only" }]);
+    const { student } = await makeClassStudent(emptyDay.id, emptyDay.organizationId);
+    const data = { studentId: student.id, academyId: emptyDay.id, organizationId: emptyDay.organizationId, occurredAt: MON_1330, date: new Date(Date.UTC(2026, 0, 5)), type: "CHECKIN" as const, delta: 1, source: "STAFF" as const, matchSource: "UNMATCHED" as const };
+    await prisma.attendanceRecord.create({ data });
+    await expect(prisma.attendanceRecord.create({ data })).rejects.toMatchObject({ code: "P2002" });
+  });
+
 });
 
 describe("what the check-in did for progress is reported truthfully for a PICKED class", () => {

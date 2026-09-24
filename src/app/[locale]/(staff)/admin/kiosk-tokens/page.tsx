@@ -18,7 +18,8 @@ import { ZONE } from "@/lib/scheduling/zone";
 import { AttendanceMatchSource } from "@/generated/prisma/client";
 import { RegenerateKioskTokenButton } from "./regenerate-kiosk-token-button";
 import { ChangeAttendanceClassForm } from "./change-attendance-class-form";
-import { crToday, listReassignableSessions, listTodaysCheckIns } from "./queries";
+import { QueuedCheckInForm } from "./queued-check-in-form";
+import { crToday, listAcademyClasses, listPendingQueuedCheckIns, listReassignableSessions, listTodaysCheckIns } from "./queries";
 
 // The academy list and today's check-ins both change without a redeploy —
 // never frozen at build time, same reasoning as the roster/dashboard pages.
@@ -69,6 +70,8 @@ export default async function KioskTokensPage() {
       academy,
       checkIns: await listTodaysCheckIns(context.organizationId, academy.id, today),
       reassignOptions: await listReassignableSessions(context.organizationId, academy.id, today),
+      queued: await listPendingQueuedCheckIns(context.organizationId, academy.id),
+      classes: await listAcademyClasses(context.organizationId, academy.id),
     })),
   );
 
@@ -78,7 +81,7 @@ export default async function KioskTokensPage() {
       <p className="text-muted-foreground">{t("description")}</p>
 
       <div className="flex flex-col gap-4">
-        {perAcademy.map(({ academy, checkIns, reassignOptions }) => (
+        {perAcademy.map(({ academy, checkIns, reassignOptions, queued, classes }) => (
           <Card key={academy.id}>
             <CardHeader>
               <CardTitle>{academy.name}</CardTitle>
@@ -142,6 +145,82 @@ export default async function KioskTokensPage() {
                                 organizationId={context.organizationId}
                                 attendanceRecordId={row.id}
                                 options={reassignOptions}
+                              />
+                            </DataTableCell>
+                          </DataTableRow>
+                        );
+                      })}
+                    </DataTableBody>
+                  </DataTable>
+                )}
+              </section>
+
+              {/* Queued (offline) check-ins the system could not attribute or trust: untrusted EVIDENCE, not attendances.
+                  A coach records each on its original day, or sets it aside with a reason. */}
+              <section className="flex flex-col gap-3" aria-labelledby={`queued-${academy.id}`}>
+                <h2 id={`queued-${academy.id}`} className="text-sm font-semibold">
+                  {t("queued.heading")} ({queued.length})
+                </h2>
+                <p className="text-sm text-muted-foreground">{t("queued.description")}</p>
+
+                {queued.length === 0 ? (
+                  <EmptyState message={t("queued.empty")} />
+                ) : (
+                  <DataTable>
+                    <DataTableHead>
+                      <DataTableHeaderRow>
+                        <DataTableHeaderCell>{t("queued.student")}</DataTableHeaderCell>
+                        <DataTableHeaderCell>{t("queued.claimedTime")}</DataTableHeaderCell>
+                        <DataTableHeaderCell>{t("queued.claimedClass")}</DataTableHeaderCell>
+                        <DataTableHeaderCell>{t("queued.reason")}</DataTableHeaderCell>
+                        <DataTableHeaderCell>{t("queued.received")}</DataTableHeaderCell>
+                        <DataTableHeaderCell>
+                          <span className="sr-only">{t("queued.actions")}</span>
+                        </DataTableHeaderCell>
+                      </DataTableHeaderRow>
+                    </DataTableHead>
+                    <DataTableBody>
+                      {queued.map((row) => {
+                        const claimed = row.claimedAt ? DateTime.fromJSDate(row.claimedAt, { zone: "utc" }).setZone(ZONE).setLocale(locale) : null;
+                        const claimedClass = row.claimedClassSessionId ? classes.find((option) => option.id === row.claimedClassSessionId) : undefined;
+                        return (
+                          <DataTableRow key={row.id}>
+                            <DataTableCell>
+                              {row.student.firstName} {row.student.lastName}
+                            </DataTableCell>
+                            <DataTableCell>
+                              {/* Exactly what the tablet claimed, in the academy's zone, and never presented as a verified
+                                  attendance date. */}
+                              {claimed ? (
+                                <span className="font-mono tabular-nums">{claimed.toLocaleString(DateTime.DATETIME_MED)}</span>
+                              ) : (
+                                <span className="text-muted-foreground">{t("queued.noValidTime")}</span>
+                              )}{" "}
+                              <Pill variant={row.claimedAtVerified ? "plain" : "warn"}>{row.claimedAtVerified ? t("queued.plausible") : t("queued.unverified")}</Pill>
+                              {row.claimedAtRaw !== null && !claimed && (
+                                <span className="block text-xs text-muted-foreground">{t("queued.sentAs", { raw: row.claimedAtRaw })}</span>
+                              )}
+                            </DataTableCell>
+                            <DataTableCell>
+                              {row.claimedClassSessionId === null ? (
+                                <span className="text-muted-foreground">{t("queued.noClassChosen")}</span>
+                              ) : claimedClass ? (
+                                `${claimedClass.startTime} · ${claimedClass.name}`
+                              ) : (
+                                <span className="text-muted-foreground">{t("queued.unknownClass")}</span>
+                              )}
+                            </DataTableCell>
+                            <DataTableCell>{t(`queued.reasons.${row.reason}`)}</DataTableCell>
+                            <DataTableCell className="font-mono tabular-nums">
+                              {DateTime.fromJSDate(row.receivedAt, { zone: "utc" }).setZone(ZONE).setLocale(locale).toLocaleString(DateTime.DATETIME_MED)}
+                            </DataTableCell>
+                            <DataTableCell>
+                              <QueuedCheckInForm
+                                organizationId={context.organizationId}
+                                queuedCheckInId={row.id}
+                                defaultDate={claimed ? claimed.toFormat("yyyy-MM-dd") : ""}
+                                defaultClassId={row.claimedClassSessionId}
+                                classes={classes.filter((option) => option.active)}
                               />
                             </DataTableCell>
                           </DataTableRow>

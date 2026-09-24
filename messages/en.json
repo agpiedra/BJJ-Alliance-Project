@@ -1134,6 +1134,49 @@
       "invalidRecord": "Only attendance check-ins can be reassigned.",
       "invalidClass": "That class doesn't belong to this academy or this day.",
       "alreadyRecorded": "The student already has attendance in that class."
+    },
+    "queued": {
+      "heading": "Queued check-ins awaiting review",
+      "description": "These check-ins were saved on a tablet while it was offline, but the system could not tell which class they belong to, or could not trust the time the tablet reported. They are NOT attendances yet and count for nothing until you record them on the right day.",
+      "empty": "Nothing is waiting for review.",
+      "student": "Student",
+      "claimedTime": "Time the tablet reported",
+      "claimedClass": "Class the tablet says was chosen",
+      "reason": "Why it needs review",
+      "received": "Received",
+      "actions": "Actions",
+      "unverified": "Not verified",
+      "plausible": "Plausible",
+      "noValidTime": "No valid time",
+      "sentAs": "Sent as: {raw}",
+      "noClassChosen": "None chosen",
+      "unknownClass": "A class that is not in this academy",
+      "reasons": {
+        "TIMESTAMP_NOT_VERIFIED": "The tablet's time could not be trusted",
+        "NO_CLASS_OPEN": "No class was open at that time",
+        "SEVERAL_CLASSES_OPEN": "Several classes were open and none was chosen",
+        "SELECTION_NOT_OPEN": "The chosen class was not open at that time"
+      },
+      "dateLabel": "Day of the class",
+      "classLabel": "Class",
+      "chooseDayFirst": "Choose the day first.",
+      "noClassesThatDay": "No active class on that day.",
+      "record": "Record attendance on this day",
+      "recorded": "Attendance recorded.",
+      "dismissSummary": "Set aside",
+      "dismissReasonLabel": "Reason",
+      "dismissSubmit": "Set aside",
+      "dismissed": "Set aside. It stays on record.",
+      "errors": {
+        "notFound": "This queued check-in could not be found.",
+        "notPending": "This queued check-in was already handled.",
+        "invalidDate": "Choose a valid day.",
+        "futureDate": "That day is in the future.",
+        "invalidClass": "That class doesn't belong to this academy.",
+        "classNotOnThatDay": "That class is not scheduled on that day.",
+        "alreadyRecorded": "The student already has attendance in that class on that day.",
+        "reasonRequired": "Write a reason (at least 3 characters)."
+      }
     }
   },
   "adminSchedule": {

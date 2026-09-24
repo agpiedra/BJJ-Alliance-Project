@@ -740,7 +740,7 @@ describe("performCheckIn", () => {
     });
 
     it("keeps an UNMATCHED tap out of belt progress until a human resolves it, but in the lifetime total", async () => {
-      // Tuesday-only fixture, a queued tap from a Monday -> retained UNMATCHED (a NEW online attempt would be refused).
+      // An UNMATCHED row (a class-less check-in) is kept out of progress until a human resolves it.
       // An unreviewed tap with no evidence of attending any specific class must not advance
       // a belt on its own: a PORTAL self-check-in needs no physical presence
       // at all, so counting it would be a free stripe. It is still a real tap,
@@ -748,24 +748,20 @@ describe("performCheckIn", () => {
       const { academy } = await makeFixtureAcademy([
         { dayOfWeek: "TUESDAY", startTime: "18:00", name: "Martes" },
       ]);
-      const { student, code } = await makeStudent({ homeAcademyId: academy.id });
+      const { student } = await makeStudent({ homeAcademyId: academy.id });
 
-      const result = await performCheckIn({
-        academyId: academy.id,
-        context: ctx(academy),
-        code,
-        source: "KIOSK",
-        // Monday 2026-01-05 13:30 CR, replayed from the offline queue with a verified original instant.
-        now: new Date("2026-01-05T19:30:00Z"),
-        replay: { timestampVerified: true },
+      // An UNMATCHED row can still exist (legacy data, or one a coach created); a queued replay no longer creates one - it
+      // becomes review evidence instead (see kiosk-replay-recovery.test.ts).
+      await prisma.attendanceRecord.create({
+        data: {
+          studentId: student.id, academyId: academy.id, organizationId: academy.organizationId, classSessionId: null,
+          occurredAt: new Date("2026-01-05T19:30:00Z"), date: new Date(Date.UTC(2026, 0, 5)), type: "CHECKIN", delta: 1,
+          source: "KIOSK", matchSource: "UNMATCHED",
+        },
       });
-
-      expect(result.ok).toBe(true);
-      if (result.ok) {
-        expect(result.summary.atBeltCount).toBe(0);
-        expect(result.summary.lifetimeCount).toBe(1);
-        expect(result.thresholdReached).toBe(false);
-      }
+      const unresolved = await getAtBeltSummary(student.id, student.organizationId, ALLIANCE_ATTENDANCE_CONFIG);
+      expect(unresolved.atBeltCount).toBe(0);
+      expect(unresolved.lifetimeCount).toBe(1);
 
       // ...and once the schedule is fixed and the row is reassigned to a real
       // counting class, it counts — review-then-count needs no extra logic,

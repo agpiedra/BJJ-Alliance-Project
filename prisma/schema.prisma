@@ -154,6 +154,26 @@ enum AttendanceMatchSource {
   UNMATCHED
 }
 
+/// Where a queued (offline) kiosk event stands with staff. Evidence is never deleted: it is recorded as an
+/// attendance on the day a coach names (RESOLVED) or set aside with a reason (DISMISSED).
+enum QueuedCheckInStatus {
+  PENDING
+  RESOLVED
+  DISMISSED
+}
+
+/// Why a queued event was not attributed to a class automatically.
+enum QueuedCheckInReason {
+  /// The device's timestamp could not be verified (malformed, in the future, or older than the replay bound).
+  TIMESTAMP_NOT_VERIFIED
+  /// The timestamp was verified but no class was open at that instant.
+  NO_CLASS_OPEN
+  /// The timestamp was verified and SEVERAL classes were open, with no usable selection recorded.
+  SEVERAL_CLASSES_OPEN
+  /// The device recorded a class selection that was not open at the claimed instant (or is not a class here).
+  SELECTION_NOT_OPEN
+}
+
 enum ClassType {
   GI
   NO_GI
@@ -251,6 +271,7 @@ model Organization {
   paymentPlans        PaymentPlan[]
   paymentPeriods      PaymentPeriod[]
   kioskAttempts       KioskAttempt[]
+  queuedCheckIns      QueuedCheckIn[]
   staffAssignments    StaffAssignment[]
   auditLogs           AuditLog[]
   notifications       Notification[]
@@ -433,6 +454,7 @@ model Academy {
   paymentPeriods    PaymentPeriod[]
   auditLogs         AuditLog[]
   kioskAttempts     KioskAttempt[]
+  queuedCheckIns    QueuedCheckIn[]
 
   // Composite FK target: MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 1 requires
   // e.g. "a student's home branch belongs to the same organization" enforced
@@ -491,6 +513,7 @@ model User {
   attendanceRecordsCreated               AttendanceRecord[]    @relation("AttendanceCreatedBy")
   attendanceRecordsCorrected             AttendanceRecord[]    @relation("AttendanceCorrectedBy")
   attendanceRecordsVoided                AttendanceRecord[]    @relation("AttendanceVoidedBy")
+  queuedCheckInsResolved                 QueuedCheckIn[]       @relation("QueuedCheckInResolvedBy")
   passwordResetTokens                    PasswordResetToken[]
   invitationsSent                        Invitation[]          @relation("InvitationInvitedBy")
   organizationInvoicesRecorded           OrganizationInvoice[] @relation("OrganizationInvoiceRecordedBy")
@@ -654,6 +677,7 @@ model Student {
   homeAcademy       Academy            @relation("HomeAcademy", fields: [organizationId, homeAcademyId], references: [organizationId, id])
   currentRank       BeltRank           @relation("CurrentRank", fields: [organizationId, currentRankId], references: [organizationId, id])
   attendanceRecords AttendanceRecord[]
+  queuedCheckIns    QueuedCheckIn[]
   promotions        Promotion[]
   promotionCredits  PromotionCredit[]
   paymentPeriods    PaymentPeriod[]
@@ -1075,6 +1099,47 @@ model KioskAttempt {
 
   @@index([academyId, kioskTokenHash, createdAt])
   @@index([organizationId])
+}
+
+/// A queued (offline) kiosk check-in that could not be attributed to a class unambiguously, kept as UNTRUSTED EVIDENCE
+/// for staff - NOT an attendance. It takes no day, contributes to nothing (not promotion, not the lifetime total, not
+/// the history) and never collides with another event, so two distinct taps can never be merged or discarded.
+/// Every `claimed*` field is exactly what the tablet SAID: the tablet's clock and selection are not trusted, and the
+/// server's replay date is never substituted for the claimed one. A coach resolves it on the ORIGINAL day (recording a
+/// real attendance and linking it here) or dismisses it with a reason; the row itself is never deleted.
+model QueuedCheckIn {
+  id                    String              @id @default(cuid())
+  organizationId        String
+  academyId             String
+  studentId             String
+  /// Identifies the queued EVENT (not the request), so a retry of the same event is recognized and two distinct
+  /// events are not: `id:<uuid the device generated>`, or - for entries queued before device ids existed -
+  /// `legacy:<claimed timestamp>`, or a random key when even that is unusable.
+  eventKey              String
+  /// The device's timestamp exactly as received (truncated), and its parsed instant when it was a valid number
+  /// (null for anything malformed). Whether it could be VERIFIED is `claimedAtVerified`.
+  claimedAtRaw          String?
+  claimedAt             DateTime?
+  /// True only when the instant was plausible at receipt: not in the future and not older than the replay bound.
+  claimedAtVerified     Boolean
+  /// The class the device says the student selected, exactly as sent. No foreign key: it may be unknown or invalid.
+  claimedClassSessionId String?
+  reason                QueuedCheckInReason
+  /// When the server received it - the replay time, kept apart from everything the device claimed.
+  receivedAt            DateTime            @default(now())
+  status                QueuedCheckInStatus @default(PENDING)
+  resolvedAttendanceId  String?
+  resolvedById          String?
+  resolvedAt            DateTime?
+  dismissReason         String?
+
+  student      Student      @relation(fields: [organizationId, studentId], references: [organizationId, id])
+  academy      Academy      @relation(fields: [organizationId, academyId], references: [organizationId, id])
+  resolvedBy   User?        @relation("QueuedCheckInResolvedBy", fields: [resolvedById], references: [id])
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@unique([organizationId, studentId, eventKey])
+  @@index([organizationId, academyId, status])
 }
 
 model AuditLog {
