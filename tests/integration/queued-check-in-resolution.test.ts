@@ -249,6 +249,42 @@ describe("which instant the coach is confirming (the class's ledger day is not t
   });
 });
 
+describe("the recorded instant itself must be inside the window (not only its minute)", () => {
+  const closesAt = mon(19, 30); // class A runs 18:00-19:00, so its window closes at 19:30:00.000
+
+  it("a claim exactly at closesAt is accepted and keeps its exact instant", async () => {
+    const f = await fixture();
+    await signIn(f.academy.organizationId, "ADMIN");
+    const kept = await f.evidence({ claimedAt: closesAt });
+    expect(await f.resolve(kept.id, { classSessionId: f.byName.A.id, date: "2026-01-05", time: "19:30" })).toEqual({ ok: true });
+    expect((await f.attendance())[0].occurredAt.toISOString()).toBe(closesAt.toISOString());
+  });
+
+  it("a claim 1 ms after closesAt is refused even though staff confirm the same HH:mm: timeOutsideClass, evidence stays PENDING, nothing written", async () => {
+    const f = await fixture();
+    await signIn(f.academy.organizationId, "ADMIN");
+    const kept = await f.evidence({ claimedAt: new Date(closesAt.getTime() + 1) });
+    expect(await f.resolve(kept.id, { classSessionId: f.byName.A.id, date: "2026-01-05", time: "19:30" })).toEqual({ error: "timeOutsideClass" });
+    expect(await f.attendance()).toHaveLength(0);
+    expect(await f.counts()).toEqual({ perInterval: 0, cumulative: 0 });
+    const after = await prisma.queuedCheckIn.findUniqueOrThrow({ where: { id: kept.id } });
+    expect(after.status).toBe("PENDING");
+    expect(after.claimedAt?.toISOString()).toBe(new Date(closesAt.getTime() + 1).toISOString()); // the claim is untouched
+    // The coach can still record the same evidence with a time that is inside the window (their own time, not the claim).
+    expect(await f.resolve(kept.id, { classSessionId: f.byName.A.id, date: "2026-01-05", time: "19:29" })).toEqual({ ok: true });
+    expect((await f.attendance())[0].occurredAt.toISOString()).toBe(mon(19, 29).toISOString());
+  });
+
+  it("a valid claimed instant retains its original precision, milliseconds included", async () => {
+    const f = await fixture();
+    await signIn(f.academy.organizationId, "ADMIN");
+    const claim = new Date(mon(18, 40).getTime() + 12_345);
+    const kept = await f.evidence({ claimedAt: claim });
+    expect(await f.resolve(kept.id, { classSessionId: f.byName.A.id, date: "2026-01-05", time: "18:40" })).toEqual({ ok: true });
+    expect((await f.attendance())[0].occurredAt.toISOString()).toBe(claim.toISOString());
+  });
+});
+
 describe("the FINAL instant is validated, not only the chosen day", () => {
   const at = (instant: Date) => {
     vi.useFakeTimers({ toFake: ["Date"] });

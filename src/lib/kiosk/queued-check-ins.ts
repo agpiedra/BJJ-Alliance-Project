@@ -82,6 +82,9 @@ export async function resolveQueuedCheckIn(
   const claimedIsConfirmed = kept.claimedAt !== null && kept.claimedAt.getTime() >= tapAt.getTime() && kept.claimedAt.getTime() < tapAt.getTime() + 60_000;
   const occurredAt = claimedIsConfirmed && kept.claimedAt ? kept.claimedAt : tapAt;
   const instantSource = claimedIsConfirmed ? "CLAIMED" : "STAFF_ENTERED";
+  // The candidate above was checked at minute precision; the claim keeps its seconds and milliseconds, so the instant that is
+  // actually recorded is checked on its own (a claim 1 ms after closesAt is refused even when its HH:mm is inside).
+  if (!isInsideWindow(window, occurredAt)) return { ok: false, error: "timeOutsideClass" };
   if (occurredAt > now) return { ok: false, error: "futureTime" };
 
   try {
