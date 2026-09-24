@@ -1004,9 +1004,22 @@
     "attendanceHistory": {
       "heading": "Historial de asistencia",
       "empty": "Todavía no hay asistencias registradas.",
-      "type": {
-        "CHECKIN": "Check-in de clase",
-        "ADJUSTMENT": "Ajuste manual"
+      "total": "{count, plural, one {# asistencia en total} other {# asistencias en total}}",
+      "breakdown": "{checkIns, plural, one {# registro de asistencia} other {# registros de asistencia}}, {staffDays, plural, one {# día agregado por el personal} other {# días agregados por el personal}}",
+      "otherAdjustments": "{count, plural, one {# otro ajuste} other {# otros ajustes}}, neto {net}",
+      "credits": "Crédito inicial, contado aparte y no es asistencia: {count, plural, one {# clase} other {# clases}}",
+      "showing": "Mostrando {shown} de {total} registros",
+      "listLabel": "Registros de asistencia",
+      "loadMore": "Mostrar asistencias anteriores",
+      "loading": "Cargando...",
+      "loadedMore": "{count, plural, one {# registro anterior cargado.} other {# registros anteriores cargados.}}",
+      "allLoaded": "Ese es el inicio de tu historial de asistencia.",
+      "loadError": "No se pudieron cargar las asistencias anteriores. Intenta de nuevo.",
+      "kind": {
+        "class_checkin": "Asistencia a clase",
+        "unmatched_checkin": "Asistencia (sin clase asignada)",
+        "staff_day": "Agregado por el personal",
+        "adjustment": "Ajuste"
       }
     },
     "promotionHistory": {
@@ -1020,10 +1033,19 @@
       "overdueNotice": "Tu pago de este mes está atrasado. Por favor contacta a tu academia."
     },
     "selfCheckIn": {
-      "heading": "Registrar asistencia",
+      "heading": "Registrar asistencia a una clase",
+      "description": "Puedes registrar tu asistencia desde 30 minutos antes de que empiece la clase hasta 30 minutos después de que empiece.",
+      "classesLabel": "Clases de hoy",
+      "noClasses": "Hoy no hay clases. Revisa el horario semanal más abajo.",
       "thresholdReachedHeading": "¡Listo para evaluación!",
-      "button": "Registrar asistencia ahora",
+      "button": "Registrar",
+      "buttonLabel": "Registrar asistencia en {name} a las {time}",
       "submitting": "Registrando...",
+      "stateOpen": "Abierta ahora",
+      "stateCheckedIn": "Asistencia registrada",
+      "stateNotOpenYet": "Abre a las {time}",
+      "stateClosed": "Cerrada",
+      "notCounted": "No cuenta para la promoción",
       "successMessage": "¡Asistencia registrada!",
       "progressAlreadyCounted": "Clase registrada. La asistencia de hoy ya contó para tu progreso, así que esta no suma más.",
       "progressNotPromotionClass": "Clase registrada. Esta clase no cuenta para la promoción.",
@@ -1033,10 +1055,11 @@
       "eligibleForReview": "¡Ya puedes ser evaluado por tu instructor!",
       "error": {
         "invalid_code": "Algo salió mal. Por favor avisa en recepción.",
-        "no_active_class": "No hay ninguna clase activa en este momento.",
         "already_checked_in": "Ya registraste tu asistencia para esta clase hoy.",
         "notActive": "El registro de asistencia no está disponible para tu cuenta en este momento.",
-        "generic": "Algo salió mal. Por favor intenta de nuevo."
+        "generic": "Algo salió mal. Por favor intenta de nuevo.",
+        "invalid_class": "Esa clase no está disponible. Elige una de la lista.",
+        "class_not_open": "Esa clase no está abierta para registrar asistencia en este momento."
       }
     },
     "schedule": {

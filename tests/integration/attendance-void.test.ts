@@ -69,9 +69,11 @@ async function makeStudent(academyId: string, organizationId: string, opts: { ba
   return student;
 }
 
-const entry = (studentId: string, academyId: string, organizationId: string, occurredAt: string, day = "2026-03-10") =>
+// `type` defaults to a check-in. Only ONE class-less check-in can exist per student per day (a database rule), so a
+// second same-day entry in these fixtures is a staff-added day (ADJUSTMENT) - the realistic way two entries share a day.
+const entry = (studentId: string, academyId: string, organizationId: string, occurredAt: string, day = "2026-03-10", type: "CHECKIN" | "ADJUSTMENT" = "CHECKIN") =>
   prisma.attendanceRecord.create({
-    data: { studentId, academyId, organizationId, occurredAt: new Date(occurredAt), date: new Date(`${day}T00:00:00Z`), type: "CHECKIN", delta: 1, source: "KIOSK" },
+    data: { studentId, academyId, organizationId, occurredAt: new Date(occurredAt), date: new Date(`${day}T00:00:00Z`), type, delta: 1, source: type === "ADJUSTMENT" ? "STAFF" : "KIOSK" },
   });
 
 const form = (fields: Record<string, string>) => {
@@ -119,7 +121,7 @@ describe("voiding a mistaken attendance entry", () => {
     // Awarded at 10:00 CR (16:00Z) on Mar 10: the 06:00 class is before it, the 18:00 class after it.
     const student = await makeStudent(ac.id, ac.organizationId, { baseline: new Date("2026-03-10T16:00:00Z"), kind: "AWARD" });
     const early = await entry(student.id, ac.id, ac.organizationId, "2026-03-10T12:00:00Z");
-    const late = await entry(student.id, ac.id, ac.organizationId, "2026-03-11T00:00:00Z");
+    const late = await entry(student.id, ac.id, ac.organizationId, "2026-03-11T00:00:00Z", "2026-03-10", "ADJUSTMENT");
     expect((await perInterval(student)).atBeltCount).toBe(0); // the day belongs to the completed interval (its first row is before the award)
 
     // The 06:00 tap was a mistake: the day's contribution becomes the valid 18:00 class, which is after the award.
@@ -137,7 +139,7 @@ describe("voiding a mistaken attendance entry", () => {
     const admin = await makeStaff("ADMIN", "void-sameday-admin");
     const student = await makeStudent(ac.id, ac.organizationId);
     const first = await entry(student.id, ac.id, ac.organizationId, "2026-03-10T12:00:00Z");
-    await entry(student.id, ac.id, ac.organizationId, "2026-03-11T00:00:00Z");
+    await entry(student.id, ac.id, ac.organizationId, "2026-03-11T00:00:00Z", "2026-03-10", "ADJUSTMENT");
     await voidAttendanceEntry(admin.organizationId, {}, form({ recordId: first.id, reason: "duplicate tap" }));
     expect((await perInterval(student)).atBeltCount).toBe(1);
   });

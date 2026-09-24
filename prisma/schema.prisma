@@ -745,8 +745,11 @@ model AttendanceRecord {
   // The one-valid-entry-per-class-occurrence rule (student, class, day) is a PARTIAL unique index that Prisma
   // cannot express: "AttendanceRecord_student_class_date_valid_key" ... WHERE "voidedAt" IS NULL (see the
   // migration). A voided row keeps its history but no longer occupies the occurrence, so a valid replacement
-  // check-in is accepted while at most one valid entry can exist. Class-less rows (classSessionId NULL) were
-  // never constrained: NULLs are distinct.
+  // check-in is accepted while at most one valid entry can exist. Class-less rows (classSessionId NULL) are
+  // invisible to that index (NULLs are distinct), so they have their own partial unique index,
+  // "AttendanceRecord_unmatched_student_date_key" on (studentId, date) WHERE classSessionId IS NULL AND
+  // type = 'CHECKIN' AND voidedAt IS NULL: one class-less check-in per student per day (staff-added ADJUSTMENT
+  // days are not covered). Also in the migrations, not expressible here.
   @@index([studentId, occurredAt])
   @@index([academyId, occurredAt])
   @@index([organizationId])

@@ -17,16 +17,20 @@ export type SelfCheckInState = ActionState & {
   progressOutcome?: ProgressOutcome;
   isVisitor?: boolean;
   homeAcademyName?: string;
+  /** The class this check-in was recorded on (echoes the student's own selection; the page re-renders that row). */
+  classSessionId?: string;
 };
 
-// No form fields to validate — the only inputs are the caller's own session
-// (which student) and the server clock (which class window), both resolved
-// server-side. `formData` is accepted only to match useActionState's action
-// signature.
+// The student checks in to an EXPLICIT class from today's list (PR 3). The only client input is that class id
+// (`classSessionId`); WHO is checking in comes from the caller's own session and WHEN from the server clock, both
+// resolved server-side. The id is never trusted: the shared core validates it against the student's own academy,
+// its active state and its check-in window (start -30 to +30 minutes) under the portal's OPEN_ONLY policy, so the
+// list on screen is a convenience, not the eligibility boundary. Unlike the attended kiosk, the portal has no
+// "no class matched, save it unattributed" fallback: no selection is refused.
 export async function selfCheckIn(
   organizationId: string,
   _prevState: SelfCheckInState,
-  _formData: FormData,
+  formData: FormData,
 ): Promise<SelfCheckInState> {
   // Any ACTIVE member — a coach who also trains checks in for THEIR OWN training
   // like anyone else. What matters is not the membership role but whether this
@@ -80,11 +84,18 @@ export async function selfCheckIn(
     return { error: "notActive" };
   }
 
+  const selected = formData.get("classSessionId");
+  if (typeof selected !== "string" || selected === "") {
+    return { error: "invalid_class" };
+  }
+
   const result = await performCheckIn({
     academyId: student.homeAcademyId,
     context,
     studentId,
     source: AttendanceSource.PORTAL,
+    pickedClassSessionId: selected,
+    pickPolicy: "OPEN_ONLY",
   });
 
   if (!result.ok) {
@@ -99,7 +110,7 @@ export async function selfCheckIn(
   // sets Next's internal `pathWasRevalidated` flag, which is what makes THIS
   // action's own response carry a freshly-rendered Server Component payload
   // for the current view — not merely a cache invalidation that only pays
-  // off on some future navigation. self-check-in-button.tsx's
+  // off on some future navigation. todays-classes-card.tsx's
   // router.refresh() call is a defensive fallback for if this ever fails
   // silently, not the mechanism this comment used to (incorrectly) credit
   // with "unlocking" fresh data — the fresh data is already carried by this
@@ -129,5 +140,6 @@ export async function selfCheckIn(
     progressOutcome: result.progressOutcome,
     isVisitor: result.isVisitor,
     homeAcademyName: result.homeAcademyName,
+    classSessionId: result.matchedClass?.id,
   };
 }

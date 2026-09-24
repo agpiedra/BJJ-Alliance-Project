@@ -660,6 +660,7 @@ describe("performCheckIn", () => {
         source: "KIOSK",
         now: MONDAY_BETWEEN_ESCAZU_WINDOWS,
         pickedClassSessionId: picked!.id,
+        pickPolicy: "TODAY_ANY",
       });
 
       expect(result.ok).toBe(true);
@@ -679,6 +680,7 @@ describe("performCheckIn", () => {
         source: "KIOSK",
         now: MONDAY_BETWEEN_ESCAZU_WINDOWS,
         pickedClassSessionId: picked!.id,
+        pickPolicy: "TODAY_ANY",
       });
       expect(again).toEqual({ ok: false, error: "already_checked_in" });
       expect(await prisma.attendanceRecord.count({ where: { studentId: student.id } })).toBe(1);
@@ -699,6 +701,7 @@ describe("performCheckIn", () => {
         source: "KIOSK",
         now: MONDAY_BETWEEN_ESCAZU_WINDOWS,
         pickedClassSessionId: sessions[0].id,
+        pickPolicy: "TODAY_ANY",
       });
 
       expect(result.ok).toBe(false);

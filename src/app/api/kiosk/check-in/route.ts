@@ -107,6 +107,8 @@ export async function POST(request: Request) {
   // never from a session/cookie (MULTI_ACADEMY_AND_KIDS_BELTS.md Appendix C
   // proposal point 3: "the kiosk path resolves its organization only from
   // the verified branch token").
+  const selection: { pickedClassSessionId: string; pickPolicy: "TODAY_ANY" } | { pickedClassSessionId?: undefined; pickPolicy?: undefined } =
+    pickedClassSessionId !== undefined ? { pickedClassSessionId, pickPolicy: "TODAY_ANY" } : {};
   const kioskContext: KioskContext = { kind: "kiosk", organizationId: academy.organizationId, academyId: academy.id };
   const result = await performCheckIn({
     academyId: academy.id,
@@ -114,7 +116,9 @@ export async function POST(request: Request) {
     code,
     source: "KIOSK",
     now: resolveAttendanceInstant(queuedAt),
-    pickedClassSessionId,
+    // The attended kiosk keeps its outside-window fallback (any of TODAY's classes): a selection is validated with
+    // the TODAY_ANY policy and, when valid, is honored even if a different class also matches automatically.
+    ...selection,
     // A `queuedAt` in the body means this is an offline replay from
     // `flushOfflineQueue`, not a live tap — nobody is at the tablet to answer
     // a picker, so an unmatched replay is saved as UNMATCHED rather than

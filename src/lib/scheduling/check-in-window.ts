@@ -43,10 +43,8 @@ interface SessionTiming {
 export function getCheckInWindow(session: SessionTiming, referenceDate: Date): { start: Date; end: Date } {
   const sessionStart = startOfOccurrence(session, DateTime.fromJSDate(referenceDate, { zone: "utc" }).setZone(ZONE));
 
-  return {
-    start: sessionStart.minus({ minutes: WINDOW_MINUTES }).toJSDate(),
-    end: sessionStart.plus({ minutes: WINDOW_MINUTES }).toJSDate(),
-  };
+  const { opensAt, closesAt } = occurrenceWindow(sessionStart);
+  return { start: opensAt, end: closesAt };
 }
 
 /** The session's scheduled start, as a CR-zoned instant on `anchorDay`'s calendar date. */
@@ -72,6 +70,29 @@ export interface SessionOccurrence<T extends SessionTiming> {
 }
 
 /**
+ * The ONE definition of when a class occurrence is open for check-in: from `WINDOW_MINUTES` before its scheduled
+ * start until `WINDOW_MINUTES` after it, inclusive at both ends, duration ignored. Automatic matching, the
+ * validation of an explicitly selected class and the portal's list of today's classes ALL read this function, so
+ * what the screen calls "open" is exactly what the server accepts.
+ */
+export function occurrenceWindow(startsAt: DateTime): { opensAt: Date; closesAt: Date } {
+  return {
+    opensAt: startsAt.minus({ minutes: WINDOW_MINUTES }).toJSDate(),
+    closesAt: startsAt.plus({ minutes: WINDOW_MINUTES }).toJSDate(),
+  };
+}
+
+/** The occurrence of `session` on the CR calendar day of `anchorDay` (any time of that day): its start instant, CR-zoned. */
+export function occurrenceStart(session: SessionTiming, anchorDay: DateTime): DateTime {
+  return startOfOccurrence(session, anchorDay);
+}
+
+/** True when `instant` is inside the (inclusive) window `[opensAt, closesAt]`. */
+export function isInsideWindow(window: { opensAt: Date; closesAt: Date }, instant: Date): boolean {
+  return instant >= window.opensAt && instant <= window.closesAt;
+}
+
+/**
  * Every anchor day (yesterday / today / tomorrow in CR time, relative to
  * `now`) whose occurrence of `session` both matches `session.dayOfWeek` and
  * whose ±30-minute window contains `now`.
@@ -93,14 +114,48 @@ function matchOccurrence<T extends SessionTiming>(session: T, now: Date): Sessio
     if (DAY_INDEX[session.dayOfWeek] !== candidateDay.weekday) continue;
 
     const startsAt = startOfOccurrence(session, candidateDay);
-    const start = startsAt.minus({ minutes: WINDOW_MINUTES }).toJSDate();
-    const end = startsAt.plus({ minutes: WINDOW_MINUTES }).toJSDate();
-    if (now >= start && now <= end) {
+    if (isInsideWindow(occurrenceWindow(startsAt), now)) {
       return { session, anchorDate: candidateDay.startOf("day"), startsAt };
     }
   }
 
   return null;
+}
+
+/**
+ * The occurrence of `session` whose window contains `now`, or null when the class is not open right now. The
+ * validation of an EXPLICITLY selected class uses this (no nearest-time ranking: the class is either open or not).
+ */
+export function openOccurrence<T extends SessionTiming>(session: T, now: Date): SessionOccurrence<T> | null {
+  return matchOccurrence(session, now);
+}
+
+/** An occurrence together with its (inclusive) check-in window. */
+export interface WindowedOccurrence<T extends SessionTiming> extends SessionOccurrence<T> {
+  opensAt: Date;
+  closesAt: Date;
+}
+
+/**
+ * The occurrences of `session` that belong on "today's classes" at `now`: the one on today's CR calendar date,
+ * whether or not its window is open, plus - because a window can straddle CR midnight - the occurrence on an
+ * adjacent day whose window is open RIGHT NOW (a 00:10 class is open from 23:40 the evening before). Days and
+ * boundaries are explicit America/Costa_Rica, never the server's local calendar. At most one element: the three
+ * candidate days have three distinct weekdays.
+ */
+export function occurrencesForToday<T extends SessionTiming>(session: T, now: Date): WindowedOccurrence<T>[] {
+  const nowInZone = DateTime.fromJSDate(now, { zone: "utc" }).setZone(ZONE);
+  const found: WindowedOccurrence<T>[] = [];
+  for (const dayOffset of [-1, 0, 1]) {
+    const candidateDay = nowInZone.plus({ days: dayOffset });
+    if (DAY_INDEX[session.dayOfWeek] !== candidateDay.weekday) continue;
+    const startsAt = startOfOccurrence(session, candidateDay);
+    const window = occurrenceWindow(startsAt);
+    if (dayOffset === 0 || isInsideWindow(window, now)) {
+      found.push({ session, anchorDate: candidateDay.startOf("day"), startsAt, ...window });
+    }
+  }
+  return found;
 }
 
 /**

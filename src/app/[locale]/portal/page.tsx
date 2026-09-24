@@ -1,5 +1,4 @@
 import { DateTime } from "luxon";
-import { cn } from "cn";
 import { getTranslations } from "next-intl/server";
 import { requirePortalContext } from "@/lib/tenant/context";
 import { accessFromContext } from "@/lib/auth/derive-access";
@@ -20,13 +19,16 @@ import { rowFor } from "@/components/ui/week-calendar-grid";
 import { getAtBeltSummary } from "@/lib/students/attendance-summary";
 import { buildProgressView } from "@/lib/promotion/progress-view";
 import { resolvePromotionConfigMap } from "@/lib/promotion/config";
-import { getAttendanceHistory } from "@/lib/students/attendance-history";
+import { getAttendanceHistoryPage, getAttendanceTotals } from "@/lib/students/attendance-history";
+import { ATTENDANCE_PAGE_SIZE, toAttendanceRow } from "@/lib/portal/attendance-rows";
+import { listTodaysClasses } from "@/lib/portal/todays-classes";
 import { getOwnPromotionHistory } from "./get-promotion-history";
 import { formatTimestampInAcademyZone } from "@/lib/format-date";
 import { getCurrentPaymentPeriod, currentCrDateParts } from "@/lib/payments/get-current-period";
 import { isOverdue } from "@/lib/payments/overdue";
 import type { ContactPaymentStatus } from "@/lib/students/contact-list";
-import { SelfCheckInButton } from "./self-check-in-button";
+import { TodaysClassesCard } from "./todays-classes-card";
+import { AttendanceHistorySection } from "./attendance-history-section";
 import { PortalTopBar } from "./portal-top-bar";
 import { getOrganizationBranding } from "@/lib/branding/get-branding";
 import { BrandingScope } from "@/components/branding/branding-scope";
@@ -106,7 +108,7 @@ export default async function StudentPortalPage({
   // unlike `students/[id]/page.tsx`, which must scope-check a caller-supplied
   // id before trusting it.
   const configByTrack = await resolvePromotionConfigMap(context.organizationId);
-  const [student, summary, attendanceHistory, promotionHistory, currentPaymentPeriod] = await Promise.all([
+  const [student, summary, historyPage, attendanceTotals, promotionHistory, currentPaymentPeriod] = await Promise.all([
     prisma.student.findUniqueOrThrow({
       where: { id: studentId, organizationId: context.organizationId },
       select: {
@@ -117,13 +119,17 @@ export default async function StudentPortalPage({
       },
     }),
     getAtBeltSummary(studentId, context.organizationId, configByTrack),
-    getAttendanceHistory(studentId, context.organizationId),
+    // The first page of the student's history, and the defined total over the WHOLE ledger (not the page length).
+    getAttendanceHistoryPage(studentId, context.organizationId, { limit: ATTENDANCE_PAGE_SIZE }),
+    getAttendanceTotals(studentId, context.organizationId),
     getOwnPromotionHistory(studentId, context.organizationId),
     // Scoped to studentId exactly like every other portal query above — no
     // route param, so there's no way to see another student's payment status
     // (spec §4.2 shows this to the student only, read-only, no recording UI).
     getCurrentPaymentPeriod(studentId, context.organizationId),
   ]);
+  // Today's classes for the student's own academy (Costa Rica day and boundaries), each with its honest state.
+  const todaysClasses = await listTodaysClasses({ context, academyId: student.homeAcademy.id, studentId });
   const overdue = isOverdue(currentPaymentPeriod, currentCrDateParts());
   const paymentStatus: ContactPaymentStatus = overdue
     ? "OVERDUE"
@@ -178,7 +184,6 @@ export default async function StudentPortalPage({
 
   const t = await getTranslations("portal");
   const tStudents = await getTranslations("students");
-  const tAttendanceType = await getTranslations("portal.attendanceHistory.type");
   const tPaymentStatus = await getTranslations("students.paymentStatus");
   const tAdminSchedule = await getTranslations("adminSchedule");
   const tClassType = await getTranslations("classType");
@@ -265,39 +270,17 @@ export default async function StudentPortalPage({
           </CardContent>
         </Card>
 
-        <SelfCheckInButton organizationId={context.organizationId} />
+        <TodaysClassesCard organizationId={context.organizationId} classes={todaysClasses} />
 
-        <Card>
-          <CardHeader className="border-b">
-            <CardTitle>{t("attendanceHistory.heading")}</CardTitle>
-          </CardHeader>
-          <CardContent className="pt-4">
-            {attendanceHistory.length === 0 ? (
-              <EmptyState message={t("attendanceHistory.empty")} />
-            ) : (
-              <ul className="flex flex-col divide-y divide-border">
-                {attendanceHistory.map((entry) => (
-                  <li key={entry.id} className="flex flex-col gap-0.5 py-2 text-sm">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="font-medium">
-                        {formatTimestampInAcademyZone(entry.date, locale)}
-                      </span>
-                      <span className={cn("tabular-nums", entry.delta < 0 ? "text-destructive" : "text-foreground")}>
-                        {entry.delta > 0 ? `+${entry.delta}` : entry.delta}
-                      </span>
-                    </div>
-                    <span className="text-muted-foreground">
-                      {entry.className ?? tAttendanceType(entry.type)}
-                    </span>
-                    {entry.reason && (
-                      <span className="text-muted-foreground italic">{entry.reason}</span>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </CardContent>
-        </Card>
+        {/* A new attendance changes the key, so the list restarts from the fresh first page (no gap under older pages). */}
+        <AttendanceHistorySection
+          key={`${attendanceTotals.entryCount}-${historyPage.entries[0]?.id ?? "none"}`}
+          organizationId={context.organizationId}
+          initialRows={historyPage.entries.map((entry) => toAttendanceRow(entry, locale))}
+          initialCursor={historyPage.nextCursor}
+          totals={attendanceTotals}
+          creditedClasses={summary.creditedClasses}
+        />
 
         <Card>
           <CardHeader className="border-b">

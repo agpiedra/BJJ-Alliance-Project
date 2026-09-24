@@ -1,7 +1,7 @@
 import { digestLookupSecret } from "@/lib/crypto";
 import { requireEnv } from "@/lib/env";
 import { attendanceDateFromZoned, crDayOfWeek, toAttendanceDate } from "@/lib/scheduling/zone";
-import { selectActiveSessionOccurrence } from "@/lib/scheduling/check-in-window";
+import { openOccurrence, selectActiveSessionOccurrence } from "@/lib/scheduling/check-in-window";
 import { getAtBeltSummary, type AtBeltSummary } from "@/lib/students/attendance-summary";
 import { isDayContribution } from "@/lib/promotion/progress-days";
 import type { BeltVisualData } from "@/components/belt-graphic/belt-graphic";
@@ -83,7 +83,7 @@ export type CheckInResult =
     }
   | {
       ok: false;
-      error: "invalid_code" | "no_active_class" | "already_checked_in";
+      error: "invalid_code" | "no_active_class" | "already_checked_in" | "invalid_class" | "class_not_open";
       /** Present only on `no_active_class`, and only when that day HAS classes
        * to choose from — the kiosk renders these as buttons. A day with no
        * classes at all never reaches this shape: it auto-saves as UNMATCHED. */
@@ -109,12 +109,6 @@ interface CommonInput {
   source: AttendanceSource;
   now?: Date;
   /**
-   * Set when the student already answered the picklist: which of today's
-   * active classes to attribute the tap to. Never trusted — re-validated
-   * against this academy's own active sessions for that CR weekday.
-   */
-  pickedClassSessionId?: string;
-  /**
    * "Nobody is standing at the tablet to answer a picker." Set by the API
    * route for an OFFLINE REPLAY (a tap that was queued on the device and is
    * being flushed later — see src/lib/kiosk/offline-queue.ts).
@@ -132,9 +126,27 @@ interface CommonInput {
   unattended?: boolean;
 }
 
+/**
+ * How an EXPLICITLY selected class is validated. Required whenever a class is selected (no default: a channel must
+ * say which policy it runs, so a new caller cannot silently inherit the lenient one).
+ *  - OPEN_ONLY (the portal): the class must belong to this academy, be active and be OPEN right now (start -30 to
+ *    start +30 minutes, inclusive). An unknown / inactive / other-academy / other-organization id is
+ *    `invalid_class`; a real class that is not open is `class_not_open`. Nothing is written.
+ *  - TODAY_ANY (the attended kiosk): the kiosk's outside-window fallback is kept - any of TODAY's active classes
+ *    is accepted whether or not its window is open. An id that is not one of today's classes is treated as if
+ *    nothing was selected (the picker / automatic match), exactly as before.
+ * Either way the selection is validated server-side against fresh queries, never trusted from the client, and a
+ * valid selection is NEVER overridden by a different nearest-time match.
+ */
+export type PickPolicy = "OPEN_ONLY" | "TODAY_ANY";
+
+type ClassSelection =
+  | { pickedClassSessionId?: undefined; pickPolicy?: undefined }
+  | { pickedClassSessionId: string; pickPolicy: PickPolicy };
+
 export type PerformCheckInInput =
-  | (CommonInput & { code: string; studentId?: never })
-  | (CommonInput & { studentId: string; code?: never });
+  | (CommonInput & ClassSelection & { code: string; studentId?: never })
+  | (CommonInput & ClassSelection & { studentId: string; code?: never });
 
 export async function performCheckIn(input: PerformCheckInInput): Promise<CheckInResult> {
   const now = input.now ?? new Date();
@@ -218,69 +230,83 @@ export async function performCheckIn(input: PerformCheckInInput): Promise<CheckI
   // same tap to different classes on identical requests.
   const occurrence = selectActiveSessionOccurrence(sessions, now);
 
-  // What the row will be attributed to, resolved by one of three paths below.
-  let classSession: MatchedClass | null;
-  let attendanceDate: Date;
-  let matchSource: AttendanceMatchSource;
+  // What the row will be attributed to, resolved by the first path that applies: an EXPLICIT selection, then an
+  // automatic window match, then the no-match handling (picker / unmatched save).
+  type Attribution = { session: (typeof sessions)[number] | null; date: Date; matchSource: AttendanceMatchSource };
+  let attribution: Attribution | null = null;
 
-  if (occurrence) {
-    classSession = toMatchedClass(occurrence.session);
-    // Stamped from the matched occurrence's OWN calendar day, never from
-    // `now`'s. A window that straddles CR midnight would otherwise give two
-    // check-ins to the same class occurrence two different `date` values,
-    // slipping past the (studentId, classSessionId, date) unique constraint and
-    // double-crediting one class — and a check-in just before midnight for a
-    // just-after-midnight class would be filed under the wrong day entirely.
-    // `occurredAt` stays the real wall-clock instant.
-    attendanceDate = attendanceDateFromZoned(occurrence.anchorDate);
-    matchSource = AttendanceMatchSource.AUTO;
-  } else {
-    // No window contains `now`. Everything from here is Phase 9's no-match
-    // path: offer that day's classes, or save the tap unattributed — never
-    // reject it outright, which used to lose the attendance entirely.
-    //
-    // "That day" is `now`'s own CR calendar day. Unlike the AUTO branch there
-    // is no occurrence to anchor to, so there is nothing to straddle midnight:
-    // a tap at 23:50 CR belongs to that day's schedule, full stop.
-    const todaysSessions = await db.classSession.findMany({
-      where: { academyId: input.academyId, active: true, dayOfWeek: crDayOfWeek(now) },
-      orderBy: { startTime: "asc" },
-    });
-
-    // Never blind-trusted: a stale or tampered id that isn't one of THIS
-    // academy's active classes for THIS weekday falls through to the picker
-    // (or the UNMATCHED save) instead of being written or throwing.
-    const picked = input.pickedClassSessionId
-      ? todaysSessions.find((session) => session.id === input.pickedClassSessionId)
-      : undefined;
-
-    if (!picked && todaysSessions.length > 0 && !input.unattended) {
-      return {
-        ok: false,
-        error: "no_active_class",
-        picklist: todaysSessions.map((session) => ({
-          id: session.id,
-          name: session.name,
-          startTime: session.startTime,
-          type: session.type,
-        })),
-      };
+  // 1. An explicit selection is validated FIRST and is never overridden by a different nearest-time match: the
+  //    student chose this class, and ranking by closeness to `now` only applies when nothing was chosen (see
+  //    PickPolicy). `sessions` is this academy's ACTIVE classes, already scoped to the organization.
+  if (input.pickedClassSessionId !== undefined) {
+    const picked = sessions.find((session) => session.id === input.pickedClassSessionId);
+    if (!picked) {
+      if (input.pickPolicy === "OPEN_ONLY") return { ok: false, error: "invalid_class" };
+      // TODAY_ANY: a stale or tampered id is treated as if nothing was selected (below), as it always was.
+    } else {
+      const open = openOccurrence(picked, now);
+      if (open) {
+        // Stamped from the occurrence's OWN calendar day (a window can straddle CR midnight), exactly like an
+        // automatic match; `occurredAt` stays the real wall-clock instant.
+        attribution = { session: picked, date: attendanceDateFromZoned(open.anchorDate), matchSource: AttendanceMatchSource.STUDENT_PICKED };
+      } else if (input.pickPolicy === "OPEN_ONLY") {
+        return { ok: false, error: "class_not_open" };
+      } else if (picked.dayOfWeek === crDayOfWeek(now)) {
+        // The kiosk's outside-window fallback: one of TODAY's classes, filed under today's date.
+        attribution = { session: picked, date: toAttendanceDate(now), matchSource: AttendanceMatchSource.STUDENT_PICKED };
+      }
+      // else TODAY_ANY and not one of today's classes: falls through, as before.
     }
-
-    classSession = picked ? toMatchedClass(picked) : null;
-    attendanceDate = toAttendanceDate(now);
-    matchSource = picked ? AttendanceMatchSource.STUDENT_PICKED : AttendanceMatchSource.UNMATCHED;
   }
 
-  // The `@@unique([studentId, classSessionId, date])` constraint cannot catch a
-  // repeat UNMATCHED tap: Postgres treats NULLs as distinct, so a second
-  // classSessionId-null row for the same day slips straight past it and
-  // double-counts toward belt progress. App-level pre-check, therefore — and
-  // only for this case; every attributed path still relies on the constraint.
-  // ponytail: a concurrent double-tap can still race this; a partial unique
-  // index on (studentId, date) WHERE classSessionId IS NULL would close it, if
-  // duplicate UNMATCHED rows ever actually show up in practice.
-  if (!classSession) {
+  if (!attribution) {
+    if (occurrence) {
+      // Stamped from the matched occurrence's OWN calendar day, never from
+      // `now`'s. A window that straddles CR midnight would otherwise give two
+      // check-ins to the same class occurrence two different `date` values,
+      // slipping past the (studentId, classSessionId, date) unique index and
+      // double-crediting one class — and a check-in just before midnight for a
+      // just-after-midnight class would be filed under the wrong day entirely.
+      // `occurredAt` stays the real wall-clock instant.
+      attribution = { session: occurrence.session, date: attendanceDateFromZoned(occurrence.anchorDate), matchSource: AttendanceMatchSource.AUTO };
+    } else {
+      // No window contains `now`. Everything from here is Phase 9's no-match
+      // path: offer that day's classes, or save the tap unattributed — never
+      // reject it outright, which used to lose the attendance entirely.
+      //
+      // "That day" is `now`'s own CR calendar day. Unlike the AUTO branch there
+      // is no occurrence to anchor to, so there is nothing to straddle midnight:
+      // a tap at 23:50 CR belongs to that day's schedule, full stop.
+      const todaysSessions = await db.classSession.findMany({
+        where: { academyId: input.academyId, active: true, dayOfWeek: crDayOfWeek(now) },
+        orderBy: { startTime: "asc" },
+      });
+
+      if (todaysSessions.length > 0 && !input.unattended) {
+        return {
+          ok: false,
+          error: "no_active_class",
+          picklist: todaysSessions.map((session) => ({
+            id: session.id,
+            name: session.name,
+            startTime: session.startTime,
+            type: session.type,
+          })),
+        };
+      }
+
+      attribution = { session: null, date: toAttendanceDate(now), matchSource: AttendanceMatchSource.UNMATCHED };
+    }
+  }
+
+  const { session: attributed, date: attendanceDate, matchSource } = attribution;
+
+  // Two check-ins with no class on the same day are refused by a partial unique index
+  // ("AttendanceRecord_unmatched_student_date_key": one class-less CHECKIN per student per day, valid rows only),
+  // which is what makes concurrent taps safe. NULLs are distinct to the ordinary
+  // (studentId, classSessionId, date) index, so this is the rule for that case. This lookup only gives the common
+  // sequential repeat a clean answer without attempting the write; the index (caught below) is the guarantee.
+  if (!attributed) {
     const existing = await db.attendanceRecord.findFirst({
       where: {
         studentId: student.id,
@@ -308,7 +334,7 @@ export async function performCheckIn(input: PerformCheckInInput): Promise<CheckI
         studentId: student.id,
         academyId: input.academyId,
         organizationId: input.context.organizationId,
-        classSessionId: classSession?.id ?? null,
+        classSessionId: attributed?.id ?? null,
         occurredAt: now,
         date: attendanceDate,
         type: AttendanceType.CHECKIN,
@@ -319,9 +345,8 @@ export async function performCheckIn(input: PerformCheckInInput): Promise<CheckI
       select: { id: true },
     });
   } catch (error) {
-    // Postgres unique constraint violation (Prisma P2002) on the
-    // (studentId, classSessionId, date) constraint — the app-level check
-    // above is a friendly pre-check; this is the real backstop for a race.
+    // Postgres unique violation (Prisma P2002): the per-class-occurrence index or the per-day class-less index.
+    // The lookup above is a friendly pre-check; this is the real backstop for a race.
     if (isUniqueConstraintError(error)) {
       return { ok: false, error: "already_checked_in" };
     }
@@ -335,9 +360,10 @@ export async function performCheckIn(input: PerformCheckInInput): Promise<CheckI
   // is nothing to explain there.
   let progressOutcome: ProgressOutcome = "counted";
   if (summaryAfter.accounting === "PER_INTERVAL") {
-    if (occurrence && !occurrence.session.countsTowardPromotion) {
-      progressOutcome = "not_promotion_class";
-    } else if (!occurrence && matchSource === AttendanceMatchSource.UNMATCHED) {
+    // Judged on what the attendance was ATTRIBUTED to - an automatic match, a selected class or nothing - so a
+    // selected class that does not count toward promotion is reported as such (it used to fall through to
+    // "already counted today").
+    if (!attributed || !attributed.countsTowardPromotion) {
       progressOutcome = "not_promotion_class";
     } else {
       const contributes = await isDayContribution(prisma, {
@@ -391,7 +417,7 @@ export async function performCheckIn(input: PerformCheckInInput): Promise<CheckI
     isVisitor: student.homeAcademyId !== input.academyId,
     homeAcademyName: student.homeAcademy.name,
     attendanceRecordId: created.id,
-    matchedClass: classSession,
+    matchedClass: attributed ? toMatchedClass(attributed) : null,
   };
 }
 

@@ -1004,9 +1004,22 @@
     "attendanceHistory": {
       "heading": "Attendance history",
       "empty": "No attendance recorded yet.",
-      "type": {
-        "CHECKIN": "Class check-in",
-        "ADJUSTMENT": "Manual adjustment"
+      "total": "{count, plural, one {# attendance in total} other {# attendances in total}}",
+      "breakdown": "{checkIns, plural, one {# check-in} other {# check-ins}}, {staffDays, plural, one {# day added by staff} other {# days added by staff}}",
+      "otherAdjustments": "{count, plural, one {# other adjustment} other {# other adjustments}}, net {net}",
+      "credits": "Head-start credit, counted separately and not attendance: {count, plural, one {# class} other {# classes}}",
+      "showing": "Showing {shown} of {total} entries",
+      "listLabel": "Attendance entries",
+      "loadMore": "Show older attendance",
+      "loading": "Loading...",
+      "loadedMore": "{count, plural, one {# older entry loaded.} other {# older entries loaded.}}",
+      "allLoaded": "That is the start of your attendance history.",
+      "loadError": "Couldn't load older attendance. Please try again.",
+      "kind": {
+        "class_checkin": "Class check-in",
+        "unmatched_checkin": "Check-in (no class matched)",
+        "staff_day": "Added by staff",
+        "adjustment": "Adjustment"
       }
     },
     "promotionHistory": {
@@ -1020,10 +1033,19 @@
       "overdueNotice": "Your payment for this month is overdue. Please contact your academy."
     },
     "selfCheckIn": {
-      "heading": "Check in",
+      "heading": "Check in to a class",
+      "description": "You can check in from 30 minutes before a class starts until 30 minutes after it starts.",
+      "classesLabel": "Today's classes",
+      "noClasses": "There are no classes today. Check the weekly schedule below.",
       "thresholdReachedHeading": "Ready for review!",
-      "button": "Check in now",
+      "button": "Check in",
+      "buttonLabel": "Check in to {name} at {time}",
       "submitting": "Checking in...",
+      "stateOpen": "Open now",
+      "stateCheckedIn": "Checked in",
+      "stateNotOpenYet": "Opens at {time}",
+      "stateClosed": "Closed",
+      "notCounted": "Does not count toward promotion",
       "successMessage": "You're checked in!",
       "progressAlreadyCounted": "Class recorded. Today's attendance already counted toward your progress, so this one adds nothing more.",
       "progressNotPromotionClass": "Class recorded. This class doesn't count toward promotion.",
@@ -1033,10 +1055,11 @@
       "eligibleForReview": "You're eligible for instructor review!",
       "error": {
         "invalid_code": "Something went wrong. Please tell the front desk.",
-        "no_active_class": "No class is active right now.",
         "already_checked_in": "You've already checked in for this class today.",
         "notActive": "Self check-in isn't available for your account right now.",
-        "generic": "Something went wrong. Please try again."
+        "generic": "Something went wrong. Please try again.",
+        "invalid_class": "That class isn't available. Please choose one from the list.",
+        "class_not_open": "That class isn't open for check-in right now."
       }
     },
     "schedule": {

@@ -22,7 +22,7 @@ export type ReserveResult = { allowed: true; attemptId: string } | RateLimitReje
  * window (which the narrower ±30-minute window made measurably more common). Neither is a
  * guess, so neither may extend the lockout.
  */
-export type KioskAttemptOutcome = "success" | "invalid_code" | "already_checked_in" | "no_active_class";
+export type KioskAttemptOutcome = "success" | "invalid_code" | "already_checked_in" | "no_active_class" | "invalid_class" | "class_not_open";
 
 /** Outcomes that leave the reserved row counting toward the lockout anchor. */
 const OUTCOME_COUNTS_AS_FAILURE: Record<KioskAttemptOutcome, boolean> = {
@@ -30,6 +30,10 @@ const OUTCOME_COUNTS_AS_FAILURE: Record<KioskAttemptOutcome, boolean> = {
   invalid_code: true,
   already_checked_in: false,
   no_active_class: false,
+  // Selection refusals: the code was valid, so neither is a guess. (The attended kiosk's TODAY_ANY policy never
+  // produces them; they exist because the shared core's result type includes the portal's OPEN_ONLY refusals.)
+  invalid_class: false,
+  class_not_open: false,
 };
 
 type WindowAttempt = { createdAt: Date };
