@@ -116,8 +116,9 @@ together.
    postgres advisory lock` — a failure that surfaces one deploy after the mistake that caused
    it. (If you ever see that P1002: find the idle session holding advisory lock `72707369`
    via `pg_locks` / `pg_stat_activity` and `pg_terminate_backend` it.) Run it manually, once,
-   not from the deployed app itself. Applies all 26 existing migrations to a database that
-   has none yet.
+   not from the deployed app itself. On a genuinely empty database it applies every migration the
+   deployed commit ships; do not rely on a count written in this document (it goes stale with every
+   release) - verify with "Verifying that every shipped migration is applied" below.
 6. **Do not run `prisma/seed.ts` against this database.** It's deliberately guarded
    (`scripts/lib/seed-safety-guard.ts`) to refuse any target that isn't localhost or named
    `*test*` — that's correct, working behavior, not a step to route around. It creates
@@ -222,6 +223,142 @@ together.
 12. **Sign in, confirm `/platform` is reachable** — open your user menu (top right) and choose
     **Plataforma**, or go to `/platform` directly — then work through
     `docs/MULTI_ACADEMY_OPERATIONS.md` for anything else.
+
+## Releasing a commit that adds migrations
+
+Written for the release that ships `20260924034500_attendance_unmatched_daily_key` and
+`20260924165601_queued_check_in_review` (PR #58), and reusable for any release that adds migrations. Every command
+and output below was run against a real database (the local test server) except `psql` itself, which was not
+installed for the check: the same queries were run through node-postgres.
+
+### 0. First, which kind of database is it?
+
+Ask the database, not your memory:
+
+```sql
+SELECT to_regclass('public."AttendanceRecord"') IS NOT NULL AS attendance_table_exists;
+```
+
+| The database is | `attendance_table_exists` | What to do |
+|---|---|---|
+| **Genuinely empty** (no schema yet - the first production deploy above) | `false` | Skip the duplicate preflight: it is not applicable and cannot even run (`ERROR 42P01: relation "AttendanceRecord" does not exist`). `prisma migrate deploy` creates everything, and the unique index is created on an empty table, so it cannot conflict. Go to section 2. |
+| **An existing database** (holds an `AttendanceRecord` table: development, staging, a restored copy, anything with data) | `true` | The duplicate preflight (section 1) is **required** before migration `20260924034500_attendance_unmatched_daily_key` is applied to it. |
+| An existing database where that migration is **already applied** | `true` | The preflight no longer matters (the index enforces it). Confirm the index exists (section 4). |
+
+The development and test databases were checked and held no duplicates. Nothing else has been checked.
+
+### 1. Existing databases only: duplicate preflight and backup
+
+Take a backup or snapshot first. Then run this read-only query with a role that can read `AttendanceRecord` and expect
+**zero rows**:
+
+```sql
+SELECT "studentId", "date"::text AS "day", count(*)::int AS "attendances",
+       array_agg("id" ORDER BY "occurredAt", "id") AS "ids"
+FROM "AttendanceRecord"
+WHERE "classSessionId" IS NULL AND "type" = 'CHECKIN' AND "voidedAt" IS NULL
+GROUP BY "studentId", "date"
+HAVING count(*) > 1
+ORDER BY "studentId", "date";
+```
+
+If it returns rows, nothing is deleted or voided automatically and no script does it. An ADMIN or DIRECTOR voids the
+extra entries with the existing audited void action (a reason is required; the rows stay in the history) or reassigns a
+tap that really belonged to a class, then you re-run the query until it returns zero. If an attempt to apply the
+migration already failed, run `prisma migrate resolve --rolled-back 20260924034500_attendance_unmatched_daily_key`
+after cleaning the data, then deploy again.
+
+### 2. Apply
+
+`prisma migrate deploy` over the direct connection, exactly as step 5 of the first deploy describes (never through the
+pooler).
+
+### 3. Verifying that every shipped migration is applied (no counts)
+
+Run these from a checkout of **the exact commit you are deploying**, so "shipped" means what that commit ships.
+
+**a. Prisma's own check.**
+
+```
+pnpm exec prisma migrate status
+```
+
+Observed on a fully migrated database: `N migrations found in prisma/migrations` (N is whatever the checkout ships)
+followed by `Database schema is up to date!`, exit code 0. Observed on a database with pending migrations: it lists
+them by name, ends with `To apply migrations in production run prisma migrate deploy.`, and exits with code 1. Use the
+connection string the way step 5 does (`DIRECT_URL`).
+
+**b. An independent comparison of shipped against applied.**
+
+```
+git ls-tree -d --name-only <deployed-commit> prisma/migrations/ | sed 's#.*/##' | sort > shipped.txt
+psql "<libpq connection string to the database>" -Atc \
+  "SELECT migration_name FROM _prisma_migrations WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL" | sort > applied.txt
+comm -23 shipped.txt applied.txt   # shipped but NOT applied: must print nothing
+comm -13 shipped.txt applied.txt   # applied but NOT shipped: must print nothing
+```
+
+Use a libpq connection string for `psql` (`sslmode=verify-full&sslrootcert=<CA file>`), not Prisma's `sslaccept` /
+`sslcert` parameters, which `psql` rejects. A non-empty first list means the release is not fully migrated: stop. A
+non-empty second list means the database is ahead of, or was migrated from a different commit than, the one you are
+deploying: stop and find out why before going on. Also expect no half-applied or rolled-back rows to be unresolved:
+
+```sql
+SELECT migration_name, finished_at IS NULL AS unfinished, rolled_back_at IS NOT NULL AS rolled_back
+FROM _prisma_migrations WHERE finished_at IS NULL OR rolled_back_at IS NOT NULL;
+```
+
+A row with `unfinished = true` is a migration that failed or is still running: stop. A `rolled_back` row that has a later
+successful row of the same name is normal history after a `migrate resolve --rolled-back` and a redeploy.
+
+### 4. Post-migration structure checks
+
+```sql
+SELECT indexname FROM pg_indexes WHERE indexname = 'AttendanceRecord_unmatched_student_date_key';   -- one row
+SELECT to_regclass('public."QueuedCheckIn"') IS NOT NULL AS queued_table_exists;                    -- true
+```
+
+**`QueuedCheckIn` is empty only at one moment: right after the migration created it and before the new application
+version takes traffic** (`SELECT count(*) FROM "QueuedCheckIn"` returns 0 then, as it did on the development database after verification). Once the
+release is live, rows are expected and legitimate: an offline replay that cannot be attributed (an unverifiable
+timestamp, no class open then, several classes open without a recorded selection) is stored there as a `PENDING` row for a
+coach to record or set aside on the Kiosco page, and rows are never deleted. A non-zero count after go-live is therefore
+not a failure; a `PENDING` row that stays unattended is work for staff, not a deployment fault.
+
+### 5. After the new version is live
+
+1. Pages answer 200: `/en/login`, `/es/login`, `/en/register-academy`, `/es/register-academy` and a student signup page;
+   fonts load from `/_next/static/media` and none from `fonts.gstatic.com`.
+2. Portal, as a real approved student: today's classes show honest states; checking in to an open class records it and
+   refreshes the row, progress and history; a closed class is refused; "Show older attendance" pages to the end.
+3. Kiosk, with the academy's real device token: no class open shows the unavailable message and writes nothing; one open
+   class checks in automatically; overlapping classes show the picker and cancelling writes nothing; a class that closes
+   while the picker is open shows the notice and fresh choices.
+4. Offline replay: queue a tap on a tablet while offline, reconnect, and confirm it syncs; an ambiguous one appears under
+   "Queued check-ins awaiting review" and a coach can record it on the original day with the confirmed tap time (a time
+   outside the class window or in the future is refused) or set it aside with a reason.
+5. Reload each kiosk tablet so it gets the new client. Entries already queued on an old client replay under the legacy key
+   and follow the same rules.
+6. Existing class-less attendance rows are unchanged; nothing is converted automatically.
+7. `NODE_ENV` is `production` (step 4 of the first deploy).
+
+### 6. Rollback - what is NOT known
+
+The two migrations are additive: the index migration adds an index and the `QueuedCheckIn` migration adds two enums, a
+table, indexes and foreign keys, and neither changes an existing row.
+
+**Rolling the application back to a build older than this release while leaving the database as migrated is UNTESTED, and
+it is not known to be safe.** By reasoning only, not by test: an older build does not know the `QueuedCheckIn` table, and
+it does not handle the new unique index, so two concurrent class-less taps that used to write two rows would now hit a
+unique violation instead, and how the older build answers that has not been observed. Do not rely on a rollback of the
+application alone, and do not drop the index or revert migrations by hand, until a rollback has been rehearsed on a copy
+of the database and its outcome recorded here. Decide the rollback plan before the release, not during it.
+
+### 7. Promotion-accounting activation is a separate decision
+
+Nothing in a release activates it. An existing organization stays on its current accounting until someone runs
+`pnpm promotion:accounting report --org=<slug>` and then `activate --org=<slug> --report=<reportId> --activated-by=<email>`
+(a dry run first, then `--apply`), on an explicit ask. It is not a step of this checklist.
 
 ## What breaks in production but never in dev
 
