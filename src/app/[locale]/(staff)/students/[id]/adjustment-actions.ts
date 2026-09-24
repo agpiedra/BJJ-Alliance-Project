@@ -7,7 +7,7 @@ import { isAcademyInTenantScope, resolveActionContext } from "@/lib/tenant/conte
 import { getScopedDb } from "@/lib/tenant/scoped-client";
 import { AttendanceSource, AttendanceType, Prisma, StudentStatus } from "@/generated/prisma/client";
 import { attendanceDateFromZoned, ZONE } from "@/lib/scheduling/zone";
-import { earliestQualifyingAt, isDayContribution } from "@/lib/promotion/progress-days";
+import { isDayContribution } from "@/lib/promotion/progress-days";
 import { refreshPromotionPages } from "@/lib/promotion/refresh-pages";
 import type { ActionState } from "@/lib/action-state";
 
@@ -62,9 +62,9 @@ const adjustmentSchema = z.object({
  *
  * Returns `info` when the entry was recorded but added nothing to progress
  * (`alreadyCountedThatDay`, `beforeLastPromotion` for a day that belongs to the
- * completed interval, or `promotionDayHistoryOnly` for the day of a promotion, whose
- * class cannot be placed before or after the award) so the coach is told, never left
- * to assume it counted.
+ * completed interval, or `promotionDayHistoryOnly` / `trackingStartDayHistoryOnly` for the
+ * day of a promotion or of the tracking start, whose class cannot be placed before or after
+ * the boundary) so the coach is told, never left to assume it counted.
  */
 export async function addAttendanceAdjustment(
   organizationId: string,
@@ -120,26 +120,19 @@ export async function addAttendanceAdjustment(
   // earliest qualifying row), and a coach only supplies a DAY. Two rules keep that honest:
   //  1. Never invent an after-award time. On the day of the last promotion (or, for a system tracking start, a
   //     past day equal to it) it cannot be known whether the class was before or after the baseline, so the
-  //     entry is history only: stamped just before the baseline, or - when the day already has a valid row -
-  //     just after that row, so it can never become the day's EARLIEST row and displace a real contribution.
+  //     entry is HISTORY ONLY: it is flagged `historyOnly` and never qualifies as a progress contribution. The
+  //     flag is stored on the row rather than inferred from a timestamp placed relative to other rows, so it
+  //     survives any later void or recomputation of those other rows (a timestamp rule cannot: "just after the
+  //     earliest row" becomes the earliest row, or lands exactly on the boundary, the moment that row is voided).
+  //     The instant is only for display and ordering; it is stamped just before the baseline.
   //  2. Any other day is unambiguous: after the promotion's day it is the new interval, before it the completed
   //     one, so the moment for today and midday for a past day are both safe.
   const baseline = student.progressBaselineAt;
   const baselineDay = DateTime.fromJSDate(baseline, { zone: "utc" }).setZone(ZONE);
   const isToday = day.hasSame(nowCr, "day");
   const isPromotionDay = student.progressBaselineKind === "AWARD" && day.hasSame(baselineDay, "day");
-  const ambiguousDay = isPromotionDay || (day.hasSame(baselineDay, "day") && !isToday);
-  let occurredAt: Date;
-  if (ambiguousDay) {
-    const earliest = await earliestQualifyingAt(prisma, {
-      studentId: student.id,
-      organizationId: student.organizationId,
-      day: day.toISODate()!,
-    });
-    occurredAt = earliest ? new Date(earliest.getTime() + 1) : new Date(baseline.getTime() - 1);
-  } else {
-    occurredAt = isToday ? now : day.set({ hour: 12 }).toJSDate();
-  }
+  const historyOnly = isPromotionDay || (day.hasSame(baselineDay, "day") && !isToday);
+  const occurredAt = historyOnly ? new Date(baseline.getTime() - 1) : isToday ? now : day.set({ hour: 12 }).toJSDate();
 
   const record = await prisma.$transaction(async (tx) => {
     const created = await tx.attendanceRecord.create({
@@ -154,6 +147,7 @@ export async function addAttendanceAdjustment(
         reason: data.reason,
         source: AttendanceSource.STAFF,
         createdById: context.actorUserId,
+        historyOnly,
         occurredAt,
         date: attendanceDateFromZoned(day),
       },
@@ -168,7 +162,7 @@ export async function addAttendanceAdjustment(
         entityType: "AttendanceRecord",
         entityId: created.id,
         before: Prisma.DbNull,
-        after: { delta: 1, reason: data.reason, day: day.toISODate() },
+        after: { delta: 1, reason: data.reason, day: day.toISODate(), historyOnly },
       },
     });
     return created;
@@ -177,13 +171,14 @@ export async function addAttendanceAdjustment(
   // The student's page shows the progress this entry just changed (see refreshPromotionPages).
   await refreshPromotionPages(student.id);
 
-  // Truthful feedback: was this the day's one contribution, and does it belong to the current interval?
+  // Truthful feedback: history only (day of a promotion / tracking start), was this the day's one contribution,
+  // and does it belong to the current interval?
+  if (historyOnly) return { ok: true, info: isPromotionDay ? "promotionDayHistoryOnly" : "trackingStartDayHistoryOnly" };
   const contributes = await isDayContribution(prisma, {
     studentId: student.id,
     organizationId: student.organizationId,
     recordId: record.id,
   });
-  if (isPromotionDay) return { ok: true, info: "promotionDayHistoryOnly" };
   if (!contributes) return { ok: true, info: "alreadyCountedThatDay" };
   if (occurredAt < student.progressBaselineAt) return { ok: true, info: "beforeLastPromotion" };
   return { ok: true };

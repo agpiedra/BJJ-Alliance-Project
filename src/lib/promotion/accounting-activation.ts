@@ -163,9 +163,14 @@ export async function buildImpactReport(db: ReportClient, organizationSlug: stri
     where: { organizationId, track: "ADULT", code: "BLACK" },
     select: { maxStripes: true, progressionMode: true, stripeIntervalMonths: true, stripeColors: true },
   });
-  const proposed = proposedBlackRank(adultMode);
+  // The black-belt catalog belongs to the ADULT track: it is completed only when that track is itself being
+  // activated. An ADULT track already on PER_INTERVAL keeps whatever catalog it has (an owner may have tuned it),
+  // even while KIDS is activated - nothing is proposed for it and nothing is written.
+  const adultIsLegacy = configByTrack.get("ADULT")?.accounting === "CUMULATIVE";
+  const proposed = black && !adultIsLegacy ? black : proposedBlackRank(adultMode);
   const blackNeedsUpdate =
     !!black &&
+    adultIsLegacy &&
     (black.maxStripes !== proposed.maxStripes ||
       black.progressionMode !== proposed.progressionMode ||
       JSON.stringify(black.stripeIntervalMonths) !== JSON.stringify(proposed.stripeIntervalMonths));

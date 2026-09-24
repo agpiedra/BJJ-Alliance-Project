@@ -661,9 +661,12 @@ describe("student detail actions", () => {
 
       currentSession = { user: { id: admin.id, role: "ADMIN" }, activeOrganizationId: admin.organizationId };
       const result = await addAttendanceAdjustment(admin.organizationId, {}, formData({ studentId: student.id, date: "2026-03-10", reason: "recorded next morning" }));
-      expect(result).toEqual({ ok: true, info: "alreadyCountedThatDay" });
+      // The baseline here is a tracking start (not an award): that day's class cannot be placed before or after
+      // it, so the coach's entry is history only - flagged, never a contribution.
+      expect(result).toEqual({ ok: true, info: "trackingStartDayHistoryOnly" });
       const after = await getAtBeltSummary(student.id, student.organizationId, ALLIANCE_PER_INTERVAL_CONFIG);
       expect(after.atBeltCount).toBe(1); // still counted in the current interval
+      expect((await prisma.attendanceRecord.findFirstOrThrow({ where: { studentId: student.id, type: "ADJUSTMENT" } })).historyOnly).toBe(true);
     });
 
     describe("the day of a promotion: only the day is known, so no after-award time is invented", () => {

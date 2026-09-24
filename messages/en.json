@@ -787,6 +787,7 @@
         "alreadyCountedThatDay": "Saved to the history, but that day had already counted toward progress, so nothing was added.",
         "beforeLastPromotion": "Saved to the history, but that day is before the last promotion, so it does not count toward the next one.",
         "promotionDayHistoryOnly": "Saved to the history only. This is the day of a promotion and it cannot be told whether the class was before or after the award, so it adds nothing toward the next one. A class after the award counts when checked in at the kiosk or portal.",
+        "trackingStartDayHistoryOnly": "Saved to the history only. Progress tracking started on this day and it cannot be told whether the class was before or after, so it adds nothing toward the next promotion. A class after that counts when checked in at the kiosk or portal.",
         "invalid": "Please check the form for errors.",
         "notFound": "Could not add this attendance day.",
         "archived": "This student is archived — attendance can't be added."

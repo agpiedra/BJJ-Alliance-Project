@@ -180,6 +180,40 @@ describe("activation edge cases", () => {
     }
   });
 
+  it("an already-active adult track keeps its OWN black-belt configuration while kids is activated; the report says so and the black belt's outcome is preserved", async () => {
+    const { org, academy, orgSlug } = await makeLegacyOrg("ownblack", "ATTENDANCE");
+    try {
+      // ADULT is already on the decided accounting with a black-belt catalog that DIFFERS from the standard one
+      // (an owner tuned it: 3 degrees, 12/24/36 months). KIDS is still legacy.
+      await prisma.promotionConfig.updateMany({ where: { organizationId: org.id, track: "ADULT" }, data: { stripeAccounting: "PER_INTERVAL" } });
+      const own = { maxStripes: 3, progressionMode: "TIME" as const, stripeIntervalMonths: [12, 24, 36], stripeColors: ["#FFFFFF", "#FFFFFF", "#FFFFFF"] };
+      await prisma.beltRank.updateMany({ where: { organizationId: org.id, track: "ADULT", code: "BLACK" }, data: own });
+      const blackBelt = await mkStudent(org.id, academy.id, "ownblack-b", "ADULT", "BLACK", 1, { timeAnchorAt: monthsAgo(30), progressBaselineAt: monthsAgo(30), progressBaselineKind: "AWARD" });
+      await mkStudent(org.id, academy.id, "ownblack-k", "KIDS", "white", 0);
+
+      const report = await buildImpactReport(appPrisma, orgSlug);
+      // Nothing is proposed for a track that is not being activated.
+      expect(report.blackBeltCatalog?.needsUpdate).toBe(false);
+      const reported = report.students.find((s) => s.studentId === blackBelt.id)!;
+      expect(reported.accounting).toBe("PER_INTERVAL");
+      expect(reported.after.state).toBe("eligible"); // degree 1 -> 2 is 24 months on its own catalog; 30 months have passed
+
+      const result = await activateAccounting(appPrisma, { organizationSlug: orgSlug, reportId: report.reportId, activatedByUserId: actorId });
+      expect(result).toMatchObject({ ok: true, tracksActivated: ["KIDS"], blackBeltCatalogUpdated: false });
+
+      const black = await prisma.beltRank.findFirstOrThrow({ where: { organizationId: org.id, track: "ADULT", code: "BLACK" } });
+      expect(black).toMatchObject(own); // exactly the owner's configuration, not the standard 6-degree one
+      const audit = await prisma.auditLog.findFirstOrThrow({ where: { organizationId: org.id, action: "promotion-accounting.activate" } });
+      expect(audit.after).toMatchObject({ blackBeltCatalogUpdated: false });
+
+      // And what the report said the black belt would see is what the app now shows.
+      const after = await buildImpactReport(appPrisma, orgSlug);
+      expect(after.students.find((s) => s.studentId === blackBelt.id)?.after).toEqual(reported.after);
+    } finally {
+      await dropOrg(org.id);
+    }
+  });
+
   it("a track that is already PER_INTERVAL keeps its real award baselines; only the legacy track is re-baselined", async () => {
     const { org, academy, orgSlug } = await makeLegacyOrg("mixed", "ATTENDANCE");
     try {

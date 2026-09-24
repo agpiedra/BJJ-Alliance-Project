@@ -725,6 +725,12 @@ model AttendanceRecord {
   voidedAt       DateTime?
   voidedById     String?
   voidReason     String?
+  /// Set on a coach-recorded day when only the DAY is known and it is the day of a promotion (or of the
+  /// progress-tracking start), so it cannot be told whether the class was before or after the boundary. The row
+  /// is real attendance (history, lifetime total) but is NEVER a progress contribution, however other rows of
+  /// that day are later voided or recomputed: attribution must not depend on another row staying valid.
+  /// Read only by the PER_INTERVAL day derivation (progress-days.ts).
+  historyOnly    Boolean               @default(false)
 
   student      Student       @relation(fields: [organizationId, studentId], references: [organizationId, id])
   academy      Academy       @relation(fields: [organizationId, academyId], references: [organizationId, id])
@@ -736,7 +742,11 @@ model AttendanceRecord {
   voidedBy     User?         @relation("AttendanceVoidedBy", fields: [voidedById], references: [id])
   organization Organization  @relation(fields: [organizationId], references: [id])
 
-  @@unique([studentId, classSessionId, date])
+  // The one-valid-entry-per-class-occurrence rule (student, class, day) is a PARTIAL unique index that Prisma
+  // cannot express: "AttendanceRecord_student_class_date_valid_key" ... WHERE "voidedAt" IS NULL (see the
+  // migration). A voided row keeps its history but no longer occupies the occurrence, so a valid replacement
+  // check-in is accepted while at most one valid entry can exist. Class-less rows (classSessionId NULL) were
+  // never constrained: NULLs are distinct.
   @@index([studentId, occurredAt])
   @@index([academyId, occurredAt])
   @@index([organizationId])

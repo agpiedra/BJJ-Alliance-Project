@@ -29,7 +29,9 @@ import type { prisma } from "@/lib/prisma";
  *
  * A row qualifies when it is not voided (an ADMIN/DIRECTOR invalidated it as a mistake; it stays in
  * the history but counts for nothing, and the day's contribution is recomputed from the remaining
- * rows), has a positive `delta` and either is a class-less
+ * rows), is not `historyOnly` (a coach-recorded day of a promotion, whose class cannot be placed before
+ * or after the award: real attendance, never a contribution, whatever else is voided later), has a
+ * positive `delta` and either is a class-less
  * staff-added day (not an UNMATCHED tap) or belongs to a class flagged
  * `countsTowardPromotion`. Negative/zero adjustments never contribute - there is
  * no arbitrary progress credit, positive or negative.
@@ -53,6 +55,7 @@ export interface ContributingDay {
  */
 const QUALIFYING = Prisma.sql`
   a."voidedAt" IS NULL
+  AND a."historyOnly" = false
   AND a."delta" > 0
   AND (
     (a."classSessionId" IS NULL AND a."matchSource" <> 'UNMATCHED')
@@ -99,30 +102,6 @@ export async function listContributingDays(
     ORDER BY firsts."day"
   `);
   return rows.map((row) => ({ day: row.day, firstAt: row.occurredAt, recordId: row.id }));
-}
-
-/**
- * The `occurredAt` of the earliest qualifying (valid, non-voided) row of one Costa Rica ledger day
- * (`YYYY-MM-DD`), or null when the day has none. Used to place a day-only staff entry so it can never
- * become that day's earliest row and displace a real contribution.
- */
-export async function earliestQualifyingAt(
-  client: RawClient,
-  params: { studentId: string; organizationId: string; day: string },
-): Promise<Date | null> {
-  const rows = await client.$queryRaw<Array<{ occurredAt: Date }>>(Prisma.sql`
-    SELECT a."occurredAt" AS "occurredAt"
-    FROM "AttendanceRecord" a
-    LEFT JOIN "ClassSession" c
-      ON c."id" = a."classSessionId" AND c."organizationId" = a."organizationId"
-    WHERE a."studentId" = ${params.studentId}
-      AND a."organizationId" = ${params.organizationId}
-      AND a."date" = ${params.day}::date
-      AND ${QUALIFYING}
-    ORDER BY a."occurredAt", a."id"
-    LIMIT 1
-  `);
-  return rows[0]?.occurredAt ?? null;
 }
 
 /**

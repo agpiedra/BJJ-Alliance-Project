@@ -10,6 +10,7 @@ let currentSession: { user: { id: string; role: string } | null; activeOrganizat
 vi.mock("@/auth", () => ({ auth: () => Promise.resolve(currentSession) }));
 
 const { voidAttendanceEntry } = await import("../../src/app/[locale]/(staff)/students/[id]/attendance-void-actions");
+const { addAttendanceAdjustment } = await import("../../src/app/[locale]/(staff)/students/[id]/adjustment-actions");
 const { getAtBeltSummary } = await import("../../src/lib/students/attendance-summary");
 const { getAttendanceHistory } = await import("../../src/lib/students/attendance-history");
 
@@ -190,6 +191,65 @@ describe("voiding a mistaken attendance entry", () => {
     expect(results.filter((r) => r.ok)).toHaveLength(1);
     expect(results.filter((r) => r.error === "alreadyVoided")).toHaveLength(1);
     expect(await prisma.auditLog.count({ where: { entityId: row.id, action: "attendance.void" } })).toBe(1);
+  });
+
+  describe("history-only entries for the day of a promotion survive voids and recomputation", () => {
+    // Awarded at 14:00 CR on Tue 2026-03-10 (20:00Z). A coach only supplies the DAY, so an entry for it is history
+    // only: it must never become a progress contribution, whatever else is voided later.
+    const AWARD = new Date("2026-03-10T20:00:00Z");
+    const coachEntry = (organizationId: string, studentId: string, reason: string) =>
+      addAttendanceAdjustment(organizationId, {}, form({ studentId, date: "2026-03-10", reason }));
+
+    async function awarded(label: string) {
+      const ac = await escazu();
+      const admin = await makeStaff("ADMIN", `void-promoday-${label}`);
+      const student = await makeStudent(ac.id, ac.organizationId, { baseline: AWARD, kind: "AWARD" });
+      return { ac, admin, student };
+    }
+    const valid = (studentId: string) => prisma.attendanceRecord.findMany({ where: { studentId, voidedAt: null }, orderBy: { occurredAt: "asc" } });
+
+    it("two coach entries on the promotion day, then the first is voided: the second does NOT start contributing", async () => {
+      const { admin, student } = await awarded("two-entries");
+      const first = await coachEntry(admin.organizationId, student.id, "ceremony class");
+      const second = await coachEntry(admin.organizationId, student.id, "recorded again by another coach");
+      expect(first).toEqual({ ok: true, info: "promotionDayHistoryOnly" });
+      expect(second).toEqual({ ok: true, info: "promotionDayHistoryOnly" });
+      expect((await perInterval(student)).atBeltCount).toBe(0);
+
+      const rows = await prisma.attendanceRecord.findMany({ where: { studentId: student.id }, orderBy: { createdAt: "asc" } });
+      expect(rows).toHaveLength(2);
+      expect(await voidAttendanceEntry(admin.organizationId, {}, form({ recordId: rows[0].id, reason: "duplicate" }))).toEqual({ ok: true });
+
+      // The remaining valid entry is still history only.
+      expect((await perInterval(student)).atBeltCount).toBe(0);
+      expect((await valid(student.id)).map((r) => r.id)).toEqual([rows[1].id]);
+      // ...and it still counts as attendance that happened.
+      expect((await perInterval(student)).lifetimeCount).toBe(1);
+    });
+
+    it("a real class after the award stays the day's contribution while coach entries come and go, and the coach entries never take over if it is voided", async () => {
+      const { ac, admin, student } = await awarded("real-after");
+      const real = await entry(student.id, ac.id, ac.organizationId, "2026-03-11T00:00:00Z", "2026-03-10"); // 18:00 CR, after the award
+      expect((await perInterval(student)).atBeltCount).toBe(1);
+
+      await coachEntry(admin.organizationId, student.id, "late entry one");
+      await coachEntry(admin.organizationId, student.id, "late entry two");
+      expect((await perInterval(student)).atBeltCount).toBe(1);
+
+      // The real class was the mistake: with it gone the day has NO progress contribution - the history-only
+      // coach entries do not inherit it.
+      await voidAttendanceEntry(admin.organizationId, {}, form({ recordId: real.id, reason: "wrong student" }));
+      expect((await perInterval(student)).atBeltCount).toBe(0);
+    });
+
+    it("a real class before the award stays in the completed interval whatever happens to the coach entries", async () => {
+      const { ac, admin, student } = await awarded("real-before");
+      const real = await entry(student.id, ac.id, ac.organizationId, "2026-03-10T12:00:00Z", "2026-03-10"); // 06:00 CR, before the award
+      await coachEntry(admin.organizationId, student.id, "second class that day");
+      expect((await perInterval(student)).atBeltCount).toBe(0);
+      await voidAttendanceEntry(admin.organizationId, {}, form({ recordId: real.id, reason: "wrong student" }));
+      expect((await perInterval(student)).atBeltCount).toBe(0);
+    });
   });
 
   it("a framework-shaped form post (with $ACTION_* fields) works", async () => {

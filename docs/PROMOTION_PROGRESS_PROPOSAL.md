@@ -84,6 +84,8 @@ except where section 6 says so.
 | `PromotionConfig` | CHECK `requiresCoachApproval = true` | The database refuses automatic approval for every writer. |
 | `Student` | `progressBaselineAt` (default now), `progressBaselineKind` (`SYSTEM_BASELINE` default, `AWARD`) | Start of the current interval, and whether it is the system's tracking start or a real award instant. Defaults fill for old writers. |
 | `AttendanceRecord` | `voidedAt`, `voidedById`, `voidReason` (nullable) | An ADMIN/DIRECTOR invalidated this entry as a mistake (section 4.7). The row is never deleted; every reader ignores a voided row. |
+| `AttendanceRecord` | `historyOnly` (default false) | A coach-recorded day of a promotion (or of the tracking start): real attendance and lifetime total, never a progress contribution. Stored on the row, not inferred from a timestamp (section 4.7). |
+| `AttendanceRecord` | unique index `(studentId, classSessionId, date) WHERE voidedAt IS NULL` (replaces the full unique constraint) | At most one VALID entry per class occurrence; a voided row keeps its history but no longer blocks a valid replacement check-in (section 4.7). Partial, so it is written in the migration, not in `schema.prisma`. |
 | `BeltRank` | `progressionMode` (nullable), `stripeIntervalMonths` (int array, default empty) | Per-rank mode override (black belt = TIME) and months per degree, indexed by the current degree count. |
 
 `Student.timeAnchorAt` now means "the instant of this student's last promotion" for time-based ranks:
@@ -170,10 +172,21 @@ earliest qualifying row, and a coach supplies only a DAY, no after-award time is
 
 - a day AFTER the promotion's day counts (stamped at the moment for today, midday for a past day);
 - a day BEFORE it belongs to the completed interval and adds nothing;
-- **the promotion's own day** cannot be placed before or after the award, so it is history only
-  (`promotionDayHistoryOnly`): stamped just before the award instant, or, if that day already has a valid
-  row, just after that row, so it can never become the day's earliest row and displace a real class. A
-  class after the award counts when checked in at the kiosk or portal.
+- **the promotion's own day** (and, under a system tracking start, a past day equal to it) cannot be placed
+  before or after the boundary, so the entry is **history only** (`promotionDayHistoryOnly` /
+  `trackingStartDayHistoryOnly`): the row is flagged `historyOnly` and NEVER qualifies as a progress
+  contribution. The flag is stored on the row, not inferred from a timestamp placed relative to other rows: an
+  earlier design stamped it "just after the day's earliest row", which became a contribution (or landed exactly
+  on the award boundary) the moment that other row was voided. It survives any later void or recomputation of
+  other rows, is still real attendance (history, lifetime total) and never displaces a real class, before or
+  after the award. A class after the award counts when checked in at the kiosk or portal. (This is read only by
+  the `PER_INTERVAL` derivation; a track still on `CUMULATIVE` counts every row as before.)
+
+**One valid entry per class occurrence.** The rule "a student has at most one entry for a class on a day" is a
+partial unique index over VALID rows only. A voided entry stays in the history but no longer occupies the
+occurrence, so a valid replacement check-in through the kiosk, portal or offline replay is accepted; a second
+valid one is refused by the database itself (concurrent replacements: exactly one is accepted, the rest are
+"already checked in"). A voided entry cannot be reassigned to another class.
 
 **Correcting a mistaken entry (void).** "No arbitrary credit" never meant "a mistake cannot be corrected".
 An ADMIN or DIRECTOR (scoped to the entry's academy) can void ONE entry, with a required reason
@@ -210,14 +223,18 @@ moves only through `pnpm promotion:accounting`:
    configuration edit in flight finish first or wait; the report is REBUILT inside the transaction and its id
    compared with the approved one; only then are the legacy tracks flipped, every student of a flipped track
    baselined at the activation instant, the black-belt catalog completed (kept manual under a MANUAL adult
-   track), and one audit row written. A concurrent change the locks do not cover (new attendance) makes the
+   track; **only when the ADULT track is itself being activated** - an ADULT track already on `PER_INTERVAL`
+   keeps its own black-belt configuration even while KIDS is activated, and the report proposes nothing for
+   it), and one audit row written. A concurrent change the locks do not cover (new attendance) makes the
    transaction fail as `conflict`: re-run the report. It never edits attendance, promotions, credits or belt
    dates, never invents a promotion, and never re-baselines a track that is already `PER_INTERVAL`.
 
 ## 5. Deployment: what changes immediately, what changes only at activation
 
-The migration is additive (new columns with defaults, one CHECK), and old code inserting students, ranks or
-attendance still works. Beyond that, "deploying" and "activating" are different events with different effects.
+The migrations are additive apart from one index change (new columns with defaults, one CHECK, and the full
+unique constraint on attendance `(studentId, classSessionId, date)` replaced by a partial unique index over
+valid rows, created before the old one is dropped and strictly weaker, so it cannot fail on existing data), and
+old code inserting students, ranks or attendance still works. Beyond that, "deploying" and "activating" are different events with different effects.
 
 **Changes immediately on deploy, for EVERY organization (including existing ones still on `CUMULATIVE`):**
 
@@ -227,7 +244,8 @@ attendance still works. Beyond that, "deploying" and "activating" are different 
 - Head-start credit entry is removed (student creation form and the credit correction action). Existing
   credits stay in the table.
 - Coach-added attendance becomes one day with a reason (no number), with the promotion-day rule above.
-- A mistaken attendance entry can be voided (ADMIN/DIRECTOR); voided rows are ignored by every reader.
+- A mistaken attendance entry can be voided (ADMIN/DIRECTOR); voided rows are ignored by every reader, and a
+  valid replacement check-in for the same class and day is accepted after a void.
 - Every award now locks the student, saves the exact award instant as the promotion time and the new progress
   baseline / last-promotion date, re-verifies eligibility inside the transaction and audits the evidence.
 - The shared progress display and its wording ("Ready for review", capped bars, the recalculated threshold date,
@@ -244,7 +262,8 @@ attendance still works. Beyond that, "deploying" and "activating" are different 
 rule and reset-to-0 counting for that organization's legacy tracks; a system tracking baseline for every
 student of those tracks (so everyone starts at 0, and a student eligible under the old rule that day reads
 0); legacy credits and arbitrary adjustments stop counting; extra same-day rows stop counting; and the
-black-belt catalog is completed (degrees 1-6, time-based).
+black-belt catalog is completed (degrees 1-6, time-based) when the ADULT track is among the tracks being
+activated (an ADULT track already on `PER_INTERVAL` keeps its own configuration).
 
 **Rolling back behavior.** Switching a track from `PER_INTERVAL` back to `CUMULATIVE` keeps every row but
 changes progress and eligibility (a student at 0 of 30 reads their cumulative total again, possibly eligible,
