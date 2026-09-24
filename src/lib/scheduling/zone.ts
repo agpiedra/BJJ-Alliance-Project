@@ -59,7 +59,7 @@ export function toAttendanceDate(occurredAt: Date): Date {
  * already-CR-zoned `DateTime` instead of a raw instant.
  *
  * Needed because a class occurrence's ledger day is NOT always the CR calendar
- * day of the check-in instant: a ±30-minute window can straddle CR midnight, so
+ * day of the check-in instant: a class window can straddle CR midnight, so
  * two check-ins to the SAME class occurrence would otherwise land on two
  * different `date` values and slip past the
  * `@@unique([studentId, classSessionId, date])` constraint — two ledger rows

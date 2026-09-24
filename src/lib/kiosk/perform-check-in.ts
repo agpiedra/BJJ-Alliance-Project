@@ -1,7 +1,7 @@
 import { digestLookupSecret } from "@/lib/crypto";
 import { requireEnv } from "@/lib/env";
-import { attendanceDateFromZoned, crDayOfWeek, toAttendanceDate } from "@/lib/scheduling/zone";
-import { selectActiveSessionOccurrence } from "@/lib/scheduling/check-in-window";
+import { attendanceDateFromZoned } from "@/lib/scheduling/zone";
+import { openOccurrences, type SessionOccurrence } from "@/lib/scheduling/check-in-window";
 import { getAtBeltSummary, type AtBeltSummary } from "@/lib/students/attendance-summary";
 import { isDayContribution } from "@/lib/promotion/progress-days";
 import type { BeltVisualData } from "@/components/belt-graphic/belt-graphic";
@@ -15,6 +15,7 @@ import type { AccessContext } from "@/lib/tenant/types";
 import {
   AttendanceMatchSource,
   AttendanceType,
+  QueuedCheckInReason,
   StudentStatus,
   type AttendanceSource,
   type ClassType,
@@ -46,12 +47,29 @@ export interface MatchedClass {
   startTime: string;
 }
 
-/** One of "today's" classes, offered to the student when nothing auto-matched. */
-export interface PicklistEntry {
+/**
+ * One class that is OPEN right now, as offered to a student who must say which class they attended: name, the
+ * scheduled time range (`HH:mm`, Costa Rica wall clock; `endTime` may be past midnight) and the real class type.
+ */
+export interface OpenClassEntry {
   id: string;
   name: string;
   startTime: string;
+  endTime: string;
   type: ClassType;
+}
+
+/** The picker entry for one open occurrence (its own scheduled range, from its own configured duration). */
+export function toOpenClassEntry(
+  occurrence: SessionOccurrence<{ id: string; name: string; startTime: string; durationMinutes: number; type: ClassType; dayOfWeek: DayOfWeek }>,
+): OpenClassEntry {
+  return {
+    id: occurrence.session.id,
+    name: occurrence.session.name,
+    startTime: occurrence.session.startTime,
+    endTime: occurrence.startsAt.plus({ minutes: occurrence.session.durationMinutes }).toFormat("HH:mm"),
+    type: occurrence.session.type,
+  };
 }
 
 export type CheckInResult =
@@ -80,14 +98,29 @@ export type CheckInResult =
       attendanceRecordId: string;
       /** null for an UNMATCHED save (no class to name on the confirmation). */
       matchedClass: MatchedClass | null;
+      /** Another class was open at the same instant, so "this is not my class" has something to offer. */
+      canCorrect: boolean;
     }
   | {
       ok: false;
-      error: "invalid_code" | "no_active_class" | "already_checked_in";
-      /** Present only on `no_active_class`, and only when that day HAS classes
-       * to choose from — the kiosk renders these as buttons. A day with no
-       * classes at all never reaches this shape: it auto-saves as UNMATCHED. */
-      picklist?: PicklistEntry[];
+      /**
+       *  - invalid_code / already_checked_in: as ever.
+       *  - invalid_class: the selected id is not an active class of this academy. Nothing written.
+       *  - class_not_open: the selected class is not open at this instant (it closed while the picker was up, or it
+       *    never opened). Nothing written; `openClasses` carries the FRESH choices (possibly none).
+       *  - no_open_class: no class is open. A live attempt never creates an attendance from this: check-in is
+       *    unavailable and a coach can record the attendance.
+       *  - class_selection_required: SEVERAL classes are open and none was selected. Nothing written; `openClasses`
+       *    is the picker's list. Only a student's explicit choice records the attendance.
+       *  - queued_for_review: ONLY a queued replay that could not be attributed unambiguously. NOT a refusal and NOT an
+       *    attendance: the event was kept as untrusted evidence for staff (`reviewId`), or was recognized as a retry of an
+       *    event already kept (`duplicate`). The kiosk route answers it with a 200 so the device queue removes the entry.
+       * A queued replay (`replay`) never returns the four class refusals above: it is attributed or retained instead.
+       */
+      error: "invalid_code" | "already_checked_in" | "invalid_class" | "class_not_open" | "no_open_class" | "class_selection_required" | "queued_for_review";
+      openClasses?: OpenClassEntry[];
+      reviewId?: string;
+      duplicate?: boolean;
     };
 
 interface CommonInput {
@@ -109,32 +142,36 @@ interface CommonInput {
   source: AttendanceSource;
   now?: Date;
   /**
-   * Set when the student already answered the picklist: which of today's
-   * active classes to attribute the tap to. Never trusted — re-validated
-   * against this academy's own active sessions for that CR weekday.
+   * Set ONLY for a queued offline replay (the kiosk route derives it from a `queuedAt` in the body). Nobody is
+   * standing at the tablet to answer a picker, and a queued attendance must NEVER be silently discarded, so a replay is
+   * evaluated at its own ORIGINAL instant (`now`, the validated `queuedAt`) and:
+   *  - a valid recorded selection (open at that instant) is honored (STUDENT_PICKED);
+   *  - exactly ONE eligible class and no selection -> that class (AUTO);
+   *  - anything else - zero eligible classes, SEVERAL without a recorded selection, a recorded selection that was not
+   *    open, or an instant that could not be verified (`timestampVerified: false`: malformed, in the future or older
+   *    than the bound) - is NOT turned into an attendance. It is kept as UNTRUSTED EVIDENCE for staff (`QueuedCheckIn`):
+   *    the device's timestamp exactly as claimed, the selection exactly as sent, never the replay date, never a day of the
+   *    ledger, never counted toward promotion or the lifetime total, and never colliding with another event. `event`
+   *    identifies THIS queued event so that a retry of it is recognized and a different event is not.
+   * This is recovery for attendance that already happened; a NEW online attempt never takes this path.
    */
-  pickedClassSessionId?: string;
-  /**
-   * "Nobody is standing at the tablet to answer a picker." Set by the API
-   * route for an OFFLINE REPLAY (a tap that was queued on the device and is
-   * being flushed later — see src/lib/kiosk/offline-queue.ts).
-   *
-   * Ruling (the brief's prose doesn't cover this case): `flushOfflineQueue`
-   * is a fire-and-forget background replay with no UI to render a picker
-   * into, and its caller only learns a count of DROPPED entries. Returning a
-   * picklist to it would therefore mean the tap is discarded outright —
-   * which is exactly the "silently drop a tap" outcome Phase 9 exists to
-   * remove. So a replay that matches no window is saved as UNMATCHED
-   * instead, whether or not that day had classes, and surfaces on the
-   * Kiosco page's "Marcajes de hoy" table where staff can `Cambiar` it to
-   * the right class. Attendance preserved, provenance honest.
-   */
-  unattended?: boolean;
+  replay?: {
+    timestampVerified: boolean;
+    event: { key: string; claimedAtRaw: string | null; claimedAt: Date | null };
+  };
 }
 
+/**
+ * An explicit selection. It is validated server-side against fresh queries - never trusted from the client - and the
+ * class must belong to this academy, be active and be OPEN at the instant of the check-in (start -30 minutes to the
+ * class's scheduled end +30 minutes, inclusive, using that class's own duration): the SAME rule for the portal and the
+ * kiosk. A valid selection is never replaced by a different match.
+ */
+type ClassSelection = { pickedClassSessionId?: string };
+
 export type PerformCheckInInput =
-  | (CommonInput & { code: string; studentId?: never })
-  | (CommonInput & { studentId: string; code?: never });
+  | (CommonInput & ClassSelection & { code: string; studentId?: never })
+  | (CommonInput & ClassSelection & { studentId: string; code?: never });
 
 export async function performCheckIn(input: PerformCheckInInput): Promise<CheckInResult> {
   const now = input.now ?? new Date();
@@ -211,90 +248,95 @@ export async function performCheckIn(input: PerformCheckInInput): Promise<CheckI
     where: { academyId: input.academyId, active: true },
   });
 
-  // Deterministic: `findMany` returns rows in no guaranteed order, and
-  // overlapping check-in windows are genuinely reachable (adjacent hourly
-  // classes touch at their boundary; the admin schedule editor can create
-  // real overlaps), so "whichever row came back first" could attribute the
-  // same tap to different classes on identical requests.
-  const occurrence = selectActiveSessionOccurrence(sessions, now);
-
-  // What the row will be attributed to, resolved by one of three paths below.
-  let classSession: MatchedClass | null;
-  let attendanceDate: Date;
-  let matchSource: AttendanceMatchSource;
-
-  if (occurrence) {
-    classSession = toMatchedClass(occurrence.session);
-    // Stamped from the matched occurrence's OWN calendar day, never from
-    // `now`'s. A window that straddles CR midnight would otherwise give two
-    // check-ins to the same class occurrence two different `date` values,
-    // slipping past the (studentId, classSessionId, date) unique constraint and
-    // double-crediting one class — and a check-in just before midnight for a
-    // just-after-midnight class would be filed under the wrong day entirely.
-    // `occurredAt` stays the real wall-clock instant.
-    attendanceDate = attendanceDateFromZoned(occurrence.anchorDate);
-    matchSource = AttendanceMatchSource.AUTO;
-  } else {
-    // No window contains `now`. Everything from here is Phase 9's no-match
-    // path: offer that day's classes, or save the tap unattributed — never
-    // reject it outright, which used to lose the attendance entirely.
-    //
-    // "That day" is `now`'s own CR calendar day. Unlike the AUTO branch there
-    // is no occurrence to anchor to, so there is nothing to straddle midnight:
-    // a tap at 23:50 CR belongs to that day's schedule, full stop.
-    const todaysSessions = await db.classSession.findMany({
-      where: { academyId: input.academyId, active: true, dayOfWeek: crDayOfWeek(now) },
-      orderBy: { startTime: "asc" },
-    });
-
-    // Never blind-trusted: a stale or tampered id that isn't one of THIS
-    // academy's active classes for THIS weekday falls through to the picker
-    // (or the UNMATCHED save) instead of being written or throwing.
-    const picked = input.pickedClassSessionId
-      ? todaysSessions.find((session) => session.id === input.pickedClassSessionId)
-      : undefined;
-
-    if (!picked && todaysSessions.length > 0 && !input.unattended) {
-      return {
-        ok: false,
-        error: "no_active_class",
-        picklist: todaysSessions.map((session) => ({
-          id: session.id,
-          name: session.name,
-          startTime: session.startTime,
-          type: session.type,
-        })),
-      };
-    }
-
-    classSession = picked ? toMatchedClass(picked) : null;
-    attendanceDate = toAttendanceDate(now);
-    matchSource = picked ? AttendanceMatchSource.STUDENT_PICKED : AttendanceMatchSource.UNMATCHED;
-  }
-
-  // The `@@unique([studentId, classSessionId, date])` constraint cannot catch a
-  // repeat UNMATCHED tap: Postgres treats NULLs as distinct, so a second
-  // classSessionId-null row for the same day slips straight past it and
-  // double-counts toward belt progress. App-level pre-check, therefore — and
-  // only for this case; every attributed path still relies on the constraint.
-  // ponytail: a concurrent double-tap can still race this; a partial unique
-  // index on (studentId, date) WHERE classSessionId IS NULL would close it, if
-  // duplicate UNMATCHED rows ever actually show up in practice.
-  if (!classSession) {
-    const existing = await db.attendanceRecord.findFirst({
-      where: {
-        studentId: student.id,
-        classSessionId: null,
-        date: attendanceDate,
-        type: AttendanceType.CHECKIN,
-        voidedAt: null,
-      },
+  // A retry of a queued event that was already kept as evidence is recognized FIRST, by its event key, before anything is
+  // evaluated: the answer is the same record (`duplicate`), never a second one and never `already_checked_in`.
+  const replay = input.replay;
+  if (replay) {
+    const kept = await db.queuedCheckIn.findUnique({
+      where: { organizationId_studentId_eventKey: { organizationId: input.context.organizationId, studentId: student.id, eventKey: replay.event.key } },
       select: { id: true },
     });
-    if (existing) {
-      return { ok: false, error: "already_checked_in" };
+    if (kept) return { ok: false, error: "queued_for_review", reviewId: kept.id, duplicate: true };
+  }
+
+  // The classes open at the instant this attendance belongs to, in a stable order. A replay whose instant could not be
+  // verified is evaluated against NO class (an untrusted timestamp must not attribute anything to whatever happens to
+  // be open at replay time): it is retained as evidence below.
+  const open = !replay || replay.timestampVerified ? openOccurrences(sessions, now) : [];
+
+  // What the row will be attributed to. `sessions` is this academy's ACTIVE classes, already scoped to the organization.
+  type Attribution = { session: (typeof sessions)[number]; date: Date; matchSource: AttendanceMatchSource };
+  let attribution: Attribution | null = null;
+  const picked = input.pickedClassSessionId !== undefined ? sessions.find((session) => session.id === input.pickedClassSessionId) : undefined;
+  const choices = () => open.map(toOpenClassEntry);
+
+  // 1. An explicit selection is validated FIRST and always wins when valid. It is filed under the occurrence's OWN
+  //    Costa Rica day (a window can straddle midnight) and `occurredAt` stays the real instant.
+  if (input.pickedClassSessionId !== undefined) {
+    const chosen = picked ? open.find((occurrence) => occurrence.session.id === picked.id) : undefined;
+    if (picked && chosen) {
+      attribution = { session: picked, date: attendanceDateFromZoned(chosen.anchorDate), matchSource: AttendanceMatchSource.STUDENT_PICKED };
+    } else if (!replay) {
+      // A live attempt is refused and NOTHING is written: an unknown / inactive / other-academy / other-organization id
+      // is `invalid_class`; a real class that is not open (it may have closed while the picker was up) is
+      // `class_not_open`, with the fresh choices so the student can pick again.
+      return picked ? { ok: false, error: "class_not_open", openClasses: choices() } : { ok: false, error: "invalid_class" };
+    }
+    // A replay with an unusable selection is not refused and not forced onto a class: it is retained below.
+  }
+
+  if (!attribution) {
+    if (!replay) {
+      // A NEW attempt with no selection. Zero open classes: check-in is unavailable and a coach records it - never an
+      // unmatched attendance from an online attempt. Several: the student must say which class; nothing is written
+      // until they do. Exactly one: it is unambiguous, so it is selected automatically.
+      if (open.length === 0) return { ok: false, error: "no_open_class" };
+      if (open.length > 1) return { ok: false, error: "class_selection_required", openClasses: choices() };
+      attribution = { session: open[0].session, date: attendanceDateFromZoned(open[0].anchorDate), matchSource: AttendanceMatchSource.AUTO };
+    } else if (input.pickedClassSessionId === undefined && open.length === 1) {
+      attribution = { session: open[0].session, date: attendanceDateFromZoned(open[0].anchorDate), matchSource: AttendanceMatchSource.AUTO };
+    } else {
+      // A replay that cannot be attributed unambiguously. Kept as EVIDENCE for staff, never as an attendance: it takes no
+      // day, so it cannot collide with another event or with an existing row, and it counts for nothing until a coach
+      // records it on the original day. What the device claimed is stored exactly as claimed.
+      const reason: QueuedCheckInReason = !replay.timestampVerified
+        ? QueuedCheckInReason.TIMESTAMP_NOT_VERIFIED
+        : input.pickedClassSessionId !== undefined
+          ? QueuedCheckInReason.SELECTION_NOT_OPEN
+          : open.length === 0
+            ? QueuedCheckInReason.NO_CLASS_OPEN
+            : QueuedCheckInReason.SEVERAL_CLASSES_OPEN;
+      try {
+        const kept = await db.queuedCheckIn.create({
+          data: {
+            organizationId: input.context.organizationId,
+            academyId: input.academyId,
+            studentId: student.id,
+            eventKey: replay.event.key,
+            claimedAtRaw: replay.event.claimedAtRaw,
+            claimedAt: replay.event.claimedAt,
+            claimedAtVerified: replay.timestampVerified,
+            claimedClassSessionId: input.pickedClassSessionId ?? null,
+            reason,
+            receivedAt: new Date(),
+          },
+          select: { id: true },
+        });
+        return { ok: false, error: "queued_for_review", reviewId: kept.id, duplicate: false };
+      } catch (error) {
+        // Two concurrent deliveries of the SAME event: the loser is a retry, not a new event.
+        if (!isUniqueConstraintError(error)) throw error;
+        const kept = await db.queuedCheckIn.findUnique({
+          where: { organizationId_studentId_eventKey: { organizationId: input.context.organizationId, studentId: student.id, eventKey: replay.event.key } },
+          select: { id: true },
+        });
+        if (!kept) throw error;
+        return { ok: false, error: "queued_for_review", reviewId: kept.id, duplicate: true };
+      }
     }
   }
+
+  const { session: attributed, date: attendanceDate, matchSource } = attribution;
 
   // Resolved once and reused for both summaries below (same student, same
   // org) rather than once per call.
@@ -308,7 +350,7 @@ export async function performCheckIn(input: PerformCheckInInput): Promise<CheckI
         studentId: student.id,
         academyId: input.academyId,
         organizationId: input.context.organizationId,
-        classSessionId: classSession?.id ?? null,
+        classSessionId: attributed.id,
         occurredAt: now,
         date: attendanceDate,
         type: AttendanceType.CHECKIN,
@@ -319,9 +361,8 @@ export async function performCheckIn(input: PerformCheckInInput): Promise<CheckI
       select: { id: true },
     });
   } catch (error) {
-    // Postgres unique constraint violation (Prisma P2002) on the
-    // (studentId, classSessionId, date) constraint — the app-level check
-    // above is a friendly pre-check; this is the real backstop for a race.
+    // Postgres unique violation (Prisma P2002): the per-class-occurrence index (one valid attendance per student, class
+    // and day). This is the backstop for a double-tap or a retry of an already-attributed event.
     if (isUniqueConstraintError(error)) {
       return { ok: false, error: "already_checked_in" };
     }
@@ -335,9 +376,10 @@ export async function performCheckIn(input: PerformCheckInInput): Promise<CheckI
   // is nothing to explain there.
   let progressOutcome: ProgressOutcome = "counted";
   if (summaryAfter.accounting === "PER_INTERVAL") {
-    if (occurrence && !occurrence.session.countsTowardPromotion) {
-      progressOutcome = "not_promotion_class";
-    } else if (!occurrence && matchSource === AttendanceMatchSource.UNMATCHED) {
+    // Judged on what the attendance was ATTRIBUTED to - an automatic match, a selected class or nothing - so a
+    // selected class that does not count toward promotion is reported as such (it used to fall through to
+    // "already counted today").
+    if (!attributed.countsTowardPromotion) {
       progressOutcome = "not_promotion_class";
     } else {
       const contributes = await isDayContribution(prisma, {
@@ -391,7 +433,8 @@ export async function performCheckIn(input: PerformCheckInInput): Promise<CheckI
     isVisitor: student.homeAcademyId !== input.academyId,
     homeAcademyName: student.homeAcademy.name,
     attendanceRecordId: created.id,
-    matchedClass: classSession,
+    matchedClass: toMatchedClass(attributed),
+    canCorrect: !replay && open.some((occurrence) => occurrence.session.id !== attributed.id),
   };
 }
 

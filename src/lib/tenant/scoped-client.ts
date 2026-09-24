@@ -34,6 +34,7 @@ export const TENANT_SCOPED_MODELS = new Set([
   "PaymentPlan",
   "PaymentPeriod",
   "KioskAttempt",
+  "QueuedCheckIn",
   "StaffAssignment",
   "Notification",
   "OrganizationBranding",
@@ -155,6 +156,7 @@ export type ScopedDb = Pick<
   | "paymentPlan"
   | "paymentPeriod"
   | "kioskAttempt"
+  | "queuedCheckIn"
   | "staffAssignment"
   | "notification"
   | "organizationBranding"

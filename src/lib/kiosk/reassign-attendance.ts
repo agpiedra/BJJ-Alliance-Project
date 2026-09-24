@@ -1,19 +1,20 @@
 import { prisma } from "@/lib/prisma";
 import { getScopedDb } from "@/lib/tenant/scoped-client";
 import type { AccessContext } from "@/lib/tenant/types";
-import { attendanceDateDayOfWeek } from "@/lib/scheduling/zone";
+import { attendanceDateDayOfWeek, attendanceDateFromZoned } from "@/lib/scheduling/zone";
+import { openOccurrences } from "@/lib/scheduling/check-in-window";
 import { isUniqueConstraintError } from "@/lib/prisma-errors";
 import { AttendanceMatchSource, AttendanceType } from "@/generated/prisma/client";
 import type { MatchedClass } from "./perform-check-in";
 
 export type ReassignAttendanceResult =
   | { ok: true; matchedClass: MatchedClass }
-  | { ok: false; error: "notFound" | "invalidRecord" | "invalidClass" | "alreadyRecorded" };
+  | { ok: false; error: "notFound" | "invalidRecord" | "invalidClass" | "classNotOpen" | "alreadyRecorded" };
 
-interface ReassignOptions {
+interface ReassignOptionsBase {
   /**
    * Who to attribute the `AuditLog` row to. `null` for the kiosk's own
-   * "¿No es esta clase?" correction when the student has no linked `User`
+   * "not this class" correction when the student has no linked `User`
    * row — `AuditLog.actorId` is a required FK (prisma/schema.prisma), so
    * there is literally no id to write. The correction itself still happens
    * and is still visible: `matchSource: STUDENT_PICKED` on the row is its
@@ -21,7 +22,6 @@ interface ReassignOptions {
    * call always has a real actor and always writes the audit row.
    */
   actorUserId: string | null;
-  matchSource: typeof AttendanceMatchSource.STUDENT_PICKED | typeof AttendanceMatchSource.STAFF_CORRECTED;
   /**
    * The record must belong to this academy or the call reports `notFound`.
    * Required, not optional — MULTI_ACADEMY_AND_KIDS_BELTS.md 1f-1: an
@@ -29,8 +29,8 @@ interface ReassignOptions {
    * caller that simply forgets to pass it silently disables the entire
    * check. The kiosk passes the academy its device token was verified
    * against; the staff action passes the record's own (already scope-
-   * checked) academy — so one academy's tablet, or one organization's
-   * staff, can never rewrite another's attendance.
+   * checked) academy — so one academy's tablet, or one organization's staff,
+   * can never rewrite another's attendance.
    */
   expectedAcademyId: string;
   /**
@@ -42,6 +42,21 @@ interface ReassignOptions {
    */
   context: AccessContext;
 }
+
+/**
+ * Who is correcting decides whether the check-in window applies - and it is decided by the TYPE, so a student-facing
+ * caller cannot forget it:
+ *  - STUDENT_PICKED (the kiosk's own "not this class" correction): `requireOpenAt` is REQUIRED - the instant the
+ *    attendance was recorded. The target class must be open at that instant (the same start -30 .. end +30 rule a
+ *    check-in obeys), so a correction can never produce an attendance the check-in itself would have refused. The
+ *    record moves to the target occurrence's own Costa Rica day.
+ *  - STAFF_CORRECTED (a coach on the Kiosco page): no window - a coach records what actually happened.
+ */
+type ReassignOptions = ReassignOptionsBase &
+  (
+    | { matchSource: typeof AttendanceMatchSource.STUDENT_PICKED; requireOpenAt: Date }
+    | { matchSource: typeof AttendanceMatchSource.STAFF_CORRECTED; requireOpenAt?: undefined }
+  );
 
 /**
  * Move one already-recorded attendance to a different class on the SAME day
@@ -88,31 +103,38 @@ export async function reassignAttendance(
 
   const target = await db.classSession.findUnique({
     where: { id: newClassSessionId },
-    select: { id: true, academyId: true, dayOfWeek: true, startTime: true, name: true, active: true },
+    select: { id: true, academyId: true, dayOfWeek: true, startTime: true, durationMinutes: true, name: true, active: true },
   });
 
-  // Three independent rejections, none of them inferable from the client's
-  // claim: a class at another academy, an inactive one, or one scheduled on a
-  // different weekday than the record's own ledger day. Reassignment moves an
-  // attendance WITHIN a day at ONE academy, never across either boundary.
-  if (
-    !target ||
-    !target.active ||
-    target.academyId !== record.academyId ||
-    target.dayOfWeek !== attendanceDateDayOfWeek(record.date)
-  ) {
+  // Independent rejections, none of them inferable from the client: a class at another academy or an inactive one; and
+  //  - staff: one scheduled on a different weekday than the record's own ledger day (a coach moves an attendance WITHIN
+  //    a day at ONE academy, never across either boundary);
+  //  - student: one that was not OPEN at the instant the attendance was recorded (the check-in window rule), in which
+  //    case the record follows the class's own occurrence day (a class running past midnight belongs to its own day).
+  if (!target || !target.active || target.academyId !== record.academyId) {
+    return { ok: false, error: "invalidClass" };
+  }
+  let newDate: Date | undefined;
+  if (opts.requireOpenAt) {
+    const open = openOccurrences([target], opts.requireOpenAt)[0];
+    if (!open) return { ok: false, error: "classNotOpen" };
+    const occurrenceDay = attendanceDateFromZoned(open.anchorDate);
+    if (occurrenceDay.getTime() !== record.date.getTime()) newDate = occurrenceDay;
+  } else if (target.dayOfWeek !== attendanceDateDayOfWeek(record.date)) {
     return { ok: false, error: "invalidClass" };
   }
 
   const isStaffCorrection = opts.matchSource === AttendanceMatchSource.STAFF_CORRECTED;
-  const after = { classSessionId: target.id, matchSource: opts.matchSource };
+  const after = { classSessionId: target.id, matchSource: opts.matchSource, ...(newDate ? { date: newDate.toISOString().slice(0, 10) } : {}) };
 
   try {
     await prisma.$transaction(async (tx) => {
       await tx.attendanceRecord.update({
         where: { id: record.id, organizationId: opts.context.organizationId },
         data: {
-          ...after,
+          classSessionId: target.id,
+          matchSource: opts.matchSource,
+          ...(newDate ? { date: newDate } : {}),
           // Only the staff variant ever writes these two. Left `undefined`
           // (i.e. absent from the payload, so Prisma doesn't touch the
           // columns) on the student path rather than explicitly nulled: a row
@@ -131,7 +153,7 @@ export async function reassignAttendance(
             action: "attendance.reassign",
             entityType: "AttendanceRecord",
             entityId: record.id,
-            before: { classSessionId: record.classSessionId, matchSource: record.matchSource },
+            before: { classSessionId: record.classSessionId, matchSource: record.matchSource, ...(newDate ? { date: record.date.toISOString().slice(0, 10) } : {}) },
             after,
           },
         });

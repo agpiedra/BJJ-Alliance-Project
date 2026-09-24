@@ -25,7 +25,8 @@ const pepper = requireEnv("CODE_PEPPER");
 // Monday 2026-01-05, as the `@db.Date` UTC-midnight value AttendanceRecord.date
 // stores (see src/lib/scheduling/zone.ts).
 const MONDAY_DATE = new Date(Date.UTC(2026, 0, 5));
-const MONDAY_INSTANT = new Date("2026-01-05T19:30:00Z");
+// Monday 18:40 CR: the 18:00 (17:30-19:30) and 19:00 (18:30-20:30) fixture classes are both open, the 20:00 one is not.
+const MONDAY_INSTANT = new Date("2026-01-06T00:40:00Z");
 
 const cleanupStudentIds: string[] = [];
 const cleanupAcademyIds: string[] = [];
@@ -182,6 +183,7 @@ describe("reassignAttendance", () => {
     const result = await reassignAttendance(record.id, sessions[0].id, {
       actorUserId: null,
       matchSource: "STUDENT_PICKED",
+      requireOpenAt: MONDAY_INSTANT,
       expectedAcademyId: academy.id,
       context: ctx(academy),
     });
@@ -213,6 +215,7 @@ describe("reassignAttendance", () => {
     await reassignAttendance(record.id, sessions[0].id, {
       actorUserId: null,
       matchSource: "STUDENT_PICKED",
+      requireOpenAt: MONDAY_INSTANT,
       expectedAcademyId: academy.id,
       context: ctx(academy),
     });
@@ -244,6 +247,7 @@ describe("reassignAttendance", () => {
     const result = await reassignAttendance(adjustment.id, sessions[0].id, {
       actorUserId: null,
       matchSource: "STUDENT_PICKED",
+      requireOpenAt: MONDAY_INSTANT,
       expectedAcademyId: academy.id,
       context: ctx(academy),
     });
@@ -262,6 +266,7 @@ describe("reassignAttendance", () => {
     const result = await reassignAttendance(record.id, theirs.sessions[0].id, {
       actorUserId: null,
       matchSource: "STUDENT_PICKED",
+      requireOpenAt: MONDAY_INSTANT,
       expectedAcademyId: mine.academy.id,
       context: ctx(mine.academy),
     });
@@ -269,7 +274,7 @@ describe("reassignAttendance", () => {
     expect(result).toEqual({ ok: false, error: "invalidClass" });
   });
 
-  it("rejects a class scheduled on a different weekday than the record's own date", async () => {
+  it("rejects a class scheduled on a different weekday than the record's own date (a coach: invalidClass; a student: it was not open, classNotOpen)", async () => {
     const { academy, sessions } = await makeAcademy([
       { dayOfWeek: "MONDAY", startTime: "18:00", name: "Lunes" },
       { dayOfWeek: "TUESDAY", startTime: "18:00", name: "Martes" },
@@ -277,14 +282,23 @@ describe("reassignAttendance", () => {
     const student = await makeStudent(academy.id, academy.organizationId);
     const record = await makeCheckIn(student.id, academy.id, academy.organizationId, sessions[0].id);
 
-    const result = await reassignAttendance(record.id, sessions[1].id, {
-      actorUserId: null,
-      matchSource: "STUDENT_PICKED",
-      expectedAcademyId: academy.id,
-      context: ctx(academy),
-    });
-
-    expect(result).toEqual({ ok: false, error: "invalidClass" });
+    expect(
+      await reassignAttendance(record.id, sessions[1].id, {
+        actorUserId: null,
+        matchSource: "STAFF_CORRECTED",
+        expectedAcademyId: academy.id,
+        context: ctx(academy),
+      }),
+    ).toEqual({ ok: false, error: "invalidClass" });
+    expect(
+      await reassignAttendance(record.id, sessions[1].id, {
+        actorUserId: null,
+        matchSource: "STUDENT_PICKED",
+        requireOpenAt: MONDAY_INSTANT,
+        expectedAcademyId: academy.id,
+        context: ctx(academy),
+      }),
+    ).toEqual({ ok: false, error: "classNotOpen" });
   });
 
   it("rejects an inactive class, an unknown record, and an out-of-scope academy", async () => {
@@ -299,6 +313,7 @@ describe("reassignAttendance", () => {
       await reassignAttendance(record.id, sessions[1].id, {
         actorUserId: null,
         matchSource: "STUDENT_PICKED",
+        requireOpenAt: MONDAY_INSTANT,
         expectedAcademyId: academy.id,
         context: ctx(academy),
       }),
@@ -308,6 +323,7 @@ describe("reassignAttendance", () => {
       await reassignAttendance("no-such-record", sessions[0].id, {
         actorUserId: null,
         matchSource: "STUDENT_PICKED",
+        requireOpenAt: MONDAY_INSTANT,
         expectedAcademyId: academy.id,
         context: ctx(academy),
       }),
@@ -317,6 +333,7 @@ describe("reassignAttendance", () => {
       await reassignAttendance(record.id, sessions[0].id, {
         actorUserId: null,
         matchSource: "STUDENT_PICKED",
+        requireOpenAt: MONDAY_INSTANT,
         expectedAcademyId: "some-other-academy",
         context: ctx(academy),
       }),
@@ -335,6 +352,7 @@ describe("reassignAttendance", () => {
     const result = await reassignAttendance(first.id, sessions[1].id, {
       actorUserId: null,
       matchSource: "STUDENT_PICKED",
+      requireOpenAt: MONDAY_INSTANT,
       expectedAcademyId: academy.id,
       context: ctx(academy),
     });

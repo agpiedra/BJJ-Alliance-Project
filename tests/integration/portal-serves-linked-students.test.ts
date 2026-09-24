@@ -1,6 +1,7 @@
 import "dotenv/config";
 import { getTestPrismaClient } from "../helpers/test-db";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { DateTime } from "luxon";
 
 vi.mock("@/lib/email/send-transactional-email", () => ({
   sendTransactionalEmail: vi.fn(async () => ({ success: true })),
@@ -176,6 +177,7 @@ describe("the portal serves anyone with a linked, active student record", () => 
     await prisma.paymentPlan.deleteMany({ where: { organizationId: { in: orgIds } } });
     await prisma.staffAssignment.deleteMany({ where: { organizationId: { in: orgIds } } });
     await prisma.organizationMembership.deleteMany({ where: { organizationId: { in: orgIds } } });
+    await prisma.classSession.deleteMany({ where: { organizationId: { in: orgIds } } });
     await prisma.academy.deleteMany({ where: { organizationId: { in: orgIds } } });
     await prisma.promotionConfig.deleteMany({ where: { organizationId: { in: orgIds } } });
     await prisma.beltRank.deleteMany({ where: { organizationId: { in: orgIds } } });
@@ -251,13 +253,23 @@ describe("the portal serves anyone with a linked, active student record", () => 
       const org = await newOrganization();
       const coach = await makeCoach(org, "checkin");
 
+      // The portal checks in to an EXPLICIT class that is open right now (Costa Rica time, real clock): the coach's
+      // academy gets one starting this minute.
+      const nowCr = DateTime.now().setZone("America/Costa_Rica");
+      const dayOfWeek = ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"][nowCr.weekday - 1] as "MONDAY";
+      const session = await prisma.classSession.create({
+        data: { academyId: org.academyId, organizationId: org.organizationId, dayOfWeek, startTime: nowCr.toFormat("HH:mm"), durationMinutes: 60, name: "Coach trains", type: "GI" },
+      });
+
       actAs(coach.user.id, org.organizationId);
-      const state = await selfCheckIn(org.organizationId, {}, new FormData());
+      const selection = new FormData();
+      selection.set("classSessionId", session.id);
+      const state = await selfCheckIn(org.organizationId, {}, selection);
 
       expect(state, JSON.stringify(state)).toMatchObject({ ok: true });
       const records = await prisma.attendanceRecord.findMany({ where: { organizationId: org.organizationId } });
       expect(records).toHaveLength(1);
-      expect(records[0]).toMatchObject({ studentId: coach.student.id, source: "PORTAL", type: "CHECKIN" });
+      expect(records[0]).toMatchObject({ studentId: coach.student.id, source: "PORTAL", type: "CHECKIN", classSessionId: session.id });
     });
 
     it("REQUIRED: a coach whose student record is archived cannot check in — honestly told notActive — and nothing is recorded", async () => {

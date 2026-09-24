@@ -186,6 +186,65 @@ describe("offline-queue", () => {
     expect(body.queuedAt).toBeLessThanOrEqual(after);
   });
 
+  it("carries a recorded class selection with the queued entry (and sends none when there was none)", async () => {
+    await enqueueOfflineCheckIn({ academySlug: "demo", token: "tok", code: "1111", pickedClassSessionId: "cls-b" });
+    await enqueueOfflineCheckIn({ academySlug: "demo", token: "tok", code: "2222" });
+
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, { ok: true }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await flushOfflineQueue();
+
+    const [first, second] = fetchMock.mock.calls.map(([, init]) => JSON.parse(init.body));
+    expect(first).toMatchObject({ code: "1111", pickedClassSessionId: "cls-b" });
+    expect(typeof first.queuedAt).toBe("number"); // still replayed at its ORIGINAL instant
+    expect(second.pickedClassSessionId).toBeUndefined();
+  });
+
+  it("gives every queued event its own id, and sends the SAME id again when the same event is retried", async () => {
+    await enqueueOfflineCheckIn({ academySlug: "demo", token: "tok", code: "1111" });
+    await enqueueOfflineCheckIn({ academySlug: "demo", token: "tok", code: "1111" }); // the same student tapping twice: two events
+
+    // First flush: the connection drops on the first entry, so nothing is deleted and the same events are replayed later.
+    const failing = vi.fn().mockRejectedValue(new TypeError("Failed to fetch"));
+    vi.stubGlobal("fetch", failing);
+    await flushOfflineQueue();
+    const firstAttempt = JSON.parse(failing.mock.calls[0][1].body);
+
+    const working = vi.fn().mockResolvedValue(jsonResponse(200, { ok: true }));
+    vi.stubGlobal("fetch", working);
+    await flushOfflineQueue();
+    const [first, second] = working.mock.calls.map(([, init]) => JSON.parse(init.body));
+
+    expect(typeof first.eventId).toBe("string");
+    expect(first.eventId.length).toBeGreaterThan(8);
+    expect(second.eventId).not.toBe(first.eventId); // two taps, two events
+    expect(firstAttempt.eventId).toBe(first.eventId); // a retry of the same event carries the same id
+    expect(firstAttempt.queuedAt).toBe(first.queuedAt); // ...and the same claimed instant
+  });
+
+  it("an event kept as evidence (200 with retained: true) is a success: the entry is removed and nothing is reported as dropped", async () => {
+    await enqueueOfflineCheckIn({ academySlug: "demo", token: "tok", code: "1234" });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(200, { ok: true, retained: true, reviewId: "rv-1", duplicate: false })));
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    expect(await flushOfflineQueue()).toEqual({ dropped: 0 });
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it.each(["no_open_class", "class_selection_required", "class_not_open", "invalid_class"])(
+    "a server that refuses a replay for its class (%s) is a contract violation: never silent - logged and COUNTED so staff see the banner",
+    async (reason) => {
+      await enqueueOfflineCheckIn({ academySlug: "demo", token: "tok", code: "1234" });
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(400, { ok: false, error: reason })));
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+      expect(await flushOfflineQueue()).toEqual({ dropped: 1 });
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      expect(warnSpy.mock.calls[0][1]).toMatchObject({ reason });
+    },
+  );
+
   it("replays entries strictly in FIFO order, one at a time", async () => {
     await enqueueOfflineCheckIn({ academySlug: "demo", token: "tok", code: "1111" });
     await enqueueOfflineCheckIn({ academySlug: "demo", token: "tok", code: "2222" });

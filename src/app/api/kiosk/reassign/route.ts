@@ -4,31 +4,33 @@ import { resolveAcademyBySlug } from "@/lib/tenant/platform-lookups";
 import { digestLookupSecret } from "@/lib/crypto";
 import { requireEnv } from "@/lib/env";
 import { reassignAttendance } from "@/lib/kiosk/reassign-attendance";
-import { attendanceDateDayOfWeek } from "@/lib/scheduling/zone";
+import { openOccurrences } from "@/lib/scheduling/check-in-window";
+import { toOpenClassEntry } from "@/lib/kiosk/perform-check-in";
 import { AttendanceMatchSource } from "@/generated/prisma/client";
 import type { KioskContext } from "@/lib/tenant/types";
 
 // Touches Prisma — Node runtime only, same as the check-in route.
 
 /**
- * The kiosk confirmation screen's "¿No es esta clase?" link (REDESIGN_BRIEF.md
- * Phase 9), in two modes against the same device-token gate:
+ * The kiosk confirmation screen "not this class" link (REDESIGN_BRIEF.md Phase 9), in two modes against the same
+ * device-token gate:
  *
  *   POST { academySlug, token, attendanceRecordId }
- *     -> 200 { ok: true, picklist: [...] }      the classes to choose from
+ *     -> 200 { ok: true, picklist: [...] }      the OTHER classes that were open when the attendance was recorded
  *   POST { academySlug, token, attendanceRecordId, classSessionId }
  *     -> 200 { ok: true, matchedClass: {...} }  reassignment done
- *     -> 400 { ok: false, error: "notFound" | "invalidClass" | "alreadyRecorded" }
+ *     -> 400 { ok: false, error: "notFound" | "invalidClass" | "classNotOpen" | "alreadyRecorded" }
+ *
+ * This is the STUDENT-facing correction, so it obeys the same check-in window as the check-in itself: the target must
+ * be open at the instant the attendance was recorded (start -30 minutes to end +30 minutes, that class's own duration),
+ * both when the choices are listed and again when one is submitted. A correction can never produce an attendance the
+ * check-in would have refused. (A coach correcting from the Kiosco page is a different action with no window.)
  *
  * Deliberately NOT behind `reserveKioskAttempt`: the rate limiter exists to
  * stop PIN guessing, and this endpoint accepts no PIN. Reaching it at all
  * requires a valid device token AND the cuid of an attendance row at that same
  * academy, and the worst it can do is move that one row between two of that
- * academy's own classes on its own day.
- *
- * The picklist is derived from the RECORD's ledger day, not from the server's
- * current weekday — a check-in made just before CR midnight must still offer
- * that class's day, not the one that started a minute ago.
+ * academy's own classes that were open at its own instant.
  */
 export async function POST(request: Request) {
   let body: {
@@ -67,7 +69,7 @@ export async function POST(request: Request) {
 
   const record = await prisma.attendanceRecord.findUnique({
     where: { id: attendanceRecordId, organizationId: academy.organizationId },
-    select: { id: true, academyId: true, date: true, student: { select: { userId: true } } },
+    select: { id: true, academyId: true, occurredAt: true, classSessionId: true, student: { select: { userId: true } } },
   });
 
   if (!record || record.academyId !== academy.id) {
@@ -75,17 +77,16 @@ export async function POST(request: Request) {
   }
 
   if (classSessionId === undefined) {
+    // The classes that were open at the instant of the original tap (the same rule as the check-in), minus the one it
+    // is already on. Derived from the RECORD, not from the current time: a correction a moment later must still offer
+    // the classes the student could have attended when they tapped.
     const sessions = await prisma.classSession.findMany({
-      where: {
-        organizationId: academy.organizationId,
-        academyId: academy.id,
-        active: true,
-        dayOfWeek: attendanceDateDayOfWeek(record.date),
-      },
-      orderBy: { startTime: "asc" },
-      select: { id: true, name: true, startTime: true, type: true },
+      where: { organizationId: academy.organizationId, academyId: academy.id, active: true },
     });
-    return NextResponse.json({ ok: true, picklist: sessions }, { status: 200 });
+    const picklist = openOccurrences(sessions, record.occurredAt)
+      .filter((occurrence) => occurrence.session.id !== record.classSessionId)
+      .map(toOpenClassEntry);
+    return NextResponse.json({ ok: true, picklist }, { status: 200 });
   }
 
   const kioskContext: KioskContext = { kind: "kiosk", organizationId: academy.organizationId, academyId: academy.id };
@@ -94,8 +95,10 @@ export async function POST(request: Request) {
     // AuditLog actor exists to write (see reassign-attendance.ts).
     actorUserId: record.student.userId,
     // A student fixing their own just-created check-in is still "the student
-    // picked it" — STAFF_CORRECTED is reserved for the Kiosco page's action.
+    // picked it" — STAFF_CORRECTED is reserved for the Kiosco page's action. The target must have been open when the
+    // attendance was recorded: the window rule applies to the student's correction exactly as to the check-in.
     matchSource: AttendanceMatchSource.STUDENT_PICKED,
+    requireOpenAt: record.occurredAt,
     expectedAcademyId: academy.id,
     context: kioskContext,
   });

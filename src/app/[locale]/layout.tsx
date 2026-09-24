@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import { Archivo, IBM_Plex_Sans, IBM_Plex_Mono } from "next/font/google";
+import localFont from "next/font/local";
 import { hasLocale, NextIntlClientProvider } from "next-intl";
 import { getMessages, setRequestLocale } from "next-intl/server";
 import { notFound } from "next/navigation";
@@ -10,22 +10,38 @@ import "../globals.css";
 // Populates the --font-heading / --font-sans / --font-mono custom properties
 // referenced by globals.css's @theme inline block (REDESIGN_BRIEF.md Phase
 // 1.3 — replaces the brand redesign's original Geist/Geist Mono pair).
-const archivo = Archivo({
+//
+// The files are vendored in src/fonts (unmodified upstream releases, OFL licences and sources documented in
+// src/fonts/README.md) and loaded with next/font/local, so the build never asks Google for a font: next/font/google
+// failed the build whenever Google answered with /l/font?kit=... URLs (vercel/next.js#99114). Same families, weights,
+// normal style, swap display and CSS variables as before; the full-coverage files keep Latin Extended (the colon sign
+// U+20A1 used for prices lives there), which next/font/local cannot get from per-script subsets.
+const archivo = localFont({
   variable: "--font-heading",
-  subsets: ["latin"],
-  weight: ["600", "700"],
+  src: [
+    { path: "../../fonts/archivo/Archivo-SemiBold.woff2", weight: "600", style: "normal" },
+    { path: "../../fonts/archivo/Archivo-Bold.woff2", weight: "700", style: "normal" },
+  ],
+  display: "swap",
 });
 
-const ibmPlexSans = IBM_Plex_Sans({
+const ibmPlexSans = localFont({
   variable: "--font-sans",
-  subsets: ["latin"],
-  weight: ["400", "500", "600"],
+  src: [
+    { path: "../../fonts/ibm-plex-sans/IBMPlexSans-Regular.woff2", weight: "400", style: "normal" },
+    { path: "../../fonts/ibm-plex-sans/IBMPlexSans-Medium.woff2", weight: "500", style: "normal" },
+    { path: "../../fonts/ibm-plex-sans/IBMPlexSans-SemiBold.woff2", weight: "600", style: "normal" },
+  ],
+  display: "swap",
 });
 
-const ibmPlexMono = IBM_Plex_Mono({
+const ibmPlexMono = localFont({
   variable: "--font-mono",
-  subsets: ["latin"],
-  weight: ["400", "500"],
+  src: [
+    { path: "../../fonts/ibm-plex-mono/IBMPlexMono-Regular.woff2", weight: "400", style: "normal" },
+    { path: "../../fonts/ibm-plex-mono/IBMPlexMono-Medium.woff2", weight: "500", style: "normal" },
+  ],
+  display: "swap",
 });
 
 export function generateStaticParams() {

@@ -1,7 +1,7 @@
 import { DateTime } from "luxon";
 import { prisma } from "@/lib/prisma";
 import { ZONE, attendanceDateDayOfWeek, attendanceDateFromZoned } from "@/lib/scheduling/zone";
-import { AttendanceType } from "@/generated/prisma/client";
+import { AttendanceType, QueuedCheckInStatus } from "@/generated/prisma/client";
 
 /**
  * Plain functions, NOT "use server" actions — same reasoning (and the same two
@@ -50,5 +50,35 @@ export async function listReassignableSessions(organizationId: string, academyId
     where: { organizationId, academyId, active: true, dayOfWeek: attendanceDateDayOfWeek(date) },
     orderBy: { startTime: "asc" },
     select: { id: true, name: true, startTime: true },
+  });
+}
+
+/**
+ * Queued (offline) check-ins at one academy that could not be attributed to a class and are waiting for a coach: what the
+ * tablet CLAIMED (kept exactly as received, never a ledger day), oldest first. They are evidence, not attendances.
+ */
+export async function listPendingQueuedCheckIns(organizationId: string, academyId: string) {
+  return prisma.queuedCheckIn.findMany({
+    where: { organizationId, academyId, status: QueuedCheckInStatus.PENDING },
+    orderBy: [{ receivedAt: "asc" }, { id: "asc" }],
+    select: {
+      id: true,
+      receivedAt: true,
+      claimedAt: true,
+      claimedAtRaw: true,
+      claimedAtVerified: true,
+      claimedClassSessionId: true,
+      reason: true,
+      student: { select: { firstName: true, lastName: true } },
+    },
+  });
+}
+
+/** Every class of the academy (active ones are the options a queued check-in can be recorded against). */
+export async function listAcademyClasses(organizationId: string, academyId: string) {
+  return prisma.classSession.findMany({
+    where: { organizationId, academyId },
+    orderBy: [{ dayOfWeek: "asc" }, { startTime: "asc" }],
+    select: { id: true, name: true, startTime: true, dayOfWeek: true, active: true },
   });
 }

@@ -441,6 +441,13 @@ Same tokens, same components, adjusted density:
 `selectActiveSessionOccurrence()` already picks the class occurrence for a check-in:
 
 - Window: **start − 30 min to start + 30 min**, anchored to the class start (not the end).
+  *[Superseded in PR #58 by the owner: every class is open from start - 30 min to its scheduled
+  END + 30 min (start + its own duration + 30), inclusive, for the portal AND the kiosk; overlapping windows
+  are expected; there is NO outside-window fallback; with several classes open the kiosk asks which class
+  BEFORE writing (nothing is recorded until the student chooses) and with none open a new online attempt is
+  refused (a coach records it). Offline replays are evaluated at their original instant and kept UNMATCHED
+  for staff when ambiguous. The nearest-start selection and the no-match picker/unmatched-save described
+  below no longer exist. See revision 46 of `docs/MULTI_ACADEMY_AND_KIDS_BELTS.md`.]*
   The file documents *why* it is not `start − 30 .. end + 30`: with back-to-back hourly
   classes — which the Escazú schedule genuinely has — the wider window made adjacent classes
   overlap by a full hour and the same tap could be attributed to either one.
@@ -465,7 +472,7 @@ to `tests/unit` if they are not covered:
 
 ### What is actually missing — build only this
 
-1. **The no-match path.** Today a tap outside every window has nowhere to go. Instead of
+1. **The no-match path.** *[Superseded in PR #58: a new online attempt outside every window is now refused and writes nothing; UNMATCHED survives only for offline recovery and coach entries.]* Today a tap outside every window has nowhere to go. Instead of
    rejecting it: show that day's classes at that academy as large buttons and let the student
    pick. Record `matchSource = 'STUDENT_PICKED'`. If the day has no classes at all, still save
    the attendance with a null session and `matchSource = 'UNMATCHED'`, and surface it for staff

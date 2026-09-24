@@ -51,7 +51,7 @@ const cleanupOrganizationIds: string[] = [];
 
 /**
  * A CR-local weekday + "HH:mm" for the moment the suite starts, so a fixture
- * session's ±30-minute window contains real server `now` — the handler uses
+ * session's check-in window contains real server `now` — the handler uses
  * the real clock (there is no `now` override on the HTTP surface, only the
  * bounded `queuedAt` replay field).
  */

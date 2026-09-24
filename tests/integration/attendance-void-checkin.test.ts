@@ -152,7 +152,7 @@ describe("check-in after a void", () => {
           ...(voided ? { voidedAt: new Date(), voidReason: "mistake" } : {}),
         },
       });
-    const opts = { actorUserId: null, matchSource: "STUDENT_PICKED" as const, expectedAcademyId: academy.id, context: ctx(academy) };
+    const opts = { actorUserId: null, matchSource: "STAFF_CORRECTED" as const, expectedAcademyId: academy.id, context: ctx(academy) };
 
     const onA = await row(a.id);
     const validOnB = await row(b.id);

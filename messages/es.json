@@ -1004,9 +1004,22 @@
     "attendanceHistory": {
       "heading": "Historial de asistencia",
       "empty": "Todavía no hay asistencias registradas.",
-      "type": {
-        "CHECKIN": "Check-in de clase",
-        "ADJUSTMENT": "Ajuste manual"
+      "total": "{count, plural, one {# asistencia en total} other {# asistencias en total}}",
+      "breakdown": "{checkIns, plural, one {# asistencia registrada} other {# asistencias registradas}}, {staffDays, plural, one {# día agregado por el personal} other {# días agregados por el personal}}",
+      "otherAdjustments": "{count, plural, one {# otro ajuste} other {# otros ajustes}}, neto {net}",
+      "credits": "Crédito inicial, contado aparte y no es asistencia: {count, plural, one {# clase} other {# clases}}",
+      "showing": "Mostrando {shown} de {total} registros",
+      "listLabel": "Registros de asistencia",
+      "loadMore": "Mostrar asistencias anteriores",
+      "loading": "Cargando...",
+      "loadedMore": "{count, plural, one {# registro anterior cargado.} other {# registros anteriores cargados.}}",
+      "allLoaded": "Ese es el inicio de tu historial de asistencia.",
+      "loadError": "No se pudieron cargar las asistencias anteriores. Intenta de nuevo.",
+      "kind": {
+        "class_checkin": "Asistencia a clase",
+        "unmatched_checkin": "Asistencia (sin clase asignada)",
+        "staff_day": "Agregado por el personal",
+        "adjustment": "Ajuste"
       }
     },
     "promotionHistory": {
@@ -1020,10 +1033,19 @@
       "overdueNotice": "Tu pago de este mes está atrasado. Por favor contacta a tu academia."
     },
     "selfCheckIn": {
-      "heading": "Registrar asistencia",
+      "heading": "Registrar asistencia a una clase",
+      "description": "Puedes registrar tu asistencia desde 30 minutos antes de que empiece la clase hasta 30 minutos después de que termine.",
+      "classesLabel": "Clases de hoy",
+      "noClasses": "Hoy no hay clases. Revisa el horario semanal más abajo.",
       "thresholdReachedHeading": "¡Listo para evaluación!",
-      "button": "Registrar asistencia ahora",
+      "button": "Registrar",
+      "buttonLabel": "Registrar asistencia en {name} a las {time}",
       "submitting": "Registrando...",
+      "stateOpen": "Abierta ahora",
+      "stateCheckedIn": "Asistencia registrada",
+      "stateNotOpenYet": "Abre a las {time}",
+      "stateClosed": "Cerrada",
+      "notCounted": "No cuenta para la promoción",
       "successMessage": "¡Asistencia registrada!",
       "progressAlreadyCounted": "Clase registrada. La asistencia de hoy ya contó para tu progreso, así que esta no suma más.",
       "progressNotPromotionClass": "Clase registrada. Esta clase no cuenta para la promoción.",
@@ -1033,10 +1055,11 @@
       "eligibleForReview": "¡Ya puedes ser evaluado por tu instructor!",
       "error": {
         "invalid_code": "Algo salió mal. Por favor avisa en recepción.",
-        "no_active_class": "No hay ninguna clase activa en este momento.",
         "already_checked_in": "Ya registraste tu asistencia para esta clase hoy.",
         "notActive": "El registro de asistencia no está disponible para tu cuenta en este momento.",
-        "generic": "Algo salió mal. Por favor intenta de nuevo."
+        "generic": "Algo salió mal. Por favor intenta de nuevo.",
+        "invalid_class": "Esa clase no está disponible. Elige una de la lista.",
+        "class_not_open": "Esa clase no está abierta para registrar asistencia en este momento."
       }
     },
     "schedule": {
@@ -1059,7 +1082,7 @@
     "visitorBadge": "Visitante de {academy}",
     "invalidCode": "Código inválido",
     "alreadyCheckedIn": "Ya marcaste asistencia hoy",
-    "noActiveClass": "No hay clase activa",
+    "noOpenClass": "El registro no está disponible ahora: no hay ninguna clase abierta. Pedí a un instructor que registre tu asistencia.",
     "invalidToken": "Este kiosco no está configurado correctamente. Contacta a un administrador.",
     "orgUnavailable": "El registro de asistencia no está disponible temporalmente. Por favor contactá a tu academia.",
     "networkError": "No se pudo conectar. Intenta de nuevo.",
@@ -1071,7 +1094,9 @@
     "syncDropped": "{count, plural, one {# check-in no se pudo sincronizar — por favor avisa en la recepción} other {# check-ins no se pudieron sincronizar — por favor avisa en la recepción}}",
     "syncDroppedDismiss": "Descartar",
     "pickClassHeading": "¿A cuál clase entraste?",
-    "pickClassDescription": "No encontramos una clase activa a esta hora. Elegí la tuya para guardar tu asistencia.",
+    "pickClassDescription": "Hay más de una clase abierta ahora. Elegí la que tomaste para guardar tu asistencia.",
+    "pickClassClosedNotice": "Esa clase acaba de cerrar. Estas son las clases abiertas ahora.",
+    "pickClassCancel": "Cancelar",
     "savedIn": "Asistencia guardada en",
     "notThisClass": "¿No es esta clase?",
     "correctClassHeading": "Elegí la clase correcta",
@@ -1109,6 +1134,53 @@
       "invalidRecord": "Solo se pueden reasignar marcajes de asistencia.",
       "invalidClass": "Esa clase no corresponde a esta academia o a este día.",
       "alreadyRecorded": "El alumno ya tiene asistencia en esa clase."
+    },
+    "queued": {
+      "heading": "Registros en cola pendientes de revisión",
+      "description": "Estos registros se guardaron en una tableta sin conexión, pero el sistema no pudo saber a qué clase pertenecen o no pudo confiar en la hora que informó la tableta. TODAVÍA NO son asistencias y no cuentan para nada hasta que los registres en el día correcto.",
+      "empty": "No hay nada pendiente de revisión.",
+      "student": "Alumno",
+      "claimedTime": "Hora que informó la tableta",
+      "claimedClass": "Clase que la tableta dice que se eligió",
+      "reason": "Por qué necesita revisión",
+      "received": "Recibido",
+      "actions": "Acciones",
+      "unverified": "No verificada",
+      "plausible": "Plausible",
+      "noValidTime": "Sin hora válida",
+      "sentAs": "Enviada como: {raw}",
+      "noClassChosen": "Ninguna elegida",
+      "unknownClass": "Una clase que no está en esta academia",
+      "reasons": {
+        "TIMESTAMP_NOT_VERIFIED": "No se pudo confiar en la hora de la tableta",
+        "NO_CLASS_OPEN": "No había ninguna clase abierta a esa hora",
+        "SEVERAL_CLASSES_OPEN": "Había varias clases abiertas y no se eligió ninguna",
+        "SELECTION_NOT_OPEN": "La clase elegida no estaba abierta a esa hora"
+      },
+      "dateLabel": "Día de la clase",
+      "timeLabel": "Hora del registro (Costa Rica)",
+      "timeHint": "Esta es la hora que estás confirmando: es la que se guarda. Empieza con la que informó la tableta si se pudo leer; escribí la hora real si está mal o falta. Tiene que caer dentro de la ventana de registro de la clase y no puede ser futura.",
+      "classLabel": "Clase",
+      "chooseDayFirst": "Elegí primero el día.",
+      "noClassesThatDay": "No hay clases activas ese día.",
+      "record": "Registrar asistencia en este día",
+      "recorded": "Asistencia registrada.",
+      "dismissSummary": "Descartar",
+      "dismissReasonLabel": "Motivo",
+      "dismissSubmit": "Descartar",
+      "dismissed": "Descartado. Queda en el registro.",
+      "errors": {
+        "notFound": "No se encontró este registro en cola.",
+        "notPending": "Este registro en cola ya fue atendido.",
+        "invalidDate": "Elegí un día válido.",
+        "invalidTime": "Escribí la hora del registro (HH:mm).",
+        "timeOutsideClass": "Esa hora está fuera de la ventana de registro de la clase (desde 30 minutos antes del inicio hasta 30 minutos después del final).",
+        "futureTime": "Esa hora todavía no ocurrió. Registrala cuando haya pasado.",
+        "invalidClass": "Esa clase no pertenece a esta academia.",
+        "classNotOnThatDay": "Esa clase no está programada ese día.",
+        "alreadyRecorded": "El alumno ya tiene asistencia en esa clase ese día.",
+        "reasonRequired": "Escribí un motivo (al menos 3 caracteres)."
+      }
     }
   },
   "adminSchedule": {

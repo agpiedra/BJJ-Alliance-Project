@@ -23,7 +23,9 @@ import { callArguments, productionSourceFiles, splitArguments, stripComments } f
  *   that could be reassigned, not `undefined`, not a spread, not an empty list (which admits
  *   nobody, and is a bug wearing a guard's clothes);
  * - naming STUDENT in a gate is how a page or action admits students, so only the portal
- *   gate (`requirePortalContext`, in context.ts) and the self check-in action may;
+ *   gate (`requirePortalContext`, in context.ts) and the portal's own student actions may:
+ *   the self check-in action and "show older attendance" (both act ONLY on the caller's own linked
+ *   student record, re-derived from the database, with no student id in their input);
  * - `requireOrganizationAccess` (the optional-roles primitive under `resolveActionContext`)
  *   is called by nothing in production but context.ts, so it can never be a gate by omission.
  */
@@ -49,7 +51,13 @@ const GATES: Gate[] = [
   {
     callee: "resolveActionContext",
     roleArgument: 1,
-    mayNameStudent: ["src/lib/tenant/context.ts", "src/app/[locale]/portal/self-check-in-action.ts"],
+    mayNameStudent: [
+      "src/lib/tenant/context.ts",
+      "src/app/[locale]/portal/self-check-in-action.ts",
+      // PR 3: the caller's OWN next page of attendance history (no student id in the input; whose history it is
+      // comes from the session's linked student record).
+      "src/app/[locale]/portal/attendance-history-actions.ts",
+    ],
     signature: /function resolveActionContext\(\s*organizationId:\s*string,\s*allowedRoles:\s*MembershipRole\[\],?\s*\)/,
   },
 ];

@@ -31,6 +31,20 @@ vi.mock("@/lib/notifications/notify-eligibility", () => ({
   notifyEligibilityReached: (...args: unknown[]) => notifyEligibilityState.spy(...args),
 }));
 
+// Counts calls into the REAL shared check-in core, so a test can prove the action refuses a request BEFORE reaching
+// it (the core would also refuse a missing selection - two layers - and each is tested on its own).
+const coreCalls = vi.hoisted(() => ({ count: 0 }));
+vi.mock("@/lib/kiosk/perform-check-in", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/kiosk/perform-check-in")>();
+  return {
+    ...actual,
+    performCheckIn: (...args: Parameters<typeof actual.performCheckIn>) => {
+      coreCalls.count += 1;
+      return actual.performCheckIn(...args);
+    },
+  };
+});
+
 const { selfCheckIn } = await import("../../src/app/[locale]/portal/self-check-in-action");
 
 const prisma = getTestPrismaClient();
@@ -38,7 +52,7 @@ const prisma = getTestPrismaClient();
 // Same fixed instants as perform-check-in.test.ts: 2026-01-05T12:00:00Z is
 // 2026-01-05 06:00 America/Costa_Rica (UTC-6, fixed, no DST) — a Monday,
 // exactly the seeded Escazú "GI" session's start, squarely inside its
-// ±30-minute window. 2026-01-04T18:00:00Z is a Sunday, outside every seeded
+// window (start - 30 minutes to end + 30 minutes). 2026-01-04T18:00:00Z is a Sunday, outside every seeded
 // session's window.
 const WITHIN_MONDAY_GI_WINDOW = new Date("2026-01-05T12:00:00Z");
 const OUTSIDE_ANY_WINDOW = new Date("2026-01-04T18:00:00Z");
@@ -57,9 +71,11 @@ async function cleanup() {
   }
 }
 
-async function makeActiveStudentUser(status: "ACTIVE" | "PENDING" | "ARCHIVED" | "INACTIVE" = "ACTIVE") {
+async function makeActiveStudentUser(status: "ACTIVE" | "PENDING" | "ARCHIVED" | "INACTIVE" = "ACTIVE", academyId?: string) {
   const suffix = `${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
-  const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+  const escazu = academyId
+    ? await prisma.academy.findUniqueOrThrow({ where: { id: academyId } })
+    : await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
   const user = await prisma.user.create({
     data: {
       email: `self-check-in-${suffix}@example.com`,
@@ -98,6 +114,20 @@ async function makeActiveStudentUser(status: "ACTIVE" | "PENDING" | "ARCHIVED" |
 // of this action's contract), so these tests fake only the `Date`
 // constructor/`Date.now`, leaving real timers (and therefore the DB
 // connection's own async machinery) untouched.
+/** The portal now checks in to an EXPLICIT class: the seeded Escazu Monday 06:00 GI class (open at WITHIN_MONDAY_GI_WINDOW). */
+async function mondayGiClassId() {
+  const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+  return (await prisma.classSession.findFirstOrThrow({ where: { academyId: escazu.id, dayOfWeek: "MONDAY", startTime: "06:00", active: true } })).id;
+}
+function selection(classSessionId: string): FormData {
+  const fd = new FormData();
+  fd.set("classSessionId", classSessionId);
+  return fd;
+}
+async function selectMondayGi(): Promise<FormData> {
+  return selection(await mondayGiClassId());
+}
+
 function setSystemTime(instant: Date) {
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(instant);
@@ -117,7 +147,7 @@ describe("selfCheckIn", () => {
     currentSession = { user: { id: user.id, role: "STUDENT" }, activeOrganizationId: user.organizationId };
     setSystemTime(WITHIN_MONDAY_GI_WINDOW);
 
-    const state = await selfCheckIn(user.organizationId, {}, new FormData());
+    const state = await selfCheckIn(user.organizationId, {}, await selectMondayGi());
 
     expect(state.ok).toBe(true);
     expect(state.error).toBeUndefined();
@@ -131,31 +161,40 @@ describe("selfCheckIn", () => {
     currentSession = { user: { id: user.id, role: "STUDENT" }, activeOrganizationId: user.organizationId };
     setSystemTime(WITHIN_MONDAY_GI_WINDOW);
 
-    const first = await selfCheckIn(user.organizationId, {}, new FormData());
+    const first = await selfCheckIn(user.organizationId, {}, await selectMondayGi());
     expect(first.ok).toBe(true);
 
-    const second = await selfCheckIn(user.organizationId, {}, new FormData());
+    const second = await selfCheckIn(user.organizationId, {}, await selectMondayGi());
     expect(second).toEqual({ error: "already_checked_in" });
 
     expect(await prisma.attendanceRecord.count({ where: { studentId } })).toBe(1);
   });
 
-  // REDESIGN_BRIEF.md Phase 9: this used to reject. `OUTSIDE_ANY_WINDOW` is a
-  // Sunday and Escazú has no Sunday classes at all, so there is nothing to
-  // offer the student to pick — the tap is saved unattributed
-  // (`matchSource: UNMATCHED`, no classSession) instead of being dropped, and
-  // staff review it on the Kiosco page's "Marcajes de hoy" table.
-  it("saves a self check-in on a day with no classes at all as an UNMATCHED record", async () => {
+  // PR 3: the portal checks in to an EXPLICIT class. `OUTSIDE_ANY_WINDOW` is a Sunday and Escazu has no Sunday
+  // classes, so there is nothing to select. The kiosk keeps its unmatched fallback (an attended device staff can
+  // correct); the portal does not save an unattributed tap - the page explains the empty day instead.
+  it("a request with no selection is refused by the action itself, before the shared core is ever called", async () => {
+    const { user, studentId } = await makeActiveStudentUser();
+    currentSession = { user: { id: user.id, role: "STUDENT" }, activeOrganizationId: user.organizationId };
+    setSystemTime(WITHIN_MONDAY_GI_WINDOW);
+    coreCalls.count = 0;
+
+    expect(await selfCheckIn(user.organizationId, {}, new FormData())).toEqual({ error: "invalid_class" });
+    const empty = new FormData();
+    empty.set("classSessionId", "");
+    expect(await selfCheckIn(user.organizationId, {}, empty)).toEqual({ error: "invalid_class" });
+    expect(coreCalls.count).toBe(0);
+    expect(await prisma.attendanceRecord.count({ where: { studentId } })).toBe(0);
+  });
+
+  it("on a day with no classes there is nothing to select: a selection is refused as not open and nothing is saved", async () => {
     const { user, studentId } = await makeActiveStudentUser();
     currentSession = { user: { id: user.id, role: "STUDENT" }, activeOrganizationId: user.organizationId };
     setSystemTime(OUTSIDE_ANY_WINDOW);
 
-    const state = await selfCheckIn(user.organizationId, {}, new FormData());
-
-    expect(state.ok).toBe(true);
-    const record = await prisma.attendanceRecord.findFirstOrThrow({ where: { studentId } });
-    expect(record.classSessionId).toBeNull();
-    expect(record.matchSource).toBe("UNMATCHED");
+    expect(await selfCheckIn(user.organizationId, {}, new FormData())).toEqual({ error: "invalid_class" });
+    expect(await selfCheckIn(user.organizationId, {}, await selectMondayGi())).toEqual({ error: "class_not_open" });
+    expect(await prisma.attendanceRecord.count({ where: { studentId } })).toBe(0);
   });
 
   it("rejects a PENDING student's self check-in with the distinct notActive error, via the upfront status check", async () => {
@@ -163,7 +202,7 @@ describe("selfCheckIn", () => {
     currentSession = { user: { id: user.id, role: "STUDENT" }, activeOrganizationId: user.organizationId };
     setSystemTime(WITHIN_MONDAY_GI_WINDOW);
 
-    const state = await selfCheckIn(user.organizationId, {}, new FormData());
+    const state = await selfCheckIn(user.organizationId, {}, await selectMondayGi());
 
     // Exactly `notActive`, not performCheckIn's generic `invalid_code` — the
     // status check in self-check-in-action.ts must short-circuit BEFORE
@@ -178,7 +217,7 @@ describe("selfCheckIn", () => {
     currentSession = { user: { id: user.id, role: "STUDENT" }, activeOrganizationId: user.organizationId };
     setSystemTime(WITHIN_MONDAY_GI_WINDOW);
 
-    const state = await selfCheckIn(user.organizationId, {}, new FormData());
+    const state = await selfCheckIn(user.organizationId, {}, await selectMondayGi());
 
     expect(state).toEqual({ error: "notActive" });
     expect(await prisma.attendanceRecord.count({ where: { studentId } })).toBe(0);
@@ -189,7 +228,7 @@ describe("selfCheckIn", () => {
     currentSession = { user: { id: user.id, role: "STUDENT" }, activeOrganizationId: user.organizationId };
     setSystemTime(WITHIN_MONDAY_GI_WINDOW);
 
-    const state = await selfCheckIn(user.organizationId, {}, new FormData());
+    const state = await selfCheckIn(user.organizationId, {}, await selectMondayGi());
 
     expect(state).toEqual({ error: "notActive" });
     expect(await prisma.attendanceRecord.count({ where: { studentId } })).toBe(0);
@@ -254,7 +293,7 @@ describe("selfCheckIn", () => {
     currentSession = { user: { id: user.id, role: "STUDENT" }, activeOrganizationId: user.organizationId };
     setSystemTime(WITHIN_MONDAY_GI_WINDOW);
 
-    const state = await selfCheckIn(user.organizationId, {}, new FormData());
+    const state = await selfCheckIn(user.organizationId, {}, await selectMondayGi());
 
     expect(state.ok).toBe(true);
     expect(state.thresholdReached).toBe(true);
@@ -271,7 +310,7 @@ describe("selfCheckIn", () => {
     });
 
     try {
-      const rejected = await selfCheckIn(otherOrg.id, {}, new FormData());
+      const rejected = await selfCheckIn(otherOrg.id, {}, await selectMondayGi());
       expect(rejected).toEqual({ error: "invalid_code" });
       expect(await prisma.attendanceRecord.count({ where: { studentId } })).toBe(0);
 
@@ -280,12 +319,98 @@ describe("selfCheckIn", () => {
       });
       expect(refusalAudit).not.toBeNull();
 
-      const legitimate = await selfCheckIn(user.organizationId, {}, new FormData());
+      const legitimate = await selfCheckIn(user.organizationId, {}, await selectMondayGi());
       expect(legitimate.ok).toBe(true);
       expect(await prisma.attendanceRecord.count({ where: { studentId } })).toBe(1);
     } finally {
       await prisma.auditLog.deleteMany({ where: { organizationId: otherOrg.id } });
       await prisma.organization.delete({ where: { id: otherOrg.id } });
+    }
+  });
+});
+
+// PR 3: explicit selection through the REAL portal action, against an academy with two same-day classes.
+describe("selfCheckIn with an explicit class selection", () => {
+  // Monday 2026-01-05 18:30 America/Costa_Rica: the 18:00 window has just closed and the 19:00 one has just opened,
+  // so automatic matching alone would prefer the earlier class.
+  const MONDAY_1830_CR = new Date("2026-01-06T00:30:00Z");
+  const fixtures = { academyIds: [] as string[] };
+
+  afterAll(async () => {
+    await prisma.attendanceRecord.deleteMany({ where: { academyId: { in: fixtures.academyIds } } });
+    await prisma.student.deleteMany({ where: { homeAcademyId: { in: fixtures.academyIds } } });
+    await prisma.organizationMembership.deleteMany({ where: { userId: { in: cleanupUserIds } } });
+    await prisma.user.deleteMany({ where: { id: { in: cleanupUserIds } } });
+    await prisma.classSession.deleteMany({ where: { academyId: { in: fixtures.academyIds } } });
+    await prisma.academy.deleteMany({ where: { id: { in: fixtures.academyIds } } });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    currentSession = null;
+  });
+
+  async function twoClassStudent() {
+    const alliance = await prisma.organization.findUniqueOrThrow({ where: { slug: "alliance-cr" } });
+    const suffix = `${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
+    const academy = await prisma.academy.create({ data: { organizationId: alliance.id, name: `Two Classes ${suffix}`, slug: `two-classes-${suffix}`, kioskTokenHash: `two-classes-${suffix}` } });
+    fixtures.academyIds.push(academy.id);
+    const mk = (startTime: string, name: string) =>
+      prisma.classSession.create({ data: { academyId: academy.id, organizationId: alliance.id, dayOfWeek: "MONDAY", startTime, durationMinutes: 60, name, type: "GI" } });
+    const early = await mk("18:00", "Early");
+    const later = await mk("19:00", "Later");
+    const { user, studentId } = await makeActiveStudentUser("ACTIVE", academy.id);
+    currentSession = { user: { id: user.id, role: "STUDENT" }, activeOrganizationId: user.organizationId };
+    setSystemTime(MONDAY_1830_CR);
+    return { user, studentId, academy, early, later };
+  }
+
+  it("selecting the later class records exactly that class id, even though automatic matching would prefer the earlier one", async () => {
+    const { user, studentId, later } = await twoClassStudent();
+    const state = await selfCheckIn(user.organizationId, {}, selection(later.id));
+    expect(state.ok).toBe(true);
+    expect(state.classSessionId).toBe(later.id);
+    const record = await prisma.attendanceRecord.findFirstOrThrow({ where: { studentId } });
+    expect(record.classSessionId).toBe(later.id);
+    expect(record.matchSource).toBe("STUDENT_PICKED");
+    expect(record.source).toBe("PORTAL");
+  });
+
+  it("a second attempt at the same class is refused, and so are concurrent attempts (exactly one row)", async () => {
+    const { user, studentId, later } = await twoClassStudent();
+    const results = await Promise.all(Array.from({ length: 5 }, () => selfCheckIn(user.organizationId, {}, selection(later.id))));
+    expect(results.filter((r) => r.ok)).toHaveLength(1);
+    expect(results.filter((r) => r.error === "already_checked_in")).toHaveLength(4);
+    expect(await prisma.attendanceRecord.count({ where: { studentId } })).toBe(1);
+    expect(await selfCheckIn(user.organizationId, {}, selection(later.id))).toEqual({ error: "already_checked_in" });
+  });
+
+  it("the two classes are separate check-ins: the student can attend both, each recorded on its own class", async () => {
+    const { user, studentId, early, later } = await twoClassStudent();
+    expect((await selfCheckIn(user.organizationId, {}, selection(later.id))).ok).toBe(true);
+    expect((await selfCheckIn(user.organizationId, {}, selection(early.id))).ok).toBe(true);
+    const classes = (await prisma.attendanceRecord.findMany({ where: { studentId } })).map((r) => r.classSessionId).sort();
+    expect(classes).toEqual([early.id, later.id].sort());
+  });
+
+  it("tampered selections write nothing: no selection, an empty one, a class of another academy, of another organization, an unknown id", async () => {
+    const { user, studentId, academy } = await twoClassStudent();
+    const foreignOrg = await prisma.organization.create({ data: { slug: `sel-foreign-${Date.now()}`, name: "Foreign", status: "ACTIVE" } });
+    try {
+      const foreignAcademy = await prisma.academy.create({ data: { organizationId: foreignOrg.id, name: "Foreign Academy", slug: `sel-foreign-a-${Date.now()}`, kioskTokenHash: `sel-foreign-${Date.now()}` } });
+      const foreignClass = await prisma.classSession.create({ data: { academyId: foreignAcademy.id, organizationId: foreignOrg.id, dayOfWeek: "MONDAY", startTime: "19:00", durationMinutes: 60, name: "Foreign", type: "GI" } });
+      const otherAcademyInOrg = await prisma.academy.create({ data: { organizationId: academy.organizationId, name: "Sibling", slug: `sel-sibling-${Date.now()}`, kioskTokenHash: `sel-sibling-${Date.now()}` } });
+      fixtures.academyIds.push(otherAcademyInOrg.id);
+      const siblingClass = await prisma.classSession.create({ data: { academyId: otherAcademyInOrg.id, organizationId: academy.organizationId, dayOfWeek: "MONDAY", startTime: "19:00", durationMinutes: 60, name: "Sibling class", type: "GI" } });
+
+      expect(await selfCheckIn(user.organizationId, {}, new FormData())).toEqual({ error: "invalid_class" });
+      for (const id of ["", "does-not-exist", foreignClass.id, siblingClass.id]) {
+        expect(await selfCheckIn(user.organizationId, {}, selection(id)), `id "${id}"`).toEqual({ error: "invalid_class" });
+      }
+      expect(await prisma.attendanceRecord.count({ where: { studentId } })).toBe(0);
+      await prisma.classSession.deleteMany({ where: { academyId: foreignAcademy.id } });
+      await prisma.academy.deleteMany({ where: { id: foreignAcademy.id } });
+    } finally {
+      await prisma.organization.deleteMany({ where: { id: foreignOrg.id } });
     }
   });
 });

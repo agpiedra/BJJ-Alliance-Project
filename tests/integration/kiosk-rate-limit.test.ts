@@ -84,7 +84,7 @@ describe("kiosk rate limiting (reserve/finalize, keyed on the kiosk token digest
     expect(failureRow.countsAsFailure).toBe(true);
   });
 
-  it.each(["already_checked_in", "no_active_class"] as const)(
+  it.each(["already_checked_in", "no_open_class", "class_selection_required", "class_not_open", "invalid_class"] as const)(
     "does NOT lock out after 5 consecutive '%s' outcomes — a valid code is not a guess",
     async (outcome) => {
       const hash = uniqueTokenHash(`valid-code-failure-${outcome}`);

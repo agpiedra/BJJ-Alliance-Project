@@ -1004,9 +1004,22 @@
     "attendanceHistory": {
       "heading": "Attendance history",
       "empty": "No attendance recorded yet.",
-      "type": {
-        "CHECKIN": "Class check-in",
-        "ADJUSTMENT": "Manual adjustment"
+      "total": "{count, plural, one {# attendance in total} other {# attendances in total}}",
+      "breakdown": "{checkIns, plural, one {# attendance checked in} other {# attendances checked in}}, {staffDays, plural, one {# day added by staff} other {# days added by staff}}",
+      "otherAdjustments": "{count, plural, one {# other adjustment} other {# other adjustments}}, net {net}",
+      "credits": "Head-start credit, counted separately and not attendance: {count, plural, one {# class} other {# classes}}",
+      "showing": "Showing {shown} of {total} entries",
+      "listLabel": "Attendance entries",
+      "loadMore": "Show older attendance",
+      "loading": "Loading...",
+      "loadedMore": "{count, plural, one {# older entry loaded.} other {# older entries loaded.}}",
+      "allLoaded": "That is the start of your attendance history.",
+      "loadError": "Couldn't load older attendance. Please try again.",
+      "kind": {
+        "class_checkin": "Class attendance",
+        "unmatched_checkin": "Attendance (no class matched)",
+        "staff_day": "Added by staff",
+        "adjustment": "Adjustment"
       }
     },
     "promotionHistory": {
@@ -1020,10 +1033,19 @@
       "overdueNotice": "Your payment for this month is overdue. Please contact your academy."
     },
     "selfCheckIn": {
-      "heading": "Check in",
+      "heading": "Check in to a class",
+      "description": "You can check in from 30 minutes before a class starts until 30 minutes after it ends.",
+      "classesLabel": "Today's classes",
+      "noClasses": "There are no classes today. Check the weekly schedule below.",
       "thresholdReachedHeading": "Ready for review!",
-      "button": "Check in now",
+      "button": "Check in",
+      "buttonLabel": "Check in to {name} at {time}",
       "submitting": "Checking in...",
+      "stateOpen": "Open now",
+      "stateCheckedIn": "Attendance recorded",
+      "stateNotOpenYet": "Opens at {time}",
+      "stateClosed": "Closed",
+      "notCounted": "Does not count toward promotion",
       "successMessage": "You're checked in!",
       "progressAlreadyCounted": "Class recorded. Today's attendance already counted toward your progress, so this one adds nothing more.",
       "progressNotPromotionClass": "Class recorded. This class doesn't count toward promotion.",
@@ -1033,10 +1055,11 @@
       "eligibleForReview": "You're eligible for instructor review!",
       "error": {
         "invalid_code": "Something went wrong. Please tell the front desk.",
-        "no_active_class": "No class is active right now.",
         "already_checked_in": "You've already checked in for this class today.",
         "notActive": "Self check-in isn't available for your account right now.",
-        "generic": "Something went wrong. Please try again."
+        "generic": "Something went wrong. Please try again.",
+        "invalid_class": "That class isn't available. Please choose one from the list.",
+        "class_not_open": "That class isn't open for check-in right now."
       }
     },
     "schedule": {
@@ -1059,7 +1082,7 @@
     "visitorBadge": "Visitor from {academy}",
     "invalidCode": "Invalid code",
     "alreadyCheckedIn": "Already checked in today",
-    "noActiveClass": "No active class",
+    "noOpenClass": "Check-in isn't available right now: no class is open. Ask a coach to record your attendance.",
     "invalidToken": "This kiosk isn't configured correctly. Contact an administrator.",
     "orgUnavailable": "Check-in is temporarily unavailable. Please contact your academy.",
     "networkError": "Couldn't connect. Please try again.",
@@ -1071,7 +1094,9 @@
     "syncDropped": "{count, plural, one {# check-in could not be synced — please tell the front desk} other {# check-ins could not be synced — please tell the front desk}}",
     "syncDroppedDismiss": "Dismiss",
     "pickClassHeading": "Which class did you attend?",
-    "pickClassDescription": "We couldn't find a class running right now. Pick yours to save your attendance.",
+    "pickClassDescription": "More than one class is open right now. Pick the one you attended to save your attendance.",
+    "pickClassClosedNotice": "That class just closed. These are the classes open now.",
+    "pickClassCancel": "Cancel",
     "savedIn": "Attendance saved to",
     "notThisClass": "Not this class?",
     "correctClassHeading": "Pick the right class",
@@ -1109,6 +1134,53 @@
       "invalidRecord": "Only attendance check-ins can be reassigned.",
       "invalidClass": "That class doesn't belong to this academy or this day.",
       "alreadyRecorded": "The student already has attendance in that class."
+    },
+    "queued": {
+      "heading": "Queued check-ins awaiting review",
+      "description": "These check-ins were saved on a tablet while it was offline, but the system could not tell which class they belong to, or could not trust the time the tablet reported. They are NOT attendances yet and count for nothing until you record them on the right day.",
+      "empty": "Nothing is waiting for review.",
+      "student": "Student",
+      "claimedTime": "Time the tablet reported",
+      "claimedClass": "Class the tablet says was chosen",
+      "reason": "Why it needs review",
+      "received": "Received",
+      "actions": "Actions",
+      "unverified": "Not verified",
+      "plausible": "Plausible",
+      "noValidTime": "No valid time",
+      "sentAs": "Sent as: {raw}",
+      "noClassChosen": "None chosen",
+      "unknownClass": "A class that is not in this academy",
+      "reasons": {
+        "TIMESTAMP_NOT_VERIFIED": "The tablet's time could not be trusted",
+        "NO_CLASS_OPEN": "No class was open at that time",
+        "SEVERAL_CLASSES_OPEN": "Several classes were open and none was chosen",
+        "SELECTION_NOT_OPEN": "The chosen class was not open at that time"
+      },
+      "dateLabel": "Day of the class",
+      "timeLabel": "Time of the tap (Costa Rica)",
+      "timeHint": "This is the time you are confirming: it is what gets recorded. It starts from the tablet's claim when that could be read; enter the real time if it is wrong or missing. It must fall inside the class's check-in window and cannot be in the future.",
+      "classLabel": "Class",
+      "chooseDayFirst": "Choose the day first.",
+      "noClassesThatDay": "No active class on that day.",
+      "record": "Record attendance on this day",
+      "recorded": "Attendance recorded.",
+      "dismissSummary": "Set aside",
+      "dismissReasonLabel": "Reason",
+      "dismissSubmit": "Set aside",
+      "dismissed": "Set aside. It stays on record.",
+      "errors": {
+        "notFound": "This queued check-in could not be found.",
+        "notPending": "This queued check-in was already handled.",
+        "invalidDate": "Choose a valid day.",
+        "invalidTime": "Enter the time of the tap (HH:mm).",
+        "timeOutsideClass": "That time is outside this class's check-in window (from 30 minutes before it starts to 30 minutes after it ends).",
+        "futureTime": "That time has not happened yet. Record it once it has passed.",
+        "invalidClass": "That class doesn't belong to this academy.",
+        "classNotOnThatDay": "That class is not scheduled on that day.",
+        "alreadyRecorded": "The student already has attendance in that class on that day.",
+        "reasonRequired": "Write a reason (at least 3 characters)."
+      }
     }
   },
   "adminSchedule": {
