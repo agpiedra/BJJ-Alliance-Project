@@ -46,7 +46,7 @@ describe("AttendanceHistorySection", () => {
   it("shows the DEFINED total and its parts, and 'showing X of Y' from the whole ledger, not from the loaded page", () => {
     renderSection("en");
     expect(screen.getByText("61 attendances in total")).toBeInTheDocument();
-    expect(screen.getByText("50 check-ins, 10 days added by staff")).toBeInTheDocument();
+    expect(screen.getByText("50 attendances checked in, 10 days added by staff")).toBeInTheDocument();
     expect(screen.getByText("1 other adjustment, net 1")).toBeInTheDocument();
     expect(screen.getByText("Showing 3 of 60 entries")).toBeInTheDocument();
   });
@@ -54,10 +54,10 @@ describe("AttendanceHistorySection", () => {
   it("says plainly what each entry is: a class check-in (with the class), a check-in with no class, a staff-added day (with its reason)", () => {
     renderSection("en");
     const items = within(screen.getByRole("list", { name: "Attendance entries" })).getAllByRole("listitem");
-    expect(items[0]).toHaveTextContent("Class check-in · Evening GI");
+    expect(items[0]).toHaveTextContent("Class attendance · Evening GI");
     expect(items[1]).toHaveTextContent("Added by staff");
     expect(items[1]).toHaveTextContent("makeup class");
-    expect(items[2]).toHaveTextContent("Check-in (no class matched)");
+    expect(items[2]).toHaveTextContent("Attendance (no class matched)");
     // Real <time> elements carry the instant.
     expect(items[0].querySelector("time")?.getAttribute("datetime")).toBe("2026-01-29T18:00:00.000Z");
   });
@@ -116,7 +116,7 @@ describe("AttendanceHistorySection", () => {
   it("is fully translated: Spanish total, breakdown, entry labels and control", () => {
     renderSection("es");
     expect(screen.getByText("61 asistencias en total")).toBeInTheDocument();
-    expect(screen.getByText("50 registros de asistencia, 10 días agregados por el personal")).toBeInTheDocument();
+    expect(screen.getByText("50 asistencias registradas, 10 días agregados por el personal")).toBeInTheDocument();
     expect(screen.getByText("Mostrando 3 de 60 registros")).toBeInTheDocument();
     const items = within(screen.getByRole("list", { name: "Registros de asistencia" })).getAllByRole("listitem");
     expect(items[0]).toHaveTextContent("Asistencia a clase · Evening GI");

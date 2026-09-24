@@ -43,8 +43,9 @@ async function scenario() {
   return { academy, byName, student };
 }
 
-const list = (academy: { id: string; organizationId: string }, studentId: string, now: Date) =>
+const view = (academy: { id: string; organizationId: string }, studentId: string, now: Date) =>
   listTodaysClasses({ context: ctx(academy), academyId: academy.id, studentId, now });
+const list = (academy: { id: string; organizationId: string }, studentId: string, now: Date) => view(academy, studentId, now).then((v) => v.classes);
 const states = (rows: Awaited<ReturnType<typeof list>>) => Object.fromEntries(rows.map((r) => [r.name, r.state.kind === "not_open_yet" ? `not_open_yet@${r.state.opensAt}` : r.state.kind]));
 
 describe("today's classes at 18:55 Costa Rica (a Tuesday for a server on Kiritimati time)", () => {
@@ -148,5 +149,77 @@ describe("the screen and the server agree: a class is listed as open exactly whe
       const result = await performCheckIn({ academyId: academy.id, context: ctx(academy), studentId: student.id, source: "PORTAL", now, pickedClassSessionId: byName.Later.id, pickPolicy: "OPEN_ONLY" });
       expect(result.ok, now.toISOString()).toBe(listed);
     }
+  });
+});
+
+/**
+ * Time-driven availability (PR 3 follow-up): a portal left open must move from "opens at" to open to closed, and
+ * roll over at Costa Rica midnight, WITHOUT a submission. The server tells the page the next instant the list can
+ * change (`nextChangeAt`) and its own clock (`serverNow`); the page refreshes itself at that instant. These tests
+ * simulate the open tab: time advances boundary by boundary and NOTHING is submitted.
+ */
+describe("advancing time without submitting: the announced boundary is exactly when the list changes", () => {
+  const snapshot = (rows: Awaited<ReturnType<typeof list>>) => JSON.stringify(rows.map((r) => [r.name, r.state]));
+
+  it("reports the server clock and a boundary strictly in the future", async () => {
+    const { academy, student } = await scenario();
+    const v = await view(academy, student.id, MON_1855);
+    expect(v.serverNow).toBe(MON_1855.toISOString());
+    expect(new Date(v.nextChangeAt).getTime()).toBeGreaterThan(MON_1855.getTime());
+  });
+
+  it("walks Monday 17:00 CR through Tuesday 01:00 CR: nothing changes before each announced boundary, something changes AT it", async () => {
+    const { academy, student } = await scenario();
+    let now = at("2026-01-05T23:00:00Z"); // Monday 17:00 CR
+    const end = at("2026-01-06T07:00:00Z").getTime(); // Tuesday 01:00 CR
+    const boundaries: string[] = [];
+    let previous = new Date(0);
+    let guard = 0;
+    while (now.getTime() < end && guard++ < 40) {
+      const current = await view(academy, student.id, now);
+      const next = new Date(current.nextChangeAt);
+      expect(next.getTime()).toBeGreaterThan(now.getTime());
+      expect(next.getTime()).toBeGreaterThan(previous.getTime());
+      const justBefore = await list(academy, student.id, new Date(next.getTime() - 1));
+      expect(snapshot(justBefore), `nothing may change before ${next.toISOString()}`).toBe(snapshot(current.classes));
+      const atBoundary = await list(academy, student.id, next);
+      expect(snapshot(atBoundary), `something must change at ${next.toISOString()}`).not.toBe(snapshot(current.classes));
+      boundaries.push(next.toISOString());
+      previous = next;
+      now = next;
+    }
+    expect(guard).toBeLessThan(40);
+    // Monday: Kids opens 16:30... the fixture's Monday classes plus the 00:10 Tuesday class (opens 23:40) and the
+    // day rolling over at 00:00 CR must all have been announced, in order.
+    expect(boundaries).toContain("2026-01-06T00:30:00.000Z"); // 18:30 CR: Later opens
+    expect(boundaries).toContain("2026-01-06T01:30:00.001Z"); // 19:30:00.001 CR: Later closes
+    expect(boundaries).toContain("2026-01-06T05:40:00.000Z"); // 23:40 CR: the 00:10 Tuesday class opens (adjacent day)
+    expect(boundaries).toContain("2026-01-06T06:00:00.000Z"); // 00:00 CR: the day rolls over
+    expect([...boundaries].sort()).toEqual(boundaries);
+  });
+
+  it("the sequence a student would watch: Later goes not-open-yet -> open -> closed, Monday's list is replaced at midnight, all with nothing submitted", async () => {
+    const { academy, student } = await scenario();
+    const seen: string[] = [];
+    for (const iso of ["2026-01-06T00:29:59.999Z", "2026-01-06T00:30:00Z", "2026-01-06T01:30:00Z", "2026-01-06T01:30:00.001Z"]) {
+      seen.push(states(await list(academy, student.id, at(iso))).Later);
+    }
+    expect(seen).toEqual(["not_open_yet@18:30", "open", "open", "closed"]);
+
+    const before = await list(academy, student.id, at("2026-01-06T05:59:59.999Z")); // Monday 23:59:59.999 CR
+    const after = await list(academy, student.id, at("2026-01-06T06:00:00Z")); // Tuesday 00:00:00.000 CR
+    expect(before.map((r) => r.name)).toContain("Mat"); // Monday's classes are today's until the day ends
+    expect(after.map((r) => r.name)).not.toContain("Mat");
+    expect(after.map((r) => r.name)).toContain("TuesdayEvening");
+    expect(states(after).Midnight).toBe("open"); // its window opened at 23:40 Monday and is still open
+  });
+
+  it("with no classes today the next boundary is still the next Costa Rica midnight (the empty-day message must roll over too)", async () => {
+    const { academy, student } = await scenario();
+    const v = await view(academy, student.id, SUN_1200);
+    expect(v.classes).toEqual([]);
+    // Sunday 2026-01-04 12:00 CR; the fixture has Monday classes, so the first boundary is Monday's Kids window
+    // (16:30 Monday) or midnight, whichever is first: midnight Monday 00:00 CR = 2026-01-05T06:00:00Z.
+    expect(v.nextChangeAt).toBe("2026-01-05T06:00:00.000Z");
   });
 });

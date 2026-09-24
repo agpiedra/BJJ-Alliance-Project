@@ -1005,7 +1005,7 @@
       "heading": "Historial de asistencia",
       "empty": "Todavía no hay asistencias registradas.",
       "total": "{count, plural, one {# asistencia en total} other {# asistencias en total}}",
-      "breakdown": "{checkIns, plural, one {# registro de asistencia} other {# registros de asistencia}}, {staffDays, plural, one {# día agregado por el personal} other {# días agregados por el personal}}",
+      "breakdown": "{checkIns, plural, one {# asistencia registrada} other {# asistencias registradas}}, {staffDays, plural, one {# día agregado por el personal} other {# días agregados por el personal}}",
       "otherAdjustments": "{count, plural, one {# otro ajuste} other {# otros ajustes}}, neto {net}",
       "credits": "Crédito inicial, contado aparte y no es asistencia: {count, plural, one {# clase} other {# clases}}",
       "showing": "Mostrando {shown} de {total} registros",

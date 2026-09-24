@@ -7,7 +7,8 @@ import { makeAccountingOrg } from "../helpers/accounting-org";
 const { performCheckIn } = await import("../../src/lib/kiosk/perform-check-in");
 
 /**
- * Explicit class selection (PR 3). The agreed shared rule: a class is OPEN from 30 minutes before its start until
+ * Explicit class selection (PR 3). The PROPOSED shared rule (the owner's specific confirmation of these timing rules is
+ * still pending; see the spec's revision 46): a class is OPEN from 30 minutes before its start until
  * 30 minutes after it, inclusive, duration ignored (the same rule automatic matching uses). A class the student
  * explicitly selects is validated FIRST in the shared core and is never overridden by a different nearest-time match.
  *  - OPEN_ONLY (the portal): only an open class of the student's own academy is accepted; otherwise the request is

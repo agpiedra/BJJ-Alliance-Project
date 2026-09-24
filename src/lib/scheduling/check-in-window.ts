@@ -159,6 +159,34 @@ export function occurrencesForToday<T extends SessionTiming>(session: T, now: Da
 }
 
 /**
+ * The next instant, strictly after `now`, at which what a student sees in today's class list can change:
+ *  - a window OPENING (`start - 30 min`), including a class on the adjacent day whose window opens tonight;
+ *  - a window CLOSING - the first instant AFTER its inclusive end (`start + 30 min + 1 ms`), including yesterday's
+ *    class that is still open after midnight;
+ *  - the Costa Rica calendar day rolling over (the list of "today's" classes changes at 00:00 CR).
+ * Every boundary is computed with the same `occurrenceWindow` and explicit America/Costa_Rica day arithmetic as the
+ * rest of this module, never the server's or the browser's calendar. The portal hands this instant to the page so it
+ * can refresh itself exactly when a row would change (see `TodaysClassesCard`); it is a scheduling hint, never an
+ * authority - the server re-validates every check-in.
+ */
+export function nextBoundaryAfter(sessions: SessionTiming[], now: Date): Date {
+  const nowInZone = DateTime.fromJSDate(now, { zone: "utc" }).setZone(ZONE);
+  let next = nowInZone.plus({ days: 1 }).startOf("day").toMillis();
+
+  for (const session of sessions) {
+    for (const dayOffset of [-1, 0, 1]) {
+      const candidateDay = nowInZone.plus({ days: dayOffset });
+      if (DAY_INDEX[session.dayOfWeek] !== candidateDay.weekday) continue;
+      const { opensAt, closesAt } = occurrenceWindow(startOfOccurrence(session, candidateDay));
+      for (const boundary of [opensAt.getTime(), closesAt.getTime() + 1]) {
+        if (boundary > now.getTime() && boundary < next) next = boundary;
+      }
+    }
+  }
+  return new Date(next);
+}
+
+/**
  * True if `now` falls within this session's check-in window, on whichever
  * adjacent calendar day the window actually spans.
  */

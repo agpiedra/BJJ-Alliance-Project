@@ -1005,7 +1005,7 @@
       "heading": "Attendance history",
       "empty": "No attendance recorded yet.",
       "total": "{count, plural, one {# attendance in total} other {# attendances in total}}",
-      "breakdown": "{checkIns, plural, one {# check-in} other {# check-ins}}, {staffDays, plural, one {# day added by staff} other {# days added by staff}}",
+      "breakdown": "{checkIns, plural, one {# attendance checked in} other {# attendances checked in}}, {staffDays, plural, one {# day added by staff} other {# days added by staff}}",
       "otherAdjustments": "{count, plural, one {# other adjustment} other {# other adjustments}}, net {net}",
       "credits": "Head-start credit, counted separately and not attendance: {count, plural, one {# class} other {# classes}}",
       "showing": "Showing {shown} of {total} entries",
@@ -1016,8 +1016,8 @@
       "allLoaded": "That is the start of your attendance history.",
       "loadError": "Couldn't load older attendance. Please try again.",
       "kind": {
-        "class_checkin": "Class check-in",
-        "unmatched_checkin": "Check-in (no class matched)",
+        "class_checkin": "Class attendance",
+        "unmatched_checkin": "Attendance (no class matched)",
         "staff_day": "Added by staff",
         "adjustment": "Adjustment"
       }
@@ -1042,7 +1042,7 @@
       "buttonLabel": "Check in to {name} at {time}",
       "submitting": "Checking in...",
       "stateOpen": "Open now",
-      "stateCheckedIn": "Checked in",
+      "stateCheckedIn": "Attendance recorded",
       "stateNotOpenYet": "Opens at {time}",
       "stateClosed": "Closed",
       "notCounted": "Does not count toward promotion",

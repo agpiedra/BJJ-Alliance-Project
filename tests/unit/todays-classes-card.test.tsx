@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import enMessages from "../../messages/en.json";
 import esMessages from "../../messages/es.json";
 import type { TodaysClass } from "../../src/lib/portal/todays-classes";
@@ -29,11 +29,14 @@ const CLASSES: TodaysClass[] = [
   { id: "c-mat", name: "Mat", type: "OPEN_MAT", startTime: "20:00", endTime: "21:00", countsTowardPromotion: true, state: { kind: "not_open_yet", opensAt: "19:30" } },
 ];
 
-function renderCard(locale: "en" | "es", classes: TodaysClass[]) {
+/** By default the next boundary is a day away, so a test that does not care about time never sees a refresh. */
+function renderCard(locale: "en" | "es", classes: TodaysClass[], timing?: { serverNow: string; nextChangeAt: string }) {
   const messages = locale === "en" ? enMessages : esMessages;
+  const now = Date.now();
+  const { serverNow, nextChangeAt } = timing ?? { serverNow: new Date(now).toISOString(), nextChangeAt: new Date(now + 86_400_000).toISOString() };
   return render(
     <NextIntlClientProvider locale={locale} messages={messages}>
-      <TodaysClassesCard organizationId="org-1" classes={classes} />
+      <TodaysClassesCard organizationId="org-1" classes={classes} serverNow={serverNow} nextChangeAt={nextChangeAt} />
     </NextIntlClientProvider>,
   );
 }
@@ -52,7 +55,7 @@ describe("TodaysClassesCard", () => {
 
     expect(byName("Morning")).toHaveTextContent("06:00 – 07:00");
     expect(byName("Morning")).toHaveTextContent("Closed");
-    expect(byName("Early")).toHaveTextContent("Checked in");
+    expect(byName("Early")).toHaveTextContent("Attendance recorded");
     expect(byName("Later")).toHaveTextContent("Open now");
     expect(byName("Mat")).toHaveTextContent("Opens at 19:30");
     // Real modalities, nothing relabelled GI/No-Gi:
@@ -112,7 +115,8 @@ describe("TodaysClassesCard", () => {
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("Esa clase no está abierta para registrar asistencia en este momento.");
     expect(within(screen.getAllByRole("listitem").find((li) => li.textContent?.includes("Later"))!).getByRole("alert")).toBe(alert);
-    expect(refresh).not.toHaveBeenCalled();
+    // A refusal means the screen was stale: the card re-reads the truth from the server.
+    await waitFor(() => expect(refresh).toHaveBeenCalled());
   });
 
   it("on success shows the truthful result and refreshes the page data in place (no full reload)", async () => {
@@ -136,5 +140,140 @@ describe("TodaysClassesCard", () => {
     expect(await screen.findByText("You're checked in!")).toBeInTheDocument();
     expect(screen.getByText("Class recorded. Today's attendance already counted toward your progress, so this one adds nothing more.")).toBeInTheDocument();
     await waitFor(() => expect(refresh).toHaveBeenCalled());
+  });
+});
+
+/**
+ * Time-driven availability (PR 3 follow-up): the page left open must move from "opens at" to open to closed, and
+ * roll over at Costa Rica midnight, WITHOUT a manual reload. The server hands the card the next instant the list can
+ * change (`nextChangeAt`) and its own clock (`serverNow`); the card refreshes the server data at exactly that
+ * instant, measured on the SERVER's clock (so a wrong browser clock cannot make it early or late), and again when the
+ * tab or window becomes active. Nothing is submitted in any of these tests, and the refresh only re-reads server
+ * state: the buttons still come from the server's list and every check-in is re-validated there.
+ */
+describe("TodaysClassesCard refreshes itself at the boundaries", () => {
+  const SERVER_NOW = "2026-01-06T00:00:00.000Z"; // Monday 18:00 CR
+  const OPENS = "2026-01-06T00:30:00.000Z"; // 18:30 CR
+  const at = (iso: string) => new Date(iso).getTime();
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(at(SERVER_NOW));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+  });
+
+  const advance = async (ms: number) => {
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(ms);
+    });
+  };
+
+  it("does nothing before the boundary and refreshes exactly once when it is reached", async () => {
+    renderCard("en", CLASSES, { serverNow: SERVER_NOW, nextChangeAt: OPENS });
+    await advance(29 * 60_000 + 59_000); // 29:59 in
+    expect(refresh).not.toHaveBeenCalled();
+    await advance(2_000); // past 30:00
+    expect(refresh).toHaveBeenCalledTimes(1);
+    await advance(60 * 60_000); // nothing else is scheduled by the same props
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("measures the boundary on the SERVER's clock: a browser clock 10 minutes fast does not make it early", async () => {
+    vi.setSystemTime(at(SERVER_NOW) + 10 * 60_000); // the browser thinks it is already 18:10
+    renderCard("en", CLASSES, { serverNow: SERVER_NOW, nextChangeAt: OPENS });
+    await advance(20 * 60_000); // the browser's clock now says 18:30, the server's says 18:20
+    expect(refresh).not.toHaveBeenCalled();
+    await advance(10 * 60_000 + 2_000);
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("measures it on the server's clock when the browser clock is SLOW too (it does not wait for its own 18:30)", async () => {
+    vi.setSystemTime(at(SERVER_NOW) - 10 * 60_000); // the browser thinks it is 17:50
+    renderCard("en", CLASSES, { serverNow: SERVER_NOW, nextChangeAt: OPENS });
+    await advance(30 * 60_000 + 2_000); // 30 minutes after render = the server's 18:30
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("refreshes when the tab becomes visible again after the boundary passed while it was asleep (timers frozen)", async () => {
+    renderCard("en", CLASSES, { serverNow: SERVER_NOW, nextChangeAt: OPENS });
+    vi.setSystemTime(at(OPENS) + 5 * 60_000); // the laptop slept through the boundary: the clock moved, no timer ran
+    expect(refresh).not.toHaveBeenCalled();
+    await act(async () => {
+      Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("refreshes when the window regains focus after the boundary, and does NOT when the boundary has not passed yet", async () => {
+    renderCard("en", CLASSES, { serverNow: SERVER_NOW, nextChangeAt: OPENS });
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    expect(refresh).not.toHaveBeenCalled(); // 18:00 - still before 18:30
+    vi.setSystemTime(at(OPENS) + 1_000);
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("a hidden tab does not refresh on the visibility event (only when it becomes visible)", async () => {
+    renderCard("en", CLASSES, { serverNow: SERVER_NOW, nextChangeAt: OPENS });
+    vi.setSystemTime(at(OPENS) + 5 * 60_000);
+    await act(async () => {
+      Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    expect(refresh).not.toHaveBeenCalled();
+  });
+
+  it("new server data (a later boundary) replaces the old timer: the old boundary does not fire again, the new one does", async () => {
+    const { rerender } = renderCard("en", CLASSES, { serverNow: SERVER_NOW, nextChangeAt: OPENS });
+    await advance(30 * 60_000 + 2_000);
+    expect(refresh).toHaveBeenCalledTimes(1);
+    // The refresh delivered fresh props: the next boundary is 19:30:00.001 CR (the class closes).
+    rerender(
+      <NextIntlClientProvider locale="en" messages={enMessages}>
+        <TodaysClassesCard organizationId="org-1" classes={CLASSES} serverNow="2026-01-06T00:30:02.000Z" nextChangeAt="2026-01-06T01:30:00.001Z" />
+      </NextIntlClientProvider>,
+    );
+    await advance(59 * 60_000);
+    expect(refresh).toHaveBeenCalledTimes(1);
+    await advance(2 * 60_000);
+    expect(refresh).toHaveBeenCalledTimes(2);
+  });
+
+  it("handles the Costa Rica midnight boundary (Monday 23:59:30 -> 00:00): refreshes when the day rolls over", async () => {
+    const mon2359 = "2026-01-06T05:59:30.000Z";
+    vi.setSystemTime(at(mon2359));
+    renderCard("en", CLASSES, { serverNow: mon2359, nextChangeAt: "2026-01-06T06:00:00.000Z" });
+    await advance(29_000);
+    expect(refresh).not.toHaveBeenCalled();
+    await advance(2_000);
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops when the card unmounts: no refresh after the page is left", async () => {
+    const { unmount } = renderCard("en", CLASSES, { serverNow: SERVER_NOW, nextChangeAt: OPENS });
+    unmount();
+    await advance(60 * 60_000);
+    expect(refresh).not.toHaveBeenCalled();
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    expect(refresh).not.toHaveBeenCalled();
+  });
+
+  it("server stays authoritative: a click on a row that closed meanwhile is refused by the server, and the card re-syncs", async () => {
+    vi.useRealTimers();
+    selfCheckIn.mockResolvedValue({ error: "class_not_open" });
+    renderCard("en", CLASSES);
+    fireEvent.click(screen.getByRole("button", { name: "Check in to Later at 19:00" }));
+    await waitFor(() => expect(refresh).toHaveBeenCalled()); // re-reads the truth from the server after the refusal
+    expect(await screen.findByRole("alert")).toHaveTextContent("That class isn't open for check-in right now.");
   });
 });

@@ -129,7 +129,7 @@ export default async function StudentPortalPage({
     getCurrentPaymentPeriod(studentId, context.organizationId),
   ]);
   // Today's classes for the student's own academy (Costa Rica day and boundaries), each with its honest state.
-  const todaysClasses = await listTodaysClasses({ context, academyId: student.homeAcademy.id, studentId });
+  const todays = await listTodaysClasses({ context, academyId: student.homeAcademy.id, studentId });
   const overdue = isOverdue(currentPaymentPeriod, currentCrDateParts());
   const paymentStatus: ContactPaymentStatus = overdue
     ? "OVERDUE"
@@ -270,7 +270,12 @@ export default async function StudentPortalPage({
           </CardContent>
         </Card>
 
-        <TodaysClassesCard organizationId={context.organizationId} classes={todaysClasses} />
+        <TodaysClassesCard
+          organizationId={context.organizationId}
+          classes={todays.classes}
+          nextChangeAt={todays.nextChangeAt}
+          serverNow={todays.serverNow}
+        />
 
         {/* A new attendance changes the key, so the list restarts from the fresh first page (no gap under older pages). */}
         <AttendanceHistorySection

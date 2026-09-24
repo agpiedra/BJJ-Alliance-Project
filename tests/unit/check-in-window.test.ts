@@ -3,6 +3,7 @@ import { toAttendanceDate } from "@/lib/scheduling/zone";
 import {
   getCheckInWindow,
   isWithinCheckInWindow,
+  nextBoundaryAfter,
   selectActiveSessionOccurrence,
 } from "@/lib/scheduling/check-in-window";
 
@@ -163,5 +164,61 @@ describe("selectActiveSessionOccurrence", () => {
     // occurrence belongs to Wednesday the 17th.
     const match = selectActiveSessionOccurrence([wednesdayLateNight], new Date("2026-06-18T06:10:00.000Z"));
     expect(match?.anchorDate.toISODate()).toBe("2026-06-17");
+  });
+});
+
+/**
+ * `nextBoundaryAfter`: the next instant at which what a student sees in today's class list can change - a window
+ * opening, a window closing (the first instant AFTER its inclusive end), or the Costa Rica calendar day rolling
+ * over. The portal refreshes itself at exactly this instant, so a page left open never shows a stale state.
+ * America/Costa_Rica is UTC-6 with no DST; these unit tests run with TZ=Pacific/Kiritimati, so a server-local
+ * boundary would be 20 hours off.
+ */
+describe("nextBoundaryAfter", () => {
+  const monday1900 = [{ dayOfWeek: "MONDAY" as const, startTime: "19:00", durationMinutes: 60 }];
+  const at = (iso: string) => new Date(iso);
+
+  it("before a window opens, the next boundary is its opening instant (start - 30 min)", () => {
+    // Monday 2026-01-05 18:00 CR = 2026-01-06T00:00:00Z; the 19:00 class opens at 18:30 CR.
+    expect(nextBoundaryAfter(monday1900, at("2026-01-06T00:00:00Z")).toISOString()).toBe("2026-01-06T00:30:00.000Z");
+  });
+
+  it("at the exact opening instant the class is already open, so the next boundary is the first instant AFTER it closes", () => {
+    expect(nextBoundaryAfter(monday1900, at("2026-01-06T00:30:00Z")).toISOString()).toBe("2026-01-06T01:30:00.001Z");
+    // ...and inside the window it is still that closing boundary.
+    expect(nextBoundaryAfter(monday1900, at("2026-01-06T01:00:00Z")).toISOString()).toBe("2026-01-06T01:30:00.001Z");
+  });
+
+  it("once the window has closed, the next boundary is Costa Rica midnight (the day's list changes)", () => {
+    // 19:30:00.001 CR -> Tuesday 00:00 CR = 2026-01-06T06:00:00Z.
+    expect(nextBoundaryAfter(monday1900, at("2026-01-06T01:30:00.001Z")).toISOString()).toBe("2026-01-06T06:00:00.000Z");
+  });
+
+  it("with no classes at all the next boundary is still the next Costa Rica midnight", () => {
+    expect(nextBoundaryAfter([], at("2026-01-05T18:00:00Z")).toISOString()).toBe("2026-01-06T06:00:00.000Z");
+  });
+
+  it("an adjacent-day class: a 00:10 Tuesday class opens at 23:40 Monday and that is a boundary on Monday evening", () => {
+    const tuesday0010 = [{ dayOfWeek: "TUESDAY" as const, startTime: "00:10", durationMinutes: 60 }];
+    expect(nextBoundaryAfter(tuesday0010, at("2026-01-06T05:00:00Z")).toISOString()).toBe("2026-01-06T05:40:00.000Z"); // Mon 23:00 CR -> 23:40 CR
+    // At 23:45 the window is open but the day rolls over first (00:00), which is the boundary before it closes at 00:40.
+    expect(nextBoundaryAfter(tuesday0010, at("2026-01-06T05:45:00Z")).toISOString()).toBe("2026-01-06T06:00:00.000Z");
+  });
+
+  it("a class that started the evening before and is still open after midnight closes at 00:20:00.001 (yesterday's window)", () => {
+    const monday2350 = [{ dayOfWeek: "MONDAY" as const, startTime: "23:50", durationMinutes: 60 }];
+    // Tuesday 00:05 CR = 2026-01-06T06:05:00Z; the 23:50 Monday class closes 00:20 CR.
+    expect(nextBoundaryAfter(monday2350, at("2026-01-06T06:05:00Z")).toISOString()).toBe("2026-01-06T06:20:00.001Z");
+  });
+
+  it("is always strictly after `now`, and picks the earliest of several classes", () => {
+    const sessions = [
+      { dayOfWeek: "MONDAY" as const, startTime: "19:00", durationMinutes: 60 },
+      { dayOfWeek: "MONDAY" as const, startTime: "18:40", durationMinutes: 60 },
+    ];
+    // 18:00 CR: the 18:40 class opens first (18:10), before the 19:00 one (18:30).
+    const next = nextBoundaryAfter(sessions, at("2026-01-06T00:00:00Z"));
+    expect(next.toISOString()).toBe("2026-01-06T00:10:00.000Z");
+    expect(next.getTime()).toBeGreaterThan(at("2026-01-06T00:00:00Z").getTime());
   });
 });

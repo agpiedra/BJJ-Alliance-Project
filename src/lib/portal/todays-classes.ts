@@ -1,6 +1,6 @@
 import { DateTime } from "luxon";
 import { attendanceDateFromZoned, ZONE } from "@/lib/scheduling/zone";
-import { isInsideWindow, occurrencesForToday } from "@/lib/scheduling/check-in-window";
+import { isInsideWindow, nextBoundaryAfter, occurrencesForToday } from "@/lib/scheduling/check-in-window";
 import { getScopedDb } from "@/lib/tenant/scoped-client";
 import { AttendanceType, type ClassType } from "@/generated/prisma/client";
 import type { AccessContext } from "@/lib/tenant/types";
@@ -32,6 +32,19 @@ export interface TodaysClass {
   state: ClassRowState;
 }
 
+export interface TodaysClassesView {
+  classes: TodaysClass[];
+  /**
+   * The next instant (ISO 8601), strictly after `serverNow`, at which anything in `classes` can change: a window
+   * opening, a window closing, or the Costa Rica day rolling over. The page refreshes itself at this instant so a
+   * tab left open never shows a stale state. It is a scheduling hint only - every check-in is re-validated by the
+   * server, so a stale or wrong hint can delay a refresh but can never let anything through.
+   */
+  nextChangeAt: string;
+  /** The server's clock (ISO 8601) that produced `classes`; the client measures its own clock skew against it. */
+  serverNow: string;
+}
+
 /**
  * Today's classes for the student's own academy, in start order, each with its honest state. "Today" and every
  * boundary are Costa Rica (Luxon with an explicit zone, never the server's local calendar): the list holds the
@@ -44,13 +57,14 @@ export async function listTodaysClasses(params: {
   academyId: string;
   studentId: string;
   now?: Date;
-}): Promise<TodaysClass[]> {
+}): Promise<TodaysClassesView> {
   const now = params.now ?? new Date();
   const db = getScopedDb(params.context);
 
   const sessions = await db.classSession.findMany({ where: { academyId: params.academyId, active: true } });
+  const stamp = { nextChangeAt: nextBoundaryAfter(sessions, now).toISOString(), serverNow: now.toISOString() };
   const occurrences = sessions.flatMap((session) => occurrencesForToday(session, now));
-  if (occurrences.length === 0) return [];
+  if (occurrences.length === 0) return { classes: [], ...stamp };
 
   // Valid (not voided) check-ins of THIS student to these classes on the occurrence's own date.
   const checkIns = await db.attendanceRecord.findMany({
@@ -65,7 +79,7 @@ export async function listTodaysClasses(params: {
   });
   const checkedIn = new Set(checkIns.map((row) => `${row.classSessionId}|${row.date.toISOString().slice(0, 10)}`));
 
-  return occurrences
+  const classes = occurrences
     .sort((a, b) => a.startsAt.toMillis() - b.startsAt.toMillis() || a.session.id.localeCompare(b.session.id))
     .map((o): TodaysClass => {
       const key = `${o.session.id}|${attendanceDateFromZoned(o.anchorDate).toISOString().slice(0, 10)}`;
@@ -86,4 +100,5 @@ export async function listTodaysClasses(params: {
         state,
       };
     });
+  return { classes, ...stamp };
 }

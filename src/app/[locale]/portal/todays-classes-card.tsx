@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useEffect, useState } from "react";
+import { useActionState, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { Badge } from "@/components/ui/badge";
@@ -24,6 +24,60 @@ function errorMessageKey(error: string): string {
   return (KNOWN_ERRORS as readonly string[]).includes(error) ? `error.${error}` : "error.generic";
 }
 
+/** A small allowance past the boundary so the refresh always lands on the far side of it. */
+const BOUNDARY_MARGIN_MS = 250;
+
+/**
+ * Re-reads the server data at the instant the class list next changes, so a page left open moves from "opens at"
+ * to an enabled check-in and from open to closed - and rolls over at Costa Rica midnight - without a manual reload.
+ *
+ * - `nextChangeAt` and `serverNow` come from the server (`listTodaysClasses`). The wait is measured against the
+ *   SERVER's clock: the browser's offset from `serverNow` is taken once at render, so a browser clock that is fast
+ *   or slow cannot make the refresh early or late (the offset lags the true one by the network latency, i.e. the
+ *   refresh errs a little late, never early).
+ * - It fires once per set of server data, at the boundary, and again as soon as the tab becomes visible or the
+ *   window regains focus if the boundary passed while it was hidden, throttled or asleep (browsers delay timers).
+ * - A refresh delivers new props (a new boundary), which restarts this effect. If the server ever returned the same
+ *   boundary again nothing loops: the effect only re-runs when the props change.
+ * - This only RE-READS server state. The buttons still come from the server's list and every check-in is
+ *   re-validated by the server; a stale or mistimed refresh can never make a check-in succeed.
+ */
+function useRefreshAtBoundary(nextChangeAt: string, serverNow: string, refresh: () => void) {
+  const refreshRef = useRef(refresh);
+  refreshRef.current = refresh;
+
+  useEffect(() => {
+    const target = new Date(nextChangeAt).getTime();
+    const offset = new Date(serverNow).getTime() - Date.now(); // server clock minus browser clock, measured now
+    if (Number.isNaN(target) || Number.isNaN(offset)) return;
+    const serverTime = () => Date.now() + offset;
+
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let fired = false;
+    const fire = () => {
+      if (fired) return;
+      fired = true;
+      clearTimeout(timer);
+      refreshRef.current();
+    };
+    const schedule = () => {
+      timer = setTimeout(() => (serverTime() >= target ? fire() : schedule()), Math.max(0, target - serverTime() + BOUNDARY_MARGIN_MS));
+    };
+    const onWake = () => {
+      if (document.visibilityState === "visible" && serverTime() >= target) fire();
+    };
+
+    schedule();
+    document.addEventListener("visibilitychange", onWake);
+    window.addEventListener("focus", onWake);
+    return () => {
+      clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onWake);
+      window.removeEventListener("focus", onWake);
+    };
+  }, [nextChangeAt, serverNow]);
+}
+
 /**
  * Today's classes for the student's own academy, each with its honest state (open, already checked in, opens at
  * HH:mm, closed) and a check-in button only where the server would accept it. The student checks in to an
@@ -32,22 +86,40 @@ function errorMessageKey(error: string): string {
  *
  * After a successful check-in the page's server data is refreshed in place (the action revalidates /portal and
  * `router.refresh()` is the defensive fallback): the row turns into "checked in", and the progress card and the
- * attendance history update without a full browser reload.
+ * attendance history update without a full browser reload. The card also refreshes itself when time moves the list
+ * (see `useRefreshAtBoundary`), so a tab left open never shows a class as "opens at" once it is open, or as open
+ * once it has closed.
  */
-export function TodaysClassesCard({ organizationId, classes }: { organizationId: string; classes: TodaysClass[] }) {
+export function TodaysClassesCard({
+  organizationId,
+  classes,
+  nextChangeAt,
+  serverNow,
+}: {
+  organizationId: string;
+  classes: TodaysClass[];
+  /** The next instant this list can change (ISO), from the server; the card refreshes itself then. */
+  nextChangeAt: string;
+  /** The server's clock (ISO) that produced `classes`. */
+  serverNow: string;
+}) {
   const t = useTranslations("portal.selfCheckIn");
   const tClassType = useTranslations("classType");
   const router = useRouter();
   const [state, formAction, isPending] = useActionState(selfCheckIn.bind(null, organizationId), INITIAL_STATE);
   const [submittedId, setSubmittedId] = useState<string | null>(null);
 
+  // A success changes the row, the progress and the history; a REFUSAL (class_not_open, already_checked_in, ...) means
+  // the screen was stale, so it re-reads the truth from the server too. The server is authoritative either way.
   useEffect(() => {
-    if (state.ok) {
+    if (state.ok || state.error) {
       router.refresh();
     }
     // Only re-run when a NEW state comes back from the action (a fresh submission), never on `router` identity.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state]);
+
+  useRefreshAtBoundary(nextChangeAt, serverNow, router.refresh);
 
   const errorText = state.error ? t(errorMessageKey(state.error)) : null;
   const errorBelongsToARow = state.error !== undefined && submittedId !== null && classes.some((c) => c.id === submittedId);
