@@ -51,8 +51,12 @@ modified version may not keep the "Plex" name under the OFL.
 
 ## How this differs from what `next/font/google` served
 
-Same families, weights (Archivo 600/700; IBM Plex Sans 400/500/600; IBM Plex Mono 400/500), normal style, `font-display: swap`,
-the same CSS variables and the same generated Arial-based fallback faces. Differences, all measured when this was changed:
+Same families, weights (Archivo 600/700; IBM Plex Sans 400/500/600; IBM Plex Mono 400/500), normal style, `font-display: swap`
+and the same CSS variables. Next still generates an Arial-based fallback face per family, but it computes the `size-adjust` and
+`ascent`/`descent` overrides from the vendored files, so the numbers differ slightly from the ones it computed from Google's
+(Archivo: size-adjust 102.8% instead of 98.7%, ascent 85.41% instead of 88.96%; IBM Plex Mono: 131.49% instead of 134.59%;
+IBM Plex Sans within 0.05%). They only apply until the web font has loaded. Other differences, all measured when this was
+changed:
 
 - Google served the variable builds of Archivo (2.001) and IBM Plex Sans (3.201) split into per-script subsets with
   `unicode-range`; these are the upstream static instances, one file per weight. `next/font/local` cannot express a
