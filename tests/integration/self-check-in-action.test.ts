@@ -52,7 +52,7 @@ const prisma = getTestPrismaClient();
 // Same fixed instants as perform-check-in.test.ts: 2026-01-05T12:00:00Z is
 // 2026-01-05 06:00 America/Costa_Rica (UTC-6, fixed, no DST) — a Monday,
 // exactly the seeded Escazú "GI" session's start, squarely inside its
-// ±30-minute window. 2026-01-04T18:00:00Z is a Sunday, outside every seeded
+// window (start - 30 minutes to end + 30 minutes). 2026-01-04T18:00:00Z is a Sunday, outside every seeded
 // session's window.
 const WITHIN_MONDAY_GI_WINDOW = new Date("2026-01-05T12:00:00Z");
 const OUTSIDE_ANY_WINDOW = new Date("2026-01-04T18:00:00Z");

@@ -6,7 +6,8 @@
  * a tablet that loses connectivity during an evening class and only comes back
  * online the next morning — while still refusing an absurdly stale value from
  * a device whose clock is simply wrong. It is a sanity bound, not the real
- * gate: `performCheckIn` still re-evaluates the ±30-minute check-in window
+ * gate: `performCheckIn` still re-evaluates each class window (start - 30 minutes to
+ * end + 30 minutes)
  * against whichever instant is used, so a nonsense timestamp that happens to
  * fall inside this bound is still rejected there as `no_active_class`.
  */

@@ -18,32 +18,24 @@ interface SessionTiming {
   dayOfWeek: DayOfWeek;
   startTime: string; // "HH:mm", 24h, CR wall-clock
   /**
-   * NOT part of the check-in window any more (spec §5's window is literally
-   * "30 minutes before to 30 minutes after the START"). Kept on the shape so
-   * real `ClassSession` rows and existing call sites still satisfy it.
+   * The class's own configured duration. REQUIRED: it is part of the check-in window (`closesAt` is the scheduled end
+   * plus 30 minutes), so a call site that forgot it must fail to compile rather than silently get a wrong window. The
+   * schedule editor caps it at 600 minutes, so a window (at most 30 + 600 + 30 minutes) never reaches past the day
+   * before or after the occurrence's own day, which is why the +/-1 day candidate loops below are sufficient.
    */
-  durationMinutes?: number;
+  durationMinutes: number;
 }
 
 /**
  * The check-in window for one occurrence of a class session, anchored to
  * the CR calendar date the session actually falls on relative to
  * `referenceDate`. Returns UTC instants (real Date objects), so callers can
- * compare directly against `new Date()`.
- *
- * The window is `start - 30min .. start + 30min` — it deliberately does NOT
- * extend by the class duration. An earlier implementation used
- * `start - 30 .. start + duration + 30`, which for an ordinary 60-minute
- * class produced a 2.5-hour window; with back-to-back hourly classes (which
- * the seeded Escazú schedule genuinely has) that made adjacent classes'
- * windows overlap by a full hour, so the same tap could be attributed to
- * either class. Spec §5's literal wording is the narrower window, and it
- * makes adjacent hourly classes merely touch at their boundary instead.
+ * compare directly against `new Date()`. See `occurrenceWindow` for the rule.
  */
 export function getCheckInWindow(session: SessionTiming, referenceDate: Date): { start: Date; end: Date } {
   const sessionStart = startOfOccurrence(session, DateTime.fromJSDate(referenceDate, { zone: "utc" }).setZone(ZONE));
 
-  const { opensAt, closesAt } = occurrenceWindow(sessionStart);
+  const { opensAt, closesAt } = occurrenceWindow(sessionStart, session.durationMinutes);
   return { start: opensAt, end: closesAt };
 }
 
@@ -57,8 +49,8 @@ function startOfOccurrence(session: SessionTiming, anchorDay: DateTime): DateTim
  * One occurrence of a session whose check-in window contains a given instant.
  *
  * `anchorDate` is the CR calendar day the matched occurrence belongs to — NOT
- * necessarily the CR calendar day of `now`, since a ±30-minute window can
- * cross local midnight. Callers that bucket attendance by day must stamp from
+ * necessarily the CR calendar day of `now`, since a window can cross local
+ * midnight (either end). Callers that bucket attendance by day must stamp from
  * this, not from the wall-clock instant (see `performCheckIn`).
  */
 export interface SessionOccurrence<T extends SessionTiming> {
@@ -70,15 +62,19 @@ export interface SessionOccurrence<T extends SessionTiming> {
 }
 
 /**
- * The ONE definition of when a class occurrence is open for check-in: from `WINDOW_MINUTES` before its scheduled
- * start until `WINDOW_MINUTES` after it, inclusive at both ends, duration ignored. Automatic matching, the
- * validation of an explicitly selected class and the portal's list of today's classes ALL read this function, so
- * what the screen calls "open" is exactly what the server accepts.
+ * The ONE definition of when a class occurrence is open for check-in (confirmed by the academy owner, for EVERY
+ * class): `opensAt` = scheduled start - 30 minutes; `closesAt` = scheduled start + the class's OWN configured
+ * duration + 30 minutes; inclusive at both ends. An 18:00-19:00 class is open 17:30-19:30, a 19:00-20:30 class
+ * 18:30-21:00, an 18:30-19:30 class 18:00-20:00. There is no shared evening window and no fixed cutoff. Automatic
+ * matching, the validation of an explicitly selected class and the portal's list of today's classes (and the moment
+ * the portal refreshes itself) ALL read this function, so what the screen calls "open" is exactly what the server
+ * accepts. Windows of neighbouring classes overlap by design; see `selectActiveSessionOccurrence` for how an
+ * automatic match is chosen and `performCheckIn` for why an explicit selection always wins.
  */
-export function occurrenceWindow(startsAt: DateTime): { opensAt: Date; closesAt: Date } {
+export function occurrenceWindow(startsAt: DateTime, durationMinutes: number): { opensAt: Date; closesAt: Date } {
   return {
     opensAt: startsAt.minus({ minutes: WINDOW_MINUTES }).toJSDate(),
-    closesAt: startsAt.plus({ minutes: WINDOW_MINUTES }).toJSDate(),
+    closesAt: startsAt.plus({ minutes: durationMinutes + WINDOW_MINUTES }).toJSDate(),
   };
 }
 
@@ -95,10 +91,11 @@ export function isInsideWindow(window: { opensAt: Date; closesAt: Date }, instan
 /**
  * Every anchor day (yesterday / today / tomorrow in CR time, relative to
  * `now`) whose occurrence of `session` both matches `session.dayOfWeek` and
- * whose ±30-minute window contains `now`.
+ * whose check-in window contains `now`.
  *
  * The three-candidate loop exists because a session's window can legitimately
- * extend into an adjacent calendar day (a 23:50 start, or a 00:05 start), so
+ * extend into an adjacent calendar day (a 23:50 start, a class that runs past
+ * midnight, or a 00:05 start whose window opens the evening before), so
  * checking `now`'s own CR weekday against `session.dayOfWeek` would silently
  * reject legitimate check-ins on either side of midnight.
  *
@@ -114,7 +111,7 @@ function matchOccurrence<T extends SessionTiming>(session: T, now: Date): Sessio
     if (DAY_INDEX[session.dayOfWeek] !== candidateDay.weekday) continue;
 
     const startsAt = startOfOccurrence(session, candidateDay);
-    if (isInsideWindow(occurrenceWindow(startsAt), now)) {
+    if (isInsideWindow(occurrenceWindow(startsAt, session.durationMinutes), now)) {
       return { session, anchorDate: candidateDay.startOf("day"), startsAt };
     }
   }
@@ -150,7 +147,7 @@ export function occurrencesForToday<T extends SessionTiming>(session: T, now: Da
     const candidateDay = nowInZone.plus({ days: dayOffset });
     if (DAY_INDEX[session.dayOfWeek] !== candidateDay.weekday) continue;
     const startsAt = startOfOccurrence(session, candidateDay);
-    const window = occurrenceWindow(startsAt);
+    const window = occurrenceWindow(startsAt, session.durationMinutes);
     if (dayOffset === 0 || isInsideWindow(window, now)) {
       found.push({ session, anchorDate: candidateDay.startOf("day"), startsAt, ...window });
     }
@@ -161,8 +158,8 @@ export function occurrencesForToday<T extends SessionTiming>(session: T, now: Da
 /**
  * The next instant, strictly after `now`, at which what a student sees in today's class list can change:
  *  - a window OPENING (`start - 30 min`), including a class on the adjacent day whose window opens tonight;
- *  - a window CLOSING - the first instant AFTER its inclusive end (`start + 30 min + 1 ms`), including yesterday's
- *    class that is still open after midnight;
+ *  - a window CLOSING - the first instant AFTER its inclusive end (`start + duration + 30 min + 1 ms`, each class
+ *    with its own duration), including yesterday's class that is still open after midnight;
  *  - the Costa Rica calendar day rolling over (the list of "today's" classes changes at 00:00 CR).
  * Every boundary is computed with the same `occurrenceWindow` and explicit America/Costa_Rica day arithmetic as the
  * rest of this module, never the server's or the browser's calendar. The portal hands this instant to the page so it
@@ -177,7 +174,7 @@ export function nextBoundaryAfter(sessions: SessionTiming[], now: Date): Date {
     for (const dayOffset of [-1, 0, 1]) {
       const candidateDay = nowInZone.plus({ days: dayOffset });
       if (DAY_INDEX[session.dayOfWeek] !== candidateDay.weekday) continue;
-      const { opensAt, closesAt } = occurrenceWindow(startOfOccurrence(session, candidateDay));
+      const { opensAt, closesAt } = occurrenceWindow(startOfOccurrence(session, candidateDay), session.durationMinutes);
       for (const boundary of [opensAt.getTime(), closesAt.getTime() + 1]) {
         if (boundary > now.getTime() && boundary < next) next = boundary;
       }
@@ -198,13 +195,15 @@ export function isWithinCheckInWindow(session: SessionTiming, now: Date): boolea
  * Pick the ONE session occurrence a check-in at `now` belongs to, out of a
  * list of candidate sessions.
  *
- * Overlapping windows are still possible even with the narrowed ±30-minute
- * window: adjacent hourly classes touch exactly at their shared boundary
- * instant, and Task 9's admin schedule editor can create genuinely
- * overlapping sessions on purpose or by mistake. Picking "whichever row
- * Postgres happened to return first" would non-deterministically attribute
- * the same tap to different classes across identical requests — including
- * flipping whether it counts toward promotion at all.
+ * Overlapping windows are EXPECTED: with the owner-confirmed window
+ * (start - 30 .. start + duration + 30) back-to-back hourly classes overlap
+ * for an hour, and the admin schedule editor can create overlapping sessions
+ * on purpose or by mistake. Picking "whichever row Postgres happened to
+ * return first" would non-deterministically attribute the same tap to
+ * different classes across identical requests — including flipping whether it
+ * counts toward promotion at all. This only ever runs when NO class was
+ * selected (the kiosk without a selection); an explicit selection is validated
+ * against its own window and always wins (see `performCheckIn`).
  *
  * Deterministic selection rules, applied in order:
  *   1. The occurrence whose scheduled start is CLOSEST in absolute time to

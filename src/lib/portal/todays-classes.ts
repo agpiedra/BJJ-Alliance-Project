@@ -8,7 +8,8 @@ import type { AccessContext } from "@/lib/tenant/types";
 /**
  * The honest state of one class for one student, right now:
  *  - checked_in: the student already has a valid check-in for THIS occurrence (a voided one does not count).
- *  - open: the class window contains now (start -30 to start +30 minutes, inclusive) - exactly what
+ *  - open: the class window contains now (start -30 minutes to end +30 minutes, inclusive, using that class's own
+ *    duration; windows of neighbouring classes overlap, so several rows can be open at once) - exactly what
  *    `performCheckIn` accepts for an explicit selection under the portal's OPEN_ONLY policy.
  *  - not_open_yet: it opens later today; `opensAt` is the CR wall-clock time (`HH:mm`).
  *  - closed: its window has ended.

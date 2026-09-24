@@ -24,7 +24,7 @@ export type SelfCheckInState = ActionState & {
 // The student checks in to an EXPLICIT class from today's list (PR 3). The only client input is that class id
 // (`classSessionId`); WHO is checking in comes from the caller's own session and WHEN from the server clock, both
 // resolved server-side. The id is never trusted: the shared core validates it against the student's own academy,
-// its active state and its check-in window (start -30 to +30 minutes) under the portal's OPEN_ONLY policy, so the
+// its active state and its check-in window (start -30 minutes to end +30 minutes, that class's own duration) under the portal's OPEN_ONLY policy, so the
 // list on screen is a convenience, not the eligibility boundary. Unlike the attended kiosk, the portal has no
 // "no class matched, save it unattributed" fallback: no selection is refused.
 export async function selfCheckIn(

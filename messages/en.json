@@ -1034,7 +1034,7 @@
     },
     "selfCheckIn": {
       "heading": "Check in to a class",
-      "description": "You can check in from 30 minutes before a class starts until 30 minutes after it starts.",
+      "description": "You can check in from 30 minutes before a class starts until 30 minutes after it ends.",
       "classesLabel": "Today's classes",
       "noClasses": "There are no classes today. Check the weekly schedule below.",
       "thresholdReachedHeading": "Ready for review!",

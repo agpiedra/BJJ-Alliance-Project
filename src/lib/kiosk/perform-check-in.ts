@@ -130,9 +130,10 @@ interface CommonInput {
  * How an EXPLICITLY selected class is validated. Required whenever a class is selected (no default: a channel must
  * say which policy it runs, so a new caller cannot silently inherit the lenient one).
  *  - OPEN_ONLY (the portal): the class must belong to this academy, be active and be OPEN right now (start -30 to
- *    start +30 minutes, inclusive). An unknown / inactive / other-academy / other-organization id is
+ *    scheduled end +30 minutes, inclusive, using that class's own duration). An unknown / inactive / other-academy / other-organization id is
  *    `invalid_class`; a real class that is not open is `class_not_open`. Nothing is written.
- *  - TODAY_ANY (the attended kiosk): the kiosk's outside-window fallback is kept - any of TODAY's active classes
+ *  - TODAY_ANY (the attended kiosk): the kiosk's outside-window fallback is kept as it always was (whether it should
+ *    stay is a separate owner decision that is still pending) - any of TODAY's active classes
  *    is accepted whether or not its window is open. An id that is not one of today's classes is treated as if
  *    nothing was selected (the picker / automatic match), exactly as before.
  * Either way the selection is validated server-side against fresh queries, never trusted from the client, and a
@@ -224,10 +225,12 @@ export async function performCheckIn(input: PerformCheckInInput): Promise<CheckI
   });
 
   // Deterministic: `findMany` returns rows in no guaranteed order, and
-  // overlapping check-in windows are genuinely reachable (adjacent hourly
-  // classes touch at their boundary; the admin schedule editor can create
-  // real overlaps), so "whichever row came back first" could attribute the
-  // same tap to different classes on identical requests.
+  // overlapping check-in windows are expected (back-to-back hourly classes
+  // overlap for an hour, and the admin schedule editor can create more), so
+  // "whichever row came back first" could attribute the same tap to different
+  // classes on identical requests. This automatic choice only applies when no
+  // class was selected; an explicit selection (below) is validated on its own
+  // window and always wins.
   const occurrence = selectActiveSessionOccurrence(sessions, now);
 
   // What the row will be attributed to, resolved by the first path that applies: an EXPLICIT selection, then an

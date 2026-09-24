@@ -1034,7 +1034,7 @@
     },
     "selfCheckIn": {
       "heading": "Registrar asistencia a una clase",
-      "description": "Puedes registrar tu asistencia desde 30 minutos antes de que empiece la clase hasta 30 minutos después de que empiece.",
+      "description": "Puedes registrar tu asistencia desde 30 minutos antes de que empiece la clase hasta 30 minutos después de que termine.",
       "classesLabel": "Clases de hoy",
       "noClasses": "Hoy no hay clases. Revisa el horario semanal más abajo.",
       "thresholdReachedHeading": "¡Listo para evaluación!",

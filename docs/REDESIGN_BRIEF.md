@@ -441,6 +441,10 @@ Same tokens, same components, adjusted density:
 `selectActiveSessionOccurrence()` already picks the class occurrence for a check-in:
 
 - Window: **start − 30 min to start + 30 min**, anchored to the class start (not the end).
+  *[Superseded in PR #58 by the owner's confirmation: every class is open from start − 30 min to its
+  scheduled END + 30 min (start + its own duration + 30), inclusive, and overlapping windows are expected;
+  the deterministic nearest-start selection below still applies when no class was chosen, and an explicitly
+  selected class always wins. See revision 46 of `docs/MULTI_ACADEMY_AND_KIDS_BELTS.md`.]*
   The file documents *why* it is not `start − 30 .. end + 30`: with back-to-back hourly
   classes — which the Escazú schedule genuinely has — the wider window made adjacent classes
   overlap by a full hour and the same tap could be attributed to either one.

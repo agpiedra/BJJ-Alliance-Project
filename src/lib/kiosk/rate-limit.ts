@@ -19,8 +19,7 @@ export type ReserveResult = { allowed: true; attemptId: string } | RateLimitReje
  * Only `invalid_code` is a brute-force signal. `already_checked_in` and `no_active_class`
  * both mean the submitted code was VALID and resolved to a real, active student — the
  * former is a student double-tapping, the latter a student arriving outside any class
- * window (which the narrower ±30-minute window made measurably more common). Neither is a
- * guess, so neither may extend the lockout.
+ * window. Neither is a guess, so neither may extend the lockout.
  */
 export type KioskAttemptOutcome = "success" | "invalid_code" | "already_checked_in" | "no_active_class" | "invalid_class" | "class_not_open";
 

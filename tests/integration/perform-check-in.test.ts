@@ -29,14 +29,14 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 // 2026-01-05T12:00:00Z is 2026-01-05 06:00 America/Costa_Rica (UTC-6, fixed,
 // no DST) — a Monday, which is exactly the seeded Escazú "GI" session's start,
-// squarely inside its ±30-minute window ([05:30, 06:30] CR) and inside no
-// other Escazú session's.
+// squarely inside its window (start - 30 .. start + 60-minute duration + 30 =
+// [05:30, 07:30] CR) and inside no other Escazú session's.
 const WITHIN_MONDAY_GI_WINDOW = new Date("2026-01-05T12:00:00Z");
 
 // 2026-01-04T18:00:00Z is 2026-01-04 12:00 CR — a Sunday, and the seeded
-// schedule has no Sunday sessions at all (nor any session whose ±30-minute
-// window crosses into Sunday from Saturday or out to Monday), so this falls
-// outside every active session's check-in window.
+// schedule has no Sunday sessions at all (nor any session whose window - up to
+// 30 minutes after its end - crosses into Sunday from Saturday or out to
+// Monday), so this falls outside every active session's check-in window.
 const OUTSIDE_ANY_WINDOW = new Date("2026-01-04T18:00:00Z");
 
 const cleanupStudentIds: string[] = [];
@@ -370,7 +370,7 @@ describe("performCheckIn", () => {
 
   describe("a class occurrence whose window crosses CR midnight", () => {
     it("buckets both sides of midnight onto the occurrence's own day, so the second check-in is refused", async () => {
-      // Wednesday 23:50 start ⇒ window [Wed 23:20, Thu 00:20] CR.
+      // Wednesday 23:50 start, 60 minutes ⇒ window [Wed 23:20, Thu 01:20] CR.
       const { academy } = await makeFixtureAcademy([
         { dayOfWeek: "WEDNESDAY", startTime: "23:50", name: "Late Night" },
       ]);
@@ -410,7 +410,7 @@ describe("performCheckIn", () => {
     });
 
     it("files a check-in made just before midnight for a just-after-midnight class under the class's day", async () => {
-      // Thursday 00:05 start ⇒ window [Wed 23:35, Thu 00:35] CR.
+      // Thursday 00:05 start, 60 minutes ⇒ window [Wed 23:35, Thu 01:35] CR.
       const { academy } = await makeFixtureAcademy([
         { dayOfWeek: "THURSDAY", startTime: "00:05", name: "Madrugada" },
       ]);
@@ -429,6 +429,39 @@ describe("performCheckIn", () => {
 
       const record = await prisma.attendanceRecord.findFirstOrThrow({ where: { studentId: student.id } });
       expect(record.date.toISOString().slice(0, 10)).toBe("2026-06-18");
+    });
+
+    it("keeps a check-in after midnight on the previous day's class until its own close (end + 30 minutes, inclusive), and no longer", async () => {
+      // Wednesday 23:50 for 60 minutes ends Thursday 00:50 and closes Thursday 01:20 CR (= 07:20Z).
+      const { academy } = await makeFixtureAcademy([
+        { dayOfWeek: "WEDNESDAY", startTime: "23:50", name: "Late Night" },
+      ]);
+      const inside = await makeStudent({ homeAcademyId: academy.id });
+      const open = await performCheckIn({
+        academyId: academy.id,
+        context: ctx(academy),
+        code: inside.code,
+        source: "KIOSK",
+        now: new Date("2026-06-18T07:20:00.000Z"),
+      });
+      expect(open.ok).toBe(true);
+      const record = await prisma.attendanceRecord.findFirstOrThrow({ where: { studentId: inside.student.id } });
+      expect(record.date.toISOString().slice(0, 10)).toBe("2026-06-17"); // Wednesday's class, at Thursday 01:20
+      expect(record.matchSource).toBe("AUTO");
+
+      // One millisecond later no window contains the instant; Thursday has no classes here, so it is saved UNMATCHED.
+      const late = await makeStudent({ homeAcademyId: academy.id });
+      const closed = await performCheckIn({
+        academyId: academy.id,
+        context: ctx(academy),
+        code: late.code,
+        source: "KIOSK",
+        now: new Date("2026-06-18T07:20:00.001Z"),
+      });
+      expect(closed.ok).toBe(true);
+      const unmatched = await prisma.attendanceRecord.findFirstOrThrow({ where: { studentId: late.student.id } });
+      expect(unmatched.classSessionId).toBeNull();
+      expect(unmatched.matchSource).toBe("UNMATCHED");
     });
   });
 
@@ -595,7 +628,13 @@ describe("performCheckIn", () => {
       { label: "Wed 18:10 -> 18:30 Competición", now: "2026-01-08T00:10:00Z", expected: "Competición" },
       { label: "Fri 18:52 -> 18:30 GI Todos los niveles", now: "2026-01-10T00:52:00Z", expected: "GI — Todos los niveles" },
       { label: "Sat 09:50 -> 10:00 Kids", now: "2026-01-10T15:50:00Z", expected: "Kids" },
-      { label: "Mon 13:30 -> no match (the student is asked to pick)", now: "2026-01-05T19:30:00Z", expected: null },
+      { label: "Mon 14:00 -> no match (the student is asked to pick)", now: "2026-01-05T20:00:00Z", expected: null },
+      // The owner-confirmed window is start - 30 .. start + duration + 30, inclusive (every seeded class is 60 minutes).
+      { label: "Mon 13:30 exactly -> 12:00 NO-GI (its end + 30 minutes, inclusive)", now: "2026-01-05T19:30:00Z", expected: "NO-GI" },
+      { label: "Mon 13:30:00.001 -> no match (1 ms after the 12:00 class's window closed)", now: "2026-01-05T19:30:00.001Z", expected: null },
+      { label: "Mon 19:20 -> 19:00 GI Avanzados (both evening windows are open; the nearer start wins)", now: "2026-01-06T01:20:00Z", expected: "GI — Avanzados" },
+      { label: "Mon 20:30 exactly -> 19:00 GI Avanzados (its end + 30 minutes, inclusive)", now: "2026-01-06T02:30:00Z", expected: "GI — Avanzados" },
+      { label: "Mon 20:30:00.001 -> no match (1 ms after the last Monday window closed)", now: "2026-01-06T02:30:00.001Z", expected: null },
     ];
 
     it.each(CASES)("$label", async ({ now, expected }) => {
@@ -611,11 +650,12 @@ describe("performCheckIn", () => {
   // itself is untouched and still covered by tests/unit/check-in-window.test.ts
   // — everything here is about what happens when it returns null.
   describe("no auto match (Phase 9)", () => {
-    // Monday 2026-01-05 13:30 CR. Escazú's Monday classes are 06:00 / 12:00 /
-    // 18:00 / 19:00, so 13:30 sits in no window (12:00's closed at 12:30,
-    // 18:00's opens at 17:30) — the brief's own "Mon 13:30 -> the student is
-    // asked to pick" verification row, against the real seeded schedule.
-    const MONDAY_BETWEEN_ESCAZU_WINDOWS = new Date("2026-01-05T19:30:00Z");
+    // Monday 2026-01-05 14:00 CR. Escazú's Monday classes are 06:00 / 12:00 /
+    // 18:00 / 19:00 (60 minutes each), so 14:00 sits in no window (12:00's
+    // closed at 13:30 = its end + 30, 18:00's opens at 17:30) — the brief's own
+    // "the student is asked to pick" verification row, against the real seeded
+    // schedule.
+    const MONDAY_BETWEEN_ESCAZU_WINDOWS = new Date("2026-01-05T20:00:00Z");
 
     it("offers that day's active classes, sorted by startTime, when the day HAS classes", async () => {
       const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });

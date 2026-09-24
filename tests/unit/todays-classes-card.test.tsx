@@ -93,9 +93,12 @@ describe("TodaysClassesCard", () => {
     expect(screen.queryByRole("button")).toBeNull();
   });
 
-  it("states the availability rule once, above the list", () => {
-    renderCard("en", CLASSES);
-    expect(screen.getByText("You can check in from 30 minutes before a class starts until 30 minutes after it starts.")).toBeInTheDocument();
+  it("states the availability rule once, above the list (until 30 minutes after the class ENDS), in both languages", () => {
+    const { unmount } = renderCard("en", CLASSES);
+    expect(screen.getByText("You can check in from 30 minutes before a class starts until 30 minutes after it ends.")).toBeInTheDocument();
+    unmount();
+    renderCard("es", CLASSES);
+    expect(screen.getByText("Puedes registrar tu asistencia desde 30 minutos antes de que empiece la clase hasta 30 minutos después de que termine.")).toBeInTheDocument();
   });
 
   it("posts the EXACT class id of the row that was clicked", async () => {
