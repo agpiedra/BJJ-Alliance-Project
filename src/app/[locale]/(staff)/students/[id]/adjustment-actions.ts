@@ -8,6 +8,8 @@ import { getScopedDb } from "@/lib/tenant/scoped-client";
 import { AttendanceSource, AttendanceType, Prisma, StudentStatus } from "@/generated/prisma/client";
 import { attendanceDateFromZoned, ZONE } from "@/lib/scheduling/zone";
 import { isDayContribution } from "@/lib/promotion/progress-days";
+import { resolvePromotionConfigMap } from "@/lib/promotion/config";
+import { getAtBeltSummary } from "@/lib/students/attendance-summary";
 import { refreshPromotionPages } from "@/lib/promotion/refresh-pages";
 import type { ActionState } from "@/lib/action-state";
 
@@ -16,9 +18,10 @@ import type { ActionState } from "@/lib/action-state";
  * (docs/PROMOTION_PROGRESS_PROPOSAL.md). It is exactly ONE attendance day - never
  * a free-form number of classes, and never a negative correction: the academy
  * decided there is no head-start credit and no arbitrary progress credit, positive
- * or negative. It shares the daily limit with the kiosk and the portal: if the
- * student already has a qualifying attendance for that day, this one is recorded
- * in the history and adds nothing.
+ * or negative. Under PER_INTERVAL accounting it shares the daily limit with the kiosk
+ * and the portal: if the student already has a qualifying attendance for that day, this
+ * one is recorded in the history and adds nothing. A track still on the legacy CUMULATIVE
+ * accounting has no daily limit, and its feedback says what that rule actually did.
  *
  * Only the three known fields are read, and a posted `delta` is refused outright
  * rather than having its number silently ignored. It is NOT a blanket "no unknown
@@ -60,11 +63,14 @@ const adjustmentSchema = z.object({
  * transaction so one can never exist without the other, matching every
  * other write in this app.
  *
- * Returns `info` when the entry was recorded but added nothing to progress
- * (`alreadyCountedThatDay`, `beforeLastPromotion` for a day that belongs to the
- * completed interval, or `promotionDayHistoryOnly` / `trackingStartDayHistoryOnly` for the
- * day of a promotion or of the tracking start, whose class cannot be placed before or after
- * the boundary) so the coach is told, never left to assume it counted.
+ * Returns `info` when the entry was recorded but added nothing to progress, so the coach is told,
+ * never left to assume it counted - and the message follows the student's OWN track accounting:
+ *  - PER_INTERVAL: `alreadyCountedThatDay`, `beforeLastPromotion` for a day that belongs to the
+ *    completed interval, or `promotionDayHistoryOnly` / `trackingStartDayHistoryOnly` for the day of
+ *    a promotion or of the tracking start, whose class cannot be placed before or after the boundary;
+ *  - CUMULATIVE (legacy): no daily limit and no history-only, so none of those; the only reason an
+ *    entry adds nothing is a date before the belt was awarded (`beforeBeltDate`), measured by the
+ *    same summary the pages read.
  */
 export async function addAttendanceAdjustment(
   organizationId: string,
@@ -93,7 +99,7 @@ export async function addAttendanceAdjustment(
 
   const student = await getScopedDb(context).student.findUnique({
     where: { id: data.studentId },
-    select: { id: true, homeAcademyId: true, organizationId: true, status: true, progressBaselineAt: true, progressBaselineKind: true },
+    select: { id: true, homeAcademyId: true, organizationId: true, status: true, track: true, progressBaselineAt: true, progressBaselineKind: true },
   });
 
   if (!student || !isAcademyInTenantScope(context, student.homeAcademyId)) {
@@ -131,8 +137,19 @@ export async function addAttendanceAdjustment(
   const baselineDay = DateTime.fromJSDate(baseline, { zone: "utc" }).setZone(ZONE);
   const isToday = day.hasSame(nowCr, "day");
   const isPromotionDay = student.progressBaselineKind === "AWARD" && day.hasSame(baselineDay, "day");
-  const historyOnly = isPromotionDay || (day.hasSame(baselineDay, "day") && !isToday);
+  // Everything above is PER_INTERVAL semantics (one contribution per day, boundaries at the baseline). A track still
+  // on the legacy CUMULATIVE accounting has neither: every qualifying row counts since the belt date, with no daily
+  // limit and no history-only concept, so it keeps the legacy stamping and its feedback reports what that rule
+  // actually did with the entry (see the end of this function). Legacy counting is never changed to fit a message.
+  const configByTrack = await resolvePromotionConfigMap(student.organizationId);
+  const perInterval = configByTrack.get(student.track)?.accounting === "PER_INTERVAL";
+  const historyOnly = perInterval && (isPromotionDay || (day.hasSame(baselineDay, "day") && !isToday));
   const occurredAt = historyOnly ? new Date(baseline.getTime() - 1) : isToday ? now : day.set({ hour: 12 }).toJSDate();
+  // The legacy count BEFORE the entry, so the response can state its real effect afterwards.
+  const legacyCountBefore =
+    !perInterval && configByTrack.has(student.track)
+      ? (await getAtBeltSummary(student.id, student.organizationId, configByTrack)).atBeltCount
+      : null;
 
   const record = await prisma.$transaction(async (tx) => {
     const created = await tx.attendanceRecord.create({
@@ -171,8 +188,16 @@ export async function addAttendanceAdjustment(
   // The student's page shows the progress this entry just changed (see refreshPromotionPages).
   await refreshPromotionPages(student.id);
 
-  // Truthful feedback: history only (day of a promotion / tracking start), was this the day's one contribution,
-  // and does it belong to the current interval?
+  // Legacy CUMULATIVE: no daily limit, no history-only. The entry counts unless it is dated before the belt was
+  // awarded; report exactly that, measured through the same summary every page reads.
+  if (!perInterval) {
+    if (legacyCountBefore === null) return { ok: true };
+    const after = await getAtBeltSummary(student.id, student.organizationId, configByTrack);
+    return after.atBeltCount > legacyCountBefore ? { ok: true } : { ok: true, info: "beforeBeltDate" };
+  }
+
+  // PER_INTERVAL. Truthful feedback: history only (day of a promotion / tracking start), was this the day's one
+  // contribution, and does it belong to the current interval?
   if (historyOnly) return { ok: true, info: isPromotionDay ? "promotionDayHistoryOnly" : "trackingStartDayHistoryOnly" };
   const contributes = await isDayContribution(prisma, {
     studentId: student.id,

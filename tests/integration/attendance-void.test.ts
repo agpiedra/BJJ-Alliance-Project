@@ -1,6 +1,7 @@
 import "dotenv/config";
 import { getTestPrismaClient } from "../helpers/test-db";
-import { afterAll, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { makeAccountingOrg } from "../helpers/accounting-org";
 import { requireEnv } from "../../src/lib/env";
 import { digestLookupSecret, hashSecret } from "../../src/lib/crypto";
 import { adultRankId } from "../helpers/belt-ranks";
@@ -200,11 +201,23 @@ describe("voiding a mistaken attendance entry", () => {
     const coachEntry = (organizationId: string, studentId: string, reason: string) =>
       addAttendanceAdjustment(organizationId, {}, form({ studentId, date: "2026-03-10", reason }));
 
+    // The history-only rule belongs to PER_INTERVAL accounting; Alliance is CUMULATIVE in the test database, so these
+    // scenarios run in a private organization that really is PER_INTERVAL (the coach action reads the real mode).
+    let fx: Awaited<ReturnType<typeof makeAccountingOrg>>;
+    beforeAll(async () => { fx = await makeAccountingOrg("PER_INTERVAL", "void-per"); });
+    afterAll(async () => { await fx?.drop(); });
+
     async function awarded(label: string) {
-      const ac = await escazu();
-      const admin = await makeStaff("ADMIN", `void-promoday-${label}`);
-      const student = await makeStudent(ac.id, ac.organizationId, { baseline: AWARD, kind: "AWARD" });
-      return { ac, admin, student };
+      const suffix = `${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
+      const student = await prisma.student.create({
+        data: {
+          homeAcademyId: fx.academy.id, organizationId: fx.org.id, firstName: "VoidPromoDay", lastName: label, phone: "88880044",
+          email: `void-promoday-${label}-${suffix}@example.com`, status: "ACTIVE", currentRankId: await fx.rankId("WHITE"), currentStripes: 1,
+          progressBaselineAt: AWARD, progressBaselineKind: "AWARD", codeHash: digestLookupSecret(`void-promoday-${label}-${suffix}`, pepper),
+        },
+      });
+      currentSession = { user: { id: fx.admin.id, role: "ADMIN" }, activeOrganizationId: fx.org.id };
+      return { ac: fx.academy, admin: { organizationId: fx.org.id }, student };
     }
     const valid = (studentId: string) => prisma.attendanceRecord.findMany({ where: { studentId, voidedAt: null }, orderBy: { occurredAt: "asc" } });
 

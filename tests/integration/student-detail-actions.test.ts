@@ -5,8 +5,6 @@ import { requireEnv } from "../../src/lib/env";
 import { digestLookupSecret, hashSecret } from "../../src/lib/crypto";
 import type { TenantContext } from "../../src/lib/tenant/types";
 import { adultRankId } from "../helpers/belt-ranks";
-import { ALLIANCE_PER_INTERVAL_CONFIG } from "../helpers/promotion-config";
-
 
 // `getStudentForStaff` / `updateStudent` / `archiveStudent` /
 // `approveStudent` / `regenerateStudentCode` all reach
@@ -37,6 +35,7 @@ const { addAttendanceAdjustment } = await import(
 );
 const { getTenantContext } = await import("../../src/lib/tenant/context");
 const { getAtBeltSummary } = await import("../../src/lib/students/attendance-summary");
+const { resolvePromotionConfigMap } = await import("../../src/lib/promotion/config");
 
 const prisma = getTestPrismaClient();
 
@@ -536,9 +535,15 @@ describe("student detail actions", () => {
       const admin = await makeStaffUser("ADMIN", "adj-positive-admin");
       const student = await makeStudent(escazu.id, escazu.organizationId, { lastName: "AdjPositive" });
 
-      // The system started tracking this student before the recorded day, so the day is in the current interval.
-      await prisma.student.update({ where: { id: student.id }, data: { progressBaselineAt: new Date("2026-03-01T00:00:00Z") } });
-      const before = await getAtBeltSummary(student.id, student.organizationId, ALLIANCE_PER_INTERVAL_CONFIG);
+      // The belt (and the tracking start) predate the recorded day, so the day counts. Alliance runs the legacy
+      // CUMULATIVE accounting in the test database, so progress is read through the organization's REAL configuration
+      // (the PER_INTERVAL behaviour of this action is pinned in coach-attendance-accounting.test.ts).
+      await prisma.student.update({
+        where: { id: student.id },
+        data: { beltAwardedAt: new Date("2026-01-01T12:00:00Z"), progressBaselineAt: new Date("2026-03-01T00:00:00Z") },
+      });
+      const realConfig = await resolvePromotionConfigMap(student.organizationId);
+      const before = await getAtBeltSummary(student.id, student.organizationId, realConfig);
 
       currentSession = { user: { id: admin.id, role: "ADMIN" }, activeOrganizationId: admin.organizationId };
       const result = await addAttendanceAdjustment(
@@ -548,7 +553,7 @@ describe("student detail actions", () => {
       );
       expect(result).toEqual({ ok: true });
 
-      const after = await getAtBeltSummary(student.id, student.organizationId, ALLIANCE_PER_INTERVAL_CONFIG);
+      const after = await getAtBeltSummary(student.id, student.organizationId, realConfig);
       expect(after.atBeltCount).toBe(before.atBeltCount + 1);
       expect(after.lifetimeCount).toBe(before.lifetimeCount + 1);
 
@@ -626,118 +631,9 @@ describe("student detail actions", () => {
       expect(await prisma.attendanceRecord.count({ where: { studentId: student.id } })).toBe(0);
     });
 
-    it("a second entry for the same day is kept in the history, adds nothing, and the coach is told", async () => {
-      const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
-      const admin = await makeStaffUser("ADMIN", "adj-sameday-admin");
-      const student = await makeStudent(escazu.id, escazu.organizationId, { lastName: "AdjSameDay" });
-      await prisma.student.update({ where: { id: student.id }, data: { progressBaselineAt: new Date("2026-03-01T00:00:00Z") } });
-
-      currentSession = { user: { id: admin.id, role: "ADMIN" }, activeOrganizationId: admin.organizationId };
-      const first = await addAttendanceAdjustment(admin.organizationId, {}, formData({ studentId: student.id, date: "2026-03-10", reason: "first" }));
-      const second = await addAttendanceAdjustment(admin.organizationId, {}, formData({ studentId: student.id, date: "2026-03-10", reason: "again" }));
-      expect(first).toEqual({ ok: true });
-      expect(second).toEqual({ ok: true, info: "alreadyCountedThatDay" });
-
-      expect(await prisma.attendanceRecord.count({ where: { studentId: student.id } })).toBe(2);
-      const perInterval = await getAtBeltSummary(student.id, student.organizationId, ALLIANCE_PER_INTERVAL_CONFIG);
-      expect(perInterval.atBeltCount).toBe(1);
-    });
-
-    it("a late entry for a day that already counted never displaces it: the real class stays the day's contribution", async () => {
-      const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
-      const admin = await makeStaffUser("ADMIN", "adj-nodisplace-admin");
-      const student = await makeStudent(escazu.id, escazu.organizationId, { lastName: "AdjNoDisplace" });
-      // Awarded at 14:00 CR on Mar 10 (20:00Z); the student then really trained that evening at 18:00 CR (00:00Z Mar 11).
-      await prisma.student.update({ where: { id: student.id }, data: { progressBaselineAt: new Date("2026-03-10T20:00:00Z") } });
-      await prisma.attendanceRecord.create({
-        data: {
-          studentId: student.id, academyId: escazu.id, organizationId: escazu.organizationId,
-          occurredAt: new Date("2026-03-11T00:00:00Z"), date: new Date("2026-03-10T00:00:00Z"),
-          type: "CHECKIN", delta: 1, source: "KIOSK",
-        },
-      });
-      const before = await getAtBeltSummary(student.id, student.organizationId, ALLIANCE_PER_INTERVAL_CONFIG);
-      expect(before.atBeltCount).toBe(1);
-
-      currentSession = { user: { id: admin.id, role: "ADMIN" }, activeOrganizationId: admin.organizationId };
-      const result = await addAttendanceAdjustment(admin.organizationId, {}, formData({ studentId: student.id, date: "2026-03-10", reason: "recorded next morning" }));
-      // The baseline here is a tracking start (not an award): that day's class cannot be placed before or after
-      // it, so the coach's entry is history only - flagged, never a contribution.
-      expect(result).toEqual({ ok: true, info: "trackingStartDayHistoryOnly" });
-      const after = await getAtBeltSummary(student.id, student.organizationId, ALLIANCE_PER_INTERVAL_CONFIG);
-      expect(after.atBeltCount).toBe(1); // still counted in the current interval
-      expect((await prisma.attendanceRecord.findFirstOrThrow({ where: { studentId: student.id, type: "ADJUSTMENT" } })).historyOnly).toBe(true);
-    });
-
-    describe("the day of a promotion: only the day is known, so no after-award time is invented", () => {
-      // Awarded at 14:00 CR on Tue 2026-03-10 (20:00Z). A coach-recorded entry for that day cannot be placed
-      // before or after the award.
-      const AWARD = new Date("2026-03-10T20:00:00Z");
-
-      async function awardedStudent(label: string) {
-        const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
-        const admin = await makeStaffUser("ADMIN", `adj-${label}-admin`);
-        const student = await makeStudent(escazu.id, escazu.organizationId, { lastName: label });
-        await prisma.student.update({ where: { id: student.id }, data: { progressBaselineAt: AWARD, progressBaselineKind: "AWARD" } });
-        currentSession = { user: { id: admin.id, role: "ADMIN" }, activeOrganizationId: admin.organizationId };
-        return { escazu, admin, student };
-      }
-      const record = (studentId: string, academyId: string, organizationId: string, occurredAt: string) =>
-        prisma.attendanceRecord.create({
-          data: { studentId, academyId, organizationId, occurredAt: new Date(occurredAt), date: new Date("2026-03-10T00:00:00Z"), type: "CHECKIN", delta: 1, source: "KIOSK" },
-        });
-      const count = (student: { id: string; organizationId: string }) =>
-        getAtBeltSummary(student.id, student.organizationId, ALLIANCE_PER_INTERVAL_CONFIG).then((s) => s.atBeltCount);
-
-      it("a late entry for the promotion day is history only: it adds nothing after the reset and says why", async () => {
-        const { admin, student } = await awardedStudent("PromoDayAlone");
-        const result = await addAttendanceAdjustment(admin.organizationId, {}, formData({ studentId: student.id, date: "2026-03-10", reason: "was at the ceremony class" }));
-        expect(result).toEqual({ ok: true, info: "promotionDayHistoryOnly" });
-        expect(await count(student)).toBe(0);
-        const row = await prisma.attendanceRecord.findFirstOrThrow({ where: { studentId: student.id } });
-        expect(row.occurredAt.getTime()).toBeLessThan(AWARD.getTime()); // before the award instant, never after it
-      });
-
-      it("it never displaces a real class after the award: that day's contribution stays in the new interval", async () => {
-        const { escazu, admin, student } = await awardedStudent("PromoDayAfter");
-        await record(student.id, escazu.id, escazu.organizationId, "2026-03-11T00:00:00Z"); // 18:00 CR, after the award
-        expect(await count(student)).toBe(1);
-        const result = await addAttendanceAdjustment(admin.organizationId, {}, formData({ studentId: student.id, date: "2026-03-10", reason: "late entry" }));
-        expect(result.ok).toBe(true);
-        expect(await count(student)).toBe(1);
-      });
-
-      it("it never pulls a pre-award class forward: a real class before the award stays in the completed interval", async () => {
-        const { escazu, admin, student } = await awardedStudent("PromoDayBefore");
-        await record(student.id, escazu.id, escazu.organizationId, "2026-03-10T12:00:00Z"); // 06:00 CR, before the award
-        expect(await count(student)).toBe(0);
-        await addAttendanceAdjustment(admin.organizationId, {}, formData({ studentId: student.id, date: "2026-03-10", reason: "second class that day" }));
-        expect(await count(student)).toBe(0);
-      });
-
-      it("the day after the promotion counts; the day before does not", async () => {
-        const { admin, student } = await awardedStudent("PromoDayNeighbours");
-        await addAttendanceAdjustment(admin.organizationId, {}, formData({ studentId: student.id, date: "2026-03-11", reason: "next day" }));
-        expect(await count(student)).toBe(1);
-        const before = await addAttendanceAdjustment(admin.organizationId, {}, formData({ studentId: student.id, date: "2026-03-09", reason: "day before" }));
-        expect(before).toEqual({ ok: true, info: "beforeLastPromotion" });
-        expect(await count(student)).toBe(1);
-      });
-    });
-
-    it("a day recorded for a date before the last promotion is kept but belongs to the completed interval", async () => {
-      const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
-      const admin = await makeStaffUser("ADMIN", "adj-before-admin");
-      const student = await makeStudent(escazu.id, escazu.organizationId, { lastName: "AdjBefore" });
-      await prisma.student.update({ where: { id: student.id }, data: { progressBaselineAt: new Date("2026-03-20T00:00:00Z") } });
-
-      currentSession = { user: { id: admin.id, role: "ADMIN" }, activeOrganizationId: admin.organizationId };
-      const result = await addAttendanceAdjustment(admin.organizationId, {}, formData({ studentId: student.id, date: "2026-03-10", reason: "late entry" }));
-      expect(result).toEqual({ ok: true, info: "beforeLastPromotion" });
-      const perInterval = await getAtBeltSummary(student.id, student.organizationId, ALLIANCE_PER_INTERVAL_CONFIG);
-      expect(perInterval.atBeltCount).toBe(0);
-      expect(perInterval.lifetimeCount).toBe(1);
-    });
+    // The PER_INTERVAL daily-limit / history-only / before-last-promotion feedback (a second same-day entry, the day of a
+    // promotion, the tracking-start day, a day before the promotion) and its CUMULATIVE counterpart are pinned in
+    // coach-attendance-accounting.test.ts, against private organizations on each accounting: Alliance is CUMULATIVE here.
 
     it("an in-scope INSTRUCTOR can successfully add an adjustment — the one write in this file INSTRUCTOR is allowed to make", async () => {
       const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });

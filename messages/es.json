@@ -788,6 +788,7 @@
         "beforeLastPromotion": "Se guardó en el historial, pero ese día es anterior a la última promoción, así que no cuenta para la siguiente.",
         "promotionDayHistoryOnly": "Guardado solo en el historial. Es el día de una promoción y no se puede saber si la clase fue antes o después de otorgarla, así que no suma para la siguiente. Una clase posterior cuenta al registrarse en el kiosco o el portal.",
         "trackingStartDayHistoryOnly": "Guardado solo en el historial. El seguimiento del progreso empezó este día y no se puede saber si la clase fue antes o después, así que no suma para la siguiente promoción. Una clase posterior cuenta al registrarse en el kiosco o el portal.",
+        "beforeBeltDate": "Guardado en el historial, pero ese día es anterior a la entrega de este cinturón, así que no cuenta para la siguiente promoción.",
         "invalid": "Por favor revisa el formulario.",
         "notFound": "No se pudo agregar este día de asistencia.",
         "archived": "Este estudiante está archivado — no se puede agregar asistencia."
