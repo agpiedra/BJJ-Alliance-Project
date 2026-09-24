@@ -3,6 +3,7 @@
 import { z } from "zod";
 import { resolveActionContext } from "@/lib/tenant/context";
 import { changeTrack } from "@/lib/promotion/track-change";
+import { refreshPromotionPages } from "@/lib/promotion/refresh-pages";
 import type { ActionState } from "@/lib/action-state";
 
 const trackChangeSchema = z.object({
@@ -43,5 +44,6 @@ export async function changeTrackAction(
   if (!result.ok) {
     return { error: result.error };
   }
+  await refreshPromotionPages(data.studentId);
   return { ok: true };
 }

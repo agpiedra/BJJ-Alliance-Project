@@ -52,13 +52,33 @@ export const ADULT_RANKS: Array<{
   isTerminal: boolean;
   primaryColor: string;
   barColor: string;
+  /** Set only where a rank is NOT attendance-based (black belt): overrides the track's mode for this rank. */
+  progressionMode?: "TIME";
+  /** Months to reach degree i+1 from degree i (index = current degree count). Degrees beyond the list are configured later, not declared impossible. */
+  stripeIntervalMonths?: number[];
 }> = [
   { code: "WHITE", labelEs: "Blanco", labelEn: "White", order: 1, maxStripes: 4, attendancesPerStripe: 30, attendancesForExam: 30, isTerminal: false, primaryColor: "#F0EBE0", barColor: ADULT_BAR_BLACK },
   { code: "BLUE", labelEs: "Azul", labelEn: "Blue", order: 2, maxStripes: 4, attendancesPerStripe: 65, attendancesForExam: 65, isTerminal: false, primaryColor: "#215DA5", barColor: ADULT_BAR_BLACK },
   { code: "PURPLE", labelEs: "Morado", labelEn: "Purple", order: 3, maxStripes: 4, attendancesPerStripe: 75, attendancesForExam: 75, isTerminal: false, primaryColor: "#652F94", barColor: ADULT_BAR_BLACK },
   { code: "BROWN", labelEs: "Café", labelEn: "Brown", order: 4, maxStripes: 4, attendancesPerStripe: 85, attendancesForExam: 85, isTerminal: false, primaryColor: "#643D20", barColor: ADULT_BAR_BLACK },
-  // Terminal: zero seeded stripes, matches the old BeltRequirement's BLACK row.
-  { code: "BLACK", labelEs: "Negro", labelEn: "Black", order: 5, maxStripes: 0, attendancesPerStripe: null, attendancesForExam: null, isTerminal: true, primaryColor: "#111116", barColor: ADULT_BAR_RED },
+  // Terminal, and TIME-based rather than attendance-based (docs/PROMOTION_PROGRESS_PROPOSAL.md,
+  // the academy's decision): black -> 1st degree 36 months, 1 -> 2 36, 2 -> 3 36, 3 -> 4 60,
+  // 4 -> 5 60, 5 -> 6 60. Eligibility is configured through the 6th degree only; later degrees
+  // stay unconfigured (not declared impossible) until the academy supplies their intervals.
+  {
+    code: "BLACK",
+    labelEs: "Negro",
+    labelEn: "Black",
+    order: 5,
+    maxStripes: 6,
+    attendancesPerStripe: null,
+    attendancesForExam: null,
+    isTerminal: true,
+    primaryColor: "#111116",
+    barColor: ADULT_BAR_RED,
+    progressionMode: "TIME",
+    stripeIntervalMonths: [36, 36, 36, 60, 60, 60],
+  },
 ];
 
 /**

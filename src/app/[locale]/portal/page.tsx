@@ -17,7 +17,8 @@ import {
   type WeekCalendarLegendItem,
 } from "@/components/ui/week-calendar";
 import { rowFor } from "@/components/ui/week-calendar-grid";
-import { getAtBeltSummary, type AtBeltSummary } from "@/lib/students/attendance-summary";
+import { getAtBeltSummary } from "@/lib/students/attendance-summary";
+import { buildProgressView } from "@/lib/promotion/progress-view";
 import { resolvePromotionConfigMap } from "@/lib/promotion/config";
 import { getAttendanceHistory } from "@/lib/students/attendance-history";
 import { getOwnPromotionHistory } from "./get-promotion-history";
@@ -55,29 +56,6 @@ function shortWeekdayLabel(date: Date, locale: string): string {
   const raw = new Intl.DateTimeFormat(locale === "es" ? "es-CR" : "en-US", { weekday: "short" }).format(date);
   const trimmed = raw.replace(/\.$/, "");
   return trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
-}
-
-/**
- * Hero progress bar's current/target pair — the exact same derivation as the
- * roster page's own page-local `resolveProgressTarget` (`(staff)/students/
- * page.tsx`), duplicated rather than imported (that function isn't exported,
- * and both are thin presentation-only reads of `AtBeltSummary`'s already-
- * computed fields — Rule 8 forbids reimplementing the belt math itself, not
- * this kind of view-level pairing, which is why the roster page doesn't put
- * it in `src/lib/students/*` either). `null` means no further computable
- * progress (e.g. a maxed-out belt with no exam threshold configured).
- */
-function resolveProgressTarget(summary: AtBeltSummary): { current: number; target: number } | null {
-  if (summary.nextTarget === "STRIPE") {
-    return { current: summary.atBeltCount, target: (summary.currentStripes + 1) * summary.attendancesPerStripe };
-  }
-  if (summary.nextTarget === "BELT" && summary.attendancesForExam > 0) {
-    return {
-      current: summary.atBeltCount,
-      target: summary.maxStripes * summary.attendancesPerStripe + summary.attendancesForExam,
-    };
-  }
-  return null;
 }
 
 // Same precedence and variant mapping as the roster page's own page-local
@@ -205,7 +183,14 @@ export default async function StudentPortalPage({
   const tAdminSchedule = await getTranslations("adminSchedule");
   const tClassType = await getTranslations("classType");
 
-  const progressTarget = resolveProgressTarget(summary);
+  // One display shaping for every surface (buildProgressView): an eligible student shows a full bar with the
+  // count capped at the target - never 42 / 30 - and a time-based degree shows a due date, not a fraction.
+  const progressView = buildProgressView(summary);
+  const progressTarget =
+    progressView.current !== null && progressView.target !== null
+      ? { current: progressView.current, target: progressView.target }
+      : null;
+  const dueDateFormatted = formatTimestampInAcademyZone(summary.dueDate, locale);
   const legend: WeekCalendarLegendItem[] = CLASS_TYPE_LEGEND_ORDER.map((type) => ({
     colorClassName: CLASS_TYPE_COLOR_CLASS[type],
     label: tClassType(type),
@@ -250,16 +235,27 @@ export default async function StudentPortalPage({
             </div>
 
             <div className="flex flex-col gap-1 text-sm">
-              <p>{t("progress.atBeltCount", { count: summary.atBeltCount })}</p>
+              <p>{t("progress.atBeltCount", { count: progressView.actualCount })}</p>
 
-              {summary.remainingAttendance !== null && (
+              {progressView.state === "in_progress" && (
                 <p className="text-muted-foreground">
-                  {t("progress.remainingToNextStripe", { count: summary.remainingAttendance })}
+                  {t("progress.remainingToNextStripe", { count: progressView.remaining ?? 0 })}
                 </p>
               )}
 
-              {summary.remainingAttendance === null && summary.nextTarget === "BELT" && summary.isEligible && (
-                <p className="font-medium">{t("progress.examEligible")}</p>
+              {/* Eligible always means ready for instructor review - never an automatic award. */}
+              {progressView.state === "eligible" && <p className="font-medium">{t("progress.eligibleForReview")}</p>}
+
+              {progressView.state === "time_pending" && dueDateFormatted && (
+                <p className="text-muted-foreground">{t("progress.timePending", { date: dueDateFormatted })}</p>
+              )}
+
+              {progressView.state === "time_anchor_missing" && (
+                <p className="text-muted-foreground">{t("progress.timeAnchorMissing")}</p>
+              )}
+
+              {progressView.state === "not_configured" && (
+                <p className="text-muted-foreground">{t("progress.notConfigured")}</p>
               )}
 
               <p className="text-muted-foreground">

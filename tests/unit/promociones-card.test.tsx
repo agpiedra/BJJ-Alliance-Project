@@ -14,6 +14,10 @@ import enMessages from "../../messages/en.json";
  * unique SVG ids) will build on — see `tests/setup.ts` and the existing
  * `belt-graphic.test.tsx` / `record-payment-form.test.tsx` for the
  * established pattern this file follows.
+ *
+ * The card no longer derives anything: it renders the shared
+ * `buildProgressView` result (docs/PROMOTION_PROGRESS_PROPOSAL.md), so these
+ * tests feed it view-models and assert the wording per display state.
  */
 vi.mock("../../src/app/[locale]/(staff)/students/[id]/promotion-actions", () => ({
   awardFromStudentPage: vi.fn(),
@@ -21,9 +25,6 @@ vi.mock("../../src/app/[locale]/(staff)/students/[id]/promotion-actions", () => 
 }));
 vi.mock("../../src/app/[locale]/(staff)/students/[id]/track-change-actions", () => ({
   changeTrackAction: vi.fn(),
-}));
-vi.mock("../../src/app/[locale]/(staff)/students/[id]/promotion-credit-actions", () => ({
-  adjustPromotionCredit: vi.fn(),
 }));
 
 const { PromocionesCard } = await import("../../src/app/[locale]/(staff)/students/[id]/promociones-card");
@@ -37,22 +38,31 @@ const BASE_BELT = {
   visibleStripeSlots: 4,
 };
 
-const BASE_PROPS: React.ComponentProps<typeof PromocionesCard> = {
+type Props = React.ComponentProps<typeof PromocionesCard>;
+type View = Props["view"];
+
+const IN_PROGRESS: View = {
+  state: "in_progress",
+  nextTarget: "STRIPE",
+  current: 47,
+  target: 50,
+  percent: 94,
+  remaining: 3,
+  actualCount: 47,
+  reachedOn: null,
+};
+
+const BASE_PROPS: Props = {
   organizationId: "org-1",
   studentId: "student-1",
   belt: BASE_BELT,
   label: "White",
   currentStripes: 2,
   maxStripes: 4,
-  atBeltCount: 47,
-  creditedClasses: 0,
   lifetimeCount: 47,
-  nextTarget: "STRIPE",
-  remainingAttendance: 3,
-  attendancesPerStripe: 50,
+  view: IN_PROGRESS,
   dueDateFormatted: null,
-  isEligible: false,
-  mode: "ATTENDANCE",
+  reachedOnFormatted: null,
   history: [],
   creditHistory: [],
   canAct: true,
@@ -60,7 +70,7 @@ const BASE_PROPS: React.ComponentProps<typeof PromocionesCard> = {
   trackChange: null,
 };
 
-function renderCard(overrides: Partial<React.ComponentProps<typeof PromocionesCard>> = {}) {
+function renderCard(overrides: Partial<Props> = {}) {
   return render(
     <NextIntlClientProvider locale="en" messages={enMessages}>
       <PromocionesCard {...BASE_PROPS} {...overrides} />
@@ -69,51 +79,81 @@ function renderCard(overrides: Partial<React.ComponentProps<typeof PromocionesCa
 }
 
 describe("PromocionesCard — ineligible state states the specific reason", () => {
-  it("ATTENDANCE mode: shows the count/threshold/remaining text, not a bare disabled button", () => {
-    renderCard({ mode: "ATTENDANCE", isEligible: false, atBeltCount: 47, remainingAttendance: 3 });
+  it("attendance rank: shows the count/threshold/remaining text, not a bare disabled button", () => {
+    renderCard();
     expect(screen.getByText("47 / 50 · 3 remaining")).toBeInTheDocument();
-    expect(screen.queryByText("Eligible now.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Eligible for instructor review.")).not.toBeInTheDocument();
   });
 
-  it("TIME mode: shows the due date text instead of an attendance count", () => {
+  it("time-based rank: shows the due date text instead of an attendance count", () => {
     renderCard({
-      mode: "TIME",
-      isEligible: false,
-      remainingAttendance: null,
+      view: { ...IN_PROGRESS, state: "time_pending", current: null, target: null, remaining: null, percent: 20 },
       dueDateFormatted: "October 15, 2026",
     });
     expect(screen.getByText("Next grade on October 15, 2026")).toBeInTheDocument();
   });
 
-  it("HYBRID mode: shows both dimensions concatenated (known simplification — see scripts/pending-callers.ts)", () => {
-    renderCard({
-      mode: "HYBRID",
-      isEligible: false,
-      atBeltCount: 47,
-      remainingAttendance: 3,
-      dueDateFormatted: "October 15, 2026",
-    });
+  it("HYBRID: shows both dimensions concatenated (known simplification — see scripts/pending-callers.ts)", () => {
+    renderCard({ dueDateFormatted: "October 15, 2026" });
     expect(screen.getByText("47 / 50 · 3 remaining · Next grade on October 15, 2026")).toBeInTheDocument();
   });
 
-  it("MANUAL mode: shows the coach's-discretion statement regardless of isEligible", () => {
-    renderCard({ mode: "MANUAL", nextTarget: "MANUAL_DISPLAY", isEligible: false });
+  it("MANUAL mode: shows the coach's-discretion statement", () => {
+    renderCard({ view: { ...IN_PROGRESS, state: "manual", current: null, target: null, remaining: null, percent: null } });
     expect(screen.getByText("Promotion is at the coach's discretion.")).toBeInTheDocument();
-
-    renderCard({ mode: "MANUAL", nextTarget: "MANUAL_DISPLAY", isEligible: true });
-    expect(screen.getAllByText("Promotion is at the coach's discretion.").length).toBeGreaterThan(0);
   });
 
-  it("an eligible student shows the eligible statement instead of a reason", () => {
-    renderCard({ mode: "ATTENDANCE", isEligible: true });
-    expect(screen.getByText("Eligible now.")).toBeInTheDocument();
+  it("a black belt with no known last-promotion date says the date is needed - no due date, and attendance is still shown", () => {
+    renderCard({
+      view: { ...IN_PROGRESS, state: "time_anchor_missing", current: null, target: null, remaining: null, percent: null, actualCount: 12 },
+    });
+    expect(screen.getByText(enMessages.students.detail.promociones.lastPromotionDateNeeded)).toBeInTheDocument();
+    expect(screen.getByText("12")).toBeInTheDocument();
+    expect(screen.queryByText(/Next grade on/)).not.toBeInTheDocument();
   });
 
+  it("a degree with no configured interval says it is not configured yet - never impossible or eligible", () => {
+    renderCard({
+      view: { ...IN_PROGRESS, state: "not_configured", current: null, target: null, remaining: null, percent: null },
+    });
+    expect(screen.getByText(enMessages.students.detail.promociones.nextDegreeNotConfigured)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Award promotion" })).toBeDisabled();
+  });
+});
+
+describe("PromocionesCard — eligible state", () => {
+  const ELIGIBLE: View = { ...IN_PROGRESS, state: "eligible", current: 50, target: 50, percent: 100, remaining: 0, actualCount: 57 };
+
+  it("says eligible for instructor review (never an award), with no overflowing fraction, and the real count on its own line", () => {
+    renderCard({ view: ELIGIBLE });
+    expect(screen.getByText("Eligible for instructor review.")).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/57 \/ 50/);
+    expect(screen.getByText("57")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Award promotion" })).toBeEnabled();
+  });
+
+  it("shows the reconstructed threshold date, labelled as recalculated from current records", () => {
+    renderCard({ view: ELIGIBLE, reachedOnFormatted: "03/12/2026" });
+    expect(screen.getByText("Threshold reached on 03/12/2026 (recalculated from current records)")).toBeInTheDocument();
+  });
+
+  it("shows no threshold date when there is none", () => {
+    renderCard({ view: ELIGIBLE, reachedOnFormatted: null });
+    expect(screen.queryByText(/recalculated from current records/)).not.toBeInTheDocument();
+  });
+});
+
+describe("PromocionesCard — read-only", () => {
   it("a read-only session (INSTRUCTOR/STUDENT, canAct=false) still sees the specific reason and no action controls — read-only is never silent", () => {
-    renderCard({ canAct: false, mode: "ATTENDANCE", isEligible: false, atBeltCount: 47, remainingAttendance: 3 });
+    renderCard({ canAct: false });
     expect(screen.getByText("47 / 50 · 3 remaining")).toBeInTheDocument();
     expect(screen.getByText("Only admins and directors can award or correct promotions.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Award promotion" })).not.toBeInTheDocument();
     expect(screen.queryByText("Manual promote / correct")).not.toBeInTheDocument();
+  });
+
+  it("no credit-entry control exists on the card (no head-start credits)", () => {
+    renderCard();
+    expect(screen.queryByText("Correct onboarding credit")).not.toBeInTheDocument();
   });
 });

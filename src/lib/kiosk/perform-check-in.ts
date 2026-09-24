@@ -3,8 +3,10 @@ import { requireEnv } from "@/lib/env";
 import { attendanceDateFromZoned, crDayOfWeek, toAttendanceDate } from "@/lib/scheduling/zone";
 import { selectActiveSessionOccurrence } from "@/lib/scheduling/check-in-window";
 import { getAtBeltSummary, type AtBeltSummary } from "@/lib/students/attendance-summary";
+import { isDayContribution } from "@/lib/promotion/progress-days";
 import type { BeltVisualData } from "@/components/belt-graphic/belt-graphic";
 import { resolvePromotionConfigMap } from "@/lib/promotion/config";
+import { prisma } from "@/lib/prisma";
 import { isUniqueConstraintError } from "@/lib/prisma-errors";
 import { notifyEligibilityReached } from "@/lib/notifications/notify-eligibility";
 import { fireAndForget } from "@/lib/notifications/fire-and-forget";
@@ -18,6 +20,23 @@ import {
   type ClassType,
   type DayOfWeek,
 } from "@/generated/prisma/client";
+
+/**
+ * What this check-in did for the student's promotion progress - reported
+ * truthfully so the screen never presents an extra same-day class as another
+ * progress day (docs/PROMOTION_PROGRESS_PROPOSAL.md: at most ONE qualifying
+ * attendance per Costa Rica calendar day). The attendance itself is always
+ * recorded either way.
+ *  - counted: this is the day's one contribution.
+ *  - already_counted_today: an earlier qualifying attendance already made the
+ *    day's contribution; this one is recorded but adds 0.
+ *  - not_promotion_class: this attendance does not qualify (a class that does not
+ *    count toward promotion, or a tap not yet matched to a class).
+ *  - before_last_promotion: the day's first attendance, but it happened before the
+ *    student's last promotion (an offline replay that arrived after the award), so it
+ *    belongs to the completed interval and adds nothing toward the next one.
+ */
+export type ProgressOutcome = "counted" | "already_counted_today" | "not_promotion_class" | "before_last_promotion";
 
 /** The class an attendance ended up attributed to, for the confirmation screen. */
 export interface MatchedClass {
@@ -48,7 +67,9 @@ export type CheckInResult =
         currentStripes: number;
       };
       summary: AtBeltSummary;
-      earnedStripe: boolean;
+      /** This check-in took the student to (or past) the threshold: "eligible for instructor review" - never an automatic award. */
+      thresholdReached: boolean;
+      progressOutcome: ProgressOutcome;
       isVisitor: boolean;
       /** The checking-in student's home academy name — populated unconditionally
        * (not just for visitors), so the kiosk UI can render a visitor badge
@@ -266,6 +287,7 @@ export async function performCheckIn(input: PerformCheckInInput): Promise<CheckI
         classSessionId: null,
         date: attendanceDate,
         type: AttendanceType.CHECKIN,
+        voidedAt: null,
       },
       select: { id: true },
     });
@@ -308,6 +330,29 @@ export async function performCheckIn(input: PerformCheckInInput): Promise<CheckI
 
   const summaryAfter = await getAtBeltSummary(student.id, input.context.organizationId, configByTrack);
 
+  // Under PER_INTERVAL accounting only the day's earliest qualifying attendance
+  // contributes. Legacy CUMULATIVE tracks count every qualifying class, so there
+  // is nothing to explain there.
+  let progressOutcome: ProgressOutcome = "counted";
+  if (summaryAfter.accounting === "PER_INTERVAL") {
+    if (occurrence && !occurrence.session.countsTowardPromotion) {
+      progressOutcome = "not_promotion_class";
+    } else if (!occurrence && matchSource === AttendanceMatchSource.UNMATCHED) {
+      progressOutcome = "not_promotion_class";
+    } else {
+      const contributes = await isDayContribution(prisma, {
+        studentId: student.id,
+        organizationId: input.context.organizationId,
+        recordId: created.id,
+      });
+      progressOutcome = !contributes
+        ? "already_counted_today"
+        : now < summaryAfter.progressBaselineAt
+          ? "before_last_promotion"
+          : "counted";
+    }
+  }
+
   if (summaryBefore.remainingAttendance === 1 && summaryAfter.remainingAttendance !== 1) {
     const type = summaryAfter.nextTarget === "BELT" && summaryAfter.isEligible ? "EXAM_THRESHOLD" : "STRIPE_THRESHOLD";
     // See fire-and-forget.ts for why this is wrapped in after() with a
@@ -337,10 +382,12 @@ export async function performCheckIn(input: PerformCheckInInput): Promise<CheckI
     },
     summary: summaryAfter,
     // "This specific check-in was the one that crossed the threshold" — works
-    // for both the ordinary stripe-earning case and the exam-eligibility case,
-    // since getAtBeltSummary already folds exam-threshold progress into
-    // remainingAttendance once a student is at max stripes.
-    earnedStripe: summaryBefore.remainingAttendance === 1 && summaryAfter.remainingAttendance !== 1,
+    // for both the stripe case and the belt-exam case, since getAtBeltSummary
+    // folds exam-threshold progress into remainingAttendance once a student is
+    // at max stripes. It means ELIGIBLE FOR REVIEW: a check-in never awards
+    // anything, an instructor does.
+    thresholdReached: summaryBefore.remainingAttendance === 1 && summaryAfter.remainingAttendance !== 1,
+    progressOutcome,
     isVisitor: student.homeAcademyId !== input.academyId,
     homeAcademyName: student.homeAcademy.name,
     attendanceRecordId: created.id,

@@ -31,6 +31,7 @@ import {
 import { listOverdueStudents, type OverdueStudent } from "@/lib/payments/list-overdue";
 import { getActiveStudentCounts } from "@/lib/students/active-counts";
 import { getAtBeltSummary } from "@/lib/students/attendance-summary";
+import { buildProgressView } from "@/lib/promotion/progress-view";
 import { resolvePromotionConfigMap } from "@/lib/promotion/config";
 type Belt = "WHITE" | "BLUE" | "PURPLE" | "BROWN" | "BLACK";
 import { resolveNextRank } from "@/lib/promotion/config";
@@ -189,6 +190,7 @@ export default async function DashboardPage() {
     AND: [
       branchScopeWhere(context),
       { type: "CHECKIN" },
+      { voidedAt: null },
       { occurredAt: { gte: from.toJSDate(), lte: to.toJSDate() } },
     ],
   });
@@ -330,6 +332,19 @@ export default async function DashboardPage() {
   const queueRows = await Promise.all(
     promotionQueue.map(async (candidate) => {
       const summary = await getAtBeltSummary(candidate.studentId, context.organizationId, queueConfigByTrack);
+      // One display shaping for every surface: the target and the capped count come from the engine, never
+      // rebuilt here (an eligible student never shows an overflowing 42 / 30).
+      const view = buildProgressView(summary);
+      if (view.current === null || view.target === null) {
+        // A time-based degree (black belt) has no attendance fraction to show.
+        return {
+          candidate,
+          detail: t("panel.promotionQueue.timeRow", {
+            ordinal: summary.currentStripes + 1,
+            belt: locale === "es" ? summary.currentBeltLabelEs : summary.currentBeltLabelEn,
+          }),
+        };
+      }
       if (candidate.status === "exam-eligible") {
         // Real catalog lookup (Phase 2c-ii) — replaces eligibility.ts's old
         // hardcoded BELT_ORDER array. A read/display path: a broken catalog
@@ -341,8 +356,8 @@ export default async function DashboardPage() {
         return {
           candidate,
           detail: t("panel.promotionQueue.examRow", {
-            current: summary.atBeltCount,
-            target: summary.maxStripes * summary.attendancesPerStripe + summary.attendancesForExam,
+            current: view.current,
+            target: view.target,
             belt: targetLabel,
           }),
         };
@@ -350,8 +365,8 @@ export default async function DashboardPage() {
       return {
         candidate,
         detail: t("panel.promotionQueue.stripeRow", {
-          current: summary.atBeltCount,
-          target: (summary.currentStripes + 1) * summary.attendancesPerStripe,
+          current: view.current,
+          target: view.target,
           ordinal: summary.currentStripes + 1,
           belt: locale === "es" ? summary.currentBeltLabelEs : summary.currentBeltLabelEn,
         }),
@@ -366,7 +381,7 @@ export default async function DashboardPage() {
     candidate,
     detail: t("panel.promotionQueue.upcomingRow", {
       current: candidate.atBeltCount,
-      target: candidate.atBeltCount + (candidate.remainingAttendance ?? 0),
+      target: candidate.target ?? candidate.atBeltCount + (candidate.remainingAttendance ?? 0),
       remaining: candidate.remainingAttendance ?? 0,
     }),
   }));

@@ -339,32 +339,34 @@ If step 11 fails on TLS and the cause is not something you can fix quickly (typi
 
 ### 1a. Set up the Healthchecks.io dead-man's switch (C1) before relying on the crons
 
-C1 (`docs/MULTI_ACADEMY_AND_KIDS_BELTS.md`) gave both scheduled jobs a `JobRun` history and a
-Healthchecks.io ping (`src/lib/jobs/heartbeat.ts`), but the account and the two checks
-themselves are **not part of this codebase** — do this once, at deploy time, as a real
+C1 (`docs/MULTI_ACADEMY_AND_KIDS_BELTS.md`) gave the scheduled job a `JobRun` history and a
+Healthchecks.io ping (`src/lib/jobs/heartbeat.ts`), but the account and the check
+itself are **not part of this codebase** — do this once, at deploy time, as a real
 manual step:
 
 1. Create a free Healthchecks.io account (or use an existing team one).
-2. Create **two** checks, one per job, each with its schedule set to the EXACT cron
+2. Create **one** check for the job, with its schedule set to the EXACT cron
    expression `vercel.json` already uses (Healthchecks.io accepts a cron schedule directly —
    paste it verbatim, don't re-derive it by hand):
    | Job | Cron schedule (paste into Healthchecks.io) | Grace period |
    |---|---|---|
    | `weekly-digest` | `0 13 * * 1` (Monday 07:00 America/Costa_Rica) | 6 hours — the digest is informational; a few hours late is not worth waking anyone at 2am for. |
-   | `promotion-auto-award` | `0 12 * * *` (daily 06:00 America/Costa_Rica) | 3 hours — this one writes real promotions; a longer silent gap is worth knowing about sooner. |
-3. Copy each check's own "ping URL" (`https://hc-ping.com/<uuid>` — a plain GET to that URL
+   There is no promotion job: every promotion is awarded by an instructor, so the former
+   `promotion-auto-award` cron (and its `HEALTHCHECK_PROMOTION_URL`) no longer exists. Delete that
+   Healthchecks.io check and env var if you created them earlier.
+3. Copy the check's own "ping URL" (`https://hc-ping.com/<uuid>` — a plain GET to that URL
    means success, `<url>/fail` means failure; `heartbeat.ts` sends both forms itself, you
    never construct the `/fail` suffix by hand).
-4. Set them as **`HEALTHCHECK_DIGEST_URL`** and **`HEALTHCHECK_PROMOTION_URL`** in Vercel's
+4. Set it as **`HEALTHCHECK_DIGEST_URL`** in Vercel's
    environment variables, scoped to Production only (same scoping mistake #2 below warns
    about for `CRON_SECRET` — get this one right the first time).
 5. Verify: after the next real cron run (or by curling the route by hand with
    `CRON_SECRET`, matching this doc's own verification pattern elsewhere), Healthchecks.io's
-   dashboard should show a green "last ping" for both checks, and
+   dashboard should show a green "last ping" for the check, and
    `GET /api/health/jobs` (behind `CRON_SECRET`, same shared secret as the crons themselves)
-   should show `heartbeatStatus: "ok"` on the latest `JobRun` row for each job.
+   should show `heartbeatStatus: "ok"` on the latest `JobRun` row for the job.
 
-**Until this is done**, both jobs still run and still write their own `JobRun` history —
+**Until this is done**, the job still runs and still writes its own `JobRun` history —
 nothing is blocked on Healthchecks.io existing — but `heartbeatStatus` reads
 `"not_configured"` instead of `"ok"`/`"failed"`, visible on the same `/api/health/jobs`
 endpoint, so the gap is a fact you can see, not a silent assumption.

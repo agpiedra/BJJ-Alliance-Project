@@ -3,12 +3,8 @@ import { getTestPrismaClient } from "../helpers/test-db";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { requireEnv } from "../../src/lib/env";
 import { digestLookupSecret, hashSecret } from "../../src/lib/crypto";
-import { toAttendanceDate } from "../../src/lib/scheduling/zone";
 import type { TenantContext } from "../../src/lib/tenant/types";
 import { adultRankId } from "../helpers/belt-ranks";
-import { ALLIANCE_ATTENDANCE_CONFIG } from "../helpers/promotion-config";
-
-const DAY_MS = 24 * 60 * 60 * 1000;
 
 // `getStudentForStaff` / `updateStudent` / `archiveStudent` /
 // `approveStudent` / `regenerateStudentCode` all reach
@@ -39,6 +35,7 @@ const { addAttendanceAdjustment } = await import(
 );
 const { getTenantContext } = await import("../../src/lib/tenant/context");
 const { getAtBeltSummary } = await import("../../src/lib/students/attendance-summary");
+const { resolvePromotionConfigMap } = await import("../../src/lib/promotion/config");
 
 const prisma = getTestPrismaClient();
 
@@ -166,32 +163,6 @@ async function makeStudent(
   });
   cleanupStudentIds.push(student.id);
   return student;
-}
-
-/** Writes `count` real CHECKIN rows, one per day starting at `startAt` — the
- * same shape `tests/integration/attendance-summary.test.ts` uses to build up
- * atBeltCount toward a stripe threshold. */
-async function addCheckins(
-  studentId: string,
-  academyId: string,
-  organizationId: string,
-  count: number,
-  startAt: Date,
-) {
-  const rows = Array.from({ length: count }, (_, i) => {
-    const occurredAt = new Date(startAt.getTime() + i * DAY_MS);
-    return {
-      studentId,
-      academyId,
-      organizationId,
-      occurredAt,
-      date: toAttendanceDate(occurredAt),
-      type: "CHECKIN" as const,
-      delta: 1,
-      source: "STAFF" as const,
-    };
-  });
-  await prisma.attendanceRecord.createMany({ data: rows });
 }
 
 function auditRowsFor(studentId: string, action: string) {
@@ -559,70 +530,110 @@ describe("student detail actions", () => {
   // INSTRUCTOR too — this is the one write in this file an in-scope
   // INSTRUCTOR is genuinely allowed to make.
   describe("addAttendanceAdjustment", () => {
-    it("a positive adjustment increases atBeltCount, verified via getAtBeltSummary", async () => {
+    it("a coach-added day is exactly one attendance day (delta 1) on the Costa Rica day being recorded, with an audit row", async () => {
       const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
       const admin = await makeStaffUser("ADMIN", "adj-positive-admin");
       const student = await makeStudent(escazu.id, escazu.organizationId, { lastName: "AdjPositive" });
 
-      const before = await getAtBeltSummary(student.id, student.organizationId, ALLIANCE_ATTENDANCE_CONFIG);
+      // The belt (and the tracking start) predate the recorded day, so the day counts. Alliance runs the legacy
+      // CUMULATIVE accounting in the test database, so progress is read through the organization's REAL configuration
+      // (the PER_INTERVAL behaviour of this action is pinned in coach-attendance-accounting.test.ts).
+      await prisma.student.update({
+        where: { id: student.id },
+        data: { beltAwardedAt: new Date("2026-01-01T12:00:00Z"), progressBaselineAt: new Date("2026-03-01T00:00:00Z") },
+      });
+      const realConfig = await resolvePromotionConfigMap(student.organizationId);
+      const before = await getAtBeltSummary(student.id, student.organizationId, realConfig);
 
       currentSession = { user: { id: admin.id, role: "ADMIN" }, activeOrganizationId: admin.organizationId };
       const result = await addAttendanceAdjustment(
         admin.organizationId,
         {},
-        formData({ studentId: student.id, delta: "3", reason: "makeup classes" }),
+        formData({ studentId: student.id, date: "2026-03-10", reason: "makeup class" }),
       );
-      expect(result.ok).toBe(true);
+      expect(result).toEqual({ ok: true });
 
-      const after = await getAtBeltSummary(student.id, student.organizationId, ALLIANCE_ATTENDANCE_CONFIG);
-      expect(after.atBeltCount).toBe(before.atBeltCount + 3);
-      expect(after.lifetimeCount).toBe(before.lifetimeCount + 3);
+      const after = await getAtBeltSummary(student.id, student.organizationId, realConfig);
+      expect(after.atBeltCount).toBe(before.atBeltCount + 1);
+      expect(after.lifetimeCount).toBe(before.lifetimeCount + 1);
 
-      const audits = await auditRowsFor(
-        (await prisma.attendanceRecord.findFirstOrThrow({
-          where: { studentId: student.id, type: "ADJUSTMENT" },
-        })).id,
-        "attendance.adjustment",
-      );
+      const record = await prisma.attendanceRecord.findFirstOrThrow({
+        where: { studentId: student.id, type: "ADJUSTMENT" },
+      });
+      // The ledger day is the CR day recorded (Mar 10), attributed to midday CR of that unambiguous day
+      // (18:00Z), never "now".
+      expect(record.date.toISOString().slice(0, 10)).toBe("2026-03-10");
+      expect(record.occurredAt.toISOString()).toBe("2026-03-10T18:00:00.000Z");
+      expect(record.delta).toBe(1);
+
+      const audits = await auditRowsFor(record.id, "attendance.adjustment");
       expect(audits).toHaveLength(1);
       expect(audits[0].entityType).toBe("AttendanceRecord");
       expect(audits[0].actorId).toBe(admin.id);
       expect(audits[0].academyId).toBe(escazu.id);
       expect(audits[0].before).toBeNull();
-      expect(audits[0].after).toMatchObject({ delta: 3, reason: "makeup classes" });
+      expect(audits[0].after).toMatchObject({ delta: 1, reason: "makeup class", day: "2026-03-10" });
     });
 
-    it("a negative adjustment decreases atBeltCount and can bring a student back below a threshold already crossed", async () => {
+    it("arbitrary progress credit is refused: a posted delta (positive or negative) is rejected and nothing is written", async () => {
       const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
       const admin = await makeStaffUser("ADMIN", "adj-negative-admin");
-      const beltAwardedAt = new Date("2026-03-01T12:00:00Z");
-      // WHITE requires 30 attendancesPerStripe (see prisma/seed) — 30
-      // CHECKIN rows crosses the first-stripe threshold exactly.
-      const student = await makeStudent(escazu.id, escazu.organizationId, {
-        lastName: "AdjNegative",
-        currentBelt: "WHITE",
-        currentStripes: 0,
-        beltAwardedAt,
-      });
+      const student = await makeStudent(escazu.id, escazu.organizationId, { lastName: "AdjNegative" });
 
-      await addCheckins(student.id, escazu.id, escazu.organizationId, 30, new Date(beltAwardedAt.getTime() + DAY_MS));
-      const crossed = await getAtBeltSummary(student.id, student.organizationId, ALLIANCE_ATTENDANCE_CONFIG);
-      expect(crossed.atBeltCount).toBe(30);
-      expect(crossed.remainingAttendance).toBe(0);
+      currentSession = { user: { id: admin.id, role: "ADMIN" }, activeOrganizationId: admin.organizationId };
+      for (const delta of ["-5", "3", "1"]) {
+        const result = await addAttendanceAdjustment(
+          admin.organizationId,
+          {},
+          formData({ studentId: student.id, delta, reason: "head start" }),
+        );
+        expect(result.error, `delta ${delta}`).toBe("invalid");
+      }
+      expect(await prisma.attendanceRecord.count({ where: { studentId: student.id } })).toBe(0);
+    });
+
+    it("a real form post works: the framework's own $ACTION_* fields do not make the submission invalid", async () => {
+      const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+      const admin = await makeStaffUser("ADMIN", "adj-framework-admin");
+      const student = await makeStudent(escazu.id, escazu.organizationId, { lastName: "AdjFramework" });
 
       currentSession = { user: { id: admin.id, role: "ADMIN" }, activeOrganizationId: admin.organizationId };
       const result = await addAttendanceAdjustment(
         admin.organizationId,
         {},
-        formData({ studentId: student.id, delta: "-5", reason: "duplicate check-ins removed" }),
+        formData({
+          "$ACTION_REF_11": "",
+          "$ACTION_11:0": "{}",
+          "$ACTION_KEY": "k",
+          studentId: student.id,
+          date: "",
+          reason: "posted from a real browser form",
+        }),
       );
+      expect(result.error).toBeUndefined();
       expect(result.ok).toBe(true);
-
-      // Back below the threshold it had just crossed.
-      const after = await getAtBeltSummary(student.id, student.organizationId, ALLIANCE_ATTENDANCE_CONFIG);
-      expect(after.atBeltCount).toBe(25);
-      expect(after.remainingAttendance).toBe(5);
+      expect(await prisma.attendanceRecord.count({ where: { studentId: student.id } })).toBe(1);
     });
+
+    it("a day in the future is refused", async () => {
+      const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+      const admin = await makeStaffUser("ADMIN", "adj-future-admin");
+      const student = await makeStudent(escazu.id, escazu.organizationId, { lastName: "AdjFuture" });
+
+      currentSession = { user: { id: admin.id, role: "ADMIN" }, activeOrganizationId: admin.organizationId };
+      const result = await addAttendanceAdjustment(
+        admin.organizationId,
+        {},
+        formData({ studentId: student.id, date: "2999-01-01", reason: "not yet" }),
+      );
+      expect(result.error).toBe("invalid");
+      expect(result.fieldErrors?.date).toBeTruthy();
+      expect(await prisma.attendanceRecord.count({ where: { studentId: student.id } })).toBe(0);
+    });
+
+    // The PER_INTERVAL daily-limit / history-only / before-last-promotion feedback (a second same-day entry, the day of a
+    // promotion, the tracking-start day, a day before the promotion) and its CUMULATIVE counterpart are pinned in
+    // coach-attendance-accounting.test.ts, against private organizations on each accounting: Alliance is CUMULATIVE here.
 
     it("an in-scope INSTRUCTOR can successfully add an adjustment — the one write in this file INSTRUCTOR is allowed to make", async () => {
       const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
@@ -633,7 +644,7 @@ describe("student detail actions", () => {
       const result = await addAttendanceAdjustment(
         instructor.organizationId,
         {},
-        formData({ studentId: student.id, delta: "1", reason: "instructor correction" }),
+        formData({ studentId: student.id, reason: "instructor correction" }),
       );
       expect(result.ok).toBe(true);
 
@@ -657,7 +668,7 @@ describe("student detail actions", () => {
       const result = await addAttendanceAdjustment(
         outOfScopeDirector.organizationId,
         {},
-        formData({ studentId: student.id, delta: "2", reason: "should not land" }),
+        formData({ studentId: student.id, reason: "should not land" }),
       );
       expect(result.error).toBe("notFound");
 
@@ -678,7 +689,7 @@ describe("student detail actions", () => {
       const missingReason = await addAttendanceAdjustment(
         admin.organizationId,
         {},
-        formData({ studentId: student.id, delta: "1" }),
+        formData({ studentId: student.id }),
       );
       expect(missingReason.error).toBe("invalid");
       expect(missingReason.fieldErrors?.reason).toBeTruthy();
@@ -687,7 +698,7 @@ describe("student detail actions", () => {
       const emptyReason = await addAttendanceAdjustment(
         admin.organizationId,
         {},
-        formData({ studentId: student.id, delta: "1", reason: "" }),
+        formData({ studentId: student.id, reason: "" }),
       );
       expect(emptyReason.error).toBe("invalid");
       expect(emptyReason.fieldErrors?.reason).toBeTruthy();
@@ -712,7 +723,7 @@ describe("student detail actions", () => {
         const rejected = await addAttendanceAdjustment(
           otherOrg.id,
           {},
-          formData({ studentId: student.id, delta: "3", reason: "should not land" }),
+          formData({ studentId: student.id, reason: "should not land" }),
         );
         expect(rejected.error).toBe("notFound");
         expect(await prisma.attendanceRecord.count({ where: { studentId: student.id } })).toBe(countBefore);
@@ -726,7 +737,7 @@ describe("student detail actions", () => {
         const legitimate = await addAttendanceAdjustment(
           admin.organizationId,
           {},
-          formData({ studentId: student.id, delta: "3", reason: "legitimate makeup classes" }),
+          formData({ studentId: student.id, reason: "legitimate makeup classes" }),
         );
         expect(legitimate.ok).toBe(true);
       } finally {

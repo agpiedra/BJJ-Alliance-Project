@@ -35,7 +35,14 @@ describe("seed data", () => {
     expect(byBelt.BLUE).toMatchObject({ order: 2, attendancesPerStripe: 65, maxStripes: 4, attendancesForExam: 65, isTerminal: false });
     expect(byBelt.PURPLE).toMatchObject({ order: 3, attendancesPerStripe: 75, maxStripes: 4, attendancesForExam: 75, isTerminal: false });
     expect(byBelt.BROWN).toMatchObject({ order: 4, attendancesPerStripe: 85, maxStripes: 4, attendancesForExam: 85, isTerminal: false });
-    expect(byBelt.BLACK).toMatchObject({ order: 5, maxStripes: 0, isTerminal: true });
+    // Black belt is TIME-based with a different interval per degree, configured through the 6th degree only.
+    expect(byBelt.BLACK).toMatchObject({
+      order: 5,
+      maxStripes: 6,
+      isTerminal: true,
+      progressionMode: "TIME",
+      stripeIntervalMonths: [36, 36, 36, 60, 60, 60],
+    });
   });
 
   it("seeds Escazú's full 18-session class schedule and Escalante's smaller 6-session one", async () => {

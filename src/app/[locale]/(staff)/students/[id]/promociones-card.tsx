@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { awardFromStudentPage } from "./promotion-actions";
 import { PromotionCorrectionForm, type RankOption } from "./promotion-correction-form";
 import { TrackChangeForm, type TrackChangeRankOption } from "./track-change-form";
-import { PromotionCreditAdjustmentForm } from "./promotion-credit-adjustment-form";
+import type { ProgressView } from "@/lib/promotion/progress-view";
 import type { ActionState } from "@/lib/action-state";
 
 const INITIAL_STATE: ActionState = {};
@@ -47,15 +47,16 @@ export interface PromocionesCardProps {
   label: string;
   currentStripes: number;
   maxStripes: number;
-  atBeltCount: number;
-  creditedClasses: number;
   lifetimeCount: number;
-  nextTarget: "STRIPE" | "BELT" | "NONE" | "MANUAL_DISPLAY";
-  remainingAttendance: number | null;
-  attendancesPerStripe: number;
+  /**
+   * The shared display shaping of the engine's result (`buildProgressView`) -
+   * the same one every other surface reads. `dueDate` is passed pre-formatted
+   * (`dueDateFormatted`), never as a Date.
+   */
+  view: Omit<ProgressView, "dueDate">;
   dueDateFormatted: string | null;
-  isEligible: boolean;
-  mode: "ATTENDANCE" | "TIME" | "HYBRID" | "MANUAL";
+  /** The Costa Rica day the threshold was reached, already formatted for the viewer's locale; recalculated from current records on every render. */
+  reachedOnFormatted: string | null;
   history: PromocionesHistoryRow[];
   creditHistory: PromotionCreditHistoryRow[];
   /** ADMIN/DIRECTOR — INSTRUCTOR/STUDENT get `false` and see everything above read-only, no buttons rendered at all (server rejects the call regardless). */
@@ -96,40 +97,51 @@ export function PromocionesCard(props: PromocionesCardProps) {
     INITIAL_STATE,
   );
 
+  const { view } = props;
+  const isEligible = view.state === "eligible";
+
   const nextTargetLabel = (() => {
-    switch (props.nextTarget) {
+    if (view.state === "manual") return t("nextTargetMANUAL");
+    switch (view.nextTarget) {
       case "STRIPE":
         return t("nextTargetSTRIPE", { ordinal: props.currentStripes + 1 });
       case "BELT":
         return t("nextTargetBELT");
-      case "MANUAL_DISPLAY":
-        return t("nextTargetMANUAL");
       default:
         return t("nextTargetNONE");
     }
   })();
 
   // Spec: "why the student is not eligible, when they aren't. Never a
-  // disabled button with no explanation." One branch per mode, matching the
-  // card-content list exactly (ATTENDANCE: count/threshold/remaining; TIME:
-  // due date; HYBRID: both; MANUAL: coach's-discretion statement).
+  // disabled button with no explanation." One branch per display state, all
+  // decided by the shared `buildProgressView` (never re-derived here).
   const progressLine = (() => {
-    if (props.mode === "MANUAL") return t("progressManual");
-    if (props.isEligible) return t("eligibleNow");
-    const attendanceLine =
-      props.remainingAttendance !== null
-        ? t("progressAttendance", {
-            current: props.atBeltCount,
-            target: props.atBeltCount + props.remainingAttendance,
-            remaining: props.remainingAttendance,
-          })
-        : null;
-    const dueDateLine = props.dueDateFormatted ? t("progressDueDate", { date: props.dueDateFormatted }) : null;
-    // HYBRID shows both dimensions rather than picking a single "binding"
-    // one — tracked as a known simplification (scripts/pending-callers.ts)
-    // since no real HYBRID academy exists to validate a richer treatment
-    // against.
-    return [attendanceLine, dueDateLine].filter(Boolean).join(" · ") || null;
+    switch (view.state) {
+      case "manual":
+        return t("progressManual");
+      case "eligible":
+        // Full bar, zero remaining, and never an overflowing fraction: the real count is on its own line below.
+        return t("eligibleNow");
+      case "in_progress": {
+        const attendanceLine = t("progressAttendance", {
+          current: view.current ?? 0,
+          target: view.target ?? 0,
+          remaining: view.remaining ?? 0,
+        });
+        // HYBRID also shows its time dimension.
+        return props.dueDateFormatted
+          ? `${attendanceLine} · ${t("progressDueDate", { date: props.dueDateFormatted })}`
+          : attendanceLine;
+      }
+      case "time_pending":
+        return props.dueDateFormatted ? t("progressDueDate", { date: props.dueDateFormatted }) : null;
+      case "time_anchor_missing":
+        return t("lastPromotionDateNeeded");
+      case "not_configured":
+        return t("nextDegreeNotConfigured");
+      default:
+        return null;
+    }
   })();
 
   return (
@@ -143,15 +155,12 @@ export function PromocionesCard(props: PromocionesCardProps) {
           <div className="flex flex-col gap-1">
             <p className="font-medium">{nextTargetLabel}</p>
             {progressLine && <p className="text-sm text-muted-foreground">{progressLine}</p>}
+            {props.reachedOnFormatted && (
+              <p className="text-sm text-muted-foreground">{t("reachedOn", { date: props.reachedOnFormatted })}</p>
+            )}
             <dl className="mt-2 grid grid-cols-2 gap-x-6 gap-y-1 text-sm">
               <dt className="text-muted-foreground">{t("atBeltCount")}</dt>
-              <dd>{props.atBeltCount}</dd>
-              {props.creditedClasses !== 0 && (
-                <>
-                  <dt className="text-muted-foreground">{t("creditedClasses")}</dt>
-                  <dd>{props.creditedClasses}</dd>
-                </>
-              )}
+              <dd>{view.actualCount}</dd>
               <dt className="text-muted-foreground">{t("lifetimeCount")}</dt>
               <dd>{props.lifetimeCount}</dd>
             </dl>
@@ -169,7 +178,7 @@ export function PromocionesCard(props: PromocionesCardProps) {
             )}
             <Button
               type="submit"
-              disabled={isPending || !props.isEligible}
+              disabled={isPending || !isEligible}
               onClick={(event) => {
                 if (!window.confirm(t("award.confirm"))) {
                   event.preventDefault();
@@ -200,8 +209,6 @@ export function PromocionesCard(props: PromocionesCardProps) {
             isTransition={props.trackChange.isTransition}
           />
         )}
-
-        <PromotionCreditAdjustmentForm organizationId={props.organizationId} studentId={props.studentId} />
 
         {props.creditHistory.length > 0 && (
           <div>

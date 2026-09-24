@@ -3,6 +3,7 @@
 import { z } from "zod";
 import { resolveActionContext } from "@/lib/tenant/context";
 import { awardPromotion } from "@/lib/promotion/award";
+import { refreshPromotionPages } from "@/lib/promotion/refresh-pages";
 import type { ActionState } from "@/lib/action-state";
 
 const confirmPromotionSchema = z.object({
@@ -45,5 +46,6 @@ export async function confirmPromotion(
   if (!result.ok) {
     return { error: result.error };
   }
+  await refreshPromotionPages(parsed.data.studentId);
   return { ok: true };
 }

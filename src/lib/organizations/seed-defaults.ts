@@ -48,10 +48,15 @@ export async function seedOrganizationDefaults(
       barColor: rank.barColor,
       stripeColors: Array.from({ length: rank.maxStripes }, () => "#FFFFFF"),
       visibleStripeSlots: 4,
+      // Black belt is time-based whatever the attendance preset - except MANUAL, where nothing is ever eligible.
+      progressionMode: promotionMode === "MANUAL" ? null : (rank.progressionMode ?? null),
+      stripeIntervalMonths: rank.stripeIntervalMonths ?? [],
     })),
   });
+  // A brand-new organization has no history to protect, so it starts on the academy's
+  // decided accounting (one qualifying day per CR day, progress resets at every award).
   await tx.promotionConfig.create({
-    data: { organizationId, track: "ADULT", mode: promotionMode, requiresCoachApproval: true },
+    data: { organizationId, track: "ADULT", mode: promotionMode, requiresCoachApproval: true, stripeAccounting: "PER_INTERVAL" },
   });
 
   await tx.beltRank.createMany({
@@ -74,6 +79,6 @@ export async function seedOrganizationDefaults(
     })),
   });
   await tx.promotionConfig.create({
-    data: { organizationId, track: "KIDS", mode: promotionMode, requiresCoachApproval: true },
+    data: { organizationId, track: "KIDS", mode: promotionMode, requiresCoachApproval: true, stripeAccounting: "PER_INTERVAL" },
   });
 }

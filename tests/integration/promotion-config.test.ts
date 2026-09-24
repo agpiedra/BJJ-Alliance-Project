@@ -38,6 +38,8 @@ function rank(overrides: Partial<RankForValidation> & Pick<RankForValidation, "i
     attendancesForExam: 40,
     monthsPerStripe: null,
     monthsForExam: null,
+    progressionMode: null,
+    stripeIntervalMonths: [],
     stripeColors: ["a", "b", "c", "d"],
     visibleStripeSlots: 4,
     ...overrides,
@@ -221,25 +223,36 @@ describe("updateTrackConfig", () => {
     expect(studentAfter.currentStripes).toBe(3);
   });
 
+  it("automatic promotion cannot be enabled: turning approval off is refused and nothing changes", async () => {
+    const configBefore = await prisma.promotionConfig.findUniqueOrThrow({ where: { organizationId_track: { organizationId: ORG, track: "ADULT" } } });
+    expect(configBefore.requiresCoachApproval).toBe(true);
+    const auditCountBefore = await prisma.auditLog.count({ where: { organizationId: ORG, action: "promotion-config.update" } });
+
+    await expect(updateTrackConfig(ctx(), "ADULT", { requiresCoachApproval: false })).rejects.toThrow(TrackConfigError);
+
+    const configAfter = await prisma.promotionConfig.findUniqueOrThrow({ where: { organizationId_track: { organizationId: ORG, track: "ADULT" } } });
+    expect(configAfter.requiresCoachApproval).toBe(true);
+    expect(await prisma.auditLog.count({ where: { organizationId: ORG, action: "promotion-config.update" } })).toBe(auditCountBefore);
+  });
+
   it("a successful update writes the new values and an AuditLog row", async () => {
     const configBefore = await prisma.promotionConfig.findUniqueOrThrow({ where: { organizationId_track: { organizationId: ORG, track: "ADULT" } } });
     expect(configBefore.requiresCoachApproval).toBe(true);
 
-    await updateTrackConfig(ctx(), "ADULT", { requiresCoachApproval: false });
+    await updateTrackConfig(ctx(), "ADULT", { requiresCoachApproval: true, ranks: [{ id: RANK_WHITE, attendancesPerStripe: 31 }] });
 
-    const configAfter = await prisma.promotionConfig.findUniqueOrThrow({ where: { organizationId_track: { organizationId: ORG, track: "ADULT" } } });
-    expect(configAfter.requiresCoachApproval).toBe(false);
+    const rankAfter = await prisma.beltRank.findUniqueOrThrow({ where: { id: RANK_WHITE } });
+    expect(rankAfter.attendancesPerStripe).toBe(31);
 
     const auditRows = await prisma.auditLog.findMany({ where: { organizationId: ORG, action: "promotion-config.update" } });
     expect(auditRows.length).toBeGreaterThan(0);
     const latest = auditRows[auditRows.length - 1];
-    expect(latest.entityId).toBe(configAfter.id);
+    expect(latest.entityId).toBe(configBefore.id);
     expect(latest.actorId).toBe(ACTOR_USER);
-    expect(latest.before).toMatchObject({ requiresCoachApproval: true });
-    expect(latest.after).toMatchObject({ requiresCoachApproval: false });
+    expect(latest.after).toMatchObject({ requiresCoachApproval: true });
 
     // restore, so later tests in this file see the seeded default
-    await updateTrackConfig(ctx(), "ADULT", { requiresCoachApproval: true });
+    await updateTrackConfig(ctx(), "ADULT", { ranks: [{ id: RANK_WHITE, attendancesPerStripe: 30 }] });
   });
 
   it("mode values are preserved across a mode switch: configure ATTENDANCE, switch to TIME, switch back, and the original ATTENDANCE numbers survive", async () => {

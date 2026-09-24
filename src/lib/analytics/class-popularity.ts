@@ -133,6 +133,7 @@ async function countCheckinAttendances(
       classSessionId: { in: classSessionIds },
       organizationId,
       type: "CHECKIN",
+      voidedAt: null,
       occurredAt: { gte: from.toJSDate(), lte: to.toJSDate() },
     },
     select: { classSessionId: true, occurredAt: true },

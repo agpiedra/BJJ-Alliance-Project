@@ -66,10 +66,12 @@ export async function reassignAttendance(
 
   const record = await db.attendanceRecord.findUnique({
     where: { id: attendanceRecordId },
-    select: { id: true, academyId: true, date: true, classSessionId: true, matchSource: true, type: true },
+    select: { id: true, academyId: true, date: true, classSessionId: true, matchSource: true, type: true, voidedAt: true },
   });
 
-  if (!record || record.academyId !== opts.expectedAcademyId) {
+  // A voided entry is history: it is not moved between classes (and moving it would put a dead row on a class
+  // occurrence a valid entry may legitimately hold).
+  if (!record || record.voidedAt || record.academyId !== opts.expectedAcademyId) {
     return { ok: false, error: "notFound" };
   }
 

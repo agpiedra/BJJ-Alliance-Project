@@ -122,6 +122,8 @@ export async function changeTrack(context: TenantContext, input: TrackChangeInpu
     toRankId: input.toRankId,
     toStripes: input.toStripes,
     studentUpdate: { track: toTrack, beltAwardedAt: new Date() },
+    // A track change puts the student on a brand-new belt in a different track: progress restarts from this instant.
+    progress: "reset",
     before: { belt: student.currentRank.code, stripes: student.currentStripes, track: student.track },
     after: { belt: toRank.code, stripes: input.toStripes, track: toTrack },
     source: "TRACK_CHANGE",

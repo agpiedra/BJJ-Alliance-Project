@@ -159,6 +159,7 @@ export async function getHeadlineTiles(
             studentId: { in: studentIds },
             organizationId: context.organizationId,
             type: "CHECKIN",
+            voidedAt: null,
             occurredAt: { gte: previous.from.toJSDate(), lte: range.to.toJSDate() },
           },
           select: { studentId: true, occurredAt: true },

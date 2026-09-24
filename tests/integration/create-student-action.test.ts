@@ -291,66 +291,54 @@ describe("createStudent", () => {
     }
   });
 
-  // MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 3d — "Estado inicial" onboarding
-  // credit, granted in the same transaction as student.create.
-  describe("Phase 3d: onboarding credit", () => {
-    it("grants a PromotionCredit anchored to the submitted beltAwardedAt when classesCredited is nonzero", async () => {
+  // docs/PROMOTION_PROGRESS_PROPOSAL.md - no head-start credits: an entered student keeps the rank and
+  // stripes typed, but academy progress starts at 0 from the system tracking baseline.
+  describe("starting progress: no head-start credit", () => {
+    it("keeps the typed rank, stripes and historical belt date, records a separate system baseline, and creates no credit", async () => {
       const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
-      const admin = await makeStaffUser("ADMIN", "create-test-credit-admin");
+      const admin = await makeStaffUser("ADMIN", "create-test-baseline-admin");
+      const fields = { ...newStudentFields(escazu.id, "BaselineOnboard"), beltAwardedAt: "2025-06-01" };
+
+      currentSession = { user: { id: admin.id, role: "ADMIN" }, activeOrganizationId: admin.organizationId };
+      const before = Date.now();
+      const result = await createStudent(admin.organizationId, {}, formData(fields));
+      expect(result.ok).toBe(true);
+
+      const student = await prisma.student.findFirstOrThrow({ where: { email: fields.email } });
+      // The historical date is kept exactly as typed...
+      expect(student.beltAwardedAt.toISOString().slice(0, 10)).toBe("2025-06-01");
+      // ...and is NOT the progress start: the system baseline is a separate, current instant.
+      expect(student.progressBaselineKind).toBe("SYSTEM_BASELINE");
+      expect(student.progressBaselineAt.getTime()).toBeGreaterThanOrEqual(before - 1000);
+      expect(await prisma.promotionCredit.count({ where: { studentId: student.id } })).toBe(0);
+    });
+
+    it("a stale client that still posts classesCredited/creditReason gets no credit - the fields are ignored, not honoured", async () => {
+      const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+      const admin = await makeStaffUser("ADMIN", "create-test-stale-credit-admin");
       const fields = {
-        ...newStudentFields(escazu.id, "CreditedOnboard"),
-        beltAwardedAt: "2025-06-01",
+        ...newStudentFields(escazu.id, "StaleCredit"),
         classesCredited: "20",
-        creditReason: "Estimated from prior gym's own records.",
+        creditReason: "head start",
       };
 
       currentSession = { user: { id: admin.id, role: "ADMIN" }, activeOrganizationId: admin.organizationId };
       const result = await createStudent(admin.organizationId, {}, formData(fields));
       expect(result.ok).toBe(true);
-
       const student = await prisma.student.findFirstOrThrow({ where: { email: fields.email } });
-      expect(student.beltAwardedAt.toISOString().slice(0, 10)).toBe("2025-06-01");
-
-      const credit = await prisma.promotionCredit.findFirstOrThrow({ where: { studentId: student.id } });
-      expect(credit.classesGranted).toBe(20);
-      expect(credit.reason).toBe("Estimated from prior gym's own records.");
-      expect(credit.grantedById).toBe(admin.id);
-      expect(credit.beltAwardedAtAnchor.getTime()).toBe(student.beltAwardedAt.getTime());
-
-      const audits = await prisma.auditLog.findMany({
-        where: { entityId: credit.id, action: "promotionCredit.grant" },
-      });
-      expect(audits).toHaveLength(1);
+      expect(await prisma.promotionCredit.count({ where: { studentId: student.id } })).toBe(0);
     });
 
-    it("a classesCredited of 0 (explicit or omitted) creates no PromotionCredit row at all", async () => {
+    it("a student with no historical belt date at all is created normally and is not blocked", async () => {
       const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
-      const admin = await makeStaffUser("ADMIN", "create-test-zero-credit-admin");
-      currentSession = { user: { id: admin.id, role: "ADMIN" }, activeOrganizationId: admin.organizationId };
-
-      const explicitZero = { ...newStudentFields(escazu.id, "ExplicitZeroCredit"), classesCredited: "0" };
-      const explicitResult = await createStudent(admin.organizationId, {}, formData(explicitZero));
-      expect(explicitResult.ok).toBe(true);
-      const explicitStudent = await prisma.student.findFirstOrThrow({ where: { email: explicitZero.email } });
-      expect(await prisma.promotionCredit.count({ where: { studentId: explicitStudent.id } })).toBe(0);
-
-      const omitted = newStudentFields(escazu.id, "OmittedCredit");
-      const omittedResult = await createStudent(admin.organizationId, {}, formData(omitted));
-      expect(omittedResult.ok).toBe(true);
-      const omittedStudent = await prisma.student.findFirstOrThrow({ where: { email: omitted.email } });
-      expect(await prisma.promotionCredit.count({ where: { studentId: omittedStudent.id } })).toBe(0);
-    });
-
-    it("rejects a nonzero classesCredited with no reason, writing nothing", async () => {
-      const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
-      const admin = await makeStaffUser("ADMIN", "create-test-missing-reason-admin");
-      const fields = { ...newStudentFields(escazu.id, "MissingReason"), classesCredited: "10" };
+      const admin = await makeStaffUser("ADMIN", "create-test-nodate-admin");
+      const fields = newStudentFields(escazu.id, "NoDateOnboard");
 
       currentSession = { user: { id: admin.id, role: "ADMIN" }, activeOrganizationId: admin.organizationId };
       const result = await createStudent(admin.organizationId, {}, formData(fields));
-      expect(result.error).toBe("invalid");
-      expect(result.fieldErrors?.creditReason).toEqual(["creditReasonRequired"]);
-      expect(await prisma.student.findFirst({ where: { email: fields.email } })).toBeNull();
+      expect(result.ok).toBe(true);
+      const student = await prisma.student.findFirstOrThrow({ where: { email: fields.email } });
+      expect(student.progressBaselineKind).toBe("SYSTEM_BASELINE");
     });
   });
 });

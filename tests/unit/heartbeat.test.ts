@@ -21,7 +21,6 @@ function fakeFetch(status = 200) {
 
 describe("pingHeartbeat", () => {
   const digestUrl = "https://hc-ping.com/digest-uuid";
-  const promotionUrl = "https://hc-ping.com/promotion-uuid";
 
   it("REQUIRED: a successful run pings the job's own configured URL, unmodified", async () => {
     vi.stubEnv("HEALTHCHECK_DIGEST_URL", digestUrl);
@@ -34,11 +33,11 @@ describe("pingHeartbeat", () => {
   });
 
   it("REQUIRED: a failed run pings <url>/fail — a different URL, not the same one with a flag", async () => {
-    vi.stubEnv("HEALTHCHECK_PROMOTION_URL", promotionUrl);
+    vi.stubEnv("HEALTHCHECK_DIGEST_URL", digestUrl);
     const fetchImpl = fakeFetch();
-    const outcome = await pingHeartbeat("promotion-auto-award", false, fetchImpl);
+    const outcome = await pingHeartbeat("weekly-digest", false, fetchImpl);
     expect(outcome).toBe("ok");
-    expect(fetchImpl.mock.calls[0]![0]).toBe(`${promotionUrl}/fail`);
+    expect(fetchImpl.mock.calls[0]![0]).toBe(`${digestUrl}/fail`);
     vi.unstubAllEnvs();
   });
 

@@ -46,7 +46,7 @@ export function renderNotificationMessage(
   switch (type) {
     // data: { studentName: string; belt: Belt; stripes: number } — a student
     // just earned a new stripe at their current belt (performCheckIn's
-    // `earnedStripe` true, `summaryAfter.examEligible` false).
+    // `thresholdReached` true, `summaryAfter.examEligible` false).
     case "STRIPE_THRESHOLD": {
       const studentName = data.studentName as string;
       const belt = pickBeltLabel(data, locale);
@@ -59,7 +59,7 @@ export function renderNotificationMessage(
     }
 
     // data: { studentName: string; belt: Belt } — a student is now eligible
-    // for a belt exam (performCheckIn's `earnedStripe` true,
+    // for a belt exam (performCheckIn's `thresholdReached` true,
     // `summaryAfter.examEligible` true).
     case "EXAM_THRESHOLD": {
       const studentName = data.studentName as string;

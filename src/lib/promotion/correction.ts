@@ -81,6 +81,10 @@ export async function correctPromotion(context: TenantContext, input: Correction
     toRankId: input.toRankId,
     toStripes: input.toStripes,
     studentUpdate,
+    // A correction fixes a mistaken record - it is not a promotion, so it never
+    // restarts progress. Any anchors it changes are the coach's explicit choice
+    // above (this is also how an existing black belt's real last-award date is supplied).
+    progress: "keep",
     before: {
       belt: student.currentRank.code,
       stripes: student.currentStripes,

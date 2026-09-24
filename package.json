@@ -14,6 +14,7 @@
     "check:pending-callers": "tsx scripts/pending-callers.ts",
     "db:check-drift": "tsx scripts/check-drift.ts",
     "baseline:alliance": "tsx scripts/alliance-baseline.ts",
+    "promotion:accounting": "tsx scripts/promotion-accounting.ts",
     "db:inventory": "tsx scripts/db-inventory.ts",
     "ci:parity-check": "tsx scripts/ci-parity-check.ts",
     "db:up": "docker compose up -d postgres",

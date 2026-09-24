@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { getLocale } from "next-intl/server";
 import { resolveActionContext } from "@/lib/tenant/context";
 import { prisma } from "@/lib/prisma";
-import { performCheckIn } from "@/lib/kiosk/perform-check-in";
+import { performCheckIn, type ProgressOutcome } from "@/lib/kiosk/perform-check-in";
 import { AttendanceSource } from "@/generated/prisma/client";
 import type { ActionState } from "@/lib/action-state";
 import type { AtBeltSummary } from "@/lib/students/attendance-summary";
@@ -12,7 +12,9 @@ import type { AtBeltSummary } from "@/lib/students/attendance-summary";
 export type SelfCheckInState = ActionState & {
   student?: { firstName: string; lastName: string; currentBelt: string; currentStripes: number };
   summary?: AtBeltSummary;
-  earnedStripe?: boolean;
+  /** This check-in reached the threshold: eligible for instructor review (a check-in never awards anything). */
+  thresholdReached?: boolean;
+  progressOutcome?: ProgressOutcome;
   isVisitor?: boolean;
   homeAcademyName?: string;
 };
@@ -123,7 +125,8 @@ export async function selfCheckIn(
     ok: true,
     student: result.student,
     summary: result.summary,
-    earnedStripe: result.earnedStripe,
+    thresholdReached: result.thresholdReached,
+    progressOutcome: result.progressOutcome,
     isVisitor: result.isVisitor,
     homeAcademyName: result.homeAcademyName,
   };

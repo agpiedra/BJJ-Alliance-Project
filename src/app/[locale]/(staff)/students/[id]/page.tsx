@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getAtBeltSummary } from "@/lib/students/attendance-summary";
+import { buildProgressView } from "@/lib/promotion/progress-view";
 import { resolvePromotionConfigMap } from "@/lib/promotion/config";
 import { formatTimestampInAcademyZone } from "@/lib/format-date";
 import { formatMonthYear } from "@/lib/format-month";
@@ -22,6 +23,8 @@ import { RestoreStudentButton } from "./restore-student-button";
 import { ApproveStudentButton } from "./approve-student-button";
 import { RegenerateCodeButton } from "./regenerate-code-button";
 import { AddAdjustmentForm } from "./add-adjustment-form";
+import { AttendanceEntriesCard } from "./attendance-entries-card";
+import { getRecentAttendanceEntries } from "@/lib/students/recent-attendance-entries";
 import { RecordPaymentForm } from "@/components/payments/record-payment-form";
 import { PromocionesCard, type PromocionesHistoryRow, type PromotionCreditHistoryRow } from "./promociones-card";
 import { resolveDefaultTrackChangeRankId } from "@/lib/promotion/track-change";
@@ -72,11 +75,14 @@ export default async function StudentDetailPage({
     notFound();
   }
 
+  // Today in Costa Rica (en-CA formats as YYYY-MM-DD): caps the coach-added attendance day; the server re-checks it.
+  const todayCr = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Costa_Rica" }).format(new Date());
   const configByTrack = await resolvePromotionConfigMap(context.organizationId);
   const summary = await getAtBeltSummary(student.id, context.organizationId, configByTrack);
   const promotionHistory = await getPromotionHistory(student.id, context.organizationId);
   const creditHistoryRaw = await getPromotionCreditHistory(student.id, context.organizationId, student.beltAwardedAt);
   const paymentHistory = await getPaymentHistory(student.id, context.organizationId);
+  const attendanceEntries = await getRecentAttendanceEntries(student.id, context.organizationId);
 
   const t = await getTranslations("students");
   const tDetail = await getTranslations("students.detail");
@@ -150,8 +156,12 @@ export default async function StudentDetailPage({
   // MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 2d: MANUAL mode has no engine
   // target to show ("at the coach's discretion") — the card's own vocabulary
   // adds a fourth display-only value the engine itself never produces.
-  const cardNextTarget = summary.mode === "MANUAL" ? "MANUAL_DISPLAY" : summary.nextTarget;
+  const cardView = buildProgressView(summary);
   const dueDateFormatted = formatTimestampInAcademyZone(summary.dueDate, locale);
+  // The CR ledger day the threshold was reached, recalculated from current records (noon UTC = 06:00 CR, the same day).
+  const reachedOnFormatted = summary.reachedOn
+    ? formatTimestampInAcademyZone(new Date(`${summary.reachedOn}T12:00:00Z`), locale)
+    : null;
   // Phase 3a rev 19: labels are per-organization data on the rank row —
   // resolved HERE (this page already has the viewer's locale) rather than
   // inside any client component, which never translates a code itself.
@@ -210,15 +220,10 @@ export default async function StudentDetailPage({
         label={currentBeltLabel}
         currentStripes={student.currentStripes}
         maxStripes={summary.maxStripes}
-        atBeltCount={summary.atBeltCount}
-        creditedClasses={summary.creditedClasses}
         lifetimeCount={summary.lifetimeCount}
-        nextTarget={cardNextTarget}
-        remainingAttendance={summary.remainingAttendance}
-        attendancesPerStripe={summary.attendancesPerStripe}
+        view={cardView}
         dueDateFormatted={dueDateFormatted}
-        isEligible={summary.isEligible}
-        mode={summary.mode}
+        reachedOnFormatted={reachedOnFormatted}
         history={promocionesHistory}
         creditHistory={creditHistory}
         canAct={canEdit}
@@ -284,16 +289,14 @@ export default async function StudentDetailPage({
         </CardContent>
       </Card>
 
-      {/* Real data as of Task 5 — the attendance-history card immediately
-          below is still a genuine `comingLater` placeholder — this
-          staff-facing attendance ledger view was never in scope (the
-          student's own portal already has one via `getAttendanceHistory`). */}
+      {/* The latest attendance entries with the ADMIN/DIRECTOR correction control (void a mistaken entry).
+          Deliberately small: not the full accessible attendance history, which is separate work. */}
       <Card>
         <CardHeader>
           <CardTitle>{tDetail("attendanceHistory.heading")}</CardTitle>
         </CardHeader>
         <CardContent>
-          <p className="text-muted-foreground">{tDetail("comingLater")}</p>
+          <AttendanceEntriesCard organizationId={context.organizationId} entries={attendanceEntries} canVoid={canEdit} />
         </CardContent>
       </Card>
       {/* Real data as of Task 2 — every PaymentPeriod row for this student,
@@ -347,7 +350,12 @@ export default async function StudentDetailPage({
           marking/correction to INSTRUCTOR too) — deliberately NOT inside the
           canEdit gate below, which is ADMIN/DIRECTOR only. The server-side
           addAttendanceAdjustment is the real enforcement either way. */}
-      <AddAdjustmentForm organizationId={context.organizationId} studentId={student.id} />
+      <AddAdjustmentForm
+        organizationId={context.organizationId}
+        studentId={student.id}
+        todayCr={todayCr}
+        accounting={summary.accounting}
+      />
 
       {canEdit && (
         <div className="flex flex-col gap-4">

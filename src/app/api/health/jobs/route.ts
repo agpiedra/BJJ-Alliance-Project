@@ -11,7 +11,6 @@ import { JOB_NAMES, type JobName } from "@/lib/jobs/job-names";
  */
 const STALE_AFTER_HOURS: Record<JobName, number> = {
   "weekly-digest": 24 * 8, // weekly (Monday) + a day of slack
-  "promotion-auto-award": 30, // daily + a few hours of slack
 };
 
 /** A RUNNING row older than this never finished — almost certainly a crashed or killed

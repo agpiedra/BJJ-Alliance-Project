@@ -119,6 +119,7 @@ export async function getCrossTraining(
 
   const conditions: Prisma.AttendanceRecordWhereInput[] = [
     { type: "CHECKIN" },
+    { voidedAt: null },
     { occurredAt: { gte: filters.from.toJSDate(), lte: filters.to.toJSDate() } },
   ];
   if (filters.academyId) {

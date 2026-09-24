@@ -113,8 +113,8 @@ const EXPECTED_ADULT_STRIPE_COLORS: Record<BeltCode, string[]> = {
   BLUE: ["#FFFFFF", "#FFFFFF", "#FFFFFF", "#FFFFFF"],
   PURPLE: ["#FFFFFF", "#FFFFFF", "#FFFFFF", "#FFFFFF"],
   BROWN: ["#FFFFFF", "#FFFFFF", "#FFFFFF", "#FFFFFF"],
-  // Terminal, zero seeded degrees — no tapes are ever drawn.
-  BLACK: [],
+  // Terminal, time-based, six configured degrees (36/36/36/60/60/60 months) - a white tape per degree.
+  BLACK: ["#FFFFFF", "#FFFFFF", "#FFFFFF", "#FFFFFF", "#FFFFFF", "#FFFFFF"],
 };
 
 describe("Adult belt catalog — tape colours are white, never the belt's own colour", () => {

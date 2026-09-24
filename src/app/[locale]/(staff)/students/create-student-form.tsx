@@ -69,8 +69,6 @@ export function CreateStudentForm({
   const selectedRank = ranksForTrack.find((r) => r.id === rankId) ?? ranksForTrack[0];
 
   const guardianNameErrors = state.fieldErrors?.guardianName;
-  const creditReasonErrors = state.fieldErrors?.creditReason;
-  const [classesCredited, setClassesCredited] = useState(0);
 
   return (
     <details className="rounded border p-4">
@@ -167,28 +165,6 @@ export function CreateStudentForm({
           <input type="date" name="beltAwardedAt" className="rounded border px-3 py-2" />
           <span className="text-sm text-muted-foreground">{t("beltAwardedAtHint")}</span>
         </label>
-        <label className="flex flex-col gap-1">
-          <span>{t("classesCredited")}</span>
-          <input
-            type="number"
-            name="classesCredited"
-            min={0}
-            step={1}
-            value={classesCredited}
-            onChange={(event) => setClassesCredited(Number(event.target.value))}
-            className="rounded border px-3 py-2"
-          />
-          <span className="text-sm text-muted-foreground">{t("classesCreditedHint")}</span>
-        </label>
-        {classesCredited !== 0 && (
-          <label className="flex flex-col gap-1">
-            <span>{t("creditReason")}</span>
-            <textarea name="creditReason" required className="rounded border px-3 py-2" />
-          </label>
-        )}
-        {creditReasonErrors && creditReasonErrors.length > 0 && (
-          <p className="text-sm text-red-600">{t("creditReasonRequired")}</p>
-        )}
         <label className="flex flex-col gap-1">
           <span>{t("dateOfBirth")}</span>
           <input type="date" name="dateOfBirth" className="rounded border px-3 py-2" />

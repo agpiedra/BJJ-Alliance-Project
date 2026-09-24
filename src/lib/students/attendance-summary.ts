@@ -1,9 +1,17 @@
 import { prisma } from "@/lib/prisma";
-import { AttendanceMatchSource, type Prisma, type PromotionMode, type Track } from "@/generated/prisma/client";
+import {
+  AttendanceMatchSource,
+  type Prisma,
+  type ProgressBaselineKind,
+  type PromotionMode,
+  type StripeAccounting,
+  type Track,
+} from "@/generated/prisma/client";
 import { DateTime } from "luxon";
 import { ZONE } from "@/lib/scheduling/zone";
 import { evaluatePromotion, InvalidPromotionConfigError, type NextTarget } from "@/lib/promotion/engine";
 import { sumPromotionCredits } from "@/lib/promotion/credit";
+import { listContributingDays, type ContributingDay } from "@/lib/promotion/progress-days";
 import type { ResolvedTrackConfig } from "@/lib/promotion/config";
 import type { BeltVisualData } from "@/components/belt-graphic/belt-graphic";
 
@@ -38,8 +46,34 @@ export interface AtBeltSummary {
   /** MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 2c-i: the engine's own vocabulary. */
   nextTarget: NextTarget;
   remainingAttendance: number | null;
+  /** "Eligible for instructor review" - never an automatic award. */
   isEligible: boolean;
-  /** Phase 2d: the Promociones card picks its display branch (attendance count vs. due date vs. "at the coach's discretion") from this. */
+  /** Which accounting produced `atBeltCount` (see PromotionConfig.stripeAccounting). */
+  accounting: StripeAccounting;
+  /**
+   * What `atBeltCount` is measured against, from the engine - the ONLY place a
+   * display target comes from. Null for a time-based degree, MANUAL, or nothing
+   * next. Consumers must not rebuild it as `atBeltCount + remainingAttendance`:
+   * that is wrong the moment the count passes the threshold.
+   */
+  target: number | null;
+  /** The engine's own progress percentage, already clamped to 0..100; null when there is nothing meaningful to show progress toward. */
+  percent: number | null;
+  /** Time-based target, last-award date unknown: no due date, never eligible. */
+  timeAnchorMissing: boolean;
+  /** Time-based degree whose interval is not configured yet (not "impossible"). */
+  notConfigured: boolean;
+  /**
+   * PER_INTERVAL only, and only once the threshold is reached: the Costa Rica
+   * ledger day (`YYYY-MM-DD`) of the qualifying day that reached it - RECALCULATED
+   * from current records on every read, never stored, and never used to decide an
+   * award (awards re-evaluate live). Null otherwise.
+   */
+  reachedOn: string | null;
+  /** Start of the current PER_INTERVAL interval and where it came from (the award instant, or the system's tracking baseline). */
+  progressBaselineAt: Date;
+  progressBaselineKind: ProgressBaselineKind;
+  /** The EFFECTIVE mode for this student's rank (the rank's own `progressionMode`, else the track's) - the Promociones card picks its display branch (attendance count vs. due date vs. "at the coach's discretion") from this. */
   mode: PromotionMode;
   /** Non-null only for TIME/HYBRID's active target — the engine's own dueDate, not recomputed here. */
   dueDate: Date | null;
@@ -96,31 +130,51 @@ export interface AtBeltSummary {
  * attendance fact.
  */
 const PROMOTION_RELEVANT: Prisma.AttendanceRecordWhereInput = {
+  // A voided (mistaken) entry counts for nothing.
+  voidedAt: null,
   OR: [
     { classSessionId: null, NOT: { matchSource: AttendanceMatchSource.UNMATCHED } },
     { classSession: { countsTowardPromotion: true } },
   ],
 };
 
+/** The guarded client or a transaction on it - the award path evaluates inside its own transaction. */
+type ProgressClient = Pick<typeof prisma, "student" | "attendanceRecord" | "promotionCredit" | "$queryRaw">;
+
+export interface EvaluateOptions {
+  /**
+   * Evaluate AS OF this instant: it is the time-based evaluation date AND the
+   * exclusive upper bound of the qualifying days (PER_INTERVAL). The award path
+   * passes the award boundary so eligibility and the audited evidence describe
+   * exactly the interval being closed. Omitted = now, unbounded.
+   */
+  at?: Date;
+}
+
 /**
- * `configByTrack` — resolved ONCE per request/batch by the caller via
- * `resolvePromotionConfigMap`, never looked up in here. A lookup inside this
- * per-student function would be an N+1 on every list surface that calls it
- * for many students (the promotion queue, the roster page) — see
- * `resolvePromotionConfigMap`'s own doc comment.
+ * The one evaluation path: every surface that shows or decides progress (staff
+ * list, student page, portal, kiosk, dashboard, analytics, the award itself)
+ * reads its result, so none of them recomputes a target of its own.
+ *
+ * Also returns the qualifying days behind the count (PER_INTERVAL) - the audited
+ * evidence an award records. A caller that does not need them ignores the field.
  */
-export async function getAtBeltSummary(
+export async function evaluateStudentProgress(
+  client: ProgressClient,
   studentId: string,
   organizationId: string,
   configByTrack: Map<Track, ResolvedTrackConfig>,
-): Promise<AtBeltSummary> {
-  const student = await prisma.student.findUniqueOrThrow({
+  options: EvaluateOptions = {},
+): Promise<{ summary: AtBeltSummary; days: ContributingDay[] }> {
+  const student = await client.student.findUniqueOrThrow({
     where: { id: studentId, organizationId },
     select: {
       track: true,
       currentStripes: true,
       beltAwardedAt: true,
       timeAnchorAt: true,
+      progressBaselineAt: true,
+      progressBaselineKind: true,
       // MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 2: currentRankId is a required
       // FK, so the requirement row is guaranteed present — no separate
       // lookup, no per-academy override fallback (dropped; branch overrides
@@ -139,6 +193,8 @@ export async function getAtBeltSummary(
           attendancesForExam: true,
           monthsPerStripe: true,
           monthsForExam: true,
+          progressionMode: true,
+          stripeIntervalMonths: true,
           isTerminal: true,
           primaryColor: true,
           centerStripeColor: true,
@@ -160,46 +216,63 @@ export async function getAtBeltSummary(
     throw new InvalidPromotionConfigError(`No PromotionConfig found for organization/track ${student.track}.`);
   }
 
-  const [atBeltAgg, lifetimeAgg, creditedClasses] = await Promise.all([
-    prisma.attendanceRecord.aggregate({
-      where: { studentId, organizationId, occurredAt: { gte: student.beltAwardedAt }, ...PROMOTION_RELEVANT },
-      _sum: { delta: true },
-    }),
-    // Unfiltered on purpose: every physical attendance ever, promotion-relevant
-    // or not (see PROMOTION_RELEVANT's comment). Deliberately never touches
-    // PromotionCredit — a real, physical-attendance total, per this field's
-    // own doc comment; folding a director's onboarding estimate in here
-    // would make it wrong, not just incomplete.
-    prisma.attendanceRecord.aggregate({
-      where: { studentId, organizationId },
-      _sum: { delta: true },
-    }),
-    // MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 3d: scoped to the CURRENT belt
-    // period only — see PromotionCredit's own schema doc comment for why a
-    // credit from a since-superseded belt period is excluded by this query
-    // alone, with no separate "consumed" step needed.
-    sumPromotionCredits(studentId, organizationId, student.beltAwardedAt),
-  ]);
+  const perInterval = config.accounting === "PER_INTERVAL";
+  // The rank may override the track's mode (adult white-brown attendance, black time).
+  const mode = student.currentRank.progressionMode ?? config.mode;
 
-  // atBeltCount folds the credit in — see this field's own doc comment for
-  // why every existing progress-bar consumer already treats it as "the
-  // number belt math reads," not a strict physical-attendance count.
-  const atBeltCount = (atBeltAgg._sum.delta ?? 0) + creditedClasses;
+  let atBeltCount: number;
+  let creditedClasses = 0;
+  let days: ContributingDay[] = [];
+  if (perInterval) {
+    // Qualifying days since the last award, one per CR calendar day. Legacy credits
+    // and arbitrary +/- adjustments are deliberately NOT read (academy decision:
+    // no head-start credits, no arbitrary progress credit).
+    days = await listContributingDays(client, {
+      studentId,
+      organizationId,
+      from: student.progressBaselineAt,
+      until: options.at,
+    });
+    atBeltCount = days.length;
+  } else {
+    const [atBeltAgg, credited] = await Promise.all([
+      client.attendanceRecord.aggregate({
+        where: { studentId, organizationId, occurredAt: { gte: student.beltAwardedAt }, ...PROMOTION_RELEVANT },
+        _sum: { delta: true },
+      }),
+      // Phase 3d: scoped to the CURRENT belt period only — see PromotionCredit's
+      // own schema doc comment for why a credit from a since-superseded belt
+      // period is excluded by this query alone.
+      sumPromotionCredits(studentId, organizationId, student.beltAwardedAt),
+    ]);
+    creditedClasses = credited;
+    // atBeltCount folds the credit in — every existing progress-bar consumer
+    // already treats it as "the number belt math reads", not a strict
+    // physical-attendance count.
+    atBeltCount = (atBeltAgg._sum.delta ?? 0) + creditedClasses;
+  }
+
+  // Unfiltered on purpose: every physical attendance ever, promotion-relevant
+  // or not (see PROMOTION_RELEVANT's comment). Never touches PromotionCredit —
+  // a real, physical-attendance total, per this field's own doc comment.
+  const lifetimeAgg = await client.attendanceRecord.aggregate({
+    where: { studentId, organizationId, voidedAt: null },
+    _sum: { delta: true },
+  });
   const lifetimeCount = lifetimeAgg._sum.delta ?? 0;
 
   // attendancesPerStripe/attendancesForExam are nullable on BeltRank (null
-  // only means "this track has never used ATTENDANCE/HYBRID mode" — see
-  // BeltRank's schema doc comment); every seeded rank today is ATTENDANCE,
-  // so these are populated except BLACK's terminal 0/0. evaluatePromotion
-  // itself gets the raw nullable values — BLACK short-circuits to "NONE"
-  // before either field is ever read, so the null-vs-0 distinction never
-  // matters for real data; the ??-to-0 here is purely for this function's
-  // own display-oriented output fields.
+  // only means "this rank has never used ATTENDANCE/HYBRID mode" — a
+  // time-based black belt has none); the ??-to-0 here is purely for this
+  // function's own display-oriented output fields. evaluatePromotion itself
+  // gets the raw nullable values.
   const attendancesPerStripe = student.currentRank.attendancesPerStripe ?? 0;
   const attendancesForExam = student.currentRank.attendancesForExam ?? 0;
 
+  const evaluationDate = DateTime.fromJSDate(options.at ?? new Date(), { zone: ZONE });
   const engineResult = evaluatePromotion({
-    mode: config.mode,
+    mode,
+    accounting: config.accounting,
     currentStripes: student.currentStripes,
     maxStripes: student.currentRank.maxStripes,
     isTerminal: student.currentRank.isTerminal,
@@ -209,36 +282,68 @@ export async function getAtBeltSummary(
     promotionRelevantAttendance: atBeltCount,
     monthsPerStripe: student.currentRank.monthsPerStripe,
     monthsForExam: student.currentRank.monthsForExam,
+    stripeIntervalMonths: student.currentRank.stripeIntervalMonths,
     timeAnchorAt: student.timeAnchorAt ? DateTime.fromJSDate(student.timeAnchorAt, { zone: ZONE }) : null,
-    evaluationDate: DateTime.now().setZone(ZONE),
+    evaluationDate,
   });
 
+  const reachedOn =
+    perInterval && engineResult.target !== null && atBeltCount >= engineResult.target
+      ? (days[engineResult.target - 1]?.day ?? null)
+      : null;
+
   return {
-    currentBelt: student.currentRank.code,
-    currentBeltLabelEs: student.currentRank.labelEs,
-    currentBeltLabelEn: student.currentRank.labelEn,
-    currentBeltVisual: {
-      primaryColor: student.currentRank.primaryColor,
-      centerStripeColor: student.currentRank.centerStripeColor,
-      barColor: student.currentRank.barColor,
-      stripeColors: student.currentRank.stripeColors,
+    days,
+    summary: {
+      currentBelt: student.currentRank.code,
+      currentBeltLabelEs: student.currentRank.labelEs,
+      currentBeltLabelEn: student.currentRank.labelEn,
+      currentBeltVisual: {
+        primaryColor: student.currentRank.primaryColor,
+        centerStripeColor: student.currentRank.centerStripeColor,
+        barColor: student.currentRank.barColor,
+        stripeColors: student.currentRank.stripeColors,
+        maxStripes: student.currentRank.maxStripes,
+        visibleStripeSlots: student.currentRank.visibleStripeSlots,
+      },
+      currentStripes: student.currentStripes,
+      atBeltCount,
+      creditedClasses,
+      lifetimeCount,
+      attendancesPerStripe,
       maxStripes: student.currentRank.maxStripes,
-      visibleStripeSlots: student.currentRank.visibleStripeSlots,
+      attendancesForExam,
+      nextTarget: engineResult.nextTarget,
+      remainingAttendance: engineResult.remainingAttendance,
+      isEligible: engineResult.isEligible,
+      accounting: config.accounting,
+      target: engineResult.target,
+      percent: engineResult.percent,
+      timeAnchorMissing: engineResult.timeAnchorMissing,
+      notConfigured: engineResult.notConfigured,
+      reachedOn,
+      progressBaselineAt: student.progressBaselineAt,
+      progressBaselineKind: student.progressBaselineKind,
+      mode,
+      dueDate: engineResult.dueDate ? engineResult.dueDate.toJSDate() : null,
+      currentRankId: student.currentRank.id,
+      track: student.track,
+      currentRankOrder: student.currentRank.order,
     },
-    currentStripes: student.currentStripes,
-    atBeltCount,
-    creditedClasses,
-    lifetimeCount,
-    attendancesPerStripe,
-    maxStripes: student.currentRank.maxStripes,
-    attendancesForExam,
-    nextTarget: engineResult.nextTarget,
-    remainingAttendance: engineResult.remainingAttendance,
-    isEligible: engineResult.isEligible,
-    mode: config.mode,
-    dueDate: engineResult.dueDate ? engineResult.dueDate.toJSDate() : null,
-    currentRankId: student.currentRank.id,
-    track: student.track,
-    currentRankOrder: student.currentRank.order,
   };
+}
+
+/**
+ * `configByTrack` — resolved ONCE per request/batch by the caller via
+ * `resolvePromotionConfigMap`, never looked up in here. A lookup inside this
+ * per-student function would be an N+1 on every list surface that calls it
+ * for many students (the promotion queue, the roster page) — see
+ * `resolvePromotionConfigMap`'s own doc comment.
+ */
+export async function getAtBeltSummary(
+  studentId: string,
+  organizationId: string,
+  configByTrack: Map<Track, ResolvedTrackConfig>,
+): Promise<AtBeltSummary> {
+  return (await evaluateStudentProgress(prisma, studentId, organizationId, configByTrack)).summary;
 }

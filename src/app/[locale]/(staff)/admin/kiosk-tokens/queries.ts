@@ -30,7 +30,7 @@ export function crToday(now: Date = new Date()): Date {
  */
 export async function listTodaysCheckIns(organizationId: string, academyId: string, today: Date = crToday()) {
   return prisma.attendanceRecord.findMany({
-    where: { organizationId, academyId, type: AttendanceType.CHECKIN, date: today },
+    where: { organizationId, academyId, type: AttendanceType.CHECKIN, date: today, voidedAt: null },
     orderBy: { occurredAt: "desc" },
     select: {
       id: true,
