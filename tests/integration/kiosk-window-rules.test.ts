@@ -216,9 +216,14 @@ describe("rule 2: one class open -> automatic; several -> ask first, nothing wri
   it("duplicate submissions (a double-tap on the picker, or a retry) write one attendance; the rest are already_checked_in", async () => {
     const f = await fixture();
     const { student, code } = await f.student("dupes");
-    const results = await Promise.all(Array.from({ length: 6 }, () => f.checkIn({ code, pickedClassSessionId: f.byName.B.id }, mon(18, 40))));
+    // Four concurrent submissions: deliberately BELOW the kiosk limiter's cap. The limiter provisionally counts every
+    // in-flight attempt until it is finalized and blocks a burst of five or more concurrent ones (a brute-force guard:
+    // measured here, 12 concurrent requests return several 429 locked_out), so a larger burst would make this test depend
+    // on how quickly the machine finalizes attempts. Six concurrent submissions of the same class are covered at the core
+    // (explicit-class-check-in.test.ts), which has no limiter in front of it.
+    const results = await Promise.all(Array.from({ length: 4 }, () => f.checkIn({ code, pickedClassSessionId: f.byName.B.id }, mon(18, 40))));
     expect(results.filter((r) => r.status === 200)).toHaveLength(1);
-    expect(results.filter((r) => r.json.error === "already_checked_in")).toHaveLength(5);
+    expect(results.filter((r) => r.json.error === "already_checked_in")).toHaveLength(3);
     expect(await f.rows(student.id)).toHaveLength(1);
   });
 
