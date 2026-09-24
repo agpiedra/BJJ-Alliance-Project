@@ -5,7 +5,7 @@ import {
   isWithinCheckInWindow,
   nextBoundaryAfter,
   occurrencesForToday,
-  selectActiveSessionOccurrence,
+  openOccurrences,
 } from "@/lib/scheduling/check-in-window";
 
 describe("toAttendanceDate", () => {
@@ -112,74 +112,73 @@ describe("isWithinCheckInWindow", () => {
   });
 });
 
-describe("selectActiveSessionOccurrence", () => {
+describe("openOccurrences", () => {
   // Back-to-back hourly classes: 18:00-19:00 is open 17:30-19:30 CR and 19:00-20:00 is open 18:30-20:30, so they
-  // OVERLAP for an hour (18:30-19:30). Overlaps are expected; selection stays deterministic.
+  // OVERLAP for an hour (18:30-19:30). Overlaps are expected; the kiosk asks the student which class they attended
+  // whenever more than one is open, so this only reports WHICH classes are open, in a stable order.
   const early = { id: "session-early", dayOfWeek: "MONDAY" as const, startTime: "18:00", durationMinutes: 60 };
   const late = { id: "session-late", dayOfWeek: "MONDAY" as const, startTime: "19:00", durationMinutes: 60 };
+  const ids = (list: ReturnType<typeof openOccurrences>) => list.map((o) => o.session.id);
 
-  it("returns null when no session's window contains `now`", () => {
+  it("is empty when no window contains the instant (the wrong day, or before/after every window)", () => {
     // Sunday - neither session's day.
-    expect(selectActiveSessionOccurrence([early, late], new Date("2026-03-08T23:00:00.000Z"))).toBeNull();
+    expect(openOccurrences([early, late], new Date("2026-03-08T23:00:00.000Z"))).toEqual([]);
+    expect(openOccurrences([], new Date("2026-03-10T00:10:00.000Z"))).toEqual([]);
   });
 
-  it("is null one millisecond before the first window opens and one millisecond after the last one closes", () => {
+  it("is empty one millisecond before the first window opens and one millisecond after the last one closes, and inclusive at both", () => {
     // Monday 17:29:59.999 CR = 2026-03-09T23:29:59.999Z; the first window opens at 17:30.
-    expect(selectActiveSessionOccurrence([early, late], new Date("2026-03-09T23:29:59.999Z"))).toBeNull();
-    expect(selectActiveSessionOccurrence([early, late], new Date("2026-03-09T23:30:00.000Z"))?.session.id).toBe("session-early");
+    expect(openOccurrences([early, late], new Date("2026-03-09T23:29:59.999Z"))).toEqual([]);
+    expect(ids(openOccurrences([early, late], new Date("2026-03-09T23:30:00.000Z")))).toEqual(["session-early"]);
     // The last window (19:00 + 60 + 30) closes 20:30 CR = 2026-03-10T02:30:00Z, inclusive.
-    expect(selectActiveSessionOccurrence([early, late], new Date("2026-03-10T02:30:00.000Z"))?.session.id).toBe("session-late");
-    expect(selectActiveSessionOccurrence([early, late], new Date("2026-03-10T02:30:00.001Z"))).toBeNull();
+    expect(ids(openOccurrences([early, late], new Date("2026-03-10T02:30:00.000Z")))).toEqual(["session-late"]);
+    expect(openOccurrences([early, late], new Date("2026-03-10T02:30:00.001Z"))).toEqual([]);
   });
 
-  it("returns the only match when exactly one window contains `now`", () => {
-    // Monday 18:10 CR = 2026-03-10T00:10Z - inside `early` only (late opens 18:30).
-    expect(selectActiveSessionOccurrence([early, late], new Date("2026-03-10T00:10:00.000Z"))?.session.id).toBe("session-early");
-    // Monday 20:00 CR - `early` closed at 19:30, `late` still open.
-    expect(selectActiveSessionOccurrence([early, late], new Date("2026-03-10T02:00:00.000Z"))?.session.id).toBe("session-late");
+  it("returns exactly one class when exactly one window is open", () => {
+    // Monday 18:10 CR - inside `early` only (late opens 18:30). Monday 20:00 CR - `early` closed at 19:30.
+    expect(ids(openOccurrences([early, late], new Date("2026-03-10T00:10:00.000Z")))).toEqual(["session-early"]);
+    expect(ids(openOccurrences([early, late], new Date("2026-03-10T02:00:00.000Z")))).toEqual(["session-late"]);
   });
 
-  it("picks the session whose start is closest to `now` when windows overlap for an hour, in either input order", () => {
-    // Monday 19:10 CR = 2026-03-10T01:10Z: both open (early until 19:30, late from 18:30). 70 vs 10 minutes: late.
-    expect(selectActiveSessionOccurrence([early, late], new Date("2026-03-10T01:10:00.000Z"))?.session.id).toBe("session-late");
-    expect(selectActiveSessionOccurrence([late, early], new Date("2026-03-10T01:10:00.000Z"))?.session.id).toBe("session-late");
-    // Monday 18:29 CR: only `early` is open (late opens 18:30). At 18:40 both are open and `late` is nearer (20 vs 40 minutes).
-    expect(selectActiveSessionOccurrence([early, late], new Date("2026-03-10T00:29:00.000Z"))?.session.id).toBe("session-early");
-    expect(selectActiveSessionOccurrence([early, late], new Date("2026-03-10T00:40:00.000Z"))?.session.id).toBe("session-late");
+  it("returns EVERY open class when windows overlap, ordered by scheduled start then id, whatever the input order", () => {
+    // Monday 18:30:00 CR is the first instant both are open (early until 19:30, late from 18:30), inclusive at opening.
+    expect(ids(openOccurrences([early, late], new Date("2026-03-10T00:30:00.000Z")))).toEqual(["session-early", "session-late"]);
+    expect(ids(openOccurrences([late, early], new Date("2026-03-10T00:30:00.000Z")))).toEqual(["session-early", "session-late"]);
+    // 19:30:00 is early's last instant; 19:30:00.001 leaves only late.
+    expect(ids(openOccurrences([late, early], new Date("2026-03-10T01:30:00.000Z")))).toEqual(["session-early", "session-late"]);
+    expect(ids(openOccurrences([late, early], new Date("2026-03-10T01:30:00.001Z")))).toEqual(["session-late"]);
   });
 
-  it("overlapping windows of DIFFERENT durations still pick the nearest start, in either input order", () => {
-    // 18:00 for 120 minutes is open 17:30-20:30; 19:00 for 60 minutes is open 18:30-20:30; 19:30 for 10 minutes is open 19:00-20:10.
+  it("overlapping windows of DIFFERENT durations are all reported, each closing at its own end + 30", () => {
+    // 18:00 for 120 min is open 17:30-20:30; 19:00 for 60 min 18:30-20:30; 19:30 for 10 min 19:00-20:10.
     const long = { id: "long", dayOfWeek: "MONDAY" as const, startTime: "18:00", durationMinutes: 120 };
     const hour = { id: "hour", dayOfWeek: "MONDAY" as const, startTime: "19:00", durationMinutes: 60 };
     const short = { id: "short", dayOfWeek: "MONDAY" as const, startTime: "19:30", durationMinutes: 10 };
-    const at = new Date("2026-03-10T01:20:00.000Z"); // 19:20 CR: all three open; distances 80, 20, 10 minutes
-    expect(selectActiveSessionOccurrence([long, hour, short], at)?.session.id).toBe("short");
-    expect(selectActiveSessionOccurrence([short, hour, long], at)?.session.id).toBe("short");
-    // 20:15 CR: `short` closed at 20:10; `long` and `hour` are still open; 135 vs 75 minutes -> hour.
-    expect(selectActiveSessionOccurrence([long, hour, short], new Date("2026-03-10T02:15:00.000Z"))?.session.id).toBe("hour");
-    expect(selectActiveSessionOccurrence([short, hour, long], new Date("2026-03-10T02:15:00.000Z"))?.session.id).toBe("hour");
+    expect(ids(openOccurrences([short, hour, long], new Date("2026-03-10T01:20:00.000Z")))).toEqual(["long", "hour", "short"]); // 19:20
+    expect(ids(openOccurrences([short, hour, long], new Date("2026-03-10T02:15:00.000Z")))).toEqual(["long", "hour"]); // 20:15: short closed at 20:10
   });
 
-  it("breaks an equidistant tie in favour of the EARLIER scheduled start", () => {
-    // Monday 18:30 CR = 2026-03-10T00:30Z is exactly 30 minutes from both the 18:00 and the 19:00 start.
-    expect(selectActiveSessionOccurrence([late, early], new Date("2026-03-10T00:30:00.000Z"))?.session.id).toBe("session-early");
-    expect(selectActiveSessionOccurrence([early, late], new Date("2026-03-10T00:30:00.000Z"))?.session.id).toBe("session-early");
-  });
-
-  it("breaks a same-start tie deterministically by lowest id", () => {
+  it("orders two classes with the identical start by lowest id", () => {
     const a = { ...early, id: "aaa" };
     const b = { ...early, id: "bbb" };
-    expect(selectActiveSessionOccurrence([a, b], new Date("2026-03-10T00:00:00.000Z"))?.session.id).toBe("aaa");
-    expect(selectActiveSessionOccurrence([b, a], new Date("2026-03-10T00:00:00.000Z"))?.session.id).toBe("aaa");
+    expect(ids(openOccurrences([b, a], new Date("2026-03-10T00:00:00.000Z")))).toEqual(["aaa", "bbb"]);
   });
 
-  it("reports the matched occurrence's own anchor day, not `now`'s, across CR midnight", () => {
+  it("reports each occurrence's own anchor day, not `now`'s, across CR midnight (a class running past midnight)", () => {
     const wednesdayLateNight = { id: "late-night", dayOfWeek: "WEDNESDAY" as const, startTime: "23:50", durationMinutes: 60 };
     // Thu 00:10 CR = 2026-06-18T06:10Z - `now` is Thursday, but the occurrence belongs to Wednesday the 17th.
-    expect(selectActiveSessionOccurrence([wednesdayLateNight], new Date("2026-06-18T06:10:00.000Z"))?.anchorDate.toISODate()).toBe("2026-06-17");
-    // ...and still does at 01:10 CR, 20 minutes after the class ENDED (00:50) and before it closes (01:20).
-    expect(selectActiveSessionOccurrence([wednesdayLateNight], new Date("2026-06-18T07:10:00.000Z"))?.anchorDate.toISODate()).toBe("2026-06-17");
+    expect(openOccurrences([wednesdayLateNight], new Date("2026-06-18T06:10:00.000Z"))[0]?.anchorDate.toISODate()).toBe("2026-06-17");
+    // ...and still does at 01:20:00 (end 00:50 + 30), inclusive; gone 1 ms later.
+    expect(openOccurrences([wednesdayLateNight], new Date("2026-06-18T07:20:00.000Z"))[0]?.anchorDate.toISODate()).toBe("2026-06-17");
+    expect(openOccurrences([wednesdayLateNight], new Date("2026-06-18T07:20:00.001Z"))).toEqual([]);
+  });
+
+  it("lists a class that opens the evening before (00:10 Tuesday opens 23:40 Monday) together with Monday's classes", () => {
+    const monday = { id: "monday-late", dayOfWeek: "MONDAY" as const, startTime: "23:00", durationMinutes: 60 }; // open until 00:30 Tue
+    const tuesday = { id: "tuesday-early", dayOfWeek: "TUESDAY" as const, startTime: "00:10", durationMinutes: 60 };
+    // Monday 23:45 CR = 2026-01-06T05:45Z
+    expect(ids(openOccurrences([tuesday, monday], new Date("2026-01-06T05:45:00.000Z")))).toEqual(["monday-late", "tuesday-early"]);
   });
 });
 

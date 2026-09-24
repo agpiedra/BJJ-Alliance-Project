@@ -192,53 +192,18 @@ export function isWithinCheckInWindow(session: SessionTiming, now: Date): boolea
 }
 
 /**
- * Pick the ONE session occurrence a check-in at `now` belongs to, out of a
- * list of candidate sessions.
+ * Every occurrence, across `sessions`, whose check-in window contains `instant` - the classes a student could be
+ * checking in to right now.
  *
- * Overlapping windows are EXPECTED: with the owner-confirmed window
- * (start - 30 .. start + duration + 30) back-to-back hourly classes overlap
- * for an hour, and the admin schedule editor can create overlapping sessions
- * on purpose or by mistake. Picking "whichever row Postgres happened to
- * return first" would non-deterministically attribute the same tap to
- * different classes across identical requests — including flipping whether it
- * counts toward promotion at all. This only ever runs when NO class was
- * selected (the kiosk without a selection); an explicit selection is validated
- * against its own window and always wins (see `performCheckIn`).
- *
- * Deterministic selection rules, applied in order:
- *   1. The occurrence whose scheduled start is CLOSEST in absolute time to
- *      `now` wins (you are checking in to the class you are nearest to).
- *   2. Tie (e.g. exactly on the boundary between two back-to-back classes):
- *      the EARLIER scheduled start wins — at that instant the earlier class
- *      is already under way, whereas the later one has not begun.
- *   3. Still tied (two sessions scheduled at the identical time — the unique
- *      constraint only blocks an exact day/time/NAME collision, so this is
- *      reachable): the lexicographically smallest `id` wins. Arbitrary, but
- *      total and stable, which is the whole point.
+ * Overlaps are EXPECTED (owner-confirmed window: start - 30 .. end + 30, so back-to-back hourly classes overlap for an
+ * hour), and this function never chooses between them: the caller decides. The kiosk checks in automatically only when
+ * exactly ONE class is open and otherwise asks the student which class they attended BEFORE anything is written;
+ * a valid explicit selection always wins (see `performCheckIn`). The order is stable and total - scheduled start, then
+ * id - so a picker shows the same list in the same order on every request and in either input order.
  */
-export function selectActiveSessionOccurrence<T extends SessionTiming & { id: string }>(
-  sessions: T[],
-  now: Date,
-): SessionOccurrence<T> | null {
-  const matches = sessions
-    .map((session) => matchOccurrence(session, now))
-    .filter((match): match is SessionOccurrence<T> => match !== null);
-
-  if (matches.length === 0) return null;
-
-  return matches.reduce((best, candidate) => {
-    const bestDistance = Math.abs(best.startsAt.toMillis() - now.getTime());
-    const candidateDistance = Math.abs(candidate.startsAt.toMillis() - now.getTime());
-    if (candidateDistance !== bestDistance) {
-      return candidateDistance < bestDistance ? candidate : best;
-    }
-
-    const bestStart = best.startsAt.toMillis();
-    const candidateStart = candidate.startsAt.toMillis();
-    if (candidateStart !== bestStart) {
-      return candidateStart < bestStart ? candidate : best;
-    }
-
-    return candidate.session.id < best.session.id ? candidate : best;
-  });
+export function openOccurrences<T extends SessionTiming & { id: string }>(sessions: T[], instant: Date): SessionOccurrence<T>[] {
+  return sessions
+    .map((session) => matchOccurrence(session, instant))
+    .filter((match): match is SessionOccurrence<T> => match !== null)
+    .sort((a, b) => a.startsAt.toMillis() - b.startsAt.toMillis() || (a.session.id < b.session.id ? -1 : a.session.id > b.session.id ? 1 : 0));
 }

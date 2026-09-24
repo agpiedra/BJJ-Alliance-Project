@@ -146,7 +146,7 @@ describe("the screen and the server agree: a class is listed as open exactly whe
     for (const now of instants) {
       const { student } = await makeClassStudent(academy.id, academy.organizationId);
       const listed = states(await list(academy, student.id, now)).Later === "open";
-      const result = await performCheckIn({ academyId: academy.id, context: ctx(academy), studentId: student.id, source: "PORTAL", now, pickedClassSessionId: byName.Later.id, pickPolicy: "OPEN_ONLY" });
+      const result = await performCheckIn({ academyId: academy.id, context: ctx(academy), studentId: student.id, source: "PORTAL", now, pickedClassSessionId: byName.Later.id });
       expect(result.ok, now.toISOString()).toBe(listed);
     }
   });
@@ -195,7 +195,7 @@ describe("different durations and overlapping windows: the list and the server a
       for (const [now, expectedOpen] of cases) {
         const { student } = await makeClassStudent(academy.id, academy.organizationId);
         const listedOpen = states(await list(academy, student.id, now))[name] === "open";
-        const result = await performCheckIn({ academyId: academy.id, context: ctx(academy), studentId: student.id, source: "PORTAL", now, pickedClassSessionId: byName[name].id, pickPolicy: "OPEN_ONLY" });
+        const result = await performCheckIn({ academyId: academy.id, context: ctx(academy), studentId: student.id, source: "PORTAL", now, pickedClassSessionId: byName[name].id });
         expect(listedOpen, `${name} listed at ${now.toISOString()}`).toBe(expectedOpen);
         expect(result.ok, `${name} accepted at ${now.toISOString()}`).toBe(expectedOpen);
       }

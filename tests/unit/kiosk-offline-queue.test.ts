@@ -186,6 +186,43 @@ describe("offline-queue", () => {
     expect(body.queuedAt).toBeLessThanOrEqual(after);
   });
 
+  it("carries a recorded class selection with the queued entry (and sends none when there was none)", async () => {
+    await enqueueOfflineCheckIn({ academySlug: "demo", token: "tok", code: "1111", pickedClassSessionId: "cls-b" });
+    await enqueueOfflineCheckIn({ academySlug: "demo", token: "tok", code: "2222" });
+
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, { ok: true }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await flushOfflineQueue();
+
+    const [first, second] = fetchMock.mock.calls.map(([, init]) => JSON.parse(init.body));
+    expect(first).toMatchObject({ code: "1111", pickedClassSessionId: "cls-b" });
+    expect(typeof first.queuedAt).toBe("number"); // still replayed at its ORIGINAL instant
+    expect(second.pickedClassSessionId).toBeUndefined();
+  });
+
+  it("an UNMATCHED save (200) is a success: the entry is removed and nothing is reported as dropped", async () => {
+    await enqueueOfflineCheckIn({ academySlug: "demo", token: "tok", code: "1234" });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(200, { ok: true, matchedClass: null })));
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    expect(await flushOfflineQueue()).toEqual({ dropped: 0 });
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it.each(["no_open_class", "class_selection_required", "class_not_open", "invalid_class"])(
+    "a server that refuses a replay for its class (%s) is a contract violation: never silent - logged and COUNTED so staff see the banner",
+    async (reason) => {
+      await enqueueOfflineCheckIn({ academySlug: "demo", token: "tok", code: "1234" });
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(400, { ok: false, error: reason })));
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+      expect(await flushOfflineQueue()).toEqual({ dropped: 1 });
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      expect(warnSpy.mock.calls[0][1]).toMatchObject({ reason });
+    },
+  );
+
   it("replays entries strictly in FIFO order, one at a time", async () => {
     await enqueueOfflineCheckIn({ academySlug: "demo", token: "tok", code: "1111" });
     await enqueueOfflineCheckIn({ academySlug: "demo", token: "tok", code: "2222" });

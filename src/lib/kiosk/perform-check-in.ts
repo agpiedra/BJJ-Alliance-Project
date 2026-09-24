@@ -1,7 +1,7 @@
 import { digestLookupSecret } from "@/lib/crypto";
 import { requireEnv } from "@/lib/env";
-import { attendanceDateFromZoned, crDayOfWeek, toAttendanceDate } from "@/lib/scheduling/zone";
-import { openOccurrence, selectActiveSessionOccurrence } from "@/lib/scheduling/check-in-window";
+import { attendanceDateFromZoned, toAttendanceDate } from "@/lib/scheduling/zone";
+import { openOccurrences, type SessionOccurrence } from "@/lib/scheduling/check-in-window";
 import { getAtBeltSummary, type AtBeltSummary } from "@/lib/students/attendance-summary";
 import { isDayContribution } from "@/lib/promotion/progress-days";
 import type { BeltVisualData } from "@/components/belt-graphic/belt-graphic";
@@ -46,12 +46,29 @@ export interface MatchedClass {
   startTime: string;
 }
 
-/** One of "today's" classes, offered to the student when nothing auto-matched. */
-export interface PicklistEntry {
+/**
+ * One class that is OPEN right now, as offered to a student who must say which class they attended: name, the
+ * scheduled time range (`HH:mm`, Costa Rica wall clock; `endTime` may be past midnight) and the real class type.
+ */
+export interface OpenClassEntry {
   id: string;
   name: string;
   startTime: string;
+  endTime: string;
   type: ClassType;
+}
+
+/** The picker entry for one open occurrence (its own scheduled range, from its own configured duration). */
+export function toOpenClassEntry(
+  occurrence: SessionOccurrence<{ id: string; name: string; startTime: string; durationMinutes: number; type: ClassType; dayOfWeek: DayOfWeek }>,
+): OpenClassEntry {
+  return {
+    id: occurrence.session.id,
+    name: occurrence.session.name,
+    startTime: occurrence.session.startTime,
+    endTime: occurrence.startsAt.plus({ minutes: occurrence.session.durationMinutes }).toFormat("HH:mm"),
+    type: occurrence.session.type,
+  };
 }
 
 export type CheckInResult =
@@ -80,14 +97,24 @@ export type CheckInResult =
       attendanceRecordId: string;
       /** null for an UNMATCHED save (no class to name on the confirmation). */
       matchedClass: MatchedClass | null;
+      /** Another class was open at the same instant, so "this is not my class" has something to offer. */
+      canCorrect: boolean;
     }
   | {
       ok: false;
-      error: "invalid_code" | "no_active_class" | "already_checked_in" | "invalid_class" | "class_not_open";
-      /** Present only on `no_active_class`, and only when that day HAS classes
-       * to choose from — the kiosk renders these as buttons. A day with no
-       * classes at all never reaches this shape: it auto-saves as UNMATCHED. */
-      picklist?: PicklistEntry[];
+      /**
+       *  - invalid_code / already_checked_in: as ever.
+       *  - invalid_class: the selected id is not an active class of this academy. Nothing written.
+       *  - class_not_open: the selected class is not open at this instant (it closed while the picker was up, or it
+       *    never opened). Nothing written; `openClasses` carries the FRESH choices (possibly none).
+       *  - no_open_class: no class is open. A live attempt never creates an attendance from this: check-in is
+       *    unavailable and a coach can record the attendance.
+       *  - class_selection_required: SEVERAL classes are open and none was selected. Nothing written; `openClasses`
+       *    is the picker's list. Only a student's explicit choice records the attendance.
+       * A queued replay (`replay`) never returns the last four: it is retained for staff review instead.
+       */
+      error: "invalid_code" | "already_checked_in" | "invalid_class" | "class_not_open" | "no_open_class" | "class_selection_required";
+      openClasses?: OpenClassEntry[];
     };
 
 interface CommonInput {
@@ -109,41 +136,26 @@ interface CommonInput {
   source: AttendanceSource;
   now?: Date;
   /**
-   * "Nobody is standing at the tablet to answer a picker." Set by the API
-   * route for an OFFLINE REPLAY (a tap that was queued on the device and is
-   * being flushed later — see src/lib/kiosk/offline-queue.ts).
-   *
-   * Ruling (the brief's prose doesn't cover this case): `flushOfflineQueue`
-   * is a fire-and-forget background replay with no UI to render a picker
-   * into, and its caller only learns a count of DROPPED entries. Returning a
-   * picklist to it would therefore mean the tap is discarded outright —
-   * which is exactly the "silently drop a tap" outcome Phase 9 exists to
-   * remove. So a replay that matches no window is saved as UNMATCHED
-   * instead, whether or not that day had classes, and surfaces on the
-   * Kiosco page's "Marcajes de hoy" table where staff can `Cambiar` it to
-   * the right class. Attendance preserved, provenance honest.
+   * Set ONLY for a queued offline replay (the kiosk route derives it from a `queuedAt` in the body). Nobody is
+   * standing at the tablet to answer a picker, and a queued attendance must NEVER be silently discarded, so a replay is
+   * evaluated at its own ORIGINAL instant (`now`, the validated `queuedAt`) and:
+   *  - a valid recorded selection (open at that instant) is honored (STUDENT_PICKED);
+   *  - exactly ONE eligible class and no selection -> that class (AUTO);
+   *  - zero eligible classes, SEVERAL eligible classes without a recorded selection, an invalid recorded selection, or
+   *    an instant that could not be verified (`timestampVerified: false`: malformed, in the future or older than the
+   *    bound) -> saved UNMATCHED for staff review (never counted toward promotion, one per student per day).
+   * This is recovery for attendance that already happened; a NEW online attempt never takes this path.
    */
-  unattended?: boolean;
+  replay?: { timestampVerified: boolean };
 }
 
 /**
- * How an EXPLICITLY selected class is validated. Required whenever a class is selected (no default: a channel must
- * say which policy it runs, so a new caller cannot silently inherit the lenient one).
- *  - OPEN_ONLY (the portal): the class must belong to this academy, be active and be OPEN right now (start -30 to
- *    scheduled end +30 minutes, inclusive, using that class's own duration). An unknown / inactive / other-academy / other-organization id is
- *    `invalid_class`; a real class that is not open is `class_not_open`. Nothing is written.
- *  - TODAY_ANY (the attended kiosk): the kiosk's outside-window fallback is kept as it always was (whether it should
- *    stay is a separate owner decision that is still pending) - any of TODAY's active classes
- *    is accepted whether or not its window is open. An id that is not one of today's classes is treated as if
- *    nothing was selected (the picker / automatic match), exactly as before.
- * Either way the selection is validated server-side against fresh queries, never trusted from the client, and a
- * valid selection is NEVER overridden by a different nearest-time match.
+ * An explicit selection. It is validated server-side against fresh queries - never trusted from the client - and the
+ * class must belong to this academy, be active and be OPEN at the instant of the check-in (start -30 minutes to the
+ * class's scheduled end +30 minutes, inclusive, using that class's own duration): the SAME rule for the portal and the
+ * kiosk. A valid selection is never replaced by a different match.
  */
-export type PickPolicy = "OPEN_ONLY" | "TODAY_ANY";
-
-type ClassSelection =
-  | { pickedClassSessionId?: undefined; pickPolicy?: undefined }
-  | { pickedClassSessionId: string; pickPolicy: PickPolicy };
+type ClassSelection = { pickedClassSessionId?: string };
 
 export type PerformCheckInInput =
   | (CommonInput & ClassSelection & { code: string; studentId?: never })
@@ -224,80 +236,46 @@ export async function performCheckIn(input: PerformCheckInInput): Promise<CheckI
     where: { academyId: input.academyId, active: true },
   });
 
-  // Deterministic: `findMany` returns rows in no guaranteed order, and
-  // overlapping check-in windows are expected (back-to-back hourly classes
-  // overlap for an hour, and the admin schedule editor can create more), so
-  // "whichever row came back first" could attribute the same tap to different
-  // classes on identical requests. This automatic choice only applies when no
-  // class was selected; an explicit selection (below) is validated on its own
-  // window and always wins.
-  const occurrence = selectActiveSessionOccurrence(sessions, now);
+  // The classes open at the instant this attendance belongs to, in a stable order. A replay whose instant could not be
+  // verified is evaluated against NO class (an untrusted timestamp must not attribute anything to whatever happens to
+  // be open at replay time): it is retained for staff review below.
+  const replay = input.replay;
+  const open = !replay || replay.timestampVerified ? openOccurrences(sessions, now) : [];
 
-  // What the row will be attributed to, resolved by the first path that applies: an EXPLICIT selection, then an
-  // automatic window match, then the no-match handling (picker / unmatched save).
+  // What the row will be attributed to. `sessions` is this academy's ACTIVE classes, already scoped to the organization.
   type Attribution = { session: (typeof sessions)[number] | null; date: Date; matchSource: AttendanceMatchSource };
   let attribution: Attribution | null = null;
+  const picked = input.pickedClassSessionId !== undefined ? sessions.find((session) => session.id === input.pickedClassSessionId) : undefined;
+  const choices = () => open.map(toOpenClassEntry);
 
-  // 1. An explicit selection is validated FIRST and is never overridden by a different nearest-time match: the
-  //    student chose this class, and ranking by closeness to `now` only applies when nothing was chosen (see
-  //    PickPolicy). `sessions` is this academy's ACTIVE classes, already scoped to the organization.
+  // 1. An explicit selection is validated FIRST and always wins when valid. It is filed under the occurrence's OWN
+  //    Costa Rica day (a window can straddle midnight) and `occurredAt` stays the real instant.
   if (input.pickedClassSessionId !== undefined) {
-    const picked = sessions.find((session) => session.id === input.pickedClassSessionId);
-    if (!picked) {
-      if (input.pickPolicy === "OPEN_ONLY") return { ok: false, error: "invalid_class" };
-      // TODAY_ANY: a stale or tampered id is treated as if nothing was selected (below), as it always was.
-    } else {
-      const open = openOccurrence(picked, now);
-      if (open) {
-        // Stamped from the occurrence's OWN calendar day (a window can straddle CR midnight), exactly like an
-        // automatic match; `occurredAt` stays the real wall-clock instant.
-        attribution = { session: picked, date: attendanceDateFromZoned(open.anchorDate), matchSource: AttendanceMatchSource.STUDENT_PICKED };
-      } else if (input.pickPolicy === "OPEN_ONLY") {
-        return { ok: false, error: "class_not_open" };
-      } else if (picked.dayOfWeek === crDayOfWeek(now)) {
-        // The kiosk's outside-window fallback: one of TODAY's classes, filed under today's date.
-        attribution = { session: picked, date: toAttendanceDate(now), matchSource: AttendanceMatchSource.STUDENT_PICKED };
-      }
-      // else TODAY_ANY and not one of today's classes: falls through, as before.
+    const chosen = picked ? open.find((occurrence) => occurrence.session.id === picked.id) : undefined;
+    if (picked && chosen) {
+      attribution = { session: picked, date: attendanceDateFromZoned(chosen.anchorDate), matchSource: AttendanceMatchSource.STUDENT_PICKED };
+    } else if (!replay) {
+      // A live attempt is refused and NOTHING is written: an unknown / inactive / other-academy / other-organization id
+      // is `invalid_class`; a real class that is not open (it may have closed while the picker was up) is
+      // `class_not_open`, with the fresh choices so the student can pick again.
+      return picked ? { ok: false, error: "class_not_open", openClasses: choices() } : { ok: false, error: "invalid_class" };
     }
+    // A replay with an unusable selection is not discarded: it falls through to the staff-review save below.
   }
 
   if (!attribution) {
-    if (occurrence) {
-      // Stamped from the matched occurrence's OWN calendar day, never from
-      // `now`'s. A window that straddles CR midnight would otherwise give two
-      // check-ins to the same class occurrence two different `date` values,
-      // slipping past the (studentId, classSessionId, date) unique index and
-      // double-crediting one class — and a check-in just before midnight for a
-      // just-after-midnight class would be filed under the wrong day entirely.
-      // `occurredAt` stays the real wall-clock instant.
-      attribution = { session: occurrence.session, date: attendanceDateFromZoned(occurrence.anchorDate), matchSource: AttendanceMatchSource.AUTO };
+    if (!replay) {
+      // A NEW attempt with no selection. Zero open classes: check-in is unavailable and a coach records it - never an
+      // unmatched attendance from an online attempt. Several: the student must say which class; nothing is written
+      // until they do. Exactly one: it is unambiguous, so it is selected automatically.
+      if (open.length === 0) return { ok: false, error: "no_open_class" };
+      if (open.length > 1) return { ok: false, error: "class_selection_required", openClasses: choices() };
+      attribution = { session: open[0].session, date: attendanceDateFromZoned(open[0].anchorDate), matchSource: AttendanceMatchSource.AUTO };
+    } else if (input.pickedClassSessionId === undefined && open.length === 1) {
+      attribution = { session: open[0].session, date: attendanceDateFromZoned(open[0].anchorDate), matchSource: AttendanceMatchSource.AUTO };
     } else {
-      // No window contains `now`. Everything from here is Phase 9's no-match
-      // path: offer that day's classes, or save the tap unattributed — never
-      // reject it outright, which used to lose the attendance entirely.
-      //
-      // "That day" is `now`'s own CR calendar day. Unlike the AUTO branch there
-      // is no occurrence to anchor to, so there is nothing to straddle midnight:
-      // a tap at 23:50 CR belongs to that day's schedule, full stop.
-      const todaysSessions = await db.classSession.findMany({
-        where: { academyId: input.academyId, active: true, dayOfWeek: crDayOfWeek(now) },
-        orderBy: { startTime: "asc" },
-      });
-
-      if (todaysSessions.length > 0 && !input.unattended) {
-        return {
-          ok: false,
-          error: "no_active_class",
-          picklist: todaysSessions.map((session) => ({
-            id: session.id,
-            name: session.name,
-            startTime: session.startTime,
-            type: session.type,
-          })),
-        };
-      }
-
+      // Replay: nothing to attribute unambiguously. Kept, class-less, for staff to resolve on the Kiosco page; it never
+      // contributes to promotion (only a class-attributed attendance can).
       attribution = { session: null, date: toAttendanceDate(now), matchSource: AttendanceMatchSource.UNMATCHED };
     }
   }
@@ -421,6 +399,7 @@ export async function performCheckIn(input: PerformCheckInInput): Promise<CheckI
     homeAcademyName: student.homeAcademy.name,
     attendanceRecordId: created.id,
     matchedClass: attributed ? toMatchedClass(attributed) : null,
+    canCorrect: !replay && attributed !== null && open.some((occurrence) => occurrence.session.id !== attributed.id),
   };
 }
 

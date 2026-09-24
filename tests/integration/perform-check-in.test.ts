@@ -7,7 +7,7 @@ import { adultRankId } from "../helpers/belt-ranks";
 import { ALLIANCE_ATTENDANCE_CONFIG } from "../helpers/promotion-config";
 
 const { performCheckIn } = await import("../../src/lib/kiosk/perform-check-in");
-const { selectActiveSessionOccurrence } = await import("../../src/lib/scheduling/check-in-window");
+const { openOccurrences } = await import("../../src/lib/scheduling/check-in-window");
 const { reassignAttendance } = await import("../../src/lib/kiosk/reassign-attendance");
 const { getAtBeltSummary } = await import("../../src/lib/students/attendance-summary");
 
@@ -287,11 +287,9 @@ describe("performCheckIn", () => {
     expect(result).toEqual({ ok: false, error: "invalid_code" });
   });
 
-  // REDESIGN_BRIEF.md Phase 9: this used to reject. `OUTSIDE_ANY_WINDOW` is a
-  // Sunday and Escazú has NO Sunday sessions at all, so there is nothing to
-  // offer the student to pick — the tap is saved unattributed instead of being
-  // dropped, and staff review it on the Kiosco page's "Marcajes de hoy" table.
-  it("saves a tap on a day with no classes at all as an UNMATCHED record, rather than rejecting it", async () => {
+  // Owner-approved rule: a NEW online attempt with no open class is refused and writes NOTHING. `OUTSIDE_ANY_WINDOW` is a
+  // Sunday and Escazu has no Sunday sessions at all; check-in is unavailable and a coach can record the attendance.
+  it("refuses a tap when no class is open (a Sunday) with no_open_class, and writes nothing", async () => {
     const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
     const { student, code } = await makeStudent({ homeAcademyId: escazu.id });
 
@@ -303,15 +301,8 @@ describe("performCheckIn", () => {
       now: OUTSIDE_ANY_WINDOW,
     });
 
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.matchedClass).toBeNull();
-    }
-
-    const record = await prisma.attendanceRecord.findFirstOrThrow({ where: { studentId: student.id } });
-    expect(record.classSessionId).toBeNull();
-    expect(record.matchSource).toBe("UNMATCHED");
-    expect(record.date.toISOString().slice(0, 10)).toBe("2026-01-04");
+    expect(result).toEqual({ ok: false, error: "no_open_class" });
+    expect(await prisma.attendanceRecord.count({ where: { studentId: student.id } })).toBe(0);
   });
 
   it("treats a student checking in away from their home academy as a visitor, recorded under the visited academy", async () => {
@@ -449,7 +440,7 @@ describe("performCheckIn", () => {
       expect(record.date.toISOString().slice(0, 10)).toBe("2026-06-17"); // Wednesday's class, at Thursday 01:20
       expect(record.matchSource).toBe("AUTO");
 
-      // One millisecond later no window contains the instant; Thursday has no classes here, so it is saved UNMATCHED.
+      // One millisecond later no window contains the instant: a NEW attempt is refused and writes nothing...
       const late = await makeStudent({ homeAcademyId: academy.id });
       const closed = await performCheckIn({
         academyId: academy.id,
@@ -458,10 +449,8 @@ describe("performCheckIn", () => {
         source: "KIOSK",
         now: new Date("2026-06-18T07:20:00.001Z"),
       });
-      expect(closed.ok).toBe(true);
-      const unmatched = await prisma.attendanceRecord.findFirstOrThrow({ where: { studentId: late.student.id } });
-      expect(unmatched.classSessionId).toBeNull();
-      expect(unmatched.matchSource).toBe("UNMATCHED");
+      expect(closed).toEqual({ ok: false, error: "no_open_class" });
+      expect(await prisma.attendanceRecord.count({ where: { studentId: late.student.id } })).toBe(0);
     });
   });
 
@@ -556,7 +545,7 @@ describe("performCheckIn", () => {
       expect(result).toEqual({ ok: false, error: "invalid_code" });
     });
 
-    it("saves a tap on a day with no classes at all as an UNMATCHED record, rather than rejecting it", async () => {
+    it("refuses a tap when no class is open (a Sunday) with no_open_class, and writes nothing", async () => {
       const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
       const { student } = await makeStudent({ homeAcademyId: escazu.id });
 
@@ -568,11 +557,8 @@ describe("performCheckIn", () => {
         now: OUTSIDE_ANY_WINDOW,
       });
 
-      expect(result.ok).toBe(true);
-
-      const record = await prisma.attendanceRecord.findFirstOrThrow({ where: { studentId: student.id } });
-      expect(record.classSessionId).toBeNull();
-      expect(record.matchSource).toBe("UNMATCHED");
+      expect(result).toEqual({ ok: false, error: "no_open_class" });
+      expect(await prisma.attendanceRecord.count({ where: { studentId: student.id } })).toBe(0);
     });
 
     it("treats a student checking in away from their home academy as a visitor, recorded under the visited academy", async () => {
@@ -614,196 +600,38 @@ describe("performCheckIn", () => {
     });
   });
 
-  // REDESIGN_BRIEF.md Phase 9's own verification table, run against the REAL
-  // seeded Escazú schedule rather than synthetic sessions (tests/unit/
-  // check-in-window.test.ts already covers the selection RULES in isolation;
-  // this is the "does it still do the right thing on our actual timetable"
-  // guard the brief asks for). `selectActiveSessionOccurrence` is untouched by
-  // Phase 9 — these must keep passing exactly as they did before it.
-  describe("nearest-class matching against the seeded Escazú schedule", () => {
-    const CASES: Array<{ label: string; now: string; expected: string | null }> = [
-      { label: "Mon 17:52 -> 18:00 GI Principiantes", now: "2026-01-05T23:52:00Z", expected: "GI — Principiantes" },
-      { label: "Mon 18:40 -> 19:00 GI Avanzados", now: "2026-01-06T00:40:00Z", expected: "GI — Avanzados" },
-      { label: "Mon 18:30 exactly -> 18:00 (tie goes to the earlier start)", now: "2026-01-06T00:30:00Z", expected: "GI — Principiantes" },
-      { label: "Wed 18:10 -> 18:30 Competición", now: "2026-01-08T00:10:00Z", expected: "Competición" },
-      { label: "Fri 18:52 -> 18:30 GI Todos los niveles", now: "2026-01-10T00:52:00Z", expected: "GI — Todos los niveles" },
-      { label: "Sat 09:50 -> 10:00 Kids", now: "2026-01-10T15:50:00Z", expected: "Kids" },
-      { label: "Mon 14:00 -> no match (the student is asked to pick)", now: "2026-01-05T20:00:00Z", expected: null },
-      // The owner-confirmed window is start - 30 .. start + duration + 30, inclusive (every seeded class is 60 minutes).
-      { label: "Mon 13:30 exactly -> 12:00 NO-GI (its end + 30 minutes, inclusive)", now: "2026-01-05T19:30:00Z", expected: "NO-GI" },
-      { label: "Mon 13:30:00.001 -> no match (1 ms after the 12:00 class's window closed)", now: "2026-01-05T19:30:00.001Z", expected: null },
-      { label: "Mon 19:20 -> 19:00 GI Avanzados (both evening windows are open; the nearer start wins)", now: "2026-01-06T01:20:00Z", expected: "GI — Avanzados" },
-      { label: "Mon 20:30 exactly -> 19:00 GI Avanzados (its end + 30 minutes, inclusive)", now: "2026-01-06T02:30:00Z", expected: "GI — Avanzados" },
-      { label: "Mon 20:30:00.001 -> no match (1 ms after the last Monday window closed)", now: "2026-01-06T02:30:00.001Z", expected: null },
+  // Which classes are OPEN at an instant, against the REAL seeded Escazu schedule rather than synthetic sessions (every
+  // seeded class is 60 minutes; the owner-confirmed window is start - 30 .. scheduled end + 30, inclusive). Overlaps are
+  // expected: when several are open the kiosk asks which class the student attended before anything is written.
+  describe("open classes against the seeded Escazu schedule", () => {
+    const CASES: Array<{ label: string; now: string; expected: string[] }> = [
+      { label: "Mon 17:52 -> only 18:00 GI Principiantes (19:00 opens 18:30)", now: "2026-01-05T23:52:00Z", expected: ["GI — Principiantes"] },
+      { label: "Mon 18:30 exactly -> both evening classes (the later one has just opened)", now: "2026-01-06T00:30:00Z", expected: ["GI — Principiantes", "GI — Avanzados"] },
+      { label: "Mon 18:40 -> both evening classes", now: "2026-01-06T00:40:00Z", expected: ["GI — Principiantes", "GI — Avanzados"] },
+      { label: "Mon 19:20 -> both evening classes (18:00 is open until 19:30)", now: "2026-01-06T01:20:00Z", expected: ["GI — Principiantes", "GI — Avanzados"] },
+      { label: "Mon 19:30:00.001 -> only 19:00 GI Avanzados", now: "2026-01-06T01:30:00.001Z", expected: ["GI — Avanzados"] },
+      { label: "Mon 20:30 exactly -> 19:00 GI Avanzados (its end + 30 minutes, inclusive)", now: "2026-01-06T02:30:00Z", expected: ["GI — Avanzados"] },
+      { label: "Mon 20:30:00.001 -> nothing open", now: "2026-01-06T02:30:00.001Z", expected: [] },
+      { label: "Mon 14:00 -> nothing open (between the 12:00 and 18:00 windows)", now: "2026-01-05T20:00:00Z", expected: [] },
+      { label: "Mon 13:30 exactly -> 12:00 NO-GI (its end + 30 minutes, inclusive)", now: "2026-01-05T19:30:00Z", expected: ["NO-GI"] },
+      { label: "Mon 13:30:00.001 -> nothing open", now: "2026-01-05T19:30:00.001Z", expected: [] },
+      { label: "Wed 18:10 -> 18:30 Competicion", now: "2026-01-08T00:10:00Z", expected: ["Competición"] },
+      { label: "Fri 18:52 -> 18:30 GI Todos los niveles", now: "2026-01-10T00:52:00Z", expected: ["GI — Todos los niveles"] },
+      { label: "Sat 09:50 -> Striking (09:00) and Kids (10:00) are both open", now: "2026-01-10T15:50:00Z", expected: ["Striking", "Kids"] },
     ];
 
     it.each(CASES)("$label", async ({ now, expected }) => {
       const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
       const sessions = await prisma.classSession.findMany({ where: { academyId: escazu.id, active: true } });
 
-      const match = selectActiveSessionOccurrence(sessions, new Date(now));
-      expect(match?.session.name ?? null).toBe(expected);
+      expect(openOccurrences(sessions, new Date(now)).map((o) => o.session.name)).toEqual(expected);
     });
   });
 
-  // REDESIGN_BRIEF.md Phase 9's no-match path. `selectActiveSessionOccurrence`
-  // itself is untouched and still covered by tests/unit/check-in-window.test.ts
-  // — everything here is about what happens when it returns null.
-  describe("no auto match (Phase 9)", () => {
-    // Monday 2026-01-05 14:00 CR. Escazú's Monday classes are 06:00 / 12:00 /
-    // 18:00 / 19:00 (60 minutes each), so 14:00 sits in no window (12:00's
-    // closed at 13:30 = its end + 30, 18:00's opens at 17:30) — the brief's own
-    // "the student is asked to pick" verification row, against the real seeded
-    // schedule.
-    const MONDAY_BETWEEN_ESCAZU_WINDOWS = new Date("2026-01-05T20:00:00Z");
-
-    it("offers that day's active classes, sorted by startTime, when the day HAS classes", async () => {
-      const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
-      const { student, code } = await makeStudent({ homeAcademyId: escazu.id });
-
-      const result = await performCheckIn({
-        academyId: escazu.id,
-        context: ctx(escazu),
-        code,
-        source: "KIOSK",
-        now: MONDAY_BETWEEN_ESCAZU_WINDOWS,
-      });
-
-      expect(result.ok).toBe(false);
-      if (!result.ok) {
-        expect(result.error).toBe("no_active_class");
-        expect(result.picklist?.map((entry) => entry.startTime)).toEqual(["06:00", "12:00", "18:00", "19:00"]);
-      }
-
-      // Nothing was written — the student still has to answer the picker.
-      expect(await prisma.attendanceRecord.count({ where: { studentId: student.id } })).toBe(0);
-    });
-
-    it("records the student's pick as STUDENT_PICKED, and refuses the same pick twice", async () => {
-      const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
-      const { student, code } = await makeStudent({ homeAcademyId: escazu.id });
-
-      const offered = await performCheckIn({
-        academyId: escazu.id,
-        context: ctx(escazu),
-        code,
-        source: "KIOSK",
-        now: MONDAY_BETWEEN_ESCAZU_WINDOWS,
-      });
-      const picked = offered.ok ? undefined : offered.picklist?.[1];
-      expect(picked).toBeDefined();
-
-      const result = await performCheckIn({
-        academyId: escazu.id,
-        context: ctx(escazu),
-        code,
-        source: "KIOSK",
-        now: MONDAY_BETWEEN_ESCAZU_WINDOWS,
-        pickedClassSessionId: picked!.id,
-        pickPolicy: "TODAY_ANY",
-      });
-
-      expect(result.ok).toBe(true);
-      if (result.ok) {
-        expect(result.matchedClass?.id).toBe(picked!.id);
-      }
-
-      const record = await prisma.attendanceRecord.findFirstOrThrow({ where: { studentId: student.id } });
-      expect(record.classSessionId).toBe(picked!.id);
-      expect(record.matchSource).toBe("STUDENT_PICKED");
-      expect(record.date.toISOString().slice(0, 10)).toBe("2026-01-05");
-
-      const again = await performCheckIn({
-        academyId: escazu.id,
-        context: ctx(escazu),
-        code,
-        source: "KIOSK",
-        now: MONDAY_BETWEEN_ESCAZU_WINDOWS,
-        pickedClassSessionId: picked!.id,
-        pickPolicy: "TODAY_ANY",
-      });
-      expect(again).toEqual({ ok: false, error: "already_checked_in" });
-      expect(await prisma.attendanceRecord.count({ where: { studentId: student.id } })).toBe(1);
-    });
-
-    it("ignores a pick that isn't one of that academy's classes for that day, falling back to the picker", async () => {
-      const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
-      const { academy: other, sessions } = await makeFixtureAcademy([
-        { dayOfWeek: "MONDAY", startTime: "13:00", name: "Somebody Else's Class" },
-      ]);
-      void other;
-      const { student, code } = await makeStudent({ homeAcademyId: escazu.id });
-
-      const result = await performCheckIn({
-        academyId: escazu.id,
-        context: ctx(escazu),
-        code,
-        source: "KIOSK",
-        now: MONDAY_BETWEEN_ESCAZU_WINDOWS,
-        pickedClassSessionId: sessions[0].id,
-        pickPolicy: "TODAY_ANY",
-      });
-
-      expect(result.ok).toBe(false);
-      if (!result.ok) expect(result.error).toBe("no_active_class");
-      expect(await prisma.attendanceRecord.count({ where: { studentId: student.id } })).toBe(0);
-    });
-
-    it("auto-saves an UNMATCHED record when the day has no active classes at all", async () => {
-      // Tuesday-only fixture, tapped on a Monday.
-      const { academy } = await makeFixtureAcademy([
-        { dayOfWeek: "TUESDAY", startTime: "18:00", name: "Martes" },
-      ]);
-      const { student, code } = await makeStudent({ homeAcademyId: academy.id });
-
-      const result = await performCheckIn({
-        academyId: academy.id,
-        context: ctx(academy),
-        code,
-        source: "KIOSK",
-        now: MONDAY_BETWEEN_ESCAZU_WINDOWS,
-      });
-
-      expect(result.ok).toBe(true);
-      if (result.ok) expect(result.matchedClass).toBeNull();
-
-      const record = await prisma.attendanceRecord.findFirstOrThrow({ where: { studentId: student.id } });
-      expect(record.classSessionId).toBeNull();
-      expect(record.matchSource).toBe("UNMATCHED");
-
-      // A second tap the same day must not double-count: the unique constraint
-      // can't see it (Postgres treats NULLs as distinct), so performCheckIn
-      // checks for it itself.
-      const again = await performCheckIn({
-        academyId: academy.id,
-        context: ctx(academy),
-        code,
-        source: "KIOSK",
-        now: MONDAY_BETWEEN_ESCAZU_WINDOWS,
-      });
-      expect(again).toEqual({ ok: false, error: "already_checked_in" });
-    });
-
-    it("saves an UNATTENDED (offline-replay) tap as UNMATCHED instead of returning a picklist nobody can answer", async () => {
-      const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
-      const { student, code } = await makeStudent({ homeAcademyId: escazu.id });
-
-      const result = await performCheckIn({
-        academyId: escazu.id,
-        context: ctx(escazu),
-        code,
-        source: "KIOSK",
-        now: MONDAY_BETWEEN_ESCAZU_WINDOWS,
-        unattended: true,
-      });
-
-      expect(result.ok).toBe(true);
-      const record = await prisma.attendanceRecord.findFirstOrThrow({ where: { studentId: student.id } });
-      expect(record.classSessionId).toBeNull();
-      expect(record.matchSource).toBe("UNMATCHED");
-    });
-
-    it("still stamps AUTO, and names the matched class, when a window does match", async () => {
+  // A live check-in with no selection. (The full matrix - zero / one / several open classes, selection, cancellation,
+  // duplicates, corrections and offline replay - is in tests/integration/kiosk-window-rules.test.ts.)
+  describe("a live check-in with no selection", () => {
+    it("names the class and stamps AUTO when exactly one class is open", async () => {
       const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
       const { student, code } = await makeStudent({ homeAcademyId: escazu.id });
 
@@ -819,10 +647,50 @@ describe("performCheckIn", () => {
       if (result.ok) {
         expect(result.matchedClass).toMatchObject({ dayOfWeek: "MONDAY", startTime: "06:00" });
         expect(result.attendanceRecordId).toEqual(expect.any(String));
+        expect(result.canCorrect).toBe(false); // nothing else was open to correct it to
       }
 
       const record = await prisma.attendanceRecord.findFirstOrThrow({ where: { studentId: student.id } });
       expect(record.matchSource).toBe("AUTO");
+    });
+
+    it("refuses with no_open_class between windows (Mon 14:00) and writes nothing", async () => {
+      const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+      const { student, code } = await makeStudent({ homeAcademyId: escazu.id });
+
+      const result = await performCheckIn({
+        academyId: escazu.id,
+        context: ctx(escazu),
+        code,
+        source: "KIOSK",
+        now: new Date("2026-01-05T20:00:00Z"),
+      });
+
+      expect(result).toEqual({ ok: false, error: "no_open_class" });
+      expect(await prisma.attendanceRecord.count({ where: { studentId: student.id } })).toBe(0);
+    });
+
+    it("asks WHICH class when several are open (Mon 18:40): the open classes with name, time range and type, in start order, nothing written", async () => {
+      const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+      const { student, code } = await makeStudent({ homeAcademyId: escazu.id });
+
+      const result = await performCheckIn({
+        academyId: escazu.id,
+        context: ctx(escazu),
+        code,
+        source: "KIOSK",
+        now: new Date("2026-01-06T00:40:00Z"),
+      });
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error).toBe("class_selection_required");
+        expect(result.openClasses).toEqual([
+          expect.objectContaining({ name: "GI — Principiantes", startTime: "18:00", endTime: "19:00", type: "GI" }),
+          expect.objectContaining({ name: "GI — Avanzados", startTime: "19:00", endTime: "20:00", type: "GI" }),
+        ]);
+      }
+      expect(await prisma.attendanceRecord.count({ where: { studentId: student.id } })).toBe(0);
     });
   });
 
@@ -872,8 +740,8 @@ describe("performCheckIn", () => {
     });
 
     it("keeps an UNMATCHED tap out of belt progress until a human resolves it, but in the lifetime total", async () => {
-      // Tuesday-only fixture, tapped on a Monday -> UNMATCHED. An unreviewed
-      // tap with no evidence of attending any specific class must not advance
+      // Tuesday-only fixture, a queued tap from a Monday -> retained UNMATCHED (a NEW online attempt would be refused).
+      // An unreviewed tap with no evidence of attending any specific class must not advance
       // a belt on its own: a PORTAL self-check-in needs no physical presence
       // at all, so counting it would be a free stripe. It is still a real tap,
       // so it stays in the unfiltered lifetime total.
@@ -887,8 +755,9 @@ describe("performCheckIn", () => {
         context: ctx(academy),
         code,
         source: "KIOSK",
-        // Monday 2026-01-05 13:30 CR.
+        // Monday 2026-01-05 13:30 CR, replayed from the offline queue with a verified original instant.
         now: new Date("2026-01-05T19:30:00Z"),
+        replay: { timestampVerified: true },
       });
 
       expect(result.ok).toBe(true);
@@ -918,7 +787,7 @@ describe("performCheckIn", () => {
         (
           await reassignAttendance(record.id, monday.id, {
             actorUserId: null,
-            matchSource: "STUDENT_PICKED",
+            matchSource: "STAFF_CORRECTED",
             expectedAcademyId: academy.id,
             context: ctx(academy),
           })

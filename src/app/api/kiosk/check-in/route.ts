@@ -12,10 +12,19 @@ import type { KioskContext } from "@/lib/tenant/types";
 // requires the Node runtime — do not add `export const runtime = "edge"` here.
 
 /**
- * Response contract for Tasks 6 (kiosk page) and 7 (offline-replay queue):
+ * Response contract for the kiosk page and the offline-replay queue:
  *
- *   200  { ok: true; student: {...}; summary: AtBeltSummary; thresholdReached: boolean; progressOutcome: "counted" | "already_counted_today" | "not_promotion_class"; isVisitor: boolean }
- *   400  { ok: false; error: "invalid_code" | "no_active_class" | "already_checked_in" }
+ *   200  { ok: true; student: {...}; summary: AtBeltSummary; thresholdReached: boolean; progressOutcome; isVisitor: boolean;
+ *          attendanceRecordId; matchedClass: {...} | null; canCorrect: boolean }
+ *   400  { ok: false; error: "invalid_code" | "already_checked_in" }
+ *   400  { ok: false; error: "no_open_class" }                  no class is open: check-in is unavailable and a coach can
+ *                                                                record the attendance. NOTHING is written.
+ *   400  { ok: false; error: "class_selection_required"; openClasses: [...] }
+ *                                                                SEVERAL classes are open: the student must choose (name,
+ *                                                                time range, class type). NOTHING is written until they do.
+ *   400  { ok: false; error: "class_not_open"; openClasses: [...] }   the chosen class is not open (it may have closed
+ *                                                                while the picker was up); fresh choices, NOTHING written.
+ *   400  { ok: false; error: "invalid_class" }                  the chosen id is not an active class of this academy.
  *   401  { ok: false; error: "invalid_token" }               (bad kiosk token — same generic
  *                                                              shape as academy-not-found, see below)
  *   403  { ok: false; error: "org_unavailable" }              (organization is PENDING, SUSPENDED,
@@ -24,6 +33,10 @@ import type { KioskContext } from "@/lib/tenant/types";
  *   404  { ok: false; error: "invalid_token" }               (unknown academySlug — deliberately
  *                                                              indistinguishable from a bad token)
  *   429  { ok: false; error: "rate_limited" | "locked_out"; retryAfterSeconds: number }
+ *
+ * A body with `queuedAt` is an OFFLINE REPLAY (recovery of an attendance that already happened) and NEVER returns
+ * no_open_class / class_selection_required / class_not_open / invalid_class: it is recorded, or retained UNMATCHED
+ * for staff review, so a queued attendance is never discarded. See `replay` in perform-check-in.ts.
  */
 export async function POST(request: Request) {
   let body: {
@@ -44,8 +57,8 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false, error: "invalid_request" }, { status: 400 });
   }
   // Optional; only its TYPE is checked here. Whether the id is actually one of
-  // this academy's active classes for this weekday is re-validated inside
-  // performCheckIn against a fresh query — never trusted from the client.
+  // this academy's active classes AND open at the check-in instant is re-validated
+  // inside performCheckIn against a fresh query — never trusted from the client.
   if (pickedClassSessionId !== undefined && typeof pickedClassSessionId !== "string") {
     return NextResponse.json({ ok: false, error: "invalid_request" }, { status: 400 });
   }
@@ -107,30 +120,29 @@ export async function POST(request: Request) {
   // never from a session/cookie (MULTI_ACADEMY_AND_KIDS_BELTS.md Appendix C
   // proposal point 3: "the kiosk path resolves its organization only from
   // the verified branch token").
-  const selection: { pickedClassSessionId: string; pickPolicy: "TODAY_ANY" } | { pickedClassSessionId?: undefined; pickPolicy?: undefined } =
-    pickedClassSessionId !== undefined ? { pickedClassSessionId, pickPolicy: "TODAY_ANY" } : {};
+  //
+  // A `queuedAt` in the body means this is an offline replay from `flushOfflineQueue`, not a live tap: nobody is at the
+  // tablet to answer a picker, and the attendance already happened, so it is evaluated at its ORIGINAL instant and is
+  // recorded or retained for staff review, never refused. A `queuedAt` that cannot be verified (malformed, in the future,
+  // older than the bound) is still a replay - it is kept - but its instant is not trusted to pick a class.
+  const replayInstant = resolveAttendanceInstant(queuedAt);
   const kioskContext: KioskContext = { kind: "kiosk", organizationId: academy.organizationId, academyId: academy.id };
   const result = await performCheckIn({
     academyId: academy.id,
     context: kioskContext,
     code,
     source: "KIOSK",
-    now: resolveAttendanceInstant(queuedAt),
-    // The attended kiosk keeps its outside-window fallback (any of TODAY's classes): a selection is validated with
-    // the TODAY_ANY policy and, when valid, is honored even if a different class also matches automatically.
-    ...selection,
-    // A `queuedAt` in the body means this is an offline replay from
-    // `flushOfflineQueue`, not a live tap — nobody is at the tablet to answer
-    // a picker, so an unmatched replay is saved as UNMATCHED rather than
-    // returned as a picklist the queue would have to discard. See the
-    // `unattended` doc comment in perform-check-in.ts for the full ruling.
-    unattended: queuedAt !== undefined,
+    now: replayInstant,
+    // The same window rule as the portal: a selection must be one of this academy's classes that is open at the
+    // instant, and a valid selection always wins. There is no outside-window fallback.
+    ...(pickedClassSessionId !== undefined ? { pickedClassSessionId } : {}),
+    ...(queuedAt !== undefined ? { replay: { timestampVerified: replayInstant !== undefined } } : {}),
   });
 
   // Step 6: record this attempt's real outcome against the row already
   // reserved in step 4. The specific reason matters, not just ok/not-ok: only
   // `invalid_code` is a wrong-guess signal that may extend the lockout, while
-  // `already_checked_in` and `no_active_class` mean the code was valid.
+  // every other failure (`already_checked_in`, `no_open_class`, `class_selection_required`, ...) means the code was valid.
   // (No reconciliation branch is needed here any more: with the gate ahead of
   // the guess there is no longer a case where a real, committed check-in could
   // be hidden behind a rate-limit rejection.)
@@ -140,7 +152,7 @@ export async function POST(request: Request) {
     return NextResponse.json(result, { status: 200 });
   }
 
-  // invalid_code / no_active_class / already_checked_in are all client-side,
+  // invalid_code / no_open_class / class_selection_required / already_checked_in are all client-side,
   // pre-condition-not-met failures — no need for finer-grained status codes
   // on an internal API with only two consumers (Tasks 6 and 7), both of
   // which branch on the `error` field, not the HTTP status.

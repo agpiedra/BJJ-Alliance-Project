@@ -31,6 +31,12 @@ export interface OfflineCheckInPayload {
   academySlug: string;
   token: string;
   code: string;
+  /**
+   * The class the student chose from the picker, when they had already chosen one before the connection failed. It
+   * travels with the queued entry so a replay can honor it (validated against the ORIGINAL instant). Absent for an
+   * ordinary offline tap, which is evaluated at its original instant without a recorded selection.
+   */
+  pickedClassSessionId?: string;
 }
 
 interface StoredCheckIn extends OfflineCheckInPayload {
@@ -156,13 +162,13 @@ async function replayEntry(entry: StoredCheckIn): Promise<ReplayResult> {
         academySlug: entry.academySlug,
         token: entry.token,
         code: entry.code,
-        // The instant the student ACTUALLY tapped, not the instant
-        // connectivity came back. Without it the server records the replay
-        // time, which mis-stamps occurredAt/date and can attribute the
-        // check-in to a later class (or reject it as no_active_class). The
-        // server validates it and falls back to its own clock if it's absent,
-        // in the future, or implausibly stale.
+        // The instant the student ACTUALLY tapped, not the instant connectivity came back. The server evaluates the
+        // class window at THIS instant (never at replay time), so an attendance is judged against the classes that
+        // were open when it happened. A body with `queuedAt` is a replay: it is recorded or retained UNMATCHED for
+        // staff review, never refused. If the instant cannot be verified (absent, in the future, implausibly stale)
+        // the tap is still kept, but it is not used to pick a class.
         queuedAt: entry.queuedAt,
+        pickedClassSessionId: entry.pickedClassSessionId,
       }),
     });
   } catch {
@@ -196,36 +202,21 @@ async function replayEntry(entry: StoredCheckIn): Promise<ReplayResult> {
     // outcomes (a real, final verdict about the code itself) and are
     // intentionally NOT logged — logging them would be noise.
     //
-    // no_active_class during a REPLAY should now be unreachable, and this
-    // branch is the backstop rather than the expected path.
+    // A REPLAY IS NEVER REFUSED FOR ITS CLASS. Every request below carries `queuedAt`, which the API route reads as
+    // "this attendance already happened": it is evaluated at its original instant and is either attributed (a valid
+    // recorded selection, or exactly one open class) or SAVED as `matchSource: UNMATCHED` for staff to resolve from
+    // the Kiosco page "Marcajes de hoy" table (zero or several eligible classes, no usable selection, an unverifiable
+    // instant) - and comes back 200. So no_open_class / class_selection_required / class_not_open / invalid_class
+    // (and the legacy no_active_class) are unreachable here. If one still arrives (an older server, mid-deploy) nothing
+    // can make it succeed - retrying sends the identical body - so it is dropped, LOGGED and COUNTED, which raises the
+    // persistent "sync dropped" banner for staff: never silent, because that would cost the student the attendance.
     //
-    // REDESIGN_BRIEF.md Phase 9 ruling (the brief's prose doesn't cover
-    // the replay case): every request below carries `queuedAt`, which the
-    // API route reads as "this is an unattended replay" and passes to
-    // `performCheckIn` as `unattended: true`. An unattended tap that
-    // matches no window is SAVED as `matchSource: UNMATCHED` and comes
-    // back 200, instead of returning the interactive picklist a
-    // fire-and-forget background flush has no UI to render and would
-    // therefore have to discard. Staff resolve it from the Kiosco page's
-    // "Marcajes de hoy" table. The alternative — surfacing a picker for a
-    // tap that already left the device — has nowhere to appear: this
-    // function reports only a COUNT of drops to the UI, not per-entry
-    // detail, and the student left hours ago.
-    //
-    // If a `no_active_class` somehow still arrives (a server older than
-    // this ruling, mid-deploy), nothing further can make it succeed —
-    // retrying sends the identical body — so it stays definitive rather
-    // than retried forever — and stays logged, since that silently costs
-    // the student their attendance credit.
-    //
-    // invalid_request (or an unrecognized/malformed failure body) would
-    // mean our own request body was malformed — enqueueOfflineCheckIn only
-    // ever stores well-formed {academySlug, token, code} strings, so this
-    // would indicate a bug, not a transient state; retrying an identical
-    // malformed request can never succeed, so it's dropped rather than
-    // retried forever, and logged since it indicates a real bug.
-    if (reason === "no_active_class") {
-      console.warn("[kiosk-offline-queue] offline check-in dropped: class window ended before replay", {
+    // invalid_request (or an unrecognized/malformed failure body) would mean our own request body was malformed —
+    // enqueueOfflineCheckIn only ever stores well-formed strings, so this would indicate a bug, not a transient state;
+    // retrying an identical malformed request can never succeed, so it is dropped rather than retried forever, and
+    // logged since it indicates a real bug.
+    if (reason === "no_active_class" || reason === "no_open_class" || reason === "class_selection_required" || reason === "class_not_open" || reason === "invalid_class") {
+      console.warn("[kiosk-offline-queue] offline check-in dropped: the server refused a queued replay for its class (contract violation)", {
         entry,
         reason,
       });

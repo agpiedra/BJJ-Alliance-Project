@@ -7,9 +7,8 @@
  * online the next morning — while still refusing an absurdly stale value from
  * a device whose clock is simply wrong. It is a sanity bound, not the real
  * gate: `performCheckIn` still re-evaluates each class window (start - 30 minutes to
- * end + 30 minutes)
- * against whichever instant is used, so a nonsense timestamp that happens to
- * fall inside this bound is still rejected there as `no_active_class`.
+ * end + 30 minutes) against whichever instant is used, so a timestamp that happens to
+ * fall inside this bound but matches no class (or several) is retained UNMATCHED for staff review.
  */
 export const MAX_QUEUED_AGE_MS = 12 * 60 * 60 * 1000;
 
@@ -23,11 +22,12 @@ export const MAX_QUEUED_AGE_MS = 12 * 60 * 60 * 1000;
  * to a LATER class (or rejected outright) because the original class window
  * has since closed.
  *
- * Returns `undefined` — meaning "fall back to real server time" — when the
- * value is absent, malformed, in the future, or older than
- * `MAX_QUEUED_AGE_MS`. Deliberately a fallback rather than a rejection:
- * losing the check-in entirely is strictly worse than recording it with a
- * slightly-off timestamp.
+ * Returns `undefined` — meaning "the instant could not be verified" — when the
+ * value is absent, malformed, in the future, or older than `MAX_QUEUED_AGE_MS`.
+ * The check-in is still recorded (at the server clock), never rejected: losing
+ * the attendance entirely is strictly worse. But an unverified instant is never
+ * used to pick a class, so a REPLAY carrying one is saved UNMATCHED for staff
+ * review (see `replay.timestampVerified` in perform-check-in.ts).
  */
 export function resolveAttendanceInstant(queuedAt: unknown, nowMs: number = Date.now()): Date | undefined {
   if (typeof queuedAt !== "number" || !Number.isFinite(queuedAt)) return undefined;

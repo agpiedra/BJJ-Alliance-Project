@@ -54,7 +54,7 @@ async function makeStudent(baseline = new Date("2026-03-01T00:00:00Z")) {
 }
 
 function checkIn(studentId: string, source: "KIOSK" | "PORTAL", now: Date, unattended = false) {
-  return performCheckIn({ studentId, academyId, context: kiosk, source, now, unattended });
+  return performCheckIn({ studentId, academyId, context: kiosk, source, now, ...(unattended ? { replay: { timestampVerified: true } } : {}) });
 }
 
 async function contributions(studentId: string) {

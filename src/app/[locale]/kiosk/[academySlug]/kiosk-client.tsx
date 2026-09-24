@@ -28,12 +28,18 @@ const QUEUED_DISPLAY_MS = 6000;
  * student's account.
  */
 const PICKER_DISPLAY_MS = 30000;
+/** The "check-in is unavailable, ask a coach" card carries an instruction, so it stays up longer than a plain error. */
+const UNAVAILABLE_DISPLAY_MS = 9000;
 
-/** One of "today's" classes, as offered by the server's picklist. */
-interface PicklistEntry {
+/**
+ * One class that is OPEN right now, as offered by the server: name, the scheduled time range and the real class type.
+ * (Only classes whose check-in window contains the moment are ever offered; see performCheckIn.)
+ */
+interface OpenClass {
   id: string;
   name: string;
   startTime: string;
+  endTime: string;
   type: string;
 }
 
@@ -83,6 +89,8 @@ interface CheckInSuccess {
   isVisitor: boolean;
   homeAcademyName: string;
   attendanceRecordId: string;
+  /** Another class was open at the same instant, so "not this class" has something to offer. */
+  canCorrect?: boolean;
   /** null for an UNMATCHED save — there is no class to name, so the
    * "Asistencia guardada en" panel is omitted entirely. */
   matchedClass: MatchedClass | null;
@@ -92,7 +100,11 @@ interface CheckInSuccess {
 type CheckInFailureReason =
   | "invalid_request"
   | "invalid_code"
-  | "no_active_class"
+  // No class is open: check-in is unavailable and a coach can record the attendance. Nothing was written.
+  | "no_open_class"
+  | "class_selection_required"
+  | "class_not_open"
+  | "invalid_class"
   | "already_checked_in"
   | "invalid_token"
   | "org_unavailable"
@@ -108,15 +120,16 @@ type CheckInFailureReason =
 type Phase =
   | { kind: "entry"; code: string; submitting: boolean }
   | { kind: "success"; result: CheckInSuccess }
-  // Nothing auto-matched, but that day HAS classes: the student picks one
-  // (REDESIGN_BRIEF.md Phase 9). Gets its own, much longer `PICKER_DISPLAY_MS`
-  // timer rather than the few seconds the success/error cards get — reading
-  // several class names and choosing is a real decision.
-  | { kind: "picking"; code: string; picklist: PicklistEntry[] }
+  // SEVERAL classes are open: the student says which one they attended BEFORE anything is written (owner-approved
+  // rule). Cancelling, or walking away until `PICKER_DISPLAY_MS` runs out, writes nothing. `closedNotice` is set when the
+  // class they chose closed while the picker was up: the choices shown are the fresh ones. Gets its own, much longer
+  // timer rather than the few seconds the success/error cards get — reading several class names and choosing is a real
+  // decision.
+  | { kind: "picking"; code: string; picklist: OpenClass[]; closedNotice: boolean }
   // The confirmation screen's "¿No es esta clase?" link, opened over the
   // success view: the same choose-a-class UI, but reassigning the record that
   // was already written rather than submitting a new check-in.
-  | { kind: "correcting"; result: CheckInSuccess; picklist: PicklistEntry[]; submitting: boolean; failed: boolean }
+  | { kind: "correcting"; result: CheckInSuccess; picklist: OpenClass[]; submitting: boolean; failed: boolean }
   | { kind: "error"; reason: CheckInFailureReason }
   | { kind: "locked"; reason: "rate_limited" | "locked_out"; retryAfterSeconds: number }
   | { kind: "queued" };
@@ -191,7 +204,7 @@ export function KioskClient({
   }, [clearTimers]);
 
   const queueCheckIn = useCallback(
-    async (code: string) => {
+    async (code: string, pickedClassSessionId?: string) => {
       // enqueueOfflineCheckIn can fail two ways: it resolves `false` when
       // IndexedDB simply isn't available in this environment, or it can
       // reject (e.g. a QuotaExceededError, or a blocked/corrupted DB).
@@ -203,7 +216,7 @@ export function KioskClient({
       // can never freeze the kiosk on the next student.
       let persisted: boolean;
       try {
-        persisted = await enqueueOfflineCheckIn({ academySlug, token, code });
+        persisted = await enqueueOfflineCheckIn({ academySlug, token, code, pickedClassSessionId });
       } catch {
         persisted = false;
       }
@@ -226,20 +239,18 @@ export function KioskClient({
     async (code: string, pickedClassSessionId?: string) => {
       setPhase({ kind: "entry", code, submitting: true });
 
-      // The offline queue is the fallback for the ORIGINAL, unattended
-      // submission only. A re-submit carrying the student's pick must never
-      // be queued: `enqueueOfflineCheckIn` stores only {academySlug, token,
-      // code}, so the replay would silently drop the choice and land the tap
-      // somewhere the student didn't ask for.
-      const canQueue = pickedClassSessionId === undefined;
-
-      // Fast pre-check: if the browser already knows it's offline, don't
+      // Offline, the attempt is queued instead of lost. A recorded selection (the student had already chosen a class
+      // from the picker when the connection dropped) travels with the queued entry; an ordinary offline tap has none.
+      // The server judges a queued attempt at its ORIGINAL instant and never refuses it for its class: it is attributed
+      // when unambiguous and otherwise kept UNMATCHED for staff review (see offline-queue.ts).
+      //
+      // Fast pre-check: if the browser already knows it is offline, don't
       // bother attempting the request at all — go straight to the queue.
       // `navigator.onLine` can still be wrong in the other direction (it
       // can report `true` on a captive portal or a dead connection), which
       // is why the fetch failure below is the real, authoritative signal.
-      if (canQueue && typeof navigator !== "undefined" && navigator.onLine === false) {
-        await queueCheckIn(code);
+      if (typeof navigator !== "undefined" && navigator.onLine === false) {
+        await queueCheckIn(code, pickedClassSessionId);
         return;
       }
 
@@ -255,13 +266,7 @@ export function KioskClient({
         // offline (or the server is unreachable). Queue the attempt instead
         // of showing an error: the student showed up and must not lose
         // credit for the class over wifi.
-        if (canQueue) {
-          await queueCheckIn(code);
-          return;
-        }
-        clearTimers();
-        setPhase({ kind: "error", reason: "network_error" });
-        timeoutRef.current = setTimeout(resetToEntry, ERROR_DISPLAY_MS);
+        await queueCheckIn(code, pickedClassSessionId);
         return;
       }
 
@@ -308,21 +313,19 @@ export function KioskClient({
         ? (body.error as CheckInFailureReason)
         : "invalid_request";
 
-      // Nothing matched, but the server offered that day's classes. The
-      // "picking" phase is only ever entered with a NON-EMPTY list: an empty
-      // one can't happen under the server contract (a day with no classes
-      // auto-saves as UNMATCHED and comes back `ok: true`), so it falls
-      // through to the ordinary error card rather than rendering an empty
-      // screen with nothing to tap.
-      const picklist = readPicklist(body);
-      if (reason === "no_active_class" && picklist.length > 0) {
-        setPhase({ kind: "picking", code, picklist });
+      // Several classes are open (or the class the student chose just closed): show the CURRENT open classes to
+      // choose from. The picker is only ever shown with a NON-EMPTY list; if the chosen class closed and nothing is
+      // open any more, the student is told check-in is unavailable. Nothing has been written at this point.
+      const openClasses = readPicklist(body, "openClasses");
+      if ((reason === "class_selection_required" || reason === "class_not_open") && openClasses.length > 0) {
+        setPhase({ kind: "picking", code, picklist: openClasses, closedNotice: reason === "class_not_open" });
         timeoutRef.current = setTimeout(resetToEntry, PICKER_DISPLAY_MS);
         return;
       }
 
-      setPhase({ kind: "error", reason });
-      timeoutRef.current = setTimeout(resetToEntry, ERROR_DISPLAY_MS);
+      const shown: CheckInFailureReason = reason === "class_not_open" || reason === "class_selection_required" ? "no_open_class" : reason;
+      setPhase({ kind: "error", reason: shown });
+      timeoutRef.current = setTimeout(resetToEntry, shown === "no_open_class" ? UNAVAILABLE_DISPLAY_MS : ERROR_DISPLAY_MS);
     },
     [academySlug, token, clearTimers, resetToEntry, queueCheckIn],
   );
@@ -333,7 +336,7 @@ export function KioskClient({
       clearTimers();
       setPhase({ kind: "correcting", result, picklist: [], submitting: true, failed: false });
 
-      let picklist: PicklistEntry[] = [];
+      let picklist: OpenClass[] = [];
       try {
         const response = await fetch("/api/kiosk/reassign", {
           method: "POST",
@@ -365,7 +368,7 @@ export function KioskClient({
   /** Correction chosen: reassign the record already written, then return to
    * the confirmation screen showing the NEW class name in the same panel. */
   const applyCorrection = useCallback(
-    async (result: CheckInSuccess, picklist: PicklistEntry[], classSessionId: string) => {
+    async (result: CheckInSuccess, picklist: OpenClass[], classSessionId: string) => {
       clearTimers();
       setPhase({ kind: "correcting", result, picklist, submitting: true, failed: false });
 
@@ -399,6 +402,16 @@ export function KioskClient({
       timeoutRef.current = setTimeout(resetToEntry, SUCCESS_DISPLAY_MS);
     },
     [academySlug, token, clearTimers, resetToEntry],
+  );
+
+  /** Correction cancelled: back to the confirmation, which still shows the class the attendance is saved in. */
+  const cancelCorrection = useCallback(
+    (result: CheckInSuccess) => {
+      clearTimers();
+      setPhase({ kind: "success", result });
+      timeoutRef.current = setTimeout(resetToEntry, SUCCESS_DISPLAY_MS);
+    },
+    [clearTimers, resetToEntry],
   );
 
   // Restyle only: the brief's PIN pad spec ("3x4 numpad" with `Borrar` /
@@ -469,8 +482,11 @@ export function KioskClient({
         <ClassPicker
           heading={t("pickClassHeading")}
           description={t("pickClassDescription")}
+          notice={phase.closedNotice ? t("pickClassClosedNotice") : undefined}
           picklist={phase.picklist}
           submitting={false}
+          cancelLabel={t("pickClassCancel")}
+          onCancel={resetToEntry}
           onPick={(classSessionId) => void submitCode(phase.code, classSessionId)}
         />
       )}
@@ -482,6 +498,8 @@ export function KioskClient({
           picklist={phase.picklist}
           submitting={phase.submitting}
           error={phase.failed ? t("correctClassFailed") : undefined}
+          cancelLabel={t("pickClassCancel")}
+          onCancel={() => cancelCorrection(phase.result)}
           onPick={(classSessionId) => void applyCorrection(phase.result, phase.picklist, classSessionId)}
         />
       )}
@@ -522,8 +540,10 @@ function errorMessageKey(reason: CheckInFailureReason): string {
       return "invalidCode";
     case "already_checked_in":
       return "alreadyCheckedIn";
-    case "no_active_class":
-      return "noActiveClass";
+    case "no_open_class":
+    case "class_not_open":
+    case "class_selection_required":
+      return "noOpenClass";
     case "invalid_token":
       return "invalidToken";
     case "org_unavailable":
@@ -647,31 +667,43 @@ function EntryView({
 }
 
 /**
- * The shared "choose one of today's classes" screen, used by both the no-match
- * `picking` phase and the confirmation screen's `correcting` overlay. Tap
- * targets are sized to the PIN pad's scale for the same reason (wall-mounted,
- * read and tapped at 1-2 metres), just laid out as full-width rows since class
- * names are long.
+ * The shared "which class did you attend?" screen, used by both the `picking` phase (several classes are open, nothing
+ * written yet) and the confirmation screen's `correcting` overlay. Every row shows the class name, its scheduled time
+ * range and its real class type. Tap targets are sized to the PIN pad's scale for the same reason (wall-mounted, read
+ * and tapped at 1-2 metres), just laid out as full-width rows since class names are long. Cancel always leaves without
+ * writing anything.
  */
 function ClassPicker({
   heading,
   description,
+  notice,
   picklist,
   submitting,
   error,
+  cancelLabel,
+  onCancel,
   onPick,
 }: {
   heading: string;
   description: string;
-  picklist: PicklistEntry[];
+  notice?: string;
+  picklist: OpenClass[];
   submitting: boolean;
   error?: string;
+  cancelLabel: string;
+  onCancel: () => void;
   onPick: (classSessionId: string) => void;
 }) {
+  const tType = useTranslations("classType");
   return (
     <div className="flex w-full max-w-xl flex-col items-center gap-6">
       <h2 className="text-center font-heading text-3xl font-semibold text-balance sm:text-4xl">{heading}</h2>
       <p className="text-center text-lg text-muted-foreground sm:text-xl">{description}</p>
+      {notice && (
+        <p role="status" className="text-center text-lg font-medium sm:text-xl">
+          {notice}
+        </p>
+      )}
 
       <div className="flex w-full flex-col gap-3">
         {picklist.map((entry) => (
@@ -683,13 +715,24 @@ function ClassPicker({
             className="h-auto w-full justify-between gap-4 px-5 py-5 text-left text-xl whitespace-normal sm:py-6 sm:text-2xl"
             onClick={() => onPick(entry.id)}
           >
-            <span>{entry.name}</span>
-            <span className="font-mono tabular-nums">{entry.startTime}</span>
+            <span className="flex flex-col gap-1">
+              <span>{entry.name}</span>
+              <span className="text-base font-normal text-muted-foreground sm:text-lg">
+                {tType.has(entry.type) ? tType(entry.type) : entry.type}
+              </span>
+            </span>
+            <span className="font-mono tabular-nums">
+              {entry.startTime} – {entry.endTime}
+            </span>
           </Button>
         ))}
       </div>
 
       {error && <p className="text-center text-lg text-bad">{error}</p>}
+
+      <Button type="button" variant="ghost" disabled={submitting} className="h-auto px-6 py-4 text-lg sm:text-xl" onClick={onCancel}>
+        {cancelLabel}
+      </Button>
     </div>
   );
 }
@@ -764,14 +807,16 @@ export function SuccessView({ result, onCorrect }: { result: CheckInSuccess; onC
             <p className="text-lg text-muted-foreground">
               {tDay(matchedClass.dayOfWeek)} {matchedClass.startTime}
             </p>
-            <Button
-              type="button"
-              variant="ghost"
-              className="h-auto px-4 py-3 text-lg underline underline-offset-4 sm:text-xl"
-              onClick={onCorrect}
-            >
-              {t("notThisClass")}
-            </Button>
+            {result.canCorrect !== false && (
+              <Button
+                type="button"
+                variant="ghost"
+                className="h-auto px-4 py-3 text-lg underline underline-offset-4 sm:text-xl"
+                onClick={onCorrect}
+              >
+                {t("notThisClass")}
+              </Button>
+            )}
           </CardContent>
         </Card>
       )}
@@ -791,18 +836,19 @@ function isCheckInSuccess(body: unknown): body is CheckInSuccess {
   return record.ok === true && "student" in record && "summary" in record;
 }
 
-/** The `picklist` off any response that carries one, or `[]` if it doesn't. */
-function readPicklist(body: unknown): PicklistEntry[] {
+/** The class list under `key` (`openClasses` on a check-in response, `picklist` on a correction response), or `[]`. */
+function readPicklist(body: unknown, key: "picklist" | "openClasses" = "picklist"): OpenClass[] {
   if (typeof body !== "object" || body === null) return [];
-  const list = (body as Record<string, unknown>).picklist;
+  const list = (body as Record<string, unknown>)[key];
   if (!Array.isArray(list)) return [];
   return list.filter(
-    (entry): entry is PicklistEntry =>
+    (entry): entry is OpenClass =>
       typeof entry === "object" &&
       entry !== null &&
-      typeof (entry as PicklistEntry).id === "string" &&
-      typeof (entry as PicklistEntry).name === "string" &&
-      typeof (entry as PicklistEntry).startTime === "string",
+      typeof (entry as OpenClass).id === "string" &&
+      typeof (entry as OpenClass).name === "string" &&
+      typeof (entry as OpenClass).startTime === "string" &&
+      typeof (entry as OpenClass).endTime === "string",
   );
 }
 

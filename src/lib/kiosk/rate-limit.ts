@@ -16,21 +16,29 @@ export type ReserveResult = { allowed: true; attemptId: string } | RateLimitReje
 /**
  * The real outcome of an attempt previously claimed by `reserveKioskAttempt`.
  *
- * Only `invalid_code` is a brute-force signal. `already_checked_in` and `no_active_class`
- * both mean the submitted code was VALID and resolved to a real, active student — the
- * former is a student double-tapping, the latter a student arriving outside any class
- * window. Neither is a guess, so neither may extend the lockout.
+ * Only `invalid_code` is a brute-force signal. Every other failure means the submitted code was VALID and resolved
+ * to a real, active student: `already_checked_in` is a double-tap, `no_open_class` a student arriving outside every
+ * class window, `class_selection_required` a student who must pick among several open classes, `class_not_open` /
+ * `invalid_class` a selection that was refused. None is a guess, so none may extend the lockout.
  */
-export type KioskAttemptOutcome = "success" | "invalid_code" | "already_checked_in" | "no_active_class" | "invalid_class" | "class_not_open";
+export type KioskAttemptOutcome =
+  | "success"
+  | "invalid_code"
+  | "already_checked_in"
+  | "no_open_class"
+  | "class_selection_required"
+  | "invalid_class"
+  | "class_not_open";
 
 /** Outcomes that leave the reserved row counting toward the lockout anchor. */
 const OUTCOME_COUNTS_AS_FAILURE: Record<KioskAttemptOutcome, boolean> = {
   success: false,
   invalid_code: true,
   already_checked_in: false,
-  no_active_class: false,
-  // Selection refusals: the code was valid, so neither is a guess. (The attended kiosk's TODAY_ANY policy never
-  // produces them; they exist because the shared core's result type includes the portal's OPEN_ONLY refusals.)
+  // Valid-code outcomes that are not a check-in: outside every window, or the student must choose a class first.
+  no_open_class: false,
+  class_selection_required: false,
+  // Selection refusals: the code was valid, so neither is a guess.
   invalid_class: false,
   class_not_open: false,
 };
@@ -50,7 +58,7 @@ type WindowAttempt = { createdAt: Date };
  * actual protection.
  *
  * "Failure" here is narrower still than `success: false`: it is a genuine wrong-code
- * guess. Valid-code failures (`already_checked_in`, `no_active_class`) and attempts the
+ * guess. Valid-code failures (`already_checked_in`, `no_open_class`, ...) and attempts the
  * gate itself refused are logged but excluded, because the anchor is re-derived from
  * whatever currently sits in the window — so counting them let five late arrivals, five
  * double-taps, or a scripted flood of already-rejected requests hold an entire academy's
