@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getScopedDb } from "@/lib/tenant/scoped-client";
 import type { AccessContext } from "@/lib/tenant/types";
 import { ZONE, attendanceDateDayOfWeek, attendanceDateFromZoned } from "@/lib/scheduling/zone";
-import { occurrenceStart } from "@/lib/scheduling/check-in-window";
+import { isInsideWindow, occurrenceStart, occurrenceWindow } from "@/lib/scheduling/check-in-window";
 import { isUniqueConstraintError } from "@/lib/prisma-errors";
 import { AttendanceMatchSource, AttendanceSource, AttendanceType, QueuedCheckInStatus } from "@/generated/prisma/client";
 
@@ -16,30 +16,39 @@ import { AttendanceMatchSource, AttendanceSource, AttendanceType, QueuedCheckInS
 
 export type ResolveQueuedCheckInResult =
   | { ok: true; attendanceRecordId: string }
-  | { ok: false; error: "notFound" | "notPending" | "invalidDate" | "futureDate" | "invalidClass" | "classNotOnThatDay" | "alreadyRecorded" };
+  | { ok: false; error: "notFound" | "notPending" | "invalidDate" | "invalidTime" | "invalidClass" | "classNotOnThatDay" | "timeOutsideClass" | "futureTime" | "alreadyRecorded" };
 
 export type DismissQueuedCheckInResult =
   | { ok: true }
   | { ok: false; error: "notFound" | "notPending" | "reasonRequired" };
 
-/** Costa Rica's calendar day of an instant, as a CR-zoned start-of-day. */
-function crDay(instant: Date): DateTime {
-  return DateTime.fromJSDate(instant, { zone: "utc" }).setZone(ZONE).startOf("day");
-}
+const TIME_OF_DAY = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
 /**
- * Record queued evidence as a real attendance on `date` (`yyyy-MM-dd`, a Costa Rica calendar day chosen by the coach) for
- * `classSessionId`. The class must be an active class of the evidence's own academy scheduled on that weekday, and the day
- * cannot be in the future. The attendance is stamped `STAFF_CORRECTED` (a person decided it), `source: KIOSK` (where the
- * tap happened), with the coach as author. Its `occurredAt` is the device's claimed instant when that instant falls on the
- * chosen day (the raw instant of the tap survives), otherwise the class's own scheduled start on that day - never the
- * replay time. The evidence is claimed and linked in the SAME transaction (a second resolver, or a second click, gets
+ * Record queued evidence as a real attendance for `classSessionId`. Two different things are chosen, and they are not the
+ * same day:
+ *  - `date` (`yyyy-MM-dd`, Costa Rica) is the class OCCURRENCE's day - the attendance's ledger `date`. The class must be an
+ *    active class of the evidence's own academy scheduled on that weekday.
+ *  - `time` (`HH:mm`, Costa Rica) is the TAP's time, the instant the coach is CONFIRMING (the form pre-fills what the tablet
+ *    claimed, when it could be read). It is required: nothing is ever derived from the class start, because a made-up
+ *    instant can fall on the other side of a promotion and change what counts for the new interval. The tap's calendar
+ *    day may differ from the occurrence's (Monday 23:50 for Tuesday's 00:10 class), so its date is whichever of the day
+ *    before / the class's day / the day after puts it inside that occurrence's check-in window (a window is far shorter
+ *    than a day, so at most one does); a time that fits none is `timeOutsideClass`.
+ *
+ * The FINAL instant is what is validated: inside the window, and not in the future (`futureTime`; the evidence stays PENDING
+ * and can be recorded once that time has passed). When the confirmed time is the very minute of the tablet's claim, the
+ * claimed instant is kept exactly (seconds included, `instantSource: CLAIMED`); otherwise the coach's own time is recorded
+ * (`STAFF_ENTERED`). The original claim always stays on the evidence row and in the audit entry.
+ *
+ * The attendance is stamped `STAFF_CORRECTED` (a person decided it), `source: KIOSK` (where the tap happened), with the
+ * coach as author. The evidence is claimed and linked in the SAME transaction (a second resolver, or a second click, gets
  * `notPending` and writes nothing), and a student who already has an attendance in that class that day gets
  * `alreadyRecorded` with everything rolled back.
  */
 export async function resolveQueuedCheckIn(
   queuedCheckInId: string,
-  opts: { classSessionId: string; date: string; actorUserId: string; context: AccessContext; now?: Date },
+  opts: { classSessionId: string; date: string; time: string; actorUserId: string; context: AccessContext; now?: Date },
 ): Promise<ResolveQueuedCheckInResult> {
   const db = getScopedDb(opts.context);
   const kept = await db.queuedCheckIn.findUnique({
@@ -51,8 +60,9 @@ export async function resolveQueuedCheckIn(
 
   const day = DateTime.fromFormat(opts.date, "yyyy-MM-dd", { zone: ZONE });
   if (!day.isValid) return { ok: false, error: "invalidDate" };
+  const time = TIME_OF_DAY.exec(opts.time.trim());
+  if (!time) return { ok: false, error: "invalidTime" };
   const now = opts.now ?? new Date();
-  if (day.startOf("day") > crDay(now)) return { ok: false, error: "futureDate" };
 
   const session = await db.classSession.findUnique({
     where: { id: opts.classSessionId },
@@ -63,8 +73,16 @@ export async function resolveQueuedCheckIn(
   const ledgerDay = attendanceDateFromZoned(day.startOf("day"));
   if (session.dayOfWeek !== attendanceDateDayOfWeek(ledgerDay)) return { ok: false, error: "classNotOnThatDay" };
 
-  const claimedOnThatDay = kept.claimedAt !== null && attendanceDateFromZoned(crDay(kept.claimedAt)).getTime() === ledgerDay.getTime();
-  const occurredAt = claimedOnThatDay && kept.claimedAt ? kept.claimedAt : occurrenceStart(session, day).toJSDate();
+  const window = occurrenceWindow(occurrenceStart(session, day), session.durationMinutes);
+  const tapAt = [-1, 0, 1]
+    .map((offset) => day.plus({ days: offset }).set({ hour: Number(time[1]), minute: Number(time[2]), second: 0, millisecond: 0 }).toJSDate())
+    .find((candidate) => isInsideWindow(window, candidate));
+  if (!tapAt) return { ok: false, error: "timeOutsideClass" };
+  // The tablet's claim is kept to the second when it is the very minute the coach confirms; anything else is the coach's own time.
+  const claimedIsConfirmed = kept.claimedAt !== null && kept.claimedAt.getTime() >= tapAt.getTime() && kept.claimedAt.getTime() < tapAt.getTime() + 60_000;
+  const occurredAt = claimedIsConfirmed && kept.claimedAt ? kept.claimedAt : tapAt;
+  const instantSource = claimedIsConfirmed ? "CLAIMED" : "STAFF_ENTERED";
+  if (occurredAt > now) return { ok: false, error: "futureTime" };
 
   try {
     return await prisma.$transaction(async (tx) => {
@@ -103,7 +121,7 @@ export async function resolveQueuedCheckIn(
           entityType: "QueuedCheckIn",
           entityId: kept.id,
           before: { status: "PENDING", claimedAtRaw: kept.claimedAtRaw, claimedAtVerified: kept.claimedAtVerified, claimedClassSessionId: kept.claimedClassSessionId },
-          after: { status: "RESOLVED", attendanceRecordId: attendance.id, classSessionId: session.id, date: opts.date, occurredAt: occurredAt.toISOString() },
+          after: { status: "RESOLVED", attendanceRecordId: attendance.id, classSessionId: session.id, date: opts.date, confirmedTime: `${time[1]}:${time[2]}`, instantSource, occurredAt: occurredAt.toISOString() },
         },
       });
       return { ok: true as const, attendanceRecordId: attendance.id };

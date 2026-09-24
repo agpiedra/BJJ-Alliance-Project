@@ -1,10 +1,9 @@
 import "dotenv/config";
-import { DateTime } from "luxon";
 import { getTestPrismaClient } from "../helpers/test-db";
-import { afterAll, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { hashSecret } from "../../src/lib/crypto";
 import { cleanupClassFixtures, makeClassAcademy, makeClassStudent } from "../helpers/class-fixtures";
-import { ALLIANCE_ATTENDANCE_CONFIG } from "../helpers/promotion-config";
+import { ALLIANCE_ATTENDANCE_CONFIG, ALLIANCE_PER_INTERVAL_CONFIG } from "../helpers/promotion-config";
 import { makeAccountingOrg } from "../helpers/accounting-org";
 
 let currentSession: { user: { id: string; role: string } | null; activeOrganizationId?: string } | null = null;
@@ -14,6 +13,7 @@ const { resolveQueuedCheckInAction, dismissQueuedCheckInAction } = await import(
   "../../src/app/[locale]/(staff)/admin/kiosk-tokens/queued-check-in-actions"
 );
 const { getAtBeltSummary } = await import("../../src/lib/students/attendance-summary");
+const { listContributingDays } = await import("../../src/lib/promotion/progress-days");
 
 /**
  * The staff path for queued check-ins that were kept as untrusted evidence: a coach records the attendance ON THE ORIGINAL
@@ -23,6 +23,8 @@ const { getAtBeltSummary } = await import("../../src/lib/students/attendance-sum
 const prisma = getTestPrismaClient();
 const cleanupUserIds: string[] = [];
 const cleanupEvidence: string[] = [];
+
+afterEach(() => vi.useRealTimers());
 
 afterAll(async () => {
   await prisma.queuedCheckIn.deleteMany({ where: { id: { in: cleanupEvidence } } });
@@ -58,6 +60,9 @@ async function fixture() {
     { dayOfWeek: "MONDAY", startTime: "18:00", durationMinutes: 60, name: "A" },
     { dayOfWeek: "TUESDAY", startTime: "18:00", durationMinutes: 60, name: "T" },
     { dayOfWeek: "MONDAY", startTime: "20:00", durationMinutes: 60, name: "Retired", active: false },
+    { dayOfWeek: "MONDAY", startTime: "20:00", durationMinutes: 60, name: "Later" },
+    // Opens Monday 23:40: a tap late on Monday night belongs to THIS class, whose own day is Tuesday.
+    { dayOfWeek: "TUESDAY", startTime: "00:10", durationMinutes: 60, name: "Late" },
   ]);
   const byName = Object.fromEntries(sessions.map((s) => [s.name, s]));
   const { student } = await makeClassStudent(academy.id, academy.organizationId);
@@ -74,10 +79,17 @@ async function fixture() {
     cleanupEvidence.push(row.id);
     return row;
   };
-  const resolve = (id: string, fields: Record<string, string>) => resolveQueuedCheckInAction(academy.organizationId, {}, form({ queuedCheckInId: id, ...fields }));
+  // `time` is the tap time (HH:mm, Costa Rica) the coach CONFIRMS; most tests confirm the usual 18:40.
+  const resolve = (id: string, fields: Record<string, string>) => resolveQueuedCheckInAction(academy.organizationId, {}, form({ queuedCheckInId: id, time: "18:40", ...fields }));
   const dismiss = (id: string, reason: string) => dismissQueuedCheckInAction(academy.organizationId, {}, form({ queuedCheckInId: id, reason }));
+  // A promotion at `at`: both accountings measure the new interval from these two instants (see attendance-summary.ts).
+  const promote = (at: Date) => prisma.student.update({ where: { id: student.id }, data: { beltAwardedAt: at, progressBaselineAt: at } });
+  const counts = async () => ({
+    perInterval: (await getAtBeltSummary(student.id, academy.organizationId, ALLIANCE_PER_INTERVAL_CONFIG)).atBeltCount,
+    cumulative: (await getAtBeltSummary(student.id, academy.organizationId, ALLIANCE_ATTENDANCE_CONFIG)).atBeltCount,
+  });
   const attendance = () => prisma.attendanceRecord.findMany({ where: { studentId: student.id }, orderBy: { occurredAt: "asc" } });
-  return { academy, byName, student, evidence, resolve, dismiss, attendance };
+  return { academy, byName, student, evidence, resolve, dismiss, attendance, promote, counts };
 }
 
 describe("recording queued evidence on its ORIGINAL day", () => {
@@ -123,21 +135,36 @@ describe("recording queued evidence on its ORIGINAL day", () => {
     expect(await f.attendance()).toHaveLength(1);
   });
 
-  it("when the chosen day is not the claimed day (or the claim is malformed) the attendance is placed at the class's own start on that day, never the claimed or replay instant", async () => {
+  it("a malformed claim has no time to confirm: the coach must state one, and it is recorded as the coach's, never invented from the class start", async () => {
     const f = await fixture();
     await signIn(f.academy.organizationId, "INSTRUCTOR", f.academy.id);
-    const other = await f.evidence({ claimedAt: tue(18, 40), claimedClassSessionId: f.byName.T.id }); // claimed Tuesday...
-    expect(await f.resolve(other.id, { classSessionId: f.byName.A.id, date: "2026-01-05" })).toEqual({ ok: true }); // ...coach records Monday
     const malformed = await f.evidence({ claimedAt: null, claimedAtRaw: "yesterday evening", claimedClassSessionId: null });
-    expect(await f.resolve(malformed.id, { classSessionId: f.byName.T.id, date: "2026-01-06" })).toEqual({ ok: true });
-    const rows = await f.attendance();
-    expect(rows.map((r) => [r.date.toISOString().slice(0, 10), r.occurredAt.toISOString()])).toEqual([
-      ["2026-01-05", mon(18, 0).toISOString()],
-      ["2026-01-06", tue(18, 0).toISOString()],
-    ]);
+    for (const time of ["", "  ", "7pm", "25:00", "18:60", "18:40:15"]) {
+      expect(await f.resolve(malformed.id, { classSessionId: f.byName.T.id, date: "2026-01-06", time }), time).toEqual({ error: "invalidTime" });
+    }
+    expect(await f.attendance()).toHaveLength(0);
+    expect(await f.resolve(malformed.id, { classSessionId: f.byName.T.id, date: "2026-01-06", time: "18:10" })).toEqual({ ok: true });
+    const [row] = await f.attendance();
+    expect([row.date.toISOString().slice(0, 10), row.occurredAt.toISOString()]).toEqual(["2026-01-06", tue(18, 10).toISOString()]);
+    const after = await prisma.queuedCheckIn.findUniqueOrThrow({ where: { id: malformed.id } });
+    expect(after).toMatchObject({ claimedAt: null, claimedAtRaw: "yesterday evening", claimedAtVerified: false }); // the claim itself is untouched
+    const audit = await prisma.auditLog.findFirstOrThrow({ where: { entityType: "QueuedCheckIn", entityId: malformed.id } });
+    expect(audit.after).toMatchObject({ confirmedTime: "18:10", instantSource: "STAFF_ENTERED", occurredAt: tue(18, 10).toISOString() });
   });
 
-  it("a malformed or future claim needs a day chosen by the coach: a missing or invalid date is refused and nothing is recorded", async () => {
+  it("a claim on a different day than the class's: the confirmed time is the coach's, on the class's own occurrence (still never the class start)", async () => {
+    const f = await fixture();
+    await signIn(f.academy.organizationId, "INSTRUCTOR", f.academy.id);
+    const other = await f.evidence({ claimedAt: tue(18, 40), claimedClassSessionId: f.byName.T.id }); // the tablet claimed Tuesday...
+    expect(await f.resolve(other.id, { classSessionId: f.byName.A.id, date: "2026-01-05", time: "18:25" })).toEqual({ ok: true }); // ...the coach says Monday 18:25
+    const [row] = await f.attendance();
+    expect([row.date.toISOString().slice(0, 10), row.occurredAt.toISOString()]).toEqual(["2026-01-05", mon(18, 25).toISOString()]);
+    const audit = await prisma.auditLog.findFirstOrThrow({ where: { entityType: "QueuedCheckIn", entityId: other.id } });
+    expect(audit.after).toMatchObject({ instantSource: "STAFF_ENTERED" });
+    expect(audit.before).toMatchObject({ claimedAtRaw: other.claimedAtRaw }); // the original claim stays on record
+  });
+
+  it("a missing or invalid class day is refused and nothing is recorded", async () => {
     const f = await fixture();
     await signIn(f.academy.organizationId, "ADMIN");
     const kept = await f.evidence({ claimedAt: null, claimedAtRaw: "garbage" });
@@ -148,13 +175,11 @@ describe("recording queued evidence on its ORIGINAL day", () => {
     expect((await prisma.queuedCheckIn.findUniqueOrThrow({ where: { id: kept.id } })).status).toBe("PENDING");
   });
 
-  it("refuses a day in the future, a class that is not on that weekday, an inactive class, and another academy's class", async () => {
+  it("refuses a class that is not on that weekday, an inactive class, and another academy's class", async () => {
     const f = await fixture();
     const elsewhere = await makeClassAcademy([{ dayOfWeek: "MONDAY", startTime: "18:00", name: "Elsewhere" }]);
     await signIn(f.academy.organizationId, "ADMIN");
     const kept = await f.evidence();
-    const tomorrow = DateTime.now().setZone("America/Costa_Rica").plus({ days: 1 }).toISODate()!;
-    expect(await f.resolve(kept.id, { classSessionId: f.byName.A.id, date: tomorrow })).toEqual({ error: "futureDate" });
     expect(await f.resolve(kept.id, { classSessionId: f.byName.A.id, date: "2026-01-06" })).toEqual({ error: "classNotOnThatDay" }); // A is a Monday class
     expect(await f.resolve(kept.id, { classSessionId: f.byName.Retired.id, date: "2026-01-05" })).toEqual({ error: "invalidClass" });
     expect(await f.resolve(kept.id, { classSessionId: elsewhere.sessions[0].id, date: "2026-01-05" })).toEqual({ error: "invalidClass" });
@@ -171,6 +196,101 @@ describe("recording queued evidence on its ORIGINAL day", () => {
     expect(await f.resolve(kept.id, { classSessionId: f.byName.A.id, date: "2026-01-05" })).toEqual({ error: "alreadyRecorded" });
     expect((await prisma.queuedCheckIn.findUniqueOrThrow({ where: { id: kept.id } })).status).toBe("PENDING");
     expect(await f.attendance()).toHaveLength(1);
+  });
+});
+
+describe("which instant the coach is confirming (the class's ledger day is not the tap's calendar day)", () => {
+  it("a Monday 23:50 tap for Tuesday's 00:10 class keeps its OWN instant: a promotion at Monday 23:55 leaves it behind, and it adds nothing to the new interval", async () => {
+    const f = await fixture();
+    await signIn(f.academy.organizationId, "ADMIN");
+    const promotedAt = mon(23, 55);
+    await f.promote(promotedAt);
+    const tap = new Date(mon(23, 50).getTime() + 27_000); // seconds must survive too
+    const kept = await f.evidence({ claimedAt: tap, claimedClassSessionId: f.byName.Late.id });
+
+    expect(await f.resolve(kept.id, { classSessionId: f.byName.Late.id, date: "2026-01-06", time: "23:50" })).toEqual({ ok: true });
+
+    const [row] = await f.attendance();
+    expect(row.date.toISOString().slice(0, 10)).toBe("2026-01-06"); // the class occurrence's own (Tuesday) ledger day...
+    expect(row.occurredAt.toISOString()).toBe(tap.toISOString()); // ...and the tap's own instant, NOT Tuesday 00:10
+    const audit = await prisma.auditLog.findFirstOrThrow({ where: { entityType: "QueuedCheckIn", entityId: kept.id } });
+    expect(audit.after).toMatchObject({ confirmedTime: "23:50", instantSource: "CLAIMED" });
+
+    // Nothing after the reset, under BOTH accountings; the attendance is still real (lifetime) and belongs to the interval before.
+    expect(await f.counts()).toEqual({ perInterval: 0, cumulative: 0 });
+    expect((await getAtBeltSummary(f.student.id, f.student.organizationId, ALLIANCE_ATTENDANCE_CONFIG)).lifetimeCount).toBe(1);
+    const before = await listContributingDays(prisma, { studentId: f.student.id, organizationId: f.student.organizationId, from: mon(0, 0), until: promotedAt });
+    expect(before.map((d) => [d.day, d.firstAt.toISOString()])).toEqual([["2026-01-06", tap.toISOString()]]);
+  });
+
+  it("the control: a tap at Tuesday 00:05, after the same promotion, does count in the new interval (so the test above can tell)", async () => {
+    const f = await fixture();
+    await signIn(f.academy.organizationId, "ADMIN");
+    await f.promote(mon(23, 55));
+    const kept = await f.evidence({ claimedAt: tue(0, 5), claimedClassSessionId: f.byName.Late.id });
+    expect(await f.resolve(kept.id, { classSessionId: f.byName.Late.id, date: "2026-01-06", time: "00:05" })).toEqual({ ok: true });
+    const [row] = await f.attendance();
+    expect(row.occurredAt.toISOString()).toBe(tue(0, 5).toISOString());
+    expect(await f.counts()).toEqual({ perInterval: 1, cumulative: 1 });
+  });
+
+  it("a time that fits no occurrence of the chosen class is refused (never moved onto the class start): the window is start - 30 min to end + 30 min, inclusive", async () => {
+    const f = await fixture();
+    await signIn(f.academy.organizationId, "ADMIN");
+    const kept = await f.evidence({ claimedAt: null, claimedAtRaw: "garbage" });
+    for (const time of ["12:00", "17:29", "19:31", "00:00"]) {
+      expect(await f.resolve(kept.id, { classSessionId: f.byName.A.id, date: "2026-01-05", time }), time).toEqual({ error: "timeOutsideClass" });
+    }
+    expect(await f.resolve(kept.id, { classSessionId: f.byName.Late.id, date: "2026-01-06", time: "12:00" })).toEqual({ error: "timeOutsideClass" });
+    expect(await f.attendance()).toHaveLength(0);
+    expect((await prisma.queuedCheckIn.findUniqueOrThrow({ where: { id: kept.id } })).status).toBe("PENDING");
+    expect(await f.resolve(kept.id, { classSessionId: f.byName.A.id, date: "2026-01-05", time: "19:30" })).toEqual({ ok: true }); // the closing boundary is inclusive
+    expect((await f.attendance())[0].occurredAt.toISOString()).toBe(mon(19, 30).toISOString());
+  });
+});
+
+describe("the FINAL instant is validated, not only the chosen day", () => {
+  const at = (instant: Date) => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(instant);
+  };
+
+  it("a claimed time later today (still in the future) is refused, stays PENDING and records nothing; once it has passed the same evidence is recordable at exactly that instant", async () => {
+    const f = await fixture();
+    await signIn(f.academy.organizationId, "ADMIN");
+    const kept = await f.evidence({ claimedAt: mon(19, 20) }); // class A runs 18:00-19:00 (open to 19:30)
+    at(mon(19, 0));
+    expect(await f.resolve(kept.id, { classSessionId: f.byName.A.id, date: "2026-01-05", time: "19:20" })).toEqual({ error: "futureTime" });
+    expect(await f.attendance()).toHaveLength(0);
+    expect((await prisma.queuedCheckIn.findUniqueOrThrow({ where: { id: kept.id } })).status).toBe("PENDING");
+    expect(await f.counts()).toEqual({ perInterval: 0, cumulative: 0 });
+
+    at(mon(19, 25));
+    expect(await f.resolve(kept.id, { classSessionId: f.byName.A.id, date: "2026-01-05", time: "19:20" })).toEqual({ ok: true });
+    expect((await f.attendance())[0].occurredAt.toISOString()).toBe(mon(19, 20).toISOString());
+  });
+
+  it("a class that starts later today is no fallback: an unreadable claim confirmed as the class start is future and refused, and a time before that class opens is outside it", async () => {
+    const f = await fixture();
+    await signIn(f.academy.organizationId, "ADMIN");
+    const kept = await f.evidence({ claimedAt: null, claimedAtRaw: "garbage", claimedClassSessionId: null });
+    at(mon(19, 0)); // "Later" runs 20:00-21:00, open from 19:30
+    expect(await f.resolve(kept.id, { classSessionId: f.byName.Later.id, date: "2026-01-05", time: "20:00" })).toEqual({ error: "futureTime" });
+    expect(await f.resolve(kept.id, { classSessionId: f.byName.Later.id, date: "2026-01-05", time: "18:50" })).toEqual({ error: "timeOutsideClass" });
+    expect(await f.resolve(kept.id, { classSessionId: f.byName.Later.id, date: "2026-01-05", time: "" })).toEqual({ error: "invalidTime" });
+    expect(await f.attendance()).toHaveLength(0);
+    expect((await prisma.queuedCheckIn.findUniqueOrThrow({ where: { id: kept.id } })).status).toBe("PENDING");
+  });
+
+  it("a Monday-night tap for Tuesday's early class is future at 23:45 and recordable at 23:58, while it is still Monday night", async () => {
+    const f = await fixture();
+    await signIn(f.academy.organizationId, "ADMIN");
+    const kept = await f.evidence({ claimedAt: mon(23, 50), claimedClassSessionId: f.byName.Late.id });
+    at(mon(23, 45));
+    expect(await f.resolve(kept.id, { classSessionId: f.byName.Late.id, date: "2026-01-06", time: "23:50" })).toEqual({ error: "futureTime" });
+    at(mon(23, 58)); // still Monday in Costa Rica: the tap is in the past although the class occurrence's day (Tuesday) has not started
+    expect(await f.resolve(kept.id, { classSessionId: f.byName.Late.id, date: "2026-01-06", time: "23:50" })).toEqual({ ok: true });
+    expect((await f.attendance())[0].occurredAt.toISOString()).toBe(mon(23, 50).toISOString());
   });
 });
 

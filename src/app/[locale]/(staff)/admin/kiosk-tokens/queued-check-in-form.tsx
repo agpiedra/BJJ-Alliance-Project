@@ -20,16 +20,19 @@ export interface QueuedClassOption {
 }
 
 /**
- * One evidence row's staff actions. "Record attendance" needs a DAY and a CLASS of that day: the day starts as the day the
- * tablet CLAIMED when that could be read (staff can change it), and is empty when the claim was unreadable, so an
- * unverified date is never silently adopted - a person chooses it. The class list only offers that academy's active classes
- * scheduled on the chosen weekday (the options come from the server; the real validation is server-side in
- * `resolveQueuedCheckIn`). "Set aside" keeps the evidence with a reason.
+ * One evidence row's staff actions. "Record attendance" needs the class's DAY, a CLASS of that day and the TIME OF THE TAP
+ * the coach is confirming. The day and the time start from what the tablet CLAIMED when that could be read (staff can change
+ * both) and are empty when the claim was unreadable, so an unverified date or time is never silently adopted - a person
+ * states it. The class day and the tap time are separate fields on purpose: a Monday 23:50 tap belongs to Tuesday's 00:10
+ * class. The class list only offers that academy's active classes scheduled on the chosen weekday (the options come from
+ * the server; the real validation - window, future, weekday - is server-side in `resolveQueuedCheckIn`). "Set aside" keeps
+ * the evidence with a reason.
  */
 export function QueuedCheckInForm({
   organizationId,
   queuedCheckInId,
   defaultDate,
+  defaultTime,
   defaultClassId,
   classes,
 }: {
@@ -37,6 +40,8 @@ export function QueuedCheckInForm({
   queuedCheckInId: string;
   /** `yyyy-MM-dd` in Costa Rica, or "" when the tablet's time was unreadable. */
   defaultDate: string;
+  /** `HH:mm` in Costa Rica of the time the tablet claimed, or "" when it was unreadable: the time staff confirm or correct. */
+  defaultTime: string;
   defaultClassId: string | null;
   classes: QueuedClassOption[];
 }) {
@@ -46,6 +51,7 @@ export function QueuedCheckInForm({
   const [date, setDate] = useState(defaultDate);
   const dateId = useId();
   const classId = useId();
+  const timeId = useId();
   const reasonId = useId();
 
   const day = DateTime.fromFormat(date, "yyyy-MM-dd");
@@ -75,6 +81,13 @@ export function QueuedCheckInForm({
             ))}
           </select>
         )}
+        <label htmlFor={timeId} className="text-xs font-medium">
+          {t("timeLabel")}
+        </label>
+        <input id={timeId} name="time" type="time" required defaultValue={defaultTime} className={FIELD_CLASS} aria-describedby={`${timeId}-hint`} />
+        <p id={`${timeId}-hint`} className="max-w-[16rem] text-xs text-muted-foreground">
+          {t("timeHint")}
+        </p>
         {resolveState.ok && <p className="text-xs text-ok">{t("recorded")}</p>}
         {resolveState.error && <p role="alert" className="text-xs text-bad">{t(`errors.${resolveState.error}`)}</p>}
         <Button type="submit" variant="primary" size="sm" disabled={resolving || options.length === 0}>

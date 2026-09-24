@@ -219,6 +219,7 @@ export default async function KioskTokensPage() {
                                 organizationId={context.organizationId}
                                 queuedCheckInId={row.id}
                                 defaultDate={claimed ? claimed.toFormat("yyyy-MM-dd") : ""}
+                                defaultTime={claimed ? claimed.toFormat("HH:mm") : ""}
                                 defaultClassId={row.claimedClassSessionId}
                                 classes={classes.filter((option) => option.active)}
                               />

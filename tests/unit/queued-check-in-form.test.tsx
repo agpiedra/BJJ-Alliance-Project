@@ -29,7 +29,7 @@ const CLASSES = [
 function renderForm(props: Partial<React.ComponentProps<typeof QueuedCheckInForm>> = {}, locale: "en" | "es" = "en") {
   return render(
     <NextIntlClientProvider locale={locale} messages={locale === "en" ? enMessages : esMessages}>
-      <QueuedCheckInForm organizationId="org-1" queuedCheckInId="q-1" defaultDate="2026-01-05" defaultClassId="cls-mon-b" classes={CLASSES} {...props} />
+      <QueuedCheckInForm organizationId="org-1" queuedCheckInId="q-1" defaultDate="2026-01-05" defaultTime="18:40" defaultClassId="cls-mon-b" classes={CLASSES} {...props} />
     </NextIntlClientProvider>,
   );
 }
@@ -75,8 +75,33 @@ describe("QueuedCheckInForm", () => {
     await waitFor(() => expect(resolveAction).toHaveBeenCalledTimes(1));
     const [organizationId, , formData] = resolveAction.mock.calls[0] as [string, unknown, FormData];
     expect(organizationId).toBe("org-1");
-    expect(Object.fromEntries(formData.entries())).toEqual({ queuedCheckInId: "q-1", date: "2026-01-05", classSessionId: "cls-mon-a" });
+    expect(Object.fromEntries(formData.entries())).toEqual({ queuedCheckInId: "q-1", date: "2026-01-05", time: "18:40", classSessionId: "cls-mon-a" });
     expect(await screen.findByText("Attendance recorded.")).toBeTruthy();
+  });
+
+  it("makes the confirmed timestamp explicit: a separate, required tap-time field that starts from the tablet's claim and can be corrected", async () => {
+    renderForm({ defaultDate: "2026-01-06", defaultTime: "23:50", defaultClassId: null }); // a Monday-night tap for Tuesday's class: two different fields
+    const time = screen.getByLabelText("Time of the tap (Costa Rica)") as HTMLInputElement;
+    expect(time.type).toBe("time");
+    expect(time.required).toBe(true);
+    expect(time.value).toBe("23:50");
+    expect(screen.getByText(/it is what gets recorded/)).toBeTruthy();
+    fireEvent.change(time, { target: { value: "23:45" } });
+    fireEvent.click(screen.getByRole("button", { name: "Record attendance on this day" }));
+    await waitFor(() => expect(resolveAction).toHaveBeenCalledTimes(1));
+    const [, , formData] = resolveAction.mock.calls[0] as [string, unknown, FormData];
+    expect(Object.fromEntries(formData.entries())).toMatchObject({ date: "2026-01-06", time: "23:45" }); // the class day and the tap time are not the same value
+  });
+
+  it("an unreadable claim leaves the tap time EMPTY too (nothing is assumed from the class), and the refusals are explained in both languages", async () => {
+    renderForm({ defaultDate: "", defaultTime: "", defaultClassId: null });
+    expect((screen.getByLabelText("Time of the tap (Costa Rica)") as HTMLInputElement).value).toBe("");
+    cleanup();
+    resolveAction.mockResolvedValue({ error: "futureTime" });
+    renderForm({}, "es");
+    expect((screen.getByLabelText("Hora del registro (Costa Rica)") as HTMLInputElement).value).toBe("18:40");
+    fireEvent.click(screen.getByRole("button", { name: "Registrar asistencia en este día" }));
+    expect((await screen.findByRole("alert")).textContent).toBe("Esa hora todavía no ocurrió. Registrala cuando haya pasado.");
   });
 
   it("shows a server refusal in the coach's language and keeps the form", async () => {

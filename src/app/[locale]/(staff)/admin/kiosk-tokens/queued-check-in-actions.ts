@@ -13,6 +13,8 @@ const resolveSchema = z.object({
   classSessionId: z.string().min(1),
   // Validated as a real Costa Rica calendar day by the domain function; a blank one is `invalidDate`, not a crash.
   date: z.string().max(20),
+  // The tap time the coach confirms (HH:mm, Costa Rica); required, validated by the domain function (`invalidTime`).
+  time: z.string().max(20).default(""),
 });
 
 const dismissSchema = z.object({
@@ -42,6 +44,7 @@ export async function resolveQueuedCheckInAction(organizationId: string, _prevSt
   const result = await resolveQueuedCheckIn(parsed.data.queuedCheckInId, {
     classSessionId: parsed.data.classSessionId,
     date: parsed.data.date,
+    time: parsed.data.time,
     actorUserId: context.actorUserId,
     context,
   });
