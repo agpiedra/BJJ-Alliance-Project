@@ -16,6 +16,9 @@ const { registerOrganization, checkSlugAvailability } = await import(
 );
 
 const prisma = getTestPrismaClient();
+// The app's own client (the one registerOrganization uses), so a test can make its transaction fail on purpose.
+const { prisma: appPrisma } = await import("../../src/lib/prisma");
+const { Prisma } = await import("../../src/generated/prisma/client");
 
 const cleanupOrgIds: string[] = [];
 
@@ -138,6 +141,64 @@ describe("registerOrganization", () => {
     const secondResult = await registerOrganization({}, second);
     expect(secondResult.error).toBe("slugTaken");
     expect(secondResult.slugTaken).toBe(true);
+  });
+
+  it("simultaneous registrations for the SAME slug: exactly one is accepted, every other gets the translated slugTaken result, none throws, and the slug stays unique", async () => {
+    // Regression: the check-then-create window let several requests pass findUnique together; the unique index correctly
+    // refused the extras, but the loser's server action threw an unhandled Prisma P2002 instead of returning slugTaken.
+    for (let round = 0; round < 3; round++) {
+      const slug = `race-${uniqueSuffix()}`;
+      const settled = await Promise.allSettled(
+        Array.from({ length: 6 }, (_, i) => registerOrganization({}, registrationFormData({ desiredSlug: slug, contactEmail: `race-${i}-${uniqueSuffix()}@example.com` }))),
+      );
+      const orgs = await prisma.organization.findMany({ where: { slug }, select: { id: true } });
+      cleanupOrgIds.push(...orgs.map((o) => o.id));
+
+      expect(settled.filter((s) => s.status === "rejected"), `round ${round}: no submission may throw`).toEqual([]);
+      const results = settled.map((s) => (s as PromiseFulfilledResult<Awaited<ReturnType<typeof registerOrganization>>>).value);
+      expect(results.filter((r) => r.ok), `round ${round}: exactly one accepted`).toHaveLength(1);
+      const losers = results.filter((r) => !r.ok);
+      expect(losers).toHaveLength(5);
+      for (const loser of losers) {
+        // the SAME result the sequential duplicate returns, so the form shows the same translated message
+        expect(loser).toEqual({ error: "slugTaken", slugTaken: true, fieldErrors: { desiredSlug: ["slugTaken"] } });
+      }
+      expect(orgs, `round ${round}: database uniqueness preserved`).toHaveLength(1);
+    }
+  });
+
+  it("only the slug conflict becomes slugTaken: any other database error reaches the caller unchanged", async () => {
+    const generic = new Error("connection lost");
+    const spy = vi.spyOn(appPrisma, "$transaction").mockRejectedValueOnce(generic);
+    await expect(registerOrganization({}, registrationFormData())).rejects.toBe(generic);
+
+    // a unique violation on a DIFFERENT constraint (same P2002 code, other model) is not a slug conflict either
+    const otherUnique = new Prisma.PrismaClientKnownRequestError("Unique constraint failed", {
+      code: "P2002",
+      clientVersion: "test",
+      meta: { modelName: "Academy", driverAdapterError: { cause: { constraint: { index: "Academy_kioskTokenHash_key" } } } },
+    });
+    spy.mockRejectedValueOnce(otherUnique);
+    await expect(registerOrganization({}, registrationFormData())).rejects.toBe(otherUnique);
+    spy.mockRestore();
+  });
+
+  it("a real slug conflict raised inside the transaction is the slugTaken result", async () => {
+    // Force the race window deterministically: another registration takes the slug AFTER this one's pre-check has passed.
+    const first = registrationFormData();
+    const slug = first.get("desiredSlug") as string;
+    const realTransaction = appPrisma.$transaction.bind(appPrisma) as (...args: unknown[]) => Promise<unknown>;
+    const spy = vi.spyOn(appPrisma, "$transaction").mockImplementationOnce((async (...args: unknown[]) => {
+      const winner = await registerOrganization({}, registrationFormData({ desiredSlug: slug, contactEmail: `winner-${uniqueSuffix()}@example.com` }));
+      expect(winner.ok).toBe(true);
+      return realTransaction(...args);
+    }) as never);
+    const result = await registerOrganization({}, first);
+    spy.mockRestore();
+    const orgs = await prisma.organization.findMany({ where: { slug }, select: { id: true } });
+    cleanupOrgIds.push(...orgs.map((o) => o.id));
+    expect(result).toEqual({ error: "slugTaken", slugTaken: true, fieldErrors: { desiredSlug: ["slugTaken"] } });
+    expect(orgs).toHaveLength(1);
   });
 
   it("duplicate contact email (already PENDING) is refused gracefully", async () => {

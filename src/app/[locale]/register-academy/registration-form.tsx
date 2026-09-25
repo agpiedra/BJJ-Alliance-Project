@@ -1,9 +1,9 @@
 "use client";
 
-import { useActionState, useState, useTransition } from "react";
+import { useActionState, useRef, useState, useTransition } from "react";
 import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
-import { slugify } from "@/lib/organizations/slug";
+import { isCheckableSlug, slugFeedback, slugify, type SlugCheck } from "@/lib/organizations/slug";
 import { CURRENCIES } from "@/lib/payments/format-money";
 import { registerOrganization, checkSlugAvailability, type RegistrationState } from "./actions";
 
@@ -16,13 +16,22 @@ export function RegistrationForm() {
   const [state, formAction, isPending] = useActionState(registerOrganization, INITIAL_STATE);
   const [slug, setSlug] = useState("");
   const [slugEditedByHand, setSlugEditedByHand] = useState(false);
-  const [slugAvailable, setSlugAvailable] = useState<boolean | null>(null);
+  // The answer is stored WITH the slug it was asked about, so feedback can only ever describe the current slug.
+  const [checked, setChecked] = useState<SlugCheck | null>(null);
   const [isCheckingSlug, startSlugCheck] = useTransition();
+  const feedback = slugFeedback(slug, checked, isCheckingSlug);
+
+  // Only the newest request may write `checked`: a superseded response (slower, earlier, or for a slug the person has since
+  // returned to) is dropped, and starting any request drops the current result, so it never stands in for the new check.
+  const latestRequest = useRef(0);
 
   function checkSlug(candidate: string) {
+    const request = ++latestRequest.current;
+    setChecked(null);
+    if (!isCheckableSlug(candidate)) return;
     startSlugCheck(async () => {
       const result = await checkSlugAvailability(candidate);
-      setSlugAvailable(result.available);
+      if (request === latestRequest.current) setChecked({ slug: candidate, available: result.available });
     });
   }
 
@@ -59,7 +68,7 @@ export function RegistrationForm() {
               if (slugEditedByHand) return;
               const suggested = slugify(e.target.value);
               setSlug(suggested);
-              if (suggested.length >= 2) checkSlug(suggested);
+              checkSlug(suggested);
             }}
           />
         </label>
@@ -75,17 +84,12 @@ export function RegistrationForm() {
               setSlugEditedByHand(true);
               const next = slugify(e.target.value);
               setSlug(next);
-              setSlugAvailable(null);
-              if (next.length >= 2) checkSlug(next);
+              checkSlug(next);
             }}
           />
-          {isCheckingSlug && <span className="text-sm text-muted-foreground">{t("slugChecking")}</span>}
-          {!isCheckingSlug && slugAvailable === true && (
-            <span className="text-sm text-ok">{t("slugAvailable")}</span>
-          )}
-          {!isCheckingSlug && slugAvailable === false && (
-            <span className="text-sm text-bad">{t("slugTaken")}</span>
-          )}
+          {feedback === "checking" && <span className="text-sm text-muted-foreground">{t("slugChecking")}</span>}
+          {feedback === "available" && <span className="text-sm text-ok">{t("slugAvailable")}</span>}
+          {feedback === "taken" && <span className="text-sm text-bad">{t("slugTaken")}</span>}
         </label>
         <label className="flex flex-col gap-1">
           <span>{t("country")}</span>

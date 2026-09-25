@@ -16,3 +16,24 @@ export function slugify(name: string): string {
     .replace(/^-+|-+$/g, "")
     .slice(0, 60);
 }
+
+/** The slug rule the server enforces (checkSlugAvailability and the registration schema): 2-60 characters of a-z 0-9 -. */
+export const SLUG_PATTERN = /^[a-z0-9-]{2,60}$/;
+
+export function isCheckableSlug(slug: string): boolean {
+  return SLUG_PATTERN.test(slug);
+}
+
+/** An availability answer, bound to the slug it was asked about. */
+export type SlugCheck = { slug: string; available: boolean };
+
+/**
+ * What the availability line under the slug field may say. Feedback describes ONLY the current valid slug: nothing for a slug
+ * that is not checkable, a result only when it was answered for this very slug, "checking" while a check is queued and this
+ * slug has no answer yet, otherwise nothing.
+ */
+export function slugFeedback(slug: string, checked: SlugCheck | null, pending: boolean): "checking" | "available" | "taken" | null {
+  if (!isCheckableSlug(slug)) return null;
+  if (checked?.slug === slug) return checked.available ? "available" : "taken";
+  return pending ? "checking" : null;
+}
