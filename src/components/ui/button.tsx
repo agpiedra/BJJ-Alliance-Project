@@ -17,7 +17,10 @@ const buttonVariants = cva(
         // MATROOM Phase 1: the tenant's action colour. `border-action-edge` is a presentation token (BrandingScope): a 1px
         // --input edge when the tenant's fill is under 3:1 against the surface, otherwise transparent. The stored colour
         // is never altered.
-        primary: "border-action-edge bg-brand-gold text-brand-gold-foreground hover:bg-brand-gold/90",
+        // Hover keeps the fill and label exactly as they are (a translucent hover fill lightened a tenant's orange to 4.3:1
+        // under its label) and adds a 1px inner ring in the label colour, which is the label's own contrast by construction.
+        primary:
+          "border-action-edge bg-brand-gold text-brand-gold-foreground hover:shadow-[inset_0_0_0_1px_var(--brand-gold-foreground)]",
         outline:
           "border-input bg-card hover:bg-muted hover:text-foreground aria-expanded:bg-muted aria-expanded:text-foreground",
         secondary:
@@ -25,7 +28,9 @@ const buttonVariants = cva(
         ghost:
           "hover:bg-muted hover:text-foreground aria-expanded:bg-muted aria-expanded:text-foreground disabled:border-transparent disabled:bg-transparent",
         destructive:
-          "border-destructive bg-destructive/10 text-destructive hover:bg-destructive/20 focus-visible:border-destructive/40 dark:bg-destructive/20 dark:hover:bg-destructive/30",
+          // The verified status fill (--bad-soft: --bad text on it is >= 4.5:1 in both themes, asserted by design-tokens.test.ts),
+          // not a translucent tint of the text colour (bg-destructive/20 under text-destructive measured 4.08:1 on the dark card).
+          "border-destructive bg-bad-soft text-destructive hover:shadow-[inset_0_0_0_1px_var(--destructive)]",
         link: "text-primary underline-offset-4 hover:underline disabled:border-transparent disabled:bg-transparent",
       },
       // Touch targets: compact on a fine pointer (dense tables), 44px on a coarse one (WCAG 2.2 target size, phones and kiosks).

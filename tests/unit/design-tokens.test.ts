@@ -107,6 +107,30 @@ describe("design/matroom/tokens.css", () => {
     expect(GLOBALS).not.toMatch(/(^|[\s,])\[data-sidebar\]\s+:focus-visible/m);
   });
 
+  it("touch targets: a coarse-pointer base rule sizes every plain form control, checkbox and disclosure, whatever class a page gives it", () => {
+    // Found by the coarse-pointer emulation (390px, pointer: coarse): page-local field classes rendered 36-42px, native checkboxes
+    // 13px and <summary> rows 20px. Emulation, not a real device; the rule is what makes the numbers hold.
+    const block = GLOBALS.slice(GLOBALS.indexOf("@media (pointer: coarse)"));
+    expect(GLOBALS).toContain("@media (pointer: coarse)");
+    expect(block).toMatch(/select,\s*textarea\s*\{\s*min-height: 2\.75rem;/);
+    expect(block).toMatch(/input\[type="checkbox"\], input\[type="radio"\]\s*\{\s*width: 1\.5rem;\s*height: 1\.5rem;/);
+    expect(block).toMatch(/label:has\(> input\[type="checkbox"\], > input\[type="radio"\]\)\s*\{\s*min-height: 2\.75rem;/);
+    expect(block).toMatch(/summary\s*\{\s*min-height: 2\.75rem;/);
+  });
+
+  it("standalone links and the portal avatar grow on coarse pointers (they measured 20px and 32px)", () => {
+    const read = (rel: string) => readFileSync(join(ROOT, ...rel.split("/")), "utf8");
+    for (const [file, needle] of [
+      ["src/app/[locale]/login/login-form.tsx", "forgot-password`} className=\"text-sm underline pointer-coarse:py-3\""],
+      ["src/app/[locale]/login/login-form.tsx", "register-academy`} className=\"mt-4 text-sm underline pointer-coarse:py-3\""],
+      ["src/app/[locale]/page.tsx", "login`} className=\"text-sm underline pointer-coarse:py-3\""],
+      ["src/app/[locale]/(staff)/payments/page.tsx", "payments/plans`} className=\"text-sm underline pointer-coarse:py-3\""],
+      ["src/app/[locale]/portal/portal-top-bar.tsx", "size-8 pointer-coarse:size-11"],
+    ] as const) {
+      expect(read(file), `${file}: ${needle}`).toContain(needle);
+    }
+  });
+
   it("globals.css imports the authority file and does not redefine its colours", () => {
     expect(GLOBALS).toContain('@import "../../design/matroom/tokens.css";');
     for (const name of ["background", "foreground", "card", "brand-gold", "input", "ok", "data"]) {

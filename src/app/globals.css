@@ -124,6 +124,28 @@
   input[type="radio"] {
     accent-color: var(--primary);
   }
+  /* Touch targets on coarse pointers (the 44px design rule; WCAG 2.2 2.5.8 needs 24px at minimum). Set here, not per class
+     string, so a page-local field style, a native checkbox and a <summary> row all get it. The shared Button, Input and
+     FIELD_CLASS already carry their own pointer-coarse sizes. */
+  @media (pointer: coarse) {
+    input:where(:not([type="checkbox"], [type="radio"], [type="hidden"], [type="range"])),
+    select,
+    textarea {
+      min-height: 2.75rem;
+    }
+    input[type="checkbox"], input[type="radio"] {
+      width: 1.5rem;
+      height: 1.5rem;
+      flex-shrink: 0; /* in a flex label a bare checkbox shrank to 21-23px wide */
+    }
+    label:has(> input[type="checkbox"], > input[type="radio"]) {
+      min-height: 2.75rem;
+    }
+    summary {
+      min-height: 2.75rem;
+      align-content: center;
+    }
+  }
   @media (prefers-reduced-motion: reduce) {
     *,
     *::before,

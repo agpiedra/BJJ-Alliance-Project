@@ -55,13 +55,13 @@ function LoginFormInner() {
             <Button type="submit" variant="primary" disabled={isPending}>
               {t("submit")}
             </Button>
-            <a href={`/${params.locale}/forgot-password`} className="text-sm underline">
+            <a href={`/${params.locale}/forgot-password`} className="text-sm underline pointer-coarse:py-3">
               {t("forgotPassword")}
             </a>
           </form>
         </CardContent>
       </Card>
-      <a href={`/${params.locale}/register-academy`} className="mt-4 text-sm underline">
+      <a href={`/${params.locale}/register-academy`} className="mt-4 text-sm underline pointer-coarse:py-3">
         {t("registerAcademy")}
       </a>
     </main>

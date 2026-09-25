@@ -89,7 +89,7 @@ export default async function PaymentsPage() {
           {t("sub", { month: monthLabel, academy: academyLabel })}
         </p>
         {canRecordPayments && (
-          <a href={`/${locale}/payments/plans`} className="text-sm underline">
+          <a href={`/${locale}/payments/plans`} className="text-sm underline pointer-coarse:py-3">
             {t("plansLink")}
           </a>
         )}

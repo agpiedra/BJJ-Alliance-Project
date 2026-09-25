@@ -2,6 +2,7 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Sheet, SheetTrigger } from "@/components/ui/sheet";
 import { Input } from "@/components/ui/input";
@@ -38,6 +39,26 @@ describe("Button (MATROOM Phase 1)", () => {
     const c = classes(screen.getByRole("button", { name: "Inscribir" }));
     expect(c).toContain("bg-brand-gold");
     expect(c).toContain("border-action-edge");
+  });
+
+  it("hover never changes the fill of a filled variant (a lightened tenant fill fell to 4.3:1 under its label)", () => {
+    for (const variant of ["primary", "destructive"] as const) {
+      const { unmount } = render(<Button variant={variant}>x</Button>);
+      const c = classes(screen.getByRole("button"));
+      expect(c, variant).not.toMatch(/hover:bg-/);
+      expect(c, variant).toContain("hover:shadow-[inset_0_0_0_1px_");
+      unmount();
+    }
+  });
+
+  it("destructive sits on the verified status fill, not a translucent tint of the text colour", () => {
+    // bg-destructive/20 under text-destructive measured 4.08:1 on the dark card at rest; --bad on --bad-soft is asserted >= 4.5:1
+    // in both themes by design-tokens.test.ts.
+    render(<Button variant="destructive">x</Button>);
+    const c = classes(screen.getByRole("button"));
+    expect(c).toContain("bg-bad-soft");
+    expect(c).toContain("text-destructive");
+    expect(c).not.toMatch(/bg-destructive\//);
   });
 
   it("is disabled by fill and text, not by fading the tenant colour", () => {
@@ -79,6 +100,16 @@ describe("Button (MATROOM Phase 1)", () => {
   });
 });
 
+describe("Badge destructive (MATROOM Phase 1)", () => {
+  it("uses the verified status fill and no translucent hover fill, like the destructive Button", () => {
+    render(<Badge variant="destructive">Atrasado</Badge>);
+    const c = classes(screen.getByText("Atrasado"));
+    expect(c).toContain("bg-bad-soft");
+    expect(c).toContain("text-destructive");
+    expect(c).not.toMatch(/bg-destructive\//);
+  });
+});
+
 describe("Input (MATROOM Phase 1)", () => {
   it("uses the control-boundary token on a card-coloured fill, at 44px on coarse pointers", () => {
     render(<Input aria-label="Correo" />);
@@ -115,31 +146,65 @@ describe("Card (MATROOM Phase 1)", () => {
 });
 
 describe("ProgressToNextGrade (MATROOM Phase 1)", () => {
-  it("is a real progressbar with its value and range, so the bar is not colour-only", () => {
-    render(<ProgressToNextGrade current={20} target={60} />);
-    const bar = screen.getByRole("progressbar");
+  it("is found by its accessible name and exposes its value, range and readable text", () => {
+    render(<ProgressToNextGrade aria-label="Progreso: Ana Verify" current={20} target={60} />);
+    const bar = screen.getByRole("progressbar", { name: "Progreso: Ana Verify" });
     expect(bar.getAttribute("aria-valuenow")).toBe("20");
     expect(bar.getAttribute("aria-valuemin")).toBe("0");
     expect(bar.getAttribute("aria-valuemax")).toBe("60");
+    expect(bar.getAttribute("aria-valuetext")).toBe("20 / 60");
     expect(screen.getByText("20 / 60")).toBeInTheDocument();
   });
 
+  it("can be named by an element instead (aria-labelledby), for callers that already show a heading", () => {
+    render(
+      <>
+        <h2 id="prog-h">Tu progreso</h2>
+        <ProgressToNextGrade aria-labelledby="prog-h" current={30} target={30} />
+      </>,
+    );
+    const bar = screen.getByRole("progressbar", { name: "Tu progreso" });
+    expect(bar.getAttribute("aria-valuenow")).toBe("30");
+    expect(bar.getAttribute("aria-valuemax")).toBe("30");
+  });
+
+  it("two bars on one page are told apart by name", () => {
+    render(
+      <>
+        <ProgressToNextGrade aria-label="Progreso: Ana" current={5} target={30} />
+        <ProgressToNextGrade aria-label="Progreso: Beto" current={25} target={30} />
+      </>,
+    );
+    expect(screen.getByRole("progressbar", { name: "Progreso: Ana" }).getAttribute("aria-valuenow")).toBe("5");
+    expect(screen.getByRole("progressbar", { name: "Progreso: Beto" }).getAttribute("aria-valuenow")).toBe("25");
+  });
+
+  it("an accessible name is required by the type: neither label prop, or both, does not compile", () => {
+    // @ts-expect-error no aria-label and no aria-labelledby
+    const unnamed = <ProgressToNextGrade current={1} target={2} />;
+    // @ts-expect-error both at once is ambiguous
+    const both = <ProgressToNextGrade aria-label="a" aria-labelledby="b" current={1} target={2} />;
+    expect(unnamed).toBeTruthy();
+    expect(both).toBeTruthy();
+  });
+
   it("draws the track with the control-boundary edge and the fill with the data colours (never foreground/40)", () => {
-    const { container, rerender } = render(<ProgressToNextGrade current={20} target={60} />);
-    const track = screen.getByRole("progressbar");
+    const { container, rerender } = render(<ProgressToNextGrade aria-label="Progreso" current={20} target={60} />);
+    const track = screen.getByRole("progressbar", { name: "Progreso" });
     expect(classes(track)).toContain("border-input");
     expect(classes(track)).toContain("bg-data-track");
     const fill = () => container.querySelector("[data-fill]")!;
     expect(classes(fill())).toContain("bg-data");
     expect(classes(fill())).not.toContain("foreground/40");
-    rerender(<ProgressToNextGrade current={58} target={60} />);
+    rerender(<ProgressToNextGrade aria-label="Progreso" current={58} target={60} />);
     expect(classes(fill())).toContain("bg-brand-data"); // near completion: the tenant colour, lightness-adjusted to 3:1 by BrandingScope
   });
 
-  it("clamps the fill at 100% and handles a zero target", () => {
-    const { container, rerender } = render(<ProgressToNextGrade current={99} target={30} />);
+  it("clamps the fill and the exposed value at the target (eligible 32 of 30 reads 30 / 30) and handles a zero target", () => {
+    const { container, rerender } = render(<ProgressToNextGrade aria-label="Progreso" current={99} target={30} />);
     expect((container.querySelector("[data-fill]") as HTMLElement).style.width).toBe("100%");
-    rerender(<ProgressToNextGrade current={5} target={0} />);
+    expect(screen.getByRole("progressbar", { name: "Progreso" }).getAttribute("aria-valuenow")).toBe("30");
+    rerender(<ProgressToNextGrade aria-label="Progreso" current={5} target={0} />);
     expect((container.querySelector("[data-fill]") as HTMLElement).style.width).toBe("0%");
   });
 });

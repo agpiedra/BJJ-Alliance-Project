@@ -1,0 +1,295 @@
+{
+ "generatedAt": "2026-09-25T04:58:22.576Z",
+ "note": "COARSE-POINTER EMULATION in desktop Chromium (isMobile + hasTouch, 390x844, DSF 2). Not a real device.",
+ "emulation": {
+  "pointerCoarse": true,
+  "anyPointerCoarse": true,
+  "hoverHover": false,
+  "viewport": "390 px wide"
+ },
+ "pageLoads": 64,
+ "fatals": [],
+ "elementsMeasured": 1076,
+ "inlineTextLinksExempt": 4,
+ "sharedControls": {
+  "measured": 888,
+  "below44": []
+ },
+ "anyInteractiveBelow24": [],
+ "otherInteractive24to43": [
+  {
+   "el": "input",
+   "tag": "input",
+   "type": "checkbox",
+   "text": "on",
+   "w": 24,
+   "h": 24,
+   "inline": false,
+   "shared": false,
+   "where": "page",
+   "page": "owner/branding",
+   "locale": "en",
+   "theme": "light",
+   "count": 12,
+   "pages": [
+    "owner/branding",
+    "owner/staff",
+    "public/register"
+   ]
+  },
+  {
+   "el": "a.px-3.py-1.5.text-sm",
+   "tag": "a",
+   "type": null,
+   "text": "7 days",
+   "w": 65,
+   "h": 32,
+   "inline": false,
+   "shared": false,
+   "where": "page",
+   "page": "owner/analytics",
+   "locale": "en",
+   "theme": "light",
+   "count": 2,
+   "pages": [
+    "owner/analytics"
+   ]
+  },
+  {
+   "el": "a.px-3.py-1.5.text-sm",
+   "tag": "a",
+   "type": null,
+   "text": "30 days",
+   "w": 75.4,
+   "h": 32,
+   "inline": false,
+   "shared": false,
+   "where": "page",
+   "page": "owner/analytics",
+   "locale": "en",
+   "theme": "light",
+   "count": 2,
+   "pages": [
+    "owner/analytics"
+   ]
+  },
+  {
+   "el": "a.px-3.py-1.5.text-sm",
+   "tag": "a",
+   "type": null,
+   "text": "90 days",
+   "w": 74.4,
+   "h": 32,
+   "inline": false,
+   "shared": false,
+   "where": "page",
+   "page": "owner/analytics",
+   "locale": "en",
+   "theme": "light",
+   "count": 2,
+   "pages": [
+    "owner/analytics"
+   ]
+  },
+  {
+   "el": "a.px-3.py-1.5.text-sm",
+   "tag": "a",
+   "type": null,
+   "text": "Year",
+   "w": 52.9,
+   "h": 32,
+   "inline": false,
+   "shared": false,
+   "where": "page",
+   "page": "owner/analytics",
+   "locale": "en",
+   "theme": "light",
+   "count": 2,
+   "pages": [
+    "owner/analytics"
+   ]
+  },
+  {
+   "el": "a.px-3.py-1.5.text-sm",
+   "tag": "a",
+   "type": null,
+   "text": "7 días",
+   "w": 61.6,
+   "h": 32,
+   "inline": false,
+   "shared": false,
+   "where": "page",
+   "page": "owner/analytics",
+   "locale": "es",
+   "theme": "light",
+   "count": 2,
+   "pages": [
+    "owner/analytics"
+   ]
+  },
+  {
+   "el": "a.px-3.py-1.5.text-sm",
+   "tag": "a",
+   "type": null,
+   "text": "30 días",
+   "w": 72.2,
+   "h": 32,
+   "inline": false,
+   "shared": false,
+   "where": "page",
+   "page": "owner/analytics",
+   "locale": "es",
+   "theme": "light",
+   "count": 2,
+   "pages": [
+    "owner/analytics"
+   ]
+  },
+  {
+   "el": "a.px-3.py-1.5.text-sm",
+   "tag": "a",
+   "type": null,
+   "text": "90 días",
+   "w": 71,
+   "h": 32,
+   "inline": false,
+   "shared": false,
+   "where": "page",
+   "page": "owner/analytics",
+   "locale": "es",
+   "theme": "light",
+   "count": 2,
+   "pages": [
+    "owner/analytics"
+   ]
+  },
+  {
+   "el": "a.px-3.py-1.5.text-sm",
+   "tag": "a",
+   "type": null,
+   "text": "Año",
+   "w": 49.8,
+   "h": 32,
+   "inline": false,
+   "shared": false,
+   "where": "page",
+   "page": "owner/analytics",
+   "locale": "es",
+   "theme": "light",
+   "count": 2,
+   "pages": [
+    "owner/analytics"
+   ]
+  },
+  {
+   "el": "a.px-3.py-1.5.text-sm",
+   "tag": "a",
+   "type": null,
+   "text": "Week",
+   "w": 60.5,
+   "h": 32,
+   "inline": false,
+   "shared": false,
+   "where": "page",
+   "page": "owner/schedule",
+   "locale": "en",
+   "theme": "light",
+   "count": 2,
+   "pages": [
+    "owner/schedule"
+   ]
+  },
+  {
+   "el": "a.px-3.py-1.5.text-sm",
+   "tag": "a",
+   "type": null,
+   "text": "Day",
+   "w": 48.8,
+   "h": 32,
+   "inline": false,
+   "shared": false,
+   "where": "page",
+   "page": "owner/schedule",
+   "locale": "en",
+   "theme": "light",
+   "count": 2,
+   "pages": [
+    "owner/schedule"
+   ]
+  },
+  {
+   "el": "a.px-3.py-1.5.text-sm",
+   "tag": "a",
+   "type": null,
+   "text": "List",
+   "w": 47.2,
+   "h": 32,
+   "inline": false,
+   "shared": false,
+   "where": "page",
+   "page": "owner/schedule",
+   "locale": "en",
+   "theme": "light",
+   "count": 2,
+   "pages": [
+    "owner/schedule"
+   ]
+  },
+  {
+   "el": "a.px-3.py-1.5.text-sm",
+   "tag": "a",
+   "type": null,
+   "text": "Semana",
+   "w": 76.7,
+   "h": 32,
+   "inline": false,
+   "shared": false,
+   "where": "page",
+   "page": "owner/schedule",
+   "locale": "es",
+   "theme": "light",
+   "count": 2,
+   "pages": [
+    "owner/schedule"
+   ]
+  },
+  {
+   "el": "a.px-3.py-1.5.text-sm",
+   "tag": "a",
+   "type": null,
+   "text": "Día",
+   "w": 45.4,
+   "h": 32,
+   "inline": false,
+   "shared": false,
+   "where": "page",
+   "page": "owner/schedule",
+   "locale": "es",
+   "theme": "light",
+   "count": 2,
+   "pages": [
+    "owner/schedule"
+   ]
+  },
+  {
+   "el": "a.px-3.py-1.5.text-sm",
+   "tag": "a",
+   "type": null,
+   "text": "Lista",
+   "w": 54.6,
+   "h": 32,
+   "inline": false,
+   "shared": false,
+   "where": "page",
+   "page": "owner/schedule",
+   "locale": "es",
+   "theme": "light",
+   "count": 2,
+   "pages": [
+    "owner/schedule"
+   ]
+  }
+ ],
+ "horizontalOverflowPages": [],
+ "elementsBeyondViewportOutsideAScroller": []
+}

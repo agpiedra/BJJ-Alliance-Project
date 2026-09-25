@@ -94,8 +94,8 @@ function ControlStates({ title }: { title: string }) {
         </label>
       </div>
       <div className="flex flex-col gap-2">
-        <ProgressToNextGrade current={20} target={60} />
-        <ProgressToNextGrade current={58} target={60} />
+        <ProgressToNextGrade aria-label="Progreso: ejemplo en curso" current={20} target={60} />
+        <ProgressToNextGrade aria-label="Progreso: ejemplo casi completo" current={58} target={60} />
       </div>
     </div>
   );
@@ -222,7 +222,7 @@ export default function DevComponentsPage() {
                 </div>
               </DataTableCell>
               <DataTableCell>
-                <ProgressToNextGrade current={63} target={65} />
+                <ProgressToNextGrade aria-label="Progreso: Fabiola" current={63} target={65} />
               </DataTableCell>
               <DataTableCell>
                 <Pill variant="ok">Al día</Pill>
@@ -237,7 +237,7 @@ export default function DevComponentsPage() {
                 </div>
               </DataTableCell>
               <DataTableCell>
-                <ProgressToNextGrade current={81} target={85} />
+                <ProgressToNextGrade aria-label="Progreso: Natalia" current={81} target={85} />
               </DataTableCell>
               <DataTableCell>
                 <Pill variant="warn">Pendiente</Pill>

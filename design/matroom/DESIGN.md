@@ -89,13 +89,14 @@ The stored colours (`OrganizationBranding.primaryColor`, `sidebarBackground` and
 
 `Button`, `Input`, `Card`, `ProgressToNextGrade`, the sidebar primitives and the staff sidebar.
 
-- **Targets:** compact on a fine pointer (`h-9` default, `h-8` small); 44px (`h-11`) on a coarse pointer for every size. Tailwind `pointer-coarse:`.
+- **Targets:** compact on a fine pointer (`h-9` default, `h-8` small); 44px (`h-11`) on a coarse pointer for every size. Tailwind `pointer-coarse:`. `globals.css` adds a coarse-pointer base rule so every plain form control (any class string), checkbox (24px, and its label row 44px), and `<summary>` row is 44px too; standalone text links take `pointer-coarse:py-3`. Inline links inside a sentence are exempt (WCAG 2.5.8).
+- **Hover:** a hover state never changes the fill/label pair of a filled control (a translucent hover fill took a tenant's orange to 4.3:1 under its label). Filled variants (`primary`, `destructive`, destructive `Badge` links) add a 1px inner ring in the label colour; outline, secondary and ghost change their soft fill, checked at 4.5:1 for the label after hover.
 - **Boundary:** buttons other than ghost and link, and all inputs, have a `--input` border (or the tenant edge above).
 - **Disabled:** shown by fill (`--muted`), text (`--muted-foreground`) and border, not by fading the tenant colour.
 - **Loading:** `Button` has an optional `loading` prop: disabled, `aria-busy`, spinner beside the label (reduced-motion collapses the animation globally). Callers keep passing their own pending label.
-- **Invalid:** a 2px destructive border (width changes as well as colour) plus the caller's message text.
+- **Invalid:** a 2px destructive border (width changes as well as colour) plus the caller's message text. **Destructive** variants sit on the verified `--bad-soft` fill, never a translucent tint of the text colour (that measured 4.08:1 on the dark card).
 - **Sidebar:** 12px caps group labels in `--sidebar-muted`; the active item has a 3px marker and heavier text in addition to its fill.
-- **Progress:** a real `progressbar` (value and range), a track edged with `--input`, the fill in `--data` (`--brand-data` near completion), and the exact value as text.
+- **Progress:** a real `progressbar` with a REQUIRED accessible name (`aria-label` or `aria-labelledby`, exactly one; neither or both does not compile), value, range and `aria-valuetext` ("20 / 60"), a track edged with `--input`, the fill in `--data` (`--brand-data` near completion), and the exact value as text.
 - **Card:** 9px radius, a `--border` hairline on the card surface.
 
 ## 7. Requirements for the page phases
