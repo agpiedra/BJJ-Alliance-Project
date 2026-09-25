@@ -86,7 +86,9 @@ describe("AttendanceHistorySection", () => {
     expect(screen.getByRole("status")).toHaveTextContent("2 older entries loaded.");
     const items = within(screen.getByRole("list", { name: "Attendance entries" })).getAllByRole("listitem");
     expect(items).toHaveLength(5);
-    expect(items[3]).toHaveFocus();
+    // Focus is applied in a passive effect after the rows commit, which can land a tick after the text above is on screen (it did
+    // not on a slow CI runner), so wait for it rather than asserting at the instant the text appears.
+    await waitFor(() => expect(items[3]).toHaveFocus());
     // The last page ends the control and says so.
     expect(screen.queryByRole("button", { name: "Show older attendance" })).toBeNull();
     expect(screen.getByText("That is the start of your attendance history.")).toBeInTheDocument();
