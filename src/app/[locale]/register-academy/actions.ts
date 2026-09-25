@@ -6,6 +6,8 @@ import { prisma } from "@/lib/prisma";
 import { formDataToObject } from "@/lib/form-data";
 import { CURRENCIES } from "@/lib/payments/format-money";
 import { seedOrganizationDefaults } from "@/lib/organizations/seed-defaults";
+import { isCheckableSlug } from "@/lib/organizations/slug";
+import { isSlugConflict } from "@/lib/organizations/slug-conflict";
 import { sendTransactionalEmail } from "@/lib/email/send-transactional-email";
 import type { ActionState } from "@/lib/action-state";
 
@@ -61,6 +63,8 @@ const registrationSchema = z.strictObject({
 });
 
 export type RegistrationState = ActionState & { slugTaken?: boolean };
+
+const slugTakenResult = (): RegistrationState => ({ error: "slugTaken", slugTaken: true, fieldErrors: { desiredSlug: ["slugTaken"] } });
 
 /**
  * `ip` is read from `x-forwarded-for` for rate-limiting purposes only —
@@ -132,7 +136,7 @@ async function isRegistrationRateLimited(ip: string, email: string): Promise<boo
  * client needs no special handling here.
  */
 export async function checkSlugAvailability(slug: string): Promise<{ available: boolean }> {
-  if (!/^[a-z0-9-]{2,60}$/.test(slug)) return { available: false };
+  if (!isCheckableSlug(slug)) return { available: false };
   const existing = await prisma.organization.findUnique({ where: { slug }, select: { id: true } });
   return { available: !existing };
 }
@@ -168,9 +172,7 @@ export async function registerOrganization(_prevState: RegistrationState, formDa
     where: { slug: data.desiredSlug },
     select: { id: true },
   });
-  if (existingSlug) {
-    return { error: "slugTaken", slugTaken: true, fieldErrors: { desiredSlug: ["slugTaken"] } };
-  }
+  if (existingSlug) return slugTakenResult();
 
   const existingContactEmail = await prisma.organization.findFirst({
     where: { contactEmail: data.contactEmail, status: { in: ["PENDING", "ACTIVE"] } },
@@ -211,7 +213,14 @@ export async function registerOrganization(_prevState: RegistrationState, formDa
     await seedOrganizationDefaults(tx, organization.id);
 
     return organization.id;
+  }).catch((error: unknown) => {
+    // The check above and this create are not atomic: two submissions of the same slug can both pass the check, and the
+    // database's unique index refuses the second. That is the ordinary "slug taken" outcome, not a crash. Anything else
+    // (another constraint, a connection fault) is not a slug conflict and is rethrown unchanged.
+    if (isSlugConflict(error)) return null;
+    throw error;
   });
+  if (organizationId === null) return slugTakenResult();
 
   // Sent AFTER the transaction commits, per the doc's own "email failure
   // does not roll back signup" — the organization/branding/ranks above are
