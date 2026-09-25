@@ -102,7 +102,8 @@ export function StaffSidebar({ locale, navItems, academySwitcher, logo }: StaffS
           if (items.length === 0) return null;
           return (
             <SidebarGroup key={group}>
-              <SidebarGroupLabel className="font-mono text-[10.5px] tracking-[.11em] uppercase">
+              {/* MATROOM: 12px Plex Sans caps in --sidebar-muted (>= 4.5:1 on the sidebar, also a tenant's), not 10.5px mono at 70% */}
+              <SidebarGroupLabel className="text-xs font-medium tracking-[.06em] text-sidebar-muted uppercase">
                 {t(`groups.${group}`)}
               </SidebarGroupLabel>
               <SidebarGroupContent>
@@ -129,7 +130,9 @@ export function StaffSidebar({ locale, navItems, academySwitcher, logo }: StaffS
                           // so an unbranded org's look is byte-for-byte
                           // unchanged) but never actually consumed by any
                           // component until now — this is that wiring.
-                          className="data-active:bg-sidebar-primary data-active:text-sidebar-primary-foreground"
+                          // MATROOM: the active item is also marked by a 3px bar and heavier text, so it is not told apart by
+                          // fill colour alone (a tenant's active colour can be close to its sidebar colour).
+                          className="relative data-active:bg-sidebar-primary data-active:font-semibold data-active:text-sidebar-primary-foreground data-active:before:absolute data-active:before:inset-y-2 data-active:before:left-0 data-active:before:w-[3px] data-active:before:rounded-sm data-active:before:bg-current data-active:before:content-['']"
                         >
                           {item.icon}
                           <span>{t(item.labelKey)}</span>

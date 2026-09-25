@@ -229,7 +229,9 @@ export function WeekCalendar({
               <div
                 className={cn(
                   "font-mono text-[9.5px] tracking-[.11em] text-muted-foreground uppercase",
-                  day.isToday && "text-brand-gold",
+                  // Today is marked by the tinted header and its brand underline (border), not by drawing the label in the
+                  // tenant's colour: a tenant colour used as text can be 1.5:1 on the header (Alliance's gold on ivory).
+                  day.isToday && "font-semibold text-foreground",
                 )}
               >
                 {day.label}

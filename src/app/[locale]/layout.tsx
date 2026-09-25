@@ -7,24 +7,15 @@ import { routing } from "@/i18n/routing";
 import { PLATFORM_NAME } from "@/lib/platform";
 import "../globals.css";
 
-// Populates the --font-heading / --font-sans / --font-mono custom properties
-// referenced by globals.css's @theme inline block (REDESIGN_BRIEF.md Phase
-// 1.3 — replaces the brand redesign's original Geist/Geist Mono pair).
+// Populates the --font-sans / --font-mono custom properties referenced by globals.css's @theme inline block. Headings use
+// IBM Plex Sans semibold too (globals.css maps --font-heading to --font-sans): MATROOM Phase 1 retired Archivo, so the
+// app loads one sans family and one mono family. The editorial serif (--font-display) is a system stack, not a file.
 //
 // The files are vendored in src/fonts (unmodified upstream releases, OFL licences and sources documented in
 // src/fonts/README.md) and loaded with next/font/local, so the build never asks Google for a font: next/font/google
 // failed the build whenever Google answered with /l/font?kit=... URLs (vercel/next.js#99114). Same families, weights,
 // normal style, swap display and CSS variables as before; the full-coverage files keep Latin Extended (the colon sign
 // U+20A1 used for prices lives there), which next/font/local cannot get from per-script subsets.
-const archivo = localFont({
-  variable: "--font-heading",
-  src: [
-    { path: "../../fonts/archivo/Archivo-SemiBold.woff2", weight: "600", style: "normal" },
-    { path: "../../fonts/archivo/Archivo-Bold.woff2", weight: "700", style: "normal" },
-  ],
-  display: "swap",
-});
-
 const ibmPlexSans = localFont({
   variable: "--font-sans",
   src: [
@@ -52,7 +43,11 @@ export function generateStaticParams() {
 // live here — not the outer src/app/layout.tsx pass-through — since this is
 // the layout that actually renders <html>/<head>.
 export const viewport: Viewport = {
-  themeColor: "#171717",
+  // MATROOM ground colours (design/matroom/tokens.css --background), by the OS colour scheme.
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#f5f3ec" },
+    { media: "(prefers-color-scheme: dark)", color: "#141d19" },
+  ],
 };
 
 export function generateMetadata(): Metadata {
@@ -83,7 +78,7 @@ export default async function LocaleLayout({
   return (
     <html
       lang={locale}
-      className={`${archivo.variable} ${ibmPlexSans.variable} ${ibmPlexMono.variable}`}
+      className={`${ibmPlexSans.variable} ${ibmPlexMono.variable}`}
       suppressHydrationWarning
     >
       <body>

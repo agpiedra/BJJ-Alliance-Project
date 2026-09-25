@@ -26,7 +26,7 @@ export async function BillingBanner({
     <div
       className={cn(
         "px-4 py-2 text-sm",
-        state === "GRACE_EXPIRED" ? "bg-destructive/10 text-destructive" : "bg-warn-soft text-warn",
+        state === "GRACE_EXPIRED" ? "bg-bad-soft text-destructive" : "bg-warn-soft text-warn",
       )}
     >
       {t(state === "GRACE_EXPIRED" ? "graceExpired" : "due", { dueOn, deadline })}

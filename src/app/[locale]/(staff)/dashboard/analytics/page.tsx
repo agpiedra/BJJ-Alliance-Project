@@ -256,7 +256,7 @@ export default async function AnalyticsPage({
           <div
             role="group"
             aria-label={t("filters.quickRange.label")}
-            className="inline-flex w-fit overflow-hidden rounded-lg border border-border"
+            className="inline-flex w-fit overflow-hidden rounded-lg border border-input"
           >
             {quickRanges.map((range, index) => (
               <a
@@ -265,8 +265,10 @@ export default async function AnalyticsPage({
                 role="button"
                 aria-pressed={range.active}
                 className={cn(
-                  "px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground aria-pressed:bg-muted aria-pressed:font-medium aria-pressed:text-foreground",
-                  index > 0 && "border-l border-border",
+                  // MATROOM: the group's edge and dividers use the 3:1 control-boundary token; the pressed segment is also
+                  // heavier and darker text, not a 1.2:1 fill alone.
+                  "px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground aria-pressed:bg-muted aria-pressed:font-semibold aria-pressed:text-foreground",
+                  index > 0 && "border-l border-input",
                 )}
               >
                 {range.label}

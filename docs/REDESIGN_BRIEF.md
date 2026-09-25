@@ -1,5 +1,11 @@
 # Alliance BJJ — UI redesign brief
 
+> **Visual direction superseded (2026-09-24).** The gold-and-near-black look this brief specifies, and its mock
+> `design/alliance-mock.html`, are replaced by the MATROOM design authority in `design/matroom/DESIGN.md` (forest and
+> ivory, IBM Plex Sans, tokens in `design/matroom/tokens.css`). Where the two conflict visually, `design/matroom/` wins.
+> This document's functional requirements (roles, routes, matching rules, what each screen must do) are unaffected and
+> its phase citations in `src/` stay valid as history.
+
 > **Status: implemented, kept for its rationale, not an open task list.** Audited during
 > MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 7 (revision 28): every phase below (0 through 9) is
 > fully built — confirmed by the existence of every named component, route, and behavior, not

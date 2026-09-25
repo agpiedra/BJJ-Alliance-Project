@@ -1,0 +1,37 @@
+{
+ "generatedAt": "2026-09-25T05:03:05.874Z",
+ "summary": {
+  "pageLoads": 36,
+  "measurements": 2828,
+  "belowThreshold": 0,
+  "distinct": 0,
+  "focusStops": 406,
+  "focusFailures": 0,
+  "overflowPages": 0,
+  "pagesWithErrors": 0,
+  "fatalLoads": 0
+ },
+ "byKind": {
+  "text": {
+   "checked": 2280,
+   "failed": 0
+  },
+  "placeholder": {
+   "checked": 8,
+   "failed": 0
+  },
+  "boundary": {
+   "checked": 252,
+   "failed": 0
+  },
+  "sheet-text": {
+   "checked": 288,
+   "failed": 0
+  }
+ },
+ "distinct": [],
+ "focusFails": [],
+ "overflows": [],
+ "errs": [],
+ "fatals": []
+}

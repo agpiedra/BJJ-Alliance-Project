@@ -74,7 +74,7 @@ export function PortalTopBar({ locale, firstName, lastName, hasStaff, logo }: Po
       alt={logo?.displayName}
     >
       <DropdownMenu>
-        <DropdownMenuTrigger className="ml-auto flex size-8 items-center justify-center rounded-full bg-sidebar-accent text-xs font-semibold text-sidebar-accent-foreground">
+        <DropdownMenuTrigger className="ml-auto flex size-8 pointer-coarse:size-11 items-center justify-center rounded-full border border-input bg-sidebar-accent text-xs font-semibold text-sidebar-accent-foreground">
           {initialsFromName(firstName, lastName)}
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">

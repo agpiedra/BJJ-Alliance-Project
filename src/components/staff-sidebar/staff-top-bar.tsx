@@ -100,7 +100,7 @@ export function StaffTopBar({
         <ThemeToggle />
         {children}
         <DropdownMenu>
-          <DropdownMenuTrigger className="flex size-8 items-center justify-center rounded-full bg-sidebar text-xs font-semibold text-sidebar-foreground">
+          <DropdownMenuTrigger className="flex size-8 items-center justify-center rounded-full border border-input bg-sidebar text-xs font-semibold text-sidebar-foreground pointer-coarse:size-11">
             {initialsFromEmail(userEmail)}
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">

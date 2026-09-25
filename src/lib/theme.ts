@@ -232,6 +232,87 @@ export function validateSidebarOverrides(overrides: SidebarOverrides):
   return failures.length > 0 ? { ok: false, failures } : { ok: true };
 }
 
+/** WCAG 2.2 1.4.11: graphical objects and control boundaries need 3:1 against what they sit on. */
+export const NON_TEXT_CONTRAST_RATIO = 3;
+
+/**
+ * The surfaces a tenant's colour is drawn on, per theme. MUST equal design/matroom/tokens.css (--background, --card,
+ * --data-track, --input); tests/unit/tenant-presentation.test.ts reads that file and fails if they drift. They are
+ * constants here, not read from CSS, because BrandingScope renders on the server where no stylesheet is available.
+ */
+export const THEME_SURFACES = {
+  light: { ground: "#f5f3ec", card: "#fffefa", track: "#e6ebdd", boundary: "#738b79" },
+  dark: { ground: "#141d19", card: "#202c25", track: "#2b3e30", boundary: "#6d8a76" },
+} as const;
+
+export type ThemeName = keyof typeof THEME_SURFACES;
+
+function rgbToHsl({ r, g, b }: Rgb): [number, number, number] {
+  const [rn, gn, bn] = [r / 255, g / 255, b / 255];
+  const max = Math.max(rn, gn, bn);
+  const min = Math.min(rn, gn, bn);
+  const l = (max + min) / 2;
+  if (max === min) return [0, 0, l];
+  const d = max - min;
+  const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+  const h = max === rn ? (gn - bn) / d + (gn < bn ? 6 : 0) : max === gn ? (bn - rn) / d + 2 : (rn - gn) / d + 4;
+  return [h * 60, s, l];
+}
+
+function hslToRgb(h: number, s: number, l: number): Rgb {
+  const c = (1 - Math.abs(2 * l - 1)) * s;
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+  const m = l - c / 2;
+  const [r, g, b] = h < 60 ? [c, x, 0] : h < 120 ? [x, c, 0] : h < 180 ? [0, c, x] : h < 240 ? [0, x, c] : h < 300 ? [x, 0, c] : [c, 0, x];
+  return { r: (r + m) * 255, g: (g + m) * 255, b: (b + m) * 255 };
+}
+
+/**
+ * A tenant colour as it may appear where it colours DATA (progress near completion): unchanged if it already clears 3:1
+ * against the track, the card and the ground of `theme`; otherwise moved along lightness (same hue and saturation, darker
+ * on light, lighter on dark) in 0.5% steps until it does. Presentation only: the stored colour is never rewritten.
+ * An input that is already a fixed point returns byte-for-byte as given (case included).
+ */
+export function resolveDataFill(colorHex: string, theme: ThemeName): string {
+  const surfaces = [THEME_SURFACES[theme].track, THEME_SURFACES[theme].card, THEME_SURFACES[theme].ground];
+  const clears = (hex: string) => surfaces.every((s) => contrastRatio(hex, s) >= NON_TEXT_CONTRAST_RATIO);
+  if (clears(colorHex)) return colorHex;
+  const [h, s, l0] = rgbToHsl(hexToRgb(colorHex));
+  const direction = theme === "light" ? -1 : 1;
+  for (let step = 1; step <= 200; step++) {
+    const l = Math.min(0.97, Math.max(0.03, l0 + direction * step * 0.005));
+    const candidate = rgbToHex(hslToRgb(h, s, l));
+    if (clears(candidate)) return candidate;
+  }
+  // Unreachable for any real colour (near-white and near-black clear 3:1 on these surfaces); fail safe to the plain boundary token.
+  return THEME_SURFACES[theme].boundary;
+}
+
+/**
+ * Whether a tenant's action fill needs a 1px boundary: it separates from the card or the ground by less than 3:1. The
+ * button's own label keeps 4.5:1 regardless (deriveForeground); this is only about the shape being findable.
+ */
+export function tenantNeedsActionEdge(colorHex: string, theme: ThemeName): boolean {
+  const { card, ground } = THEME_SURFACES[theme];
+  return contrastRatio(colorHex, card) < NON_TEXT_CONTRAST_RATIO || contrastRatio(colorHex, ground) < NON_TEXT_CONTRAST_RATIO;
+}
+
+export interface TenantThemePresentation {
+  /** Value for --action-edge: the shared boundary token, or nothing. */
+  actionEdge: "var(--input)" | "transparent";
+  /** Value for --brand-data. */
+  brandData: string;
+}
+
+/** Everything BrandingScope adds on top of a tenant's stored colours, per theme. Derived at render time, never stored. */
+export function resolveTenantPresentation(primaryColorHex: string): Record<ThemeName, TenantThemePresentation> {
+  const one = (theme: ThemeName): TenantThemePresentation => ({
+    actionEdge: tenantNeedsActionEdge(primaryColorHex, theme) ? "var(--input)" : "transparent",
+    brandData: resolveDataFill(primaryColorHex, theme),
+  });
+  return { light: one("light"), dark: one("dark") };
+}
+
 /** Doc's "organization initials on the primary color" logo fallback. First letter of up to the first two words, uppercase — "Alliance Jiu-Jitsu" -> "AJ", "Demo" -> "D". */
 export function deriveInitials(name: string): string {
   const words = name.trim().split(/\s+/).filter(Boolean).slice(0, 2);

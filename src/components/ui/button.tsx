@@ -1,9 +1,10 @@
 import { Button as ButtonPrimitive } from "@base-ui/react/button"
 import { cva, type VariantProps } from "class-variance-authority"
+import { Loader2 } from "lucide-react"
 import { cn } from "cn"
 
 const buttonVariants = cva(
-  "group/button inline-flex shrink-0 items-center justify-center rounded-lg border border-transparent bg-clip-padding text-sm font-medium whitespace-nowrap transition-all outline-none select-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 active:not-aria-[haspopup]:translate-y-px disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+  "group/button inline-flex shrink-0 items-center justify-center rounded-sm border border-transparent bg-clip-padding text-sm font-semibold whitespace-nowrap transition-all select-none active:not-aria-[haspopup]:translate-y-px disabled:pointer-events-none disabled:border-border disabled:bg-muted disabled:text-muted-foreground aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
   {
     variants: {
       variant: {
@@ -13,29 +14,38 @@ const buttonVariants = cva(
         // for primary actions — extending the sanctioned gold-use list from
         // "sidebar active-nav, banner accents, stat highlights" (Phase 1) to
         // include primary CTA buttons, per "the mock wins for visuals."
-        primary: "bg-brand-gold text-brand-gold-foreground hover:bg-brand-gold/90",
+        // MATROOM Phase 1: the tenant's action colour. `border-action-edge` is a presentation token (BrandingScope): a 1px
+        // --input edge when the tenant's fill is under 3:1 against the surface, otherwise transparent. The stored colour
+        // is never altered.
+        // Hover keeps the fill and label exactly as they are (a translucent hover fill lightened a tenant's orange to 4.3:1
+        // under its label) and adds a 1px inner ring in the label colour, which is the label's own contrast by construction.
+        primary:
+          "border-action-edge bg-brand-gold text-brand-gold-foreground hover:shadow-[inset_0_0_0_1px_var(--brand-gold-foreground)]",
         outline:
-          "border-border bg-background hover:bg-muted hover:text-foreground aria-expanded:bg-muted aria-expanded:text-foreground dark:border-input dark:bg-input/30 dark:hover:bg-input/50",
+          "border-input bg-card hover:bg-muted hover:text-foreground aria-expanded:bg-muted aria-expanded:text-foreground",
         secondary:
-          "bg-secondary text-secondary-foreground hover:bg-[color-mix(in_oklch,var(--secondary),var(--foreground)_5%)] aria-expanded:bg-secondary aria-expanded:text-secondary-foreground",
+          "border-input bg-secondary text-secondary-foreground hover:bg-[color-mix(in_oklch,var(--secondary),var(--foreground)_5%)] aria-expanded:bg-secondary aria-expanded:text-secondary-foreground",
         ghost:
-          "hover:bg-muted hover:text-foreground aria-expanded:bg-muted aria-expanded:text-foreground dark:hover:bg-muted/50",
+          "hover:bg-muted hover:text-foreground aria-expanded:bg-muted aria-expanded:text-foreground disabled:border-transparent disabled:bg-transparent",
         destructive:
-          "bg-destructive/10 text-destructive hover:bg-destructive/20 focus-visible:border-destructive/40 focus-visible:ring-destructive/20 dark:bg-destructive/20 dark:hover:bg-destructive/30 dark:focus-visible:ring-destructive/40",
-        link: "text-primary underline-offset-4 hover:underline",
+          // The verified status fill (--bad-soft: --bad text on it is >= 4.5:1 in both themes, asserted by design-tokens.test.ts),
+          // not a translucent tint of the text colour (bg-destructive/20 under text-destructive measured 4.08:1 on the dark card).
+          "border-destructive bg-bad-soft text-destructive hover:shadow-[inset_0_0_0_1px_var(--destructive)]",
+        link: "text-primary underline-offset-4 hover:underline disabled:border-transparent disabled:bg-transparent",
       },
+      // Touch targets: compact on a fine pointer (dense tables), 44px on a coarse one (WCAG 2.2 target size, phones and kiosks).
       size: {
         default:
-          "h-8 gap-1.5 px-2.5 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2",
-        xs: "h-6 gap-1 rounded-[min(var(--radius-md),10px)] px-2 text-xs in-data-[slot=button-group]:rounded-lg has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 [&_svg:not([class*='size-'])]:size-3",
-        sm: "h-7 gap-1 rounded-[min(var(--radius-md),12px)] px-2.5 text-[0.8rem] in-data-[slot=button-group]:rounded-lg has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 [&_svg:not([class*='size-'])]:size-3.5",
-        lg: "h-9 gap-1.5 px-2.5 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2",
-        icon: "size-8",
+          "h-9 gap-1.5 px-3 pointer-coarse:h-11 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2",
+        xs: "h-7 gap-1 rounded-[min(var(--radius-md),10px)] px-2 text-xs pointer-coarse:h-11 in-data-[slot=button-group]:rounded-lg has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 [&_svg:not([class*='size-'])]:size-3",
+        sm: "h-8 gap-1 rounded-[min(var(--radius-md),12px)] px-2.5 text-[0.8rem] pointer-coarse:h-11 in-data-[slot=button-group]:rounded-lg has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 [&_svg:not([class*='size-'])]:size-3.5",
+        lg: "h-10 gap-1.5 px-3.5 pointer-coarse:h-11 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2",
+        icon: "size-9 pointer-coarse:size-11",
         "icon-xs":
-          "size-6 rounded-[min(var(--radius-md),10px)] in-data-[slot=button-group]:rounded-lg [&_svg:not([class*='size-'])]:size-3",
+          "size-7 rounded-[min(var(--radius-md),10px)] pointer-coarse:size-11 in-data-[slot=button-group]:rounded-lg [&_svg:not([class*='size-'])]:size-3",
         "icon-sm":
-          "size-7 rounded-[min(var(--radius-md),12px)] in-data-[slot=button-group]:rounded-lg",
-        "icon-lg": "size-9",
+          "size-8 rounded-[min(var(--radius-md),12px)] pointer-coarse:size-11 in-data-[slot=button-group]:rounded-lg",
+        "icon-lg": "size-10 pointer-coarse:size-11",
       },
     },
     defaultVariants: {
@@ -45,17 +55,30 @@ const buttonVariants = cva(
   }
 )
 
+/**
+ * `loading` is the pending state of an action: the button is disabled (so it cannot be pressed twice), marked
+ * `aria-busy`, and shows a spinner beside its label. Callers keep passing their own pending label as children
+ * (e.g. "Guardando...") exactly as before; nothing about `disabled` changes for callers that do not use `loading`.
+ */
 function Button({
   className,
   variant = "default",
   size = "default",
+  loading = false,
+  disabled,
   ...props
-}: ButtonPrimitive.Props & VariantProps<typeof buttonVariants>) {
+}: ButtonPrimitive.Props & VariantProps<typeof buttonVariants> & { loading?: boolean }) {
+  // `children` stays inside `props` (never destructured and re-passed as JSX children): this component is also used as a
+  // Base UI `render={<Button />}` target (the schedule page's Sheet trigger), where the trigger supplies the label through
+  // the props it merges in. Re-passing it as JSX children rendered that trigger empty in the real app.
   return (
     <ButtonPrimitive
       data-slot="button"
       className={cn(buttonVariants({ variant, size, className }))}
+      disabled={disabled || loading}
+      aria-busy={loading || undefined}
       {...props}
+      {...(loading ? { children: (<><Loader2 aria-hidden="true" className="animate-spin" />{props.children}</>) } : {})}
     />
   )
 }

@@ -232,6 +232,7 @@ export default async function StudentPortalPage({
               </span>
               {progressTarget && (
                 <ProgressToNextGrade
+                  aria-label={t("progress.heading")}
                   current={progressTarget.current}
                   target={progressTarget.target}
                   className="w-full max-w-[220px]"

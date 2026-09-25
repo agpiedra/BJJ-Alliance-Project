@@ -438,7 +438,11 @@ export default async function StudentsPage({
                       </DataTableCell>
                       <DataTableCell>
                         {progress ? (
-                          <ProgressToNextGrade current={progress.current} target={progress.target} />
+                          <ProgressToNextGrade
+                            aria-label={`${t("columns.progress")}: ${student.firstName} ${student.lastName}`}
+                            current={progress.current}
+                            target={progress.target}
+                          />
                         ) : (
                           <span className="text-muted-foreground">—</span>
                         )}

@@ -34,6 +34,9 @@ export interface BrandBannerProps {
 export function BrandBanner({ children, compact = false, logoUrl, initials, initialsBackground, initialsForeground, alt }: BrandBannerProps) {
   return (
     <div
+      // Marks the banner as a sidebar-coloured surface so the global focus ring takes the sidebar's own foreground here
+      // (globals.css `[data-sidebar] :focus-visible`), not the theme ring, which a tenant's banner colour could hide.
+      data-sidebar="banner"
       className={cn(
         "flex items-center gap-3 border-b-2 border-brand-gold bg-sidebar px-4 text-sidebar-foreground",
         compact ? "h-12" : "h-16"

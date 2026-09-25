@@ -1,0 +1,1918 @@
+<!doctype html>
+<html lang="en" data-visualize-standalone>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; style-src 'unsafe-inline' blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; img-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; font-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; media-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; worker-src blob:; connect-src blob: data:; frame-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<title>Matroom Approved Landing</title>
+<style>:root{color-scheme:light dark;background:light-dark(rgb(255 255 255), rgb(24 24 24))}html,body{margin:0}body{box-sizing:border-box;padding:1rem;background:inherit}iframe{display:block;width:100%;height:calc(100vh - 2rem);margin:0 auto;border:0}</style>
+</head>
+<body>
+<iframe id="codex-visualization" sandbox="allow-scripts" referrerpolicy="no-referrer" title="Matroom Approved Landing" data-srcdoc="&lt;!doctype html&gt;
+&lt;html lang=&quot;en&quot; data-visualize-standalone&gt;
+&lt;head&gt;
+&lt;meta charset=&quot;utf-8&quot;&gt;
+&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width, initial-scale=1&quot;&gt;
+&lt;meta name=&quot;referrer&quot; content=&quot;no-referrer&quot;&gt;
+&lt;meta http-equiv=&quot;Content-Security-Policy&quot; content=&quot;default-src &#x27;none&#x27;; script-src &#x27;unsafe-inline&#x27; &#x27;unsafe-eval&#x27; &#x27;wasm-unsafe-eval&#x27; blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; style-src &#x27;unsafe-inline&#x27; blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; img-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; font-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; media-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; worker-src blob:; connect-src blob: data:; frame-src &#x27;none&#x27;; object-src &#x27;none&#x27;; base-uri &#x27;none&#x27;; form-action &#x27;none&#x27;&quot;&gt;
+&lt;title&gt;Matroom Approved Landing&lt;/title&gt;
+&lt;style&gt;:root {
+  color-scheme: light dark;
+  background-color: var(
+    --background,
+    var(--color-background-primary, light-dark(rgb(255 255 255), rgb(24 24 24)))
+  ) !important;
+
+  /* Agent-facing contract; keep in sync with SKILL.md. */
+  --background: var(
+    --color-background-primary,
+    light-dark(rgb(255 255 255), rgb(24 24 24))
+  );
+  --foreground: var(
+    --color-text-primary,
+    light-dark(rgb(26 28 31), rgb(255 255 255))
+  );
+  --card: color-mix(in oklab, var(--foreground) 5%, var(--background));
+  --card-foreground: var(
+    --color-text-primary,
+    light-dark(rgb(26 28 31), rgb(255 255 255))
+  );
+  --popover: var(
+    --color-background-secondary,
+    light-dark(rgb(255 255 255), rgb(45 45 45))
+  );
+  --popover-foreground: var(
+    --color-text-primary,
+    light-dark(rgb(26 28 31), rgb(255 255 255))
+  );
+  --primary: var(
+    --color-text-info,
+    light-dark(rgb(51 156 255), rgb(131 195 255))
+  );
+  --primary-foreground: var(
+    --color-text-inverse,
+    light-dark(rgb(255 255 255), rgb(13 13 13))
+  );
+  --secondary: var(
+    --color-background-secondary,
+    light-dark(rgb(255 255 255 / 96%), rgb(54 54 54 / 96%))
+  );
+  --secondary-foreground: var(
+    --color-text-primary,
+    light-dark(rgb(26 28 31), rgb(255 255 255))
+  );
+  --muted: color-mix(in srgb, var(--foreground) 10%, transparent);
+  --muted-foreground: var(
+    --color-text-secondary,
+    light-dark(rgb(26 28 31 / 49.4%), rgb(255 255 255 / 49.8%))
+  );
+  --accent: var(
+    --color-background-info,
+    light-dark(rgb(229 242 255), rgb(13 39 63))
+  );
+  --accent-foreground: var(
+    --color-text-info,
+    light-dark(rgb(51 156 255), rgb(131 195 255))
+  );
+  --destructive: var(
+    --color-text-warning,
+    light-dark(rgb(226 85 7), rgb(255 133 73))
+  );
+  --border: var(
+    --color-border-secondary,
+    light-dark(rgb(26 28 31 / 8%), rgb(255 255 255 / 8.2%))
+  );
+  --input: var(
+    --color-border-primary,
+    light-dark(
+      rgb(26 28 31 / 11.8%),
+      color-mix(in oklab, rgb(0 0 0) 10%, transparent)
+    )
+  );
+  --ring: var(
+    --color-ring-primary,
+    light-dark(rgb(51 156 255), rgb(131 195 255 / 76%))
+  );
+  --font-size-base: var(--font-text-md-size, 14px);
+  --blue: light-dark(rgb(51 156 255), rgb(51 156 255));
+  --orange: light-dark(rgb(226 85 7), rgb(251 106 34));
+  --green: light-dark(rgb(0 162 64), rgb(64 201 119));
+  --red: light-dark(rgb(224 46 42), rgb(255 103 100));
+  --purple: light-dark(rgb(146 79 247), rgb(173 123 249));
+  --yellow: light-dark(rgb(255 195 0), rgb(255 210 64));
+  --viz-series-1: var(--primary);
+  --viz-series-2: light-dark(rgb(243 136 59), rgb(245 154 86));
+  --viz-series-3: light-dark(rgb(93 201 119), rgb(116 213 139));
+  --viz-series-4: light-dark(rgb(235 119 177), rgb(240 143 192));
+  --viz-series-5: light-dark(rgb(155 121 236), rgb(170 145 239));
+  --viz-series-6: light-dark(rgb(58 185 177), rgb(90 203 194));
+
+  /* Internal implementation variables; not part of the agent contract. */
+  --font-sans: -apple-system, system-ui, &quot;Segoe UI&quot;, sans-serif;
+  --font-mono:
+    ui-monospace, SFMono-Regular, &quot;SF Mono&quot;, Menlo, Consolas, &quot;Liberation Mono&quot;,
+    monospace;
+  --font-size-normal: max(11px, var(--font-size-base));
+  --font-size-tooltip: calc(var(--font-size-base) - 1px);
+  --font-size-small: max(11px, calc(var(--font-size-base) - 2px));
+  --font-size-h1: calc(var(--font-size-normal) * 1.7142857143);
+  --font-size-h2: calc(var(--font-size-normal) * 1.4285714286);
+  --font-size-h3: calc(var(--font-size-normal) * 1.2857142857);
+  --font-weight-normal: 430;
+  --font-weight-medium: 500;
+  --icon-size: 16px;
+  --line-height-normal: calc(var(--font-size-normal) * 1.5);
+  --line-height-tooltip: calc(var(--font-size-tooltip) * 1.4285714286);
+  --line-height-small: calc(var(--font-size-small) + 4px);
+  --corner-shape: round;
+  --radius: var(--border-radius-lg, 10px);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-2xl: calc(var(--radius) * 1.6);
+  --radius-full: 9999px;
+  --shadow-sm: 0 1px 2px -1px rgb(0 0 0 / 8%);
+  --checkmark-image: url(&quot;data:image/svg+xml,%3Csvg xmlns=&#x27;http://www.w3.org/2000/svg&#x27; viewBox=&#x27;0 0 17 17&#x27;%3E%3Cpath d=&#x27;M12.8961 3.64101C13.1297 3.41418 13.4984 3.37523 13.7779 3.56581C14.0571 3.75635 14.1554 4.11331 14.0299 4.41347L13.9615 4.53847L7.71151 13.7045C7.59411 13.8767 7.4063 13.9877 7.19881 14.0072C6.99136 14.0267 6.78564 13.9533 6.63826 13.806L2.88826 10.056L2.79842 9.9457C2.6192 9.67407 2.64927 9.30496 2.88826 9.06581C3.12738 8.82669 3.49647 8.79676 3.76815 8.97597L3.8785 9.06581L7.03084 12.2182L12.8053 3.74941L12.8961 3.64101Z&#x27;/%3E%3C/svg%3E&quot;);
+
+  /* Legacy aliases; not part of the current agent contract. */
+  --viz-bg: transparent;
+  --viz-panel: var(--card);
+  --viz-border: var(--border);
+  --viz-text: var(--foreground);
+  --viz-muted: var(--muted-foreground);
+  --viz-accent: var(--primary);
+  --viz-accent-text: var(--primary-foreground);
+  --viz-accent-bg: var(--accent);
+  --viz-font-size: var(--font-size-base);
+  --viz-warning: var(--destructive);
+}
+
+:root[data-theme=&quot;light&quot;] {
+  color-scheme: light;
+}
+
+:root[data-theme=&quot;dark&quot;] {
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html &gt; body {
+  /* Preserve MCP aliases for older inline renderers without creating :root cycles. */
+  --color-background-primary: var(
+    --background,
+    light-dark(rgb(255 255 255), rgb(24 24 24))
+  );
+  --color-text-primary: var(
+    --foreground,
+    light-dark(rgb(26 28 31), rgb(255 255 255))
+  );
+  --color-border-secondary: var(
+    --border,
+    light-dark(rgb(26 28 31 / 8%), rgb(255 255 255 / 8.2%))
+  );
+
+  margin: 0;
+  padding: var(--visualize-paint-gutter, 0px);
+  color: var(--foreground);
+  background: transparent !important;
+  font-family: var(--font-sans) !important;
+  font-size: var(--font-size-normal);
+  font-weight: var(--font-weight-normal);
+  line-height: var(--line-height-normal);
+}
+
+.cursor-interaction {
+  cursor: var(--cursor-interaction, pointer);
+}
+
+a {
+  color: color-mix(in srgb, var(--viz-accent) 80%, var(--viz-text) 20%);
+  cursor: var(--cursor-interaction, pointer);
+  font-weight: var(--font-weight-medium, 500);
+  text-decoration: none;
+  text-underline-offset: 2px;
+}
+
+a:is(:hover, :focus-visible) {
+  text-decoration-line: underline;
+  text-decoration-style: dashed;
+  text-decoration-thickness: 0.5px;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+p {
+  margin-block: 0;
+}
+
+h1 {
+  font-size: var(--font-size-h1);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.25;
+}
+
+h2 {
+  font-size: var(--font-size-h2);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.25;
+}
+
+h3,
+h4,
+h5,
+h6 {
+  font-size: var(--font-size-h3);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.3;
+}
+
+b,
+strong,
+th {
+  font-weight: var(--font-weight-medium);
+}
+
+code:not(pre code) {
+  display: inline;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  corner-shape: var(--corner-shape);
+  background: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  overflow-wrap: anywhere;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+  word-break: break-word;
+}
+
+.table-responsive {
+  width: 100%;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  color: var(--foreground);
+  font: inherit;
+  text-align: start;
+}
+
+.table :is(th, td) {
+  padding-block: 10px;
+  padding-inline: 0 24px;
+  overflow-wrap: anywhere;
+  border-bottom: 1px solid var(--border);
+  text-align: start;
+  vertical-align: top;
+}
+
+.table-responsive &gt; .table :is(th, td) {
+  overflow-wrap: break-word;
+}
+
+.table :is(th, td):last-child {
+  padding-inline-end: 0;
+}
+
+.table :is(caption, thead th) {
+  font-weight: 600;
+}
+
+.table thead th {
+  padding-block: 8px;
+  border-bottom-color: color-mix(in srgb, var(--foreground) 16%, transparent);
+}
+
+.table tbody tr:last-child :is(th, td) {
+  border-bottom: 0;
+}
+
+.table.table-sm :is(th, td) {
+  padding-block: 6px;
+}
+
+.table.table-sm :is(th, td):not(:last-child) {
+  padding-inline-end: 16px;
+}
+
+.table :is(.text-end, [align=&quot;right&quot;]) {
+  text-align: end;
+  font-variant-numeric: tabular-nums;
+}
+
+.table :is(.text-center, [align=&quot;center&quot;]) {
+  text-align: center;
+}
+
+.table .text-nowrap {
+  white-space: nowrap;
+}
+
+#widget {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  padding: 0;
+  background: transparent !important;
+}
+
+.card {
+  min-width: 0;
+  padding: 12px;
+  overflow: hidden;
+  overflow-wrap: break-word;
+  border-radius: var(--radius-2xl);
+  corner-shape: var(--corner-shape);
+  color: var(--card-foreground);
+  background: var(--card);
+}
+
+#widget &gt; :not(.card, .progress) {
+  width: 100% !important;
+  max-width: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.tooltip {
+  position: fixed;
+  z-index: 50;
+  top: 0;
+  left: 0;
+  width: max-content;
+  max-width: min(
+    20rem,
+    var(--tooltip-available-width, calc(100vw - 10px)),
+    calc(100vw - 10px)
+  );
+  max-height: min(
+    var(--tooltip-available-height, calc(100vh - 10px)),
+    calc(100vh - 10px)
+  );
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  corner-shape: var(--corner-shape);
+  color: var(--popover-foreground);
+  background: var(--popover);
+  box-shadow: none;
+  font-size: var(--font-size-tooltip);
+  line-height: var(--line-height-tooltip);
+  overflow-wrap: break-word;
+  white-space: normal;
+  pointer-events: none;
+  user-select: none;
+}
+
+.viz-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(max(180px, 24%), 1fr));
+  gap: 10px;
+}
+
+.viz-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.viz-stat-value {
+  font-size: var(--font-size-h2);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.25;
+}
+
+.viz-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+hr {
+  width: 100%;
+  height: 1px;
+  margin-block: 6px;
+  border: 0;
+  background: var(--border);
+}
+
+.nav {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+}
+
+.progress {
+  display: flex;
+  height: 8px;
+  margin-block: calc((var(--line-height-normal, 1.5em) - 8px) / 2);
+  overflow: hidden;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: var(--muted);
+}
+
+.progress-bar:only-child {
+  border-radius: var(--radius-full);
+}
+
+.progress-bar {
+  height: 100%;
+  flex-shrink: 0;
+  border: 0;
+  background: var(--viz-series-1);
+}
+
+.viz-badge {
+  padding: 3px 8px;
+  border-radius: var(--radius-full);
+  color: var(--accent-foreground);
+  background: var(--accent);
+  font-weight: var(--font-weight-medium);
+}
+
+small,
+.text-small,
+.viz-badge {
+  font-size: var(--font-size-small);
+  line-height: var(--line-height-small);
+}
+
+.text-muted {
+  color: var(--muted-foreground);
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.viz-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.viz-controls &gt; .form-label {
+  display: grid;
+  min-width: min(100%, 260px);
+  flex: 1 1 280px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 2px 12px;
+  margin-bottom: 0;
+}
+
+.viz-controls &gt; .form-label &gt; :is(.form-control, .form-range, .form-select) {
+  grid-column: 1 / -1;
+}
+
+.btn,
+.nav-link,
+.form-check-input,
+.form-control,
+.form-range,
+.form-select {
+  font: inherit;
+}
+
+.btn,
+.nav-link {
+  appearance: button;
+  display: inline-flex;
+  inline-size: fit-content;
+  max-inline-size: 100%;
+  min-height: 28px;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  margin: 0;
+  padding: 0 8px;
+  -webkit-app-region: no-drag;
+  border: 1px solid var(--input);
+  border-radius: var(--radius-lg);
+  corner-shape: var(--corner-shape);
+  color: var(--secondary-foreground);
+  background: var(--secondary);
+  cursor: var(--cursor-interaction, pointer);
+  text-align: center;
+  text-decoration: none;
+  white-space: nowrap;
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+.btn:is(.btn-block, .viz-tile) {
+  inline-size: 100%;
+}
+
+.btn.viz-tile {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+a.btn {
+  cursor: var(--cursor-interaction, pointer);
+  text-decoration: none;
+}
+
+.btn:not(:disabled):hover,
+.nav-link:not(:disabled):not([aria-disabled=&quot;true&quot;]):hover {
+  background: color-mix(in srgb, var(--foreground) 6%, var(--secondary));
+}
+
+.btn-primary {
+  border-color: transparent;
+  color: var(--primary-foreground);
+  background: var(--foreground);
+  background-clip: padding-box;
+}
+
+.btn-primary .text-muted {
+  color: color-mix(in srgb, var(--primary-foreground) 50%, transparent);
+}
+
+.btn-primary:not(:disabled):hover {
+  background: color-mix(in srgb, var(--foreground) 80%, transparent);
+  background-clip: padding-box;
+}
+
+.btn-ghost {
+  border-color: transparent;
+  color: var(--muted-foreground);
+  background: transparent;
+}
+
+.btn-ghost:not(:disabled):hover {
+  color: var(--foreground);
+  background: color-mix(in srgb, var(--foreground) 6%, var(--secondary));
+}
+
+.nav-pills .nav-link {
+  min-width: 0;
+  border-color: transparent;
+  color: var(--muted-foreground);
+  background: transparent;
+}
+
+.nav-justified .nav-link {
+  flex: 1 1 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.nav-pills .nav-link.active {
+  color: var(--foreground);
+  background: var(--muted);
+}
+
+.btn:disabled,
+.nav-link:disabled,
+.nav-link[aria-disabled=&quot;true&quot;] {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+[data-lucide] {
+  stroke-width: 1.6;
+}
+
+.form-label {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--foreground);
+}
+
+.form-control {
+  display: block;
+  width: 100%;
+  min-height: 28px;
+  padding: 0 8px;
+  outline: none;
+  border: 1px solid var(--input);
+  border-radius: var(--radius-lg);
+  corner-shape: var(--corner-shape);
+  color: var(--foreground);
+  background: var(--secondary);
+}
+
+.form-control::placeholder {
+  color: var(--muted-foreground);
+}
+
+.form-control[type=&quot;file&quot;] {
+  padding: 0;
+  overflow: hidden;
+  cursor: var(--cursor-interaction, pointer);
+}
+
+.form-control[type=&quot;file&quot;]::file-selector-button {
+  min-height: 26px;
+  margin-right: 8px;
+  padding: 0 8px;
+  border: 0;
+  border-right: 1px solid var(--input);
+  color: var(--secondary-foreground);
+  background: var(--secondary);
+  cursor: inherit;
+  font: inherit;
+}
+
+.form-control[type=&quot;file&quot;]:not(:disabled):hover::file-selector-button {
+  background: color-mix(in srgb, var(--foreground) 6%, var(--secondary));
+}
+
+.form-control-color[type=&quot;color&quot;] {
+  width: 40px;
+  height: 28px;
+  padding: 3px;
+  cursor: var(--cursor-interaction, pointer);
+}
+
+.form-control-color[type=&quot;color&quot;]::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.form-control-color[type=&quot;color&quot;]::-webkit-color-swatch {
+  border: 0;
+  border-radius: calc(var(--radius-lg) - 4px);
+  corner-shape: var(--corner-shape);
+}
+
+textarea.form-control {
+  height: auto;
+  min-height: 72px;
+  padding: 8px 10px;
+  resize: vertical;
+}
+
+.form-control:focus-visible {
+  border-color: var(--ring);
+  box-shadow: inset 0 0 0 1px var(--ring);
+}
+
+.form-control:disabled,
+.form-select:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.form-select {
+  appearance: none;
+  display: block;
+  width: 100%;
+  min-height: 28px;
+  margin: 0;
+  padding: 0 32px 0 8px;
+  outline: none;
+  border: 1px solid var(--input);
+  border-radius: var(--radius-lg);
+  corner-shape: var(--corner-shape);
+  color: var(--foreground);
+  background-color: var(--secondary);
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--muted-foreground) 50%),
+    linear-gradient(135deg, var(--muted-foreground) 50%, transparent 50%);
+  background-position:
+    calc(100% - 14px) 50%,
+    calc(100% - 10px) 50%;
+  background-repeat: no-repeat;
+  background-size: 4px 4px;
+  cursor: var(--cursor-interaction, default);
+}
+
+.form-select:not(:disabled):hover {
+  background-color: color-mix(in srgb, var(--foreground) 6%, var(--secondary));
+}
+
+.form-select:focus-visible {
+  border-color: var(--ring);
+  box-shadow: inset 0 0 0 1px var(--ring);
+}
+
+.form-check {
+  display: flex;
+  min-height: 20px;
+  align-items: center;
+  gap: 6px;
+}
+
+.form-check-input {
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  margin: 0;
+  border: 1px solid var(--input);
+  color: var(--primary-foreground);
+  background-color: transparent;
+  cursor: var(--cursor-interaction, default);
+  transition:
+    background-color 150ms,
+    border-color 150ms,
+    box-shadow 150ms;
+}
+
+.form-check:not(.form-switch) .form-check-input[type=&quot;checkbox&quot;] {
+  border-color: var(--input);
+  border-radius: var(--radius-sm);
+  corner-shape: var(--corner-shape);
+  background-color: var(--secondary);
+  box-shadow: var(--shadow-sm);
+}
+
+.form-check:not(.form-switch)
+  .form-check-input:not(:disabled):not(:checked):hover {
+  background-color: var(--card);
+}
+
+.form-check:not(.form-switch) .form-check-input[type=&quot;checkbox&quot;]:checked {
+  border-color: var(--primary);
+  background-color: var(--primary);
+}
+
+.form-check:not(.form-switch)
+  .form-check-input[type=&quot;checkbox&quot;]:checked::before {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: var(--primary-foreground);
+  content: &quot;&quot;;
+  mask: var(--checkmark-image) center / 12px 12px no-repeat;
+}
+
+.form-check-input[type=&quot;radio&quot;] {
+  width: 14px;
+  height: 14px;
+  border-radius: var(--radius-full);
+}
+
+.form-check-input[type=&quot;radio&quot;]:checked {
+  border: 2px solid var(--primary);
+  background:
+    radial-gradient(circle, var(--primary-foreground) 0 2.5px, transparent 3px),
+    var(--primary);
+}
+
+.form-check:not(.form-switch) .form-check-input:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+.form-check:not(.form-switch) .form-check-input:disabled {
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.form-check:not(.form-switch) .form-check-input:disabled + .form-check-label {
+  cursor: not-allowed;
+}
+
+.form-switch .form-check-input:disabled,
+.form-switch .form-check-input:disabled + .form-check-label {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.form-check-label {
+  color: var(--foreground);
+  cursor: var(--cursor-interaction, default);
+}
+
+.form-switch .form-check-input {
+  position: relative;
+  width: 32px;
+  height: 20px;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: var(--muted);
+  box-shadow: none;
+  transition: background-color 200ms cubic-bezier(0, 0, 0.2, 1);
+}
+
+.form-switch .form-check-input::before {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 16px;
+  height: 16px;
+  box-sizing: border-box;
+  border: 1px solid light-dark(var(--primary-foreground), var(--foreground));
+  border-radius: var(--radius-full);
+  background: light-dark(var(--primary-foreground), var(--foreground));
+  box-shadow: var(--shadow-sm);
+  content: &quot;&quot;;
+  transform: translate(2px, -50%);
+  transition: transform 200ms cubic-bezier(0, 0, 0.2, 1);
+}
+
+.form-switch .form-check-input:checked {
+  background: var(--primary);
+}
+
+.form-switch .form-check-input:checked::before {
+  transform: translate(14px, -50%);
+}
+
+.form-switch .form-check-input:focus-visible {
+  box-shadow: 0 0 0 2px var(--ring);
+}
+
+.form-range {
+  appearance: none;
+  display: block;
+  width: 100%;
+  height: 28px;
+  flex: 1;
+  margin: 0;
+  padding: 0;
+  outline: none;
+  border: 0;
+  accent-color: var(--primary);
+  background: linear-gradient(
+      color-mix(in srgb, var(--foreground) 7%, transparent),
+      color-mix(in srgb, var(--foreground) 7%, transparent)
+    )
+    center / 100% 2px no-repeat;
+}
+
+.form-range::-webkit-slider-runnable-track {
+  height: 28px;
+  background: transparent;
+}
+
+.form-range::-webkit-slider-thumb {
+  appearance: none;
+  width: 20px;
+  height: 20px;
+  margin-top: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: light-dark(var(--primary-foreground), var(--foreground));
+}
+
+.form-range:focus-visible::-webkit-slider-thumb {
+  border-color: var(--ring);
+  box-shadow: inset 0 0 0 1px var(--ring);
+}
+
+.form-range::-moz-range-track {
+  height: 28px;
+  background: transparent;
+}
+
+.form-range::-moz-range-thumb {
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: light-dark(var(--primary-foreground), var(--foreground));
+}
+
+.form-range:focus-visible::-moz-range-thumb {
+  border-color: var(--ring);
+  box-shadow: inset 0 0 0 1px var(--ring);
+}
+
+.form-range:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.btn:not(.btn-primary, .viz-tile):is(
+  [aria-pressed=&quot;true&quot;],
+  [aria-selected=&quot;true&quot;],
+  .is-selected
+) {
+  border-color: var(--primary);
+  color: var(--primary-foreground);
+  background: var(--primary);
+}
+
+.btn.viz-tile:is([aria-pressed=&quot;true&quot;], [aria-selected=&quot;true&quot;], .is-selected) {
+  border-color: var(--primary);
+  box-shadow: inset 0 0 0 1px var(--primary);
+}
+
+.btn:focus-visible,
+.nav-link:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+@media (pointer: coarse) {
+  .btn,
+  .nav-link,
+  .form-control,
+  .form-select {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  /* Keep small-screen WebKit from zooming when a text field receives focus. */
+  .form-control,
+  .form-select {
+    font-size: max(16px, var(--font-size-normal));
+  }
+
+  .form-control[type=&quot;file&quot;]::file-selector-button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .form-control-color[type=&quot;color&quot;] {
+    width: 44px;
+    height: 44px;
+  }
+
+  .form-control:is(
+    [type=&quot;date&quot;],
+    [type=&quot;datetime-local&quot;],
+    [type=&quot;month&quot;],
+    [type=&quot;time&quot;],
+    [type=&quot;week&quot;]
+  ) {
+    min-width: 0;
+    max-width: 100%;
+    padding-block: 8px;
+  }
+
+  .form-check {
+    min-height: 44px;
+    padding-inline: 15px;
+  }
+
+  .form-check-input {
+    position: relative;
+  }
+
+  .form-check-input::after {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 44px;
+    height: 44px;
+    content: &quot;&quot;;
+    transform: translate(-50%, -50%);
+  }
+
+  .form-check-label {
+    display: inline-flex;
+    min-width: 44px;
+    min-height: 44px;
+    align-items: center;
+  }
+
+  .form-range {
+    height: 44px;
+    touch-action: pan-y;
+  }
+
+  .form-range::-webkit-slider-runnable-track {
+    height: 44px;
+  }
+
+  .form-range::-moz-range-track {
+    height: 44px;
+  }
+
+  .form-range::-webkit-slider-thumb {
+    margin-top: 12px;
+  }
+}
+
+svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+#widget &gt; svg {
+  width: 100%;
+}
+
+/* Model-authored chart rules can otherwise stretch icons after these styles load. */
+svg.lucide {
+  display: block;
+  width: var(--icon-size) !important;
+  height: var(--icon-size) !important;
+  flex: none;
+  margin: 0 !important;
+  stroke-width: 1.6;
+}
+
+.text-warning,
+.text-destructive {
+  color: var(--destructive);
+}
+
+html&gt;body{padding:0}&lt;/style&gt;
+&lt;/head&gt;
+&lt;body&gt;
+&lt;script type=&quot;application/json&quot; id=&quot;codex-visualization-widget-state&quot;&gt;__CODEX_VISUALIZATION_WIDGET_STATE__&lt;/script&gt;
+&lt;script&gt;(() =&gt; {
+  const root = document.documentElement;
+  const mediaQuery = globalThis.matchMedia(&quot;(prefers-color-scheme: dark)&quot;);
+  const apply = Reflect.apply;
+  const isArray = Array.isArray;
+  const hasOwn = Object.hasOwn;
+  const parentWindow = globalThis.parent;
+  const stringify = JSON.stringify;
+  const parse = JSON.parse;
+  const encode = TextEncoder.prototype.encode.bind(new TextEncoder());
+  const initialStateElement = document.getElementById(
+    &quot;codex-visualization-widget-state&quot;,
+  );
+  const initialGlobals = parse(initialStateElement?.textContent ?? &quot;{}&quot;);
+  initialStateElement?.remove();
+  /** @type {Record&lt;string, unknown&gt; | null} */
+  let state = initialGlobals.widgetState ?? null;
+  const statePersistence = initialGlobals.statePersistence ?? &quot;none&quot;;
+  let nextStateRequestId = 0;
+  /** @type {Map&lt;number, { resolve: () =&gt; void; reject: (error: Error) =&gt; void; timeout: ReturnType&lt;typeof globalThis.setTimeout&gt;; serializedState: string }&gt;} */
+  const pendingStateWrites = new Map();
+  const persistenceError = () =&gt;
+    Object.assign(
+      new Error(&quot;The host could not persist the widget state update&quot;),
+      {
+        code: -32000,
+        data: { code: &quot;widget_state_persistence_failed&quot;, retryable: false },
+      },
+    );
+  /**
+   * @param {object} prototype
+   * @param {string} property
+   */
+  const getPrototypeGetter = (prototype, property) =&gt; {
+    // oxlint-disable-next-line typescript/unbound-method -- invoked through captured Reflect.apply
+    const getter = Object.getOwnPropertyDescriptor(prototype, property)?.get;
+    if (getter == null) {
+      throw new Error(`Missing ${property} getter`);
+    }
+    return getter;
+  };
+  const getMessageData = getPrototypeGetter(MessageEvent.prototype, &quot;data&quot;);
+  const getMessagePorts = getPrototypeGetter(MessageEvent.prototype, &quot;ports&quot;);
+  const getMessageSource = getPrototypeGetter(MessageEvent.prototype, &quot;source&quot;);
+  // oxlint-disable-next-line typescript/unbound-method -- captured before the untrusted fragment runs
+  const addHostMessageListener = MessagePort.prototype.addEventListener;
+  // oxlint-disable-next-line typescript/unbound-method -- captured before the untrusted fragment runs
+  const postHostMessage = MessagePort.prototype.postMessage;
+  // oxlint-disable-next-line typescript/unbound-method -- captured before the untrusted fragment runs
+  const startHostPort = MessagePort.prototype.start;
+  // oxlint-disable-next-line typescript/unbound-method -- captured before the untrusted fragment runs
+  const stopMessagePropagation = Event.prototype.stopImmediatePropagation;
+  /** @type {MessagePort | null} */
+  let hostPort = null;
+  const postToHost = (type, payload) =&gt; {
+    if (hostPort != null) {
+      apply(postHostMessage, hostPort, [{ type, ...payload }]);
+    }
+  };
+  const openExternal = ({ href }) =&gt; {
+    if (globalThis.navigator.userActivation?.isActive === true) {
+      postToHost(&quot;open-external&quot;, { href });
+    }
+  };
+  const sendFollowUpMessage = ({ context, prompt, title }) =&gt; {
+    if (globalThis.navigator.userActivation?.isActive === true) {
+      postToHost(&quot;follow-up&quot;, { context, prompt, title });
+    }
+    return Promise.resolve();
+  };
+  /**
+   * @param {Record&lt;string, unknown&gt; | ((previous: Record&lt;string, unknown&gt; | null) =&gt; Record&lt;string, unknown&gt;)} next
+   * @returns {Promise&lt;void&gt;}
+   */
+  const setWidgetState = async (next) =&gt; {
+    const nextState = typeof next === &quot;function&quot; ? next(state) : next;
+    if (
+      nextState == null ||
+      typeof nextState !== &quot;object&quot; ||
+      isArray(nextState)
+    ) {
+      throw new TypeError(&quot;Widget state must be a JSON object&quot;);
+    }
+    const inputState = stringify(
+      nextState,
+      (_key, /** @type {unknown} */ value) =&gt; {
+        if (
+          typeof value === &quot;undefined&quot; ||
+          typeof value === &quot;function&quot; ||
+          typeof value === &quot;symbol&quot; ||
+          (typeof value === &quot;number&quot; &amp;&amp; !Number.isFinite(value))
+        ) {
+          throw new TypeError(&quot;Widget state must be a JSON object&quot;);
+        }
+        return value;
+      },
+    );
+    const parsedState = parse(inputState);
+    if (
+      parsedState == null ||
+      typeof parsedState !== &quot;object&quot; ||
+      isArray(parsedState)
+    ) {
+      throw new TypeError(&quot;Widget state must be a JSON object&quot;);
+    }
+    const storedState = {
+      modelContent: null,
+      privateContent: null,
+      ...parsedState,
+    };
+    const serializedState = stringify(storedState);
+    if (encode(serializedState).length &gt; 16 * 1024) {
+      throw new TypeError(
+        &quot;Widget state must be a JSON object of at most 16 KiB&quot;,
+      );
+    }
+    if (
+      hasOwn(storedState, &quot;imageIds&quot;) &amp;&amp;
+      (!isArray(storedState.imageIds) ||
+        storedState.imageIds.some(
+          (/** @type {unknown} */ id) =&gt; typeof id !== &quot;string&quot;,
+        ))
+    ) {
+      throw new TypeError(&quot;Widget state imageIds must be an array of strings&quot;);
+    }
+    if (storedState.imageIds?.length &gt; 0) {
+      throw Object.assign(
+        new TypeError(&quot;Visualization state does not support image attachments&quot;),
+        { code: -32602, data: { code: &quot;images_unsupported&quot; } },
+      );
+    }
+    state = storedState;
+    globalThis.openai.widgetState = state;
+    globalThis.dispatchEvent(
+      new CustomEvent(&quot;openai:set_globals&quot;, {
+        detail: { globals: { widgetState: state } },
+      }),
+    );
+    if (statePersistence === &quot;none&quot;) {
+      throw persistenceError();
+    }
+    const id = ++nextStateRequestId;
+    return new Promise((resolve, reject) =&gt; {
+      const timeout = globalThis.setTimeout(() =&gt; {
+        pendingStateWrites.delete(id);
+        reject(persistenceError());
+      }, 30_000);
+      pendingStateWrites.set(id, { resolve, reject, timeout, serializedState });
+      postToHost(&quot;widget-state-write&quot;, { id, state: serializedState });
+    });
+  };
+  const syncTheme = () =&gt; {
+    const theme = mediaQuery.matches ? &quot;dark&quot; : &quot;light&quot;;
+    root.dataset.theme = theme;
+    globalThis.openai = {
+      ...globalThis.openai,
+      openExternal,
+      sendFollowUpMessage,
+      setWidgetState,
+      theme,
+      visualizationStyleVariables: {},
+      visualizationTheme: theme,
+      widgetState: state,
+      statePersistence,
+      stateModelContext: &quot;none&quot;,
+    };
+    globalThis.dispatchEvent(
+      new CustomEvent(&quot;openai:set_globals&quot;, {
+        detail: { globals: globalThis.openai },
+      }),
+    );
+  };
+  const sendHeight = () =&gt; {
+    postToHost(&quot;height&quot;, {
+      height: Math.ceil(
+        Math.max(
+          document.body.scrollHeight,
+          document.body.getBoundingClientRect().height,
+        ),
+      ),
+    });
+  };
+
+  globalThis.addEventListener(
+    &quot;message&quot;,
+    (event) =&gt; {
+      const data = apply(getMessageData, event, []);
+      const ports = apply(getMessagePorts, event, []);
+      const source = apply(getMessageSource, event, []);
+      if (
+        hostPort != null ||
+        source !== parentWindow ||
+        typeof data !== &quot;object&quot; ||
+        data?.type !== &quot;codex-visualization-initialize&quot; ||
+        !isArray(ports) ||
+        ports.length !== 1
+      ) {
+        return;
+      }
+      apply(stopMessagePropagation, event, []);
+      const nextHostPort = ports[0];
+      try {
+        apply(addHostMessageListener, nextHostPort, [
+          &quot;message&quot;,
+          (event) =&gt; {
+            const data = apply(getMessageData, event, []);
+            if (typeof data === &quot;object&quot; &amp;&amp; data?.type === &quot;measure&quot;) {
+              sendHeight();
+            } else if (
+              typeof data === &quot;object&quot; &amp;&amp;
+              data?.type === &quot;widget-state-result&quot;
+            ) {
+              /** @type {unknown} */
+              const id = data.id;
+              if (typeof id !== &quot;number&quot;) {
+                return;
+              }
+              const pending = pendingStateWrites.get(id);
+              if (pending != null) {
+                pendingStateWrites.delete(id);
+                globalThis.clearTimeout(pending.timeout);
+                if (data.ok === true) {
+                  pending.resolve();
+                } else {
+                  pending.reject(persistenceError());
+                }
+              }
+            }
+          },
+        ]);
+        apply(startHostPort, nextHostPort, []);
+      } catch {
+        return;
+      }
+      hostPort = nextHostPort;
+      for (const [id, { serializedState }] of pendingStateWrites) {
+        postToHost(&quot;widget-state-write&quot;, { id, state: serializedState });
+      }
+      sendHeight();
+    },
+    { capture: true },
+  );
+  document.currentScript?.remove();
+  mediaQuery.addEventListener(&quot;change&quot;, syncTheme);
+  globalThis.addEventListener(&quot;click&quot;, (event) =&gt; {
+    if (event.defaultPrevented) {
+      return;
+    }
+    let element = null;
+    if (event.target instanceof globalThis.Element) {
+      element = event.target;
+    } else if (event.target instanceof globalThis.Node) {
+      element = event.target.parentElement;
+    }
+    const link = element?.closest(&quot;a[href]&quot;);
+    const href = link?.getAttribute(&quot;href&quot;);
+    if (href == null) {
+      return;
+    }
+    if (href.startsWith(&quot;#&quot;)) {
+      let id;
+      try {
+        id = decodeURIComponent(href.slice(1));
+      } catch {
+        return;
+      }
+      const target = id.length === 0 ? root : document.getElementById(id);
+      if (
+        target == null ||
+        globalThis.navigator.userActivation?.isActive !== true
+      ) {
+        return;
+      }
+      event.preventDefault();
+      postToHost(&quot;scroll-to&quot;, {
+        top: target.getBoundingClientRect().top + globalThis.scrollY,
+      });
+      return;
+    }
+    event.preventDefault();
+    openExternal({ href });
+  });
+  new ResizeObserver(sendHeight).observe(document.body);
+  syncTheme();
+})();
+&lt;/script&gt;
+&lt;div id=&quot;matroom-concept&quot; aria-label=&quot;Academy platform landing and registration concept&quot;&gt;
+&lt;style&gt;
+#matroom-concept{--mr-bg:light-dark(#f5f3ec,#141d19);--mr-paper:light-dark(#fffefa,#202c25);--mr-ink:light-dark(#1d392b,#eff1e9);--mr-muted:light-dark(#59675d,#b4c1b7);--mr-line:light-dark(#d8ded3,#3c4e40);--mr-soft:light-dark(#e6ebdd,#2b3e30);--mr-brand:light-dark(#254b35,#c9dfb4);--mr-on:light-dark(#fffefa,#182a1e);--mr-display:Georgia,&#x27;Times New Roman&#x27;,serif;font:14px/1.55 &#x27;Segoe UI&#x27;,Arial,sans-serif;color:var(--mr-ink)}
+#matroom-concept *{box-sizing:border-box}#matroom-concept [hidden]{display:none!important}#matroom-concept h1,#matroom-concept h2,#matroom-concept h3,#matroom-concept p{margin:0}#matroom-concept button,#matroom-concept input,#matroom-concept select{font:inherit}#matroom-concept button{color:inherit}#matroom-concept button:focus-visible,#matroom-concept input:focus-visible,#matroom-concept select:focus-visible{outline:3px solid var(--mr-brand);outline-offset:4px}#matroom-concept button{transition:background .15s,transform .15s}#matroom-concept button:active{transform:translateY(1px)}#matroom-concept .site{background:var(--mr-bg);border:1px solid var(--mr-line);overflow:hidden;border-radius:8px}#matroom-concept .nav{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:24px 40px;border-bottom:1px solid var(--mr-line)}#matroom-concept .wordmark{font-size:19px;font-weight:750;letter-spacing:-.7px;display:flex;gap:10px;align-items:center}#matroom-concept .mark{width:24px;height:24px;border:6px solid var(--mr-brand);border-top-width:2px;border-bottom-width:2px;transform:skewY(-12deg);display:inline-block}#matroom-concept .navlinks{display:flex;gap:23px;align-items:center}#matroom-concept button{border:0;background:transparent;padding:10px 0;font-size:13px;font-weight:600}#matroom-concept .solid{background:var(--mr-brand);color:var(--mr-on);padding:13px 20px;border-radius:5px;display:inline-flex;gap:22px;align-items:center;justify-content:center}#matroom-concept .solid:hover{filter:brightness(.92)}#matroom-concept .outline{border:1px solid var(--mr-line);padding:12px 18px;border-radius:5px;background:var(--mr-paper)}#matroom-concept .quiet{color:var(--mr-muted)}#matroom-concept .eyebrow{font-size:11px;font-weight:650;letter-spacing:1.6px;text-transform:uppercase}#matroom-concept .hero{padding:58px 40px 34px;text-align:center;position:relative}#matroom-concept .hero .eyebrow{display:inline-flex;gap:9px;align-items:center;border:1px solid var(--mr-line);border-radius:30px;padding:7px 12px;font-size:10px;letter-spacing:1px}#matroom-concept .dot{width:6px;height:6px;background:var(--mr-brand);border-radius:50%}#matroom-concept h1{font:clamp(42px,6.8vw,76px)/1.04 var(--mr-display);letter-spacing:-3px;font-weight:400;max-width:850px;margin:23px auto 20px;text-wrap:balance}#matroom-concept h1 em{font-weight:400;color:var(--mr-muted)}#matroom-concept .lead{font-size:16px;line-height:1.7;max-width:530px;margin:auto;color:var(--mr-muted)}#matroom-concept .cta-row{display:flex;justify-content:center;align-items:center;gap:25px;flex-wrap:wrap;margin-top:25px}#matroom-concept .micro{font-size:11px;color:var(--mr-muted)}#matroom-concept .hero .micro{margin-top:13px}#matroom-concept .product-stage{margin:8px 40px 0;padding:30px 30px 0;background:var(--mr-soft);border-radius:9px;position:relative}#matroom-concept .app{background:var(--mr-paper);border:1px solid var(--mr-line);border-radius:8px 8px 0 0;box-shadow:0 12px 35px light-dark(#263b2512,#00000022);overflow:hidden}#matroom-concept .app-bar{display:flex;gap:12px;align-items:center;justify-content:space-between;padding:13px 18px;border-bottom:1px solid var(--mr-line);font-size:11px}#matroom-concept .app-brand{font-weight:650}#matroom-concept .app-tabs{display:flex;gap:21px;flex-wrap:wrap;padding:0 22px;border-bottom:1px solid var(--mr-line)}#matroom-concept .app-tabs button{font-size:12px;padding:13px 0;color:var(--mr-muted);border-bottom:2px solid transparent}#matroom-concept .app-tabs button[aria-pressed=true]{border-bottom-color:var(--mr-brand);color:var(--mr-ink)}#matroom-concept .app-content{padding:24px;min-height:280px}#matroom-concept .app-title{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:20px}#matroom-concept .app-title h3{font-size:22px;letter-spacing:-.6px;font-weight:600}#matroom-concept .badge{padding:5px 8px;background:var(--mr-soft);font-size:11px;border-radius:4px}#matroom-concept .app-columns{display:grid;grid-template-columns:1fr 1.15fr;gap:30px}#matroom-concept .numbers{display:grid;grid-template-columns:1fr 1fr;gap:18px}#matroom-concept .number strong{font-size:36px;letter-spacing:-1px;display:block;font-weight:550;font-variant-numeric:tabular-nums}#matroom-concept .number p{font-size:12px;color:var(--mr-muted)}#matroom-concept .app-note{border-top:1px solid var(--mr-line);padding-top:14px;margin-top:18px;font-size:12px;color:var(--mr-muted)}#matroom-concept .app-row{display:flex;align-items:center;justify-content:space-between;gap:12px;border-bottom:1px solid var(--mr-line);padding:12px 0;font-size:12px}#matroom-concept .app-row:first-child{padding-top:0}#matroom-concept .app-row strong{font-weight:600}#matroom-concept .app-row p{color:var(--mr-muted);font-size:11px;margin-top:3px}#matroom-concept .mini-belt{width:76px;height:9px;background:light-dark(#edeadd,#dbd7c8);border-right:19px solid light-dark(#26302b,#101a13)}#matroom-concept .mini-belt.blue{background:light-dark(#376da2,#759dcc)}#matroom-concept .mini-belt.purple{background:light-dark(#795d92,#a88bc0)}#matroom-concept .row-left{display:flex;align-items:center;gap:12px}#matroom-concept .avatar{display:grid;place-items:center;width:30px;height:30px;border-radius:50%;background:var(--mr-soft);font-size:10px}#matroom-concept .stage-caption{display:flex;justify-content:space-between;gap:12px;padding:12px 0;font-size:10px;color:var(--mr-muted)}#matroom-concept .capabilities{padding:25px 40px;display:flex;gap:22px;justify-content:center;flex-wrap:wrap;color:var(--mr-muted);font-size:12px;border-bottom:1px solid var(--mr-line)}#matroom-concept .capabilities span{display:flex;align-items:center;gap:7px}#matroom-concept .benefits{padding:65px 48px;display:grid;grid-template-columns:1fr 1fr;gap:60px}#matroom-concept h2{font:42px/1.13 var(--mr-display);letter-spacing:-1.5px;text-wrap:balance}#matroom-concept .benefits h2{margin:16px 0}#matroom-concept .benefits p{color:var(--mr-muted);max-width:340px}#matroom-concept .benefit{display:grid;grid-template-columns:30px 1fr;gap:13px;padding:19px 0;border-bottom:1px solid var(--mr-line)}#matroom-concept .benefit:first-child{padding-top:0}#matroom-concept .benefit&gt;span{font-size:11px;color:var(--mr-muted);padding-top:4px}#matroom-concept .benefit h3{font-size:15px;font-weight:600;margin-bottom:6px}#matroom-concept .benefit p{font-size:13px}#matroom-concept .start-section{background:var(--mr-soft);padding:40px 48px;display:flex;align-items:center;justify-content:space-between;gap:30px}#matroom-concept .start-section h2{font-size:34px;margin:9px 0 12px}#matroom-concept .start-section p{font-size:13px;color:var(--mr-muted);max-width:450px}#matroom-concept .footer{display:flex;flex-wrap:wrap;justify-content:space-between;gap:18px;padding:23px 40px;font-size:11px;color:var(--mr-muted)}#matroom-concept .footer strong{letter-spacing:1px;font-size:12px}#matroom-concept .registration{display:grid;grid-template-columns:.9fr 1.1fr;min-height:650px}#matroom-concept .reg-intro{padding:48px 35px;background:var(--mr-soft)}#matroom-concept .reg-intro h2{margin:20px 0;font-size:45px}#matroom-concept .reg-intro&gt;p{color:var(--mr-muted);font-size:14px}#matroom-concept .steps{margin-top:34px}#matroom-concept .step{padding:17px 0;display:flex;gap:13px;border-bottom:1px solid var(--mr-line);color:var(--mr-muted)}#matroom-concept .step b{width:27px;height:27px;display:grid;place-items:center;border:1px solid var(--mr-line);border-radius:50%;font-size:11px;font-weight:500}#matroom-concept .step.current{color:var(--mr-ink)}#matroom-concept .step.current b{background:var(--mr-brand);color:var(--mr-on);border-color:var(--mr-brand)}#matroom-concept .step strong{display:block;font-size:13px}#matroom-concept .step small{font-size:11px}#matroom-concept .reg-form{padding:46px 35px;background:var(--mr-paper);min-width:0}#matroom-concept .reg-form h3{font-size:24px;font-weight:600;letter-spacing:-.7px;margin:9px 0}#matroom-concept .reg-form .intro{font-size:13px;color:var(--mr-muted);margin-bottom:20px}#matroom-concept .fields{display:grid;grid-template-columns:1fr 1fr;gap:16px}#matroom-concept label{font-size:12px;font-weight:600;display:block;min-width:0}#matroom-concept label.wide{grid-column:1/-1}#matroom-concept input,#matroom-concept select{width:100%;min-width:0;background:var(--mr-bg);color:var(--mr-ink);border:1px solid var(--mr-line);border-radius:5px;padding:11px;margin-top:7px;font-size:16px}#matroom-concept label small{display:block;color:var(--mr-muted);font-weight:400;font-size:11px;margin-top:5px}#matroom-concept .form-actions{display:flex;justify-content:space-between;align-items:center;gap:14px;margin-top:25px}#matroom-concept .check{display:flex;gap:10px;align-items:start;font-weight:400;margin-top:20px}#matroom-concept .check input{width:16px;flex-shrink:0;margin:3px 0 0}#matroom-concept .summary-line{display:flex;justify-content:space-between;gap:15px;padding:12px 0;border-bottom:1px solid var(--mr-line);font-size:13px;overflow-wrap:anywhere}#matroom-concept .summary-line span{color:var(--mr-muted)}#matroom-concept .reg-success{padding:65px 35px;max-width:590px;margin:auto;text-align:center}#matroom-concept .reg-success h2{margin:20px 0}#matroom-concept .reg-success p{color:var(--mr-muted);margin-bottom:20px}#matroom-concept .demo-note{border-top:1px solid var(--mr-line);padding:11px 20px;text-align:center;color:var(--mr-muted);font-size:11px;background:var(--mr-paper)}
+@media(max-width:700px){#matroom-concept .nav{padding:19px 22px}#matroom-concept .navlinks{gap:15px}#matroom-concept .navlinks .learn{display:none}#matroom-concept .hero{padding:43px 22px 30px}#matroom-concept h1{font-size:53px;letter-spacing:-2px}#matroom-concept .product-stage{margin-inline:20px;padding:18px 15px 0}#matroom-concept .benefits{padding:40px 26px;gap:30px}#matroom-concept h2{font-size:34px}#matroom-concept .start-section{padding:30px 26px}#matroom-concept .registration{grid-template-columns:1fr}#matroom-concept .reg-intro{padding:25px}#matroom-concept .reg-intro h2{font-size:34px;margin:10px 0}#matroom-concept .steps{display:flex;gap:14px;margin-top:15px}#matroom-concept .step{flex:1;border:0;gap:8px}#matroom-concept .step small{display:none}#matroom-concept .reg-form{padding:30px 25px}}
+@media(max-width:480px){#matroom-concept .wordmark{font-size:15px;gap:7px}#matroom-concept .nav{padding:17px 16px;gap:12px}#matroom-concept .navlinks{gap:10px}#matroom-concept .navlinks .solid{padding:10px;font-size:11px}#matroom-concept h1{font-size:43px;letter-spacing:-1.8px}#matroom-concept .lead{font-size:14px}#matroom-concept .app-columns,#matroom-concept .benefits{grid-template-columns:1fr}#matroom-concept .app-content{padding:18px}#matroom-concept .app-columns{gap:22px}#matroom-concept .app-title h3{font-size:20px}#matroom-concept .app-title .badge{display:none}#matroom-concept .app-tabs{gap:17px;padding-inline:18px}#matroom-concept .product-stage{margin-inline:12px;padding:13px 10px 0}#matroom-concept .stage-caption{flex-wrap:wrap}#matroom-concept .benefits{gap:24px}#matroom-concept .start-section{flex-direction:column;align-items:start}#matroom-concept .footer{padding:23px}#matroom-concept .capabilities{padding:22px;gap:15px}#matroom-concept .fields{grid-template-columns:1fr}#matroom-concept .step{flex-direction:column}#matroom-concept .reg-intro&gt;p{font-size:13px}}
+@media(prefers-reduced-motion:reduce){#matroom-concept button{transition:none}}
+&lt;/style&gt;
+&lt;div class=&quot;site&quot;&gt;
+&lt;header class=&quot;nav&quot;&gt;&lt;div class=&quot;wordmark&quot;&gt;&lt;span class=&quot;mark&quot; aria-hidden=&quot;true&quot;&gt;&lt;/span&gt;MATROOM&lt;/div&gt;&lt;nav class=&quot;navlinks&quot; aria-label=&quot;Main&quot;&gt;&lt;button class=&quot;learn cursor-interaction&quot; data-jump=&quot;mr-product&quot;&gt;The platform&lt;/button&gt;&lt;button class=&quot;cursor-interaction&quot; data-home hidden&gt;← Back&lt;/button&gt;&lt;button class=&quot;solid cursor-interaction&quot; data-register&gt;Register your academy &lt;span aria-hidden=&quot;true&quot;&gt;↗&lt;/span&gt;&lt;/button&gt;&lt;/nav&gt;&lt;/header&gt;
+&lt;div data-page=&quot;landing&quot;&gt;
+&lt;section class=&quot;hero&quot;&gt;&lt;div class=&quot;eyebrow&quot;&gt;&lt;span class=&quot;dot&quot;&gt;&lt;/span&gt;For the people behind the academy&lt;/div&gt;&lt;h1&gt;More time on the mat.&lt;br&gt;&lt;em&gt;Less behind a desk.&lt;/em&gt;&lt;/h1&gt;&lt;p class=&quot;lead&quot;&gt;Your students, classes, attendance, and dues.&lt;br&gt;One place to keep your academy moving.&lt;/p&gt;&lt;div class=&quot;cta-row&quot;&gt;&lt;button class=&quot;solid cursor-interaction&quot; data-register&gt;Register your academy &lt;span aria-hidden=&quot;true&quot;&gt;↗&lt;/span&gt;&lt;/button&gt;&lt;button class=&quot;cursor-interaction&quot; data-jump=&quot;mr-product&quot;&gt;Explore the platform ↓&lt;/button&gt;&lt;/div&gt;&lt;p class=&quot;micro&quot;&gt;Request access. Set up your academy after approval.&lt;/p&gt;&lt;/section&gt;
+&lt;section id=&quot;mr-product&quot; class=&quot;product-stage&quot; aria-label=&quot;Interactive product preview&quot;&gt;&lt;div class=&quot;app&quot;&gt;&lt;div class=&quot;app-bar&quot;&gt;&lt;span class=&quot;app-brand&quot;&gt;ALLIANCE &lt;span class=&quot;quiet&quot;&gt;/ Academy workspace&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;quiet&quot;&gt;Illustrative preview&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;app-tabs&quot; aria-label=&quot;Product preview screens&quot;&gt;&lt;button class=&quot;cursor-interaction&quot; data-preview=&quot;overview&quot; aria-pressed=&quot;true&quot;&gt;Overview&lt;/button&gt;&lt;button class=&quot;cursor-interaction&quot; data-preview=&quot;students&quot; aria-pressed=&quot;false&quot;&gt;Students&lt;/button&gt;&lt;button class=&quot;cursor-interaction&quot; data-preview=&quot;schedule&quot; aria-pressed=&quot;false&quot;&gt;Schedule&lt;/button&gt;&lt;/div&gt;&lt;div class=&quot;app-content&quot;&gt;
+&lt;div data-product=&quot;overview&quot;&gt;&lt;div class=&quot;app-title&quot;&gt;&lt;h3&gt;Your academy, in focus.&lt;/h3&gt;&lt;span class=&quot;badge&quot;&gt;All locations&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;app-columns&quot;&gt;&lt;div&gt;&lt;div class=&quot;numbers&quot;&gt;&lt;div class=&quot;number&quot;&gt;&lt;p&gt;Active students&lt;/p&gt;&lt;strong&gt;39&lt;/strong&gt;&lt;/div&gt;&lt;div class=&quot;number&quot;&gt;&lt;p&gt;Grading reviews&lt;/p&gt;&lt;strong&gt;3&lt;/strong&gt;&lt;/div&gt;&lt;/div&gt;&lt;p class=&quot;app-note&quot;&gt;26 adults · 13 kids&lt;br&gt;Alliance Escalante &amp; Alliance Escazú&lt;/p&gt;&lt;/div&gt;&lt;div&gt;&lt;div class=&quot;app-row&quot;&gt;&lt;div&gt;&lt;strong&gt;Review outstanding dues&lt;/strong&gt;&lt;p&gt;Keep payment follow-up in one place.&lt;/p&gt;&lt;/div&gt;&lt;span&gt;↗&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;app-row&quot;&gt;&lt;div&gt;&lt;strong&gt;Students ready for review&lt;/strong&gt;&lt;p&gt;Attendance informs the instructor&#x27;s decision.&lt;/p&gt;&lt;/div&gt;&lt;span&gt;↗&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;app-row&quot;&gt;&lt;div&gt;&lt;strong&gt;Your academy. Your identity.&lt;/strong&gt;&lt;p&gt;Use your logo and brand colors.&lt;/p&gt;&lt;/div&gt;&lt;span&gt;↗&lt;/span&gt;&lt;/div&gt;&lt;/div&gt;&lt;/div&gt;&lt;/div&gt;
+&lt;div data-product=&quot;students&quot; hidden&gt;&lt;div class=&quot;app-title&quot;&gt;&lt;h3&gt;Know the person. See the progress.&lt;/h3&gt;&lt;/div&gt;&lt;div class=&quot;app-row&quot;&gt;&lt;div class=&quot;row-left&quot;&gt;&lt;span class=&quot;avatar&quot;&gt;RM&lt;/span&gt;&lt;div&gt;&lt;strong&gt;Ricardo Mora&lt;/strong&gt;&lt;p&gt;Adult program · Illustrative rank&lt;/p&gt;&lt;/div&gt;&lt;/div&gt;&lt;span class=&quot;mini-belt&quot; aria-label=&quot;White belt&quot;&gt;&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;app-row&quot;&gt;&lt;div class=&quot;row-left&quot;&gt;&lt;span class=&quot;avatar&quot;&gt;FJ&lt;/span&gt;&lt;div&gt;&lt;strong&gt;Fabiola Jiménez&lt;/strong&gt;&lt;p&gt;Adult program · Illustrative rank&lt;/p&gt;&lt;/div&gt;&lt;/div&gt;&lt;span class=&quot;mini-belt blue&quot; aria-label=&quot;Blue belt&quot;&gt;&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;app-row&quot;&gt;&lt;div class=&quot;row-left&quot;&gt;&lt;span class=&quot;avatar&quot;&gt;SC&lt;/span&gt;&lt;div&gt;&lt;strong&gt;Santiago Chinchilla&lt;/strong&gt;&lt;p&gt;Adult program · Illustrative rank&lt;/p&gt;&lt;/div&gt;&lt;/div&gt;&lt;span class=&quot;mini-belt purple&quot; aria-label=&quot;Purple belt&quot;&gt;&lt;/span&gt;&lt;/div&gt;&lt;p class=&quot;app-note&quot;&gt;Student profiles bring attendance, rank, and payment status together.&lt;/p&gt;&lt;/div&gt;
+&lt;div data-product=&quot;schedule&quot; hidden&gt;&lt;div class=&quot;app-title&quot;&gt;&lt;h3&gt;A rhythm for every training day.&lt;/h3&gt;&lt;span class=&quot;badge&quot;&gt;Sample Monday&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;app-row&quot;&gt;&lt;div class=&quot;row-left&quot;&gt;&lt;strong&gt;06:00&lt;/strong&gt;&lt;div&gt;&lt;strong&gt;Gi&lt;/strong&gt;&lt;p&gt;Morning training&lt;/p&gt;&lt;/div&gt;&lt;/div&gt;&lt;span class=&quot;badge&quot;&gt;GI&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;app-row&quot;&gt;&lt;div class=&quot;row-left&quot;&gt;&lt;strong&gt;18:00&lt;/strong&gt;&lt;div&gt;&lt;strong&gt;Gi · Beginners&lt;/strong&gt;&lt;p&gt;Evening training&lt;/p&gt;&lt;/div&gt;&lt;/div&gt;&lt;span class=&quot;badge&quot;&gt;GI&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;app-row&quot;&gt;&lt;div class=&quot;row-left&quot;&gt;&lt;strong&gt;19:00&lt;/strong&gt;&lt;div&gt;&lt;strong&gt;Gi · Advanced&lt;/strong&gt;&lt;p&gt;Evening training&lt;/p&gt;&lt;/div&gt;&lt;/div&gt;&lt;span class=&quot;badge&quot;&gt;GI&lt;/span&gt;&lt;/div&gt;&lt;p class=&quot;app-note&quot;&gt;A shared schedule for staff, students, and the check-in kiosk.&lt;/p&gt;&lt;/div&gt;
+&lt;/div&gt;&lt;/div&gt;&lt;div class=&quot;stage-caption&quot;&gt;&lt;span&gt;A workspace for the whole academy&lt;/span&gt;&lt;span&gt;Desktop for the front desk. Mobile for the mat.&lt;/span&gt;&lt;/div&gt;&lt;/section&gt;
+&lt;div class=&quot;capabilities&quot;&gt;&lt;span&gt;&lt;i data-lucide=&quot;users&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt; Student records&lt;/span&gt;&lt;span&gt;&lt;i data-lucide=&quot;calendar-days&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt; Class schedules&lt;/span&gt;&lt;span&gt;&lt;i data-lucide=&quot;scan-line&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt; Kiosk check-in&lt;/span&gt;&lt;span&gt;&lt;i data-lucide=&quot;wallet&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt; Dues tracking&lt;/span&gt;&lt;/div&gt;
+&lt;section class=&quot;benefits&quot;&gt;&lt;div&gt;&lt;div class=&quot;eyebrow quiet&quot;&gt;Built around your everyday&lt;/div&gt;&lt;h2&gt;Keep the details together.&lt;br&gt;Keep teaching.&lt;/h2&gt;&lt;p&gt;From the first class to the next belt, give your team a shared view of academy life.&lt;/p&gt;&lt;/div&gt;&lt;div&gt;&lt;article class=&quot;benefit&quot;&gt;&lt;span&gt;01&lt;/span&gt;&lt;div&gt;&lt;h3&gt;A clearer start to the day&lt;/h3&gt;&lt;p&gt;See the class schedule, review attendance, and find the students who need a follow-up.&lt;/p&gt;&lt;/div&gt;&lt;/article&gt;&lt;article class=&quot;benefit&quot;&gt;&lt;span&gt;02&lt;/span&gt;&lt;div&gt;&lt;h3&gt;Progress with context&lt;/h3&gt;&lt;p&gt;Keep ranks and attendance alongside each student&#x27;s history, ready for the next instructor review.&lt;/p&gt;&lt;/div&gt;&lt;/article&gt;&lt;article class=&quot;benefit&quot;&gt;&lt;span&gt;03&lt;/span&gt;&lt;div&gt;&lt;h3&gt;Your academy, across locations&lt;/h3&gt;&lt;p&gt;Bring your staff and branches into one workspace, with your own logo and colors.&lt;/p&gt;&lt;/div&gt;&lt;/article&gt;&lt;/div&gt;&lt;/section&gt;
+&lt;section class=&quot;start-section&quot;&gt;&lt;div&gt;&lt;div class=&quot;eyebrow quiet&quot;&gt;A considered start&lt;/div&gt;&lt;h2&gt;Make room for your academy.&lt;/h2&gt;&lt;p&gt;Tell us about your school. We’ll review your request and email an invitation after approval.&lt;/p&gt;&lt;/div&gt;&lt;button class=&quot;solid cursor-interaction&quot; data-register&gt;Request access &lt;span aria-hidden=&quot;true&quot;&gt;↗&lt;/span&gt;&lt;/button&gt;&lt;/section&gt;
+&lt;/div&gt;
+&lt;div data-page=&quot;register&quot; hidden&gt;&lt;div class=&quot;registration&quot; id=&quot;mr-registration&quot;&gt;&lt;aside class=&quot;reg-intro&quot;&gt;&lt;div class=&quot;eyebrow quiet&quot;&gt;Your next chapter&lt;/div&gt;&lt;h2&gt;A home for&lt;br&gt;your academy.&lt;/h2&gt;&lt;p&gt;A few details help us get your academy started. Your workspace becomes available after your request is approved.&lt;/p&gt;&lt;div class=&quot;steps&quot;&gt;&lt;div class=&quot;step current&quot; data-step-label=&quot;0&quot;&gt;&lt;b&gt;1&lt;/b&gt;&lt;div&gt;&lt;strong&gt;Your academy&lt;/strong&gt;&lt;small&gt;Name, location &amp; size&lt;/small&gt;&lt;/div&gt;&lt;/div&gt;&lt;div class=&quot;step&quot; data-step-label=&quot;1&quot;&gt;&lt;b&gt;2&lt;/b&gt;&lt;div&gt;&lt;strong&gt;Your details&lt;/strong&gt;&lt;small&gt;Contact &amp; preferences&lt;/small&gt;&lt;/div&gt;&lt;/div&gt;&lt;div class=&quot;step&quot; data-step-label=&quot;2&quot;&gt;&lt;b&gt;3&lt;/b&gt;&lt;div&gt;&lt;strong&gt;Review&lt;/strong&gt;&lt;small&gt;Check your request&lt;/small&gt;&lt;/div&gt;&lt;/div&gt;&lt;/div&gt;&lt;p class=&quot;micro&quot; style=&quot;margin-top:35px&quot;&gt;After approval: accept your invitation, add your branding, and set up your academy.&lt;/p&gt;&lt;/aside&gt;&lt;div class=&quot;reg-form&quot;&gt;&lt;form id=&quot;mr-form&quot;&gt;
+&lt;section data-form-step=&quot;0&quot;&gt;&lt;div class=&quot;eyebrow quiet&quot;&gt;Step 1 of 3&lt;/div&gt;&lt;h3&gt;Tell us about your academy.&lt;/h3&gt;&lt;p class=&quot;intro&quot;&gt;Start with the essentials. Your branding comes later.&lt;/p&gt;&lt;div class=&quot;fields&quot;&gt;&lt;label class=&quot;wide&quot;&gt;Academy name&lt;input name=&quot;academy&quot; required placeholder=&quot;e.g. Alliance Escalante&quot; autocomplete=&quot;organization&quot;&gt;&lt;/label&gt;&lt;label class=&quot;wide&quot;&gt;Academy address name&lt;input name=&quot;slug&quot; required placeholder=&quot;alliance-escalante&quot;&gt;&lt;small&gt;Your academy&#x27;s name in its web address. Availability is checked in the live product.&lt;/small&gt;&lt;/label&gt;&lt;label&gt;Country&lt;input name=&quot;country&quot; required placeholder=&quot;Costa Rica&quot; autocomplete=&quot;country-name&quot;&gt;&lt;/label&gt;&lt;label&gt;City&lt;input name=&quot;city&quot; required placeholder=&quot;San José&quot; autocomplete=&quot;address-level2&quot;&gt;&lt;/label&gt;&lt;label class=&quot;wide&quot;&gt;Number of students&lt;select name=&quot;size&quot; required&gt;&lt;option value=&quot;&quot;&gt;Select your academy size&lt;/option&gt;&lt;option&gt;1–25&lt;/option&gt;&lt;option&gt;26–75&lt;/option&gt;&lt;option&gt;76–150&lt;/option&gt;&lt;option&gt;150+&lt;/option&gt;&lt;/select&gt;&lt;/label&gt;&lt;/div&gt;&lt;div class=&quot;form-actions&quot;&gt;&lt;button class=&quot;quiet cursor-interaction&quot; type=&quot;button&quot; id=&quot;mr-demo&quot;&gt;Use demo details&lt;/button&gt;&lt;button class=&quot;solid cursor-interaction&quot; type=&quot;button&quot; data-next&gt;Continue →&lt;/button&gt;&lt;/div&gt;&lt;/section&gt;
+&lt;section data-form-step=&quot;1&quot; hidden&gt;&lt;div class=&quot;eyebrow quiet&quot;&gt;Step 2 of 3&lt;/div&gt;&lt;h3&gt;Who should we contact?&lt;/h3&gt;&lt;p class=&quot;intro&quot;&gt;We’ll use these details to follow up on your request.&lt;/p&gt;&lt;div class=&quot;fields&quot;&gt;&lt;label class=&quot;wide&quot;&gt;Your name&lt;input name=&quot;contact&quot; required autocomplete=&quot;name&quot; placeholder=&quot;Full name&quot;&gt;&lt;/label&gt;&lt;label class=&quot;wide&quot;&gt;Email address&lt;input type=&quot;email&quot; name=&quot;email&quot; required autocomplete=&quot;email&quot; placeholder=&quot;you@youracademy.com&quot;&gt;&lt;/label&gt;&lt;label class=&quot;wide&quot;&gt;Phone number&lt;input type=&quot;tel&quot; name=&quot;phone&quot; required autocomplete=&quot;tel&quot; placeholder=&quot;+506&quot;&gt;&lt;/label&gt;&lt;label&gt;Preferred language&lt;select name=&quot;locale&quot;&gt;&lt;option&gt;English&lt;/option&gt;&lt;option&gt;Español&lt;/option&gt;&lt;/select&gt;&lt;/label&gt;&lt;label&gt;Currency&lt;select name=&quot;currency&quot;&gt;&lt;option&gt;CRC&lt;/option&gt;&lt;option&gt;USD&lt;/option&gt;&lt;/select&gt;&lt;/label&gt;&lt;label class=&quot;wide&quot;&gt;How did you hear about us? &lt;span class=&quot;quiet&quot;&gt;(optional)&lt;/span&gt;&lt;input name=&quot;referral&quot; placeholder=&quot;A friend, another academy…&quot;&gt;&lt;/label&gt;&lt;/div&gt;&lt;div class=&quot;form-actions&quot;&gt;&lt;button class=&quot;cursor-interaction&quot; type=&quot;button&quot; data-prev&gt;← Back&lt;/button&gt;&lt;button class=&quot;solid cursor-interaction&quot; type=&quot;button&quot; data-next&gt;Review request →&lt;/button&gt;&lt;/div&gt;&lt;/section&gt;
+&lt;section data-form-step=&quot;2&quot; hidden&gt;&lt;div class=&quot;eyebrow quiet&quot;&gt;Step 3 of 3&lt;/div&gt;&lt;h3&gt;Ready for review.&lt;/h3&gt;&lt;p class=&quot;intro&quot;&gt;Make sure these details are right before sending your request.&lt;/p&gt;&lt;div id=&quot;mr-summary&quot;&gt;&lt;/div&gt;&lt;label class=&quot;check&quot;&gt;&lt;input name=&quot;terms&quot; type=&quot;checkbox&quot; required&gt;&lt;span&gt;I accept the service terms.&lt;small&gt;Concept placeholder: the approved terms will be linked here.&lt;/small&gt;&lt;/span&gt;&lt;/label&gt;&lt;div class=&quot;form-actions&quot;&gt;&lt;button class=&quot;cursor-interaction&quot; type=&quot;button&quot; data-prev&gt;← Back&lt;/button&gt;&lt;button class=&quot;solid cursor-interaction&quot; type=&quot;submit&quot;&gt;Preview submission →&lt;/button&gt;&lt;/div&gt;&lt;p class=&quot;micro&quot; style=&quot;margin-top:18px&quot;&gt;This demo does not submit or store your information.&lt;/p&gt;&lt;/section&gt;
+&lt;/form&gt;&lt;/div&gt;&lt;/div&gt;&lt;div class=&quot;reg-success&quot; id=&quot;mr-success&quot; aria-live=&quot;polite&quot; hidden&gt;&lt;span class=&quot;eyebrow&quot;&gt;Submission preview&lt;/span&gt;&lt;h2&gt;Your academy starts here.&lt;/h2&gt;&lt;p&gt;In the live product, your request would now be pending review. An invitation would arrive by email after approval.&lt;/p&gt;&lt;p class=&quot;micro&quot;&gt;Nothing was submitted or saved in this mockup.&lt;/p&gt;&lt;button class=&quot;solid cursor-interaction&quot; data-home&gt;Back to the platform →&lt;/button&gt;&lt;/div&gt;&lt;/div&gt;
+&lt;footer class=&quot;footer&quot;&gt;&lt;strong&gt;MATROOM&lt;/strong&gt;&lt;span&gt;Academy management, with room to grow.&lt;/span&gt;&lt;span&gt;MATROOM · Design concept&lt;/span&gt;&lt;/footer&gt;&lt;div class=&quot;demo-note&quot; id=&quot;mr-status&quot; aria-live=&quot;polite&quot;&gt;Interactive concept · Explore the product tabs or preview academy registration.&lt;/div&gt;
+&lt;/div&gt;
+&lt;script&gt;
+(()=&gt;{const root=document.getElementById(&#x27;matroom-concept&#x27;);const form=root.querySelector(&#x27;#mr-form&#x27;);let step=0;let slugEdited=false;const panels=[...root.querySelectorAll(&#x27;[data-form-step]&#x27;)];const status=root.querySelector(&#x27;#mr-status&#x27;);function showStep(n){step=n;panels.forEach((p,i)=&gt;{p.hidden=i!==n;p.querySelectorAll(&#x27;input,select&#x27;).forEach(f=&gt;f.disabled=i!==n);});root.querySelectorAll(&#x27;[data-step-label]&#x27;).forEach((p,i)=&gt;p.classList.toggle(&#x27;current&#x27;,i===n));if(n===2){const summary=root.querySelector(&#x27;#mr-summary&#x27;);summary.replaceChildren();[[&#x27;Academy&#x27;,&#x27;academy&#x27;],[&#x27;Address name&#x27;,&#x27;slug&#x27;],[&#x27;Country&#x27;,&#x27;country&#x27;],[&#x27;City&#x27;,&#x27;city&#x27;],[&#x27;Students&#x27;,&#x27;size&#x27;],[&#x27;Contact&#x27;,&#x27;contact&#x27;],[&#x27;Email&#x27;,&#x27;email&#x27;],[&#x27;Phone&#x27;,&#x27;phone&#x27;],[&#x27;Language&#x27;,&#x27;locale&#x27;],[&#x27;Currency&#x27;,&#x27;currency&#x27;]].forEach(([label,name])=&gt;{const row=document.createElement(&#x27;div&#x27;);row.className=&#x27;summary-line&#x27;;const key=document.createElement(&#x27;span&#x27;);key.textContent=label;const value=document.createElement(&#x27;strong&#x27;);value.textContent=form.elements.namedItem(name).value;row.append(key,value);summary.append(row);});}status.textContent=&#x27;Registration preview · Step &#x27;+(n+1)+&#x27; of 3 · No information is sent or saved.&#x27;;}
+function page(name){root.querySelectorAll(&#x27;[data-page]&#x27;).forEach(p=&gt;p.hidden=p.dataset.page!==name);root.querySelector(&#x27;.nav [data-home]&#x27;).hidden=name===&#x27;landing&#x27;;root.querySelector(&#x27;.nav .learn&#x27;).hidden=name!==&#x27;landing&#x27;;if(name===&#x27;register&#x27;){root.querySelector(&#x27;#mr-registration&#x27;).hidden=false;root.querySelector(&#x27;#mr-success&#x27;).hidden=true;showStep(step);}else status.textContent=&#x27;Interactive concept · Explore the product tabs or preview academy registration.&#x27;;root.scrollIntoView({block:&#x27;start&#x27;,behavior:&#x27;instant&#x27;});}
+root.querySelectorAll(&#x27;[data-register]&#x27;).forEach(b=&gt;b.addEventListener(&#x27;click&#x27;,()=&gt;page(&#x27;register&#x27;)));root.querySelectorAll(&#x27;[data-home]&#x27;).forEach(b=&gt;b.addEventListener(&#x27;click&#x27;,()=&gt;page(&#x27;landing&#x27;)));root.querySelectorAll(&#x27;[data-jump]&#x27;).forEach(b=&gt;b.addEventListener(&#x27;click&#x27;,()=&gt;{page(&#x27;landing&#x27;);root.querySelector(&#x27;#&#x27;+b.dataset.jump).scrollIntoView({block:&#x27;start&#x27;,behavior:&#x27;instant&#x27;});}));root.querySelectorAll(&#x27;[data-preview]&#x27;).forEach(b=&gt;b.addEventListener(&#x27;click&#x27;,()=&gt;{root.querySelectorAll(&#x27;[data-preview]&#x27;).forEach(x=&gt;x.setAttribute(&#x27;aria-pressed&#x27;,String(x===b)));root.querySelectorAll(&#x27;[data-product]&#x27;).forEach(p=&gt;p.hidden=p.dataset.product!==b.dataset.preview);}));root.querySelectorAll(&#x27;[data-next]&#x27;).forEach(b=&gt;b.addEventListener(&#x27;click&#x27;,()=&gt;{const fields=[...panels[step].querySelectorAll(&#x27;input,select&#x27;)];for(const f of fields){if(!f.reportValidity())return;}showStep(Math.min(2,step+1));}));root.querySelectorAll(&#x27;[data-prev]&#x27;).forEach(b=&gt;b.addEventListener(&#x27;click&#x27;,()=&gt;showStep(Math.max(0,step-1))));form.elements.namedItem(&#x27;academy&#x27;).addEventListener(&#x27;input&#x27;,()=&gt;{if(!slugEdited)form.elements.namedItem(&#x27;slug&#x27;).value=form.elements.namedItem(&#x27;academy&#x27;).value.toLowerCase().normalize(&#x27;NFD&#x27;).replace(/[\u0300-\u036f]/g,&#x27;&#x27;).replace(/[^a-z0-9]+/g,&#x27;-&#x27;).replace(/^-|-$/g,&#x27;&#x27;);});form.elements.namedItem(&#x27;slug&#x27;).addEventListener(&#x27;input&#x27;,()=&gt;slugEdited=true);root.querySelector(&#x27;#mr-demo&#x27;).addEventListener(&#x27;click&#x27;,()=&gt;{const demo={academy:&#x27;Demo Jiu-Jitsu Academy&#x27;,slug:&#x27;demo-jiu-jitsu&#x27;,country:&#x27;Costa Rica&#x27;,city:&#x27;San José&#x27;,size:&#x27;26–75&#x27;,contact:&#x27;Demo Owner&#x27;,email:&#x27;owner@example.com&#x27;,phone:&#x27;+506 0000 0000&#x27;};Object.entries(demo).forEach(([k,v])=&gt;form.elements.namedItem(k).value=v);status.textContent=&#x27;Sample details filled in for exploring the registration flow.&#x27;;});form.addEventListener(&#x27;submit&#x27;,e=&gt;{e.preventDefault();if(step!==2){root.querySelector(&#x27;[data-form-step=&quot;&#x27;+step+&#x27;&quot;] [data-next]&#x27;).click();return;}if(!form.reportValidity())return;root.querySelector(&#x27;#mr-registration&#x27;).hidden=true;root.querySelector(&#x27;#mr-success&#x27;).hidden=false;status.textContent=&#x27;Preview complete. No registration was created.&#x27;;});showStep(0);status.textContent=&#x27;Interactive concept · Explore the product tabs or preview academy registration.&#x27;;const state={direction:&#x27;Forest&#x27;,type:&#x27;Editorial&#x27;};function render(){root.style.setProperty(&#x27;--mr-display&#x27;,state.type===&#x27;Editorial&#x27;?&quot;Georgia,&#x27;Times New Roman&#x27;,serif&quot;:&quot;&#x27;Segoe UI&#x27;,Arial,sans-serif&quot;);root.style.setProperty(&#x27;--mr-brand&#x27;,state.direction===&#x27;Forest&#x27;?&#x27;light-dark(#254b35,#c9dfb4)&#x27;:&#x27;light-dark(#303943,#ccd4df)&#x27;);root.style.setProperty(&#x27;--mr-soft&#x27;,state.direction===&#x27;Forest&#x27;?&#x27;light-dark(#e6ebdd,#2b3e30)&#x27;:&#x27;light-dark(#e3e8ed,#2e3947)&#x27;);}render();if(globalThis.Tweak){const t=new Tweak({container:root,onChange:render});t.addSelect(state,&#x27;direction&#x27;,{label:&#x27;Palette&#x27;,options:[&#x27;Forest&#x27;,&#x27;Graphite&#x27;]});t.addSelect(state,&#x27;type&#x27;,{label:&#x27;Headline style&#x27;,options:[&#x27;Editorial&#x27;,&#x27;Modern&#x27;]});}})();
+&lt;/script&gt;
+&lt;/div&gt;
+
+
+&lt;script src=&quot;https://unpkg.com/@floating-ui/core@1.7.3/dist/floating-ui.core.umd.min.js&quot;&gt;&lt;/script&gt;
+&lt;script src=&quot;https://unpkg.com/@floating-ui/dom@1.7.4/dist/floating-ui.dom.umd.min.js&quot;&gt;&lt;/script&gt;
+&lt;script&gt;
+(() =&gt; {
+  if (window.FloatingUIDOM == null) {
+    return;
+  }
+  const { autoUpdate, computePosition, flip, offset, shift, size } =
+    window.FloatingUIDOM;
+  const tooltipPlacements = new Set([&quot;top&quot;, &quot;right&quot;, &quot;bottom&quot;, &quot;left&quot;]);
+  const tooltipId = `codex-visualization-tooltip-${
+    window.crypto?.randomUUID?.() ?? Date.now().toString(36)
+  }`;
+  const tooltipGap = 5;
+  const hoverDelay = 700;
+  const skipDelay = 300;
+  let activeTrigger = null;
+  let pendingTrigger = null;
+  let tooltip = null;
+  let openTimeout = null;
+  let autoUpdateCleanup = null;
+  let positionRequest = 0;
+  let skipDelayUntil = 0;
+  let lastPointerWasTouch = false;
+  let pinnedByTouch = false;
+
+  const getTrigger = (target) =&gt;
+    target?.nodeType === Node.ELEMENT_NODE
+      ? target.closest(&quot;[data-tooltip]&quot;)
+      : null;
+  const containsTarget = (trigger, target) =&gt;
+    target?.nodeType != null &amp;&amp; trigger.contains(target);
+  const getContent = (trigger) =&gt;
+    trigger.getAttribute(&quot;data-tooltip&quot;)?.trim() ?? &quot;&quot;;
+  const getPlacement = (trigger) =&gt; {
+    const placement = trigger.getAttribute(&quot;data-tooltip-placement&quot;);
+    return tooltipPlacements.has(placement) ? placement : &quot;top&quot;;
+  };
+  const getTooltip = () =&gt; {
+    if (tooltip == null) {
+      tooltip = document.createElement(&quot;div&quot;);
+      tooltip.id = tooltipId;
+      tooltip.className = &quot;tooltip&quot;;
+      tooltip.setAttribute(&quot;role&quot;, &quot;tooltip&quot;);
+    }
+    return tooltip;
+  };
+  const setDescribedBy = (trigger, described) =&gt; {
+    const ids = new Set(
+      (trigger.getAttribute(&quot;aria-describedby&quot;) ?? &quot;&quot;)
+        .split(/\s+/)
+        .filter(Boolean),
+    );
+    if (described) {
+      ids.add(tooltipId);
+    } else {
+      ids.delete(tooltipId);
+    }
+    if (ids.size === 0) {
+      trigger.removeAttribute(&quot;aria-describedby&quot;);
+    } else {
+      trigger.setAttribute(&quot;aria-describedby&quot;, [...ids].join(&quot; &quot;));
+    }
+  };
+  const clearOpenTimeout = () =&gt; {
+    if (openTimeout != null) {
+      window.clearTimeout(openTimeout);
+      openTimeout = null;
+    }
+    pendingTrigger = null;
+  };
+  const closeTooltip = (activateSkipDelay = true) =&gt; {
+    clearOpenTimeout();
+    pinnedByTouch = false;
+    positionRequest += 1;
+    autoUpdateCleanup?.();
+    autoUpdateCleanup = null;
+    if (activeTrigger == null) {
+      return;
+    }
+    setDescribedBy(activeTrigger, false);
+    activeTrigger = null;
+    tooltip?.remove();
+    if (activateSkipDelay) {
+      skipDelayUntil = Date.now() + skipDelay;
+    }
+  };
+  const updatePosition = (trigger, floating) =&gt; {
+    const request = ++positionRequest;
+    void computePosition(trigger, floating, {
+      middleware: [
+        offset(tooltipGap),
+        flip({ padding: tooltipGap }),
+        shift({ padding: tooltipGap }),
+        size({
+          padding: tooltipGap,
+          apply({ availableHeight, availableWidth, elements }) {
+            elements.floating.style.setProperty(
+              &quot;--tooltip-available-width&quot;,
+              `${Math.max(0, availableWidth)}px`,
+            );
+            elements.floating.style.setProperty(
+              &quot;--tooltip-available-height&quot;,
+              `${Math.max(0, availableHeight)}px`,
+            );
+          },
+        }),
+      ],
+      placement: getPlacement(trigger),
+      strategy: &quot;fixed&quot;,
+    })
+      .then(({ x, y }) =&gt; {
+        if (activeTrigger !== trigger || request !== positionRequest) {
+          return;
+        }
+        const scale = window.devicePixelRatio || 1;
+        floating.style.transform = `translate(${Math.round(x * scale) / scale}px, ${Math.round(y * scale) / scale}px)`;
+        floating.style.visibility = &quot;visible&quot;;
+      })
+      .catch(() =&gt; {
+        if (activeTrigger === trigger &amp;&amp; request === positionRequest) {
+          closeTooltip(false);
+        }
+      });
+  };
+  const openTooltip = (trigger) =&gt; {
+    const content = getContent(trigger);
+    if (!trigger.isConnected || content.length === 0) {
+      return;
+    }
+    clearOpenTimeout();
+    if (activeTrigger === trigger) {
+      return;
+    }
+    closeTooltip();
+    const floating = getTooltip();
+    floating.textContent = content;
+    floating.style.visibility = &quot;hidden&quot;;
+    floating.style.transform = &quot;translate(0, 0)&quot;;
+    document.body.appendChild(floating);
+    activeTrigger = trigger;
+    setDescribedBy(trigger, true);
+    autoUpdateCleanup = autoUpdate(trigger, floating, () =&gt; {
+      updatePosition(trigger, floating);
+    });
+  };
+  const requestOpen = (trigger, immediate = false) =&gt; {
+    if (
+      getContent(trigger).length === 0 ||
+      activeTrigger === trigger ||
+      pendingTrigger === trigger
+    ) {
+      return;
+    }
+    clearOpenTimeout();
+    pendingTrigger = trigger;
+    const delay =
+      immediate || activeTrigger != null || Date.now() &lt; skipDelayUntil
+        ? 0
+        : hoverDelay;
+    if (delay === 0) {
+      openTooltip(trigger);
+      return;
+    }
+    openTimeout = window.setTimeout(() =&gt; {
+      openTimeout = null;
+      pendingTrigger = null;
+      openTooltip(trigger);
+    }, delay);
+  };
+  const handlePointerOpen = (event) =&gt; {
+    if (event.pointerType === &quot;touch&quot;) {
+      return;
+    }
+    const trigger = getTrigger(event.target);
+    if (trigger == null || containsTarget(trigger, event.relatedTarget)) {
+      return;
+    }
+    requestOpen(trigger);
+  };
+  const handlePointer = (event) =&gt; {
+    lastPointerWasTouch =
+      event.type === &quot;pointerdown&quot; &amp;&amp; event.pointerType === &quot;touch&quot;;
+  };
+  const handleTouchClick = (event) =&gt; {
+    const isTouch = event.pointerType === &quot;touch&quot; || lastPointerWasTouch;
+    lastPointerWasTouch = false;
+    if (!isTouch || event.detail === 0) {
+      return;
+    }
+    const trigger = getTrigger(event.target);
+    if (
+      trigger == null ||
+      !trigger.isConnected ||
+      getContent(trigger).length === 0 ||
+      (pinnedByTouch &amp;&amp; activeTrigger === trigger)
+    ) {
+      if (pinnedByTouch) {
+        closeTooltip();
+      }
+      return;
+    }
+    openTooltip(trigger);
+    pinnedByTouch = activeTrigger === trigger;
+    window.setTimeout(() =&gt; {
+      if (activeTrigger === trigger &amp;&amp; !trigger.isConnected) {
+        closeTooltip(false);
+      }
+    }, 0);
+  };
+  const handleLeave = (event) =&gt; {
+    if (pinnedByTouch) {
+      return;
+    }
+    const trigger = getTrigger(event.target);
+    if (trigger == null || containsTarget(trigger, event.relatedTarget)) {
+      return;
+    }
+    if (activeTrigger === trigger || pendingTrigger === trigger) {
+      closeTooltip();
+    }
+  };
+  const handleFocusIn = (event) =&gt; {
+    const trigger = getTrigger(event.target);
+    if (trigger?.matches(&quot;:focus-visible&quot;)) {
+      requestOpen(trigger, true);
+    }
+  };
+  const handleKeyDown = (event) =&gt; {
+    if (event.key === &quot;Escape&quot;) {
+      closeTooltip();
+    }
+  };
+  const handleContextMenu = (event) =&gt; {
+    lastPointerWasTouch = false;
+    const trigger = getTrigger(event.target);
+    if (activeTrigger === trigger || pendingTrigger === trigger) {
+      closeTooltip();
+    }
+  };
+  const destroy = () =&gt; {
+    closeTooltip(false);
+    lastPointerWasTouch = false;
+    document.removeEventListener(&quot;pointerover&quot;, handlePointerOpen);
+    document.removeEventListener(&quot;pointerdown&quot;, handlePointer);
+    document.removeEventListener(&quot;pointercancel&quot;, handlePointer);
+    document.removeEventListener(&quot;click&quot;, handleTouchClick);
+    document.removeEventListener(&quot;pointerout&quot;, handleLeave);
+    document.removeEventListener(&quot;focusin&quot;, handleFocusIn);
+    document.removeEventListener(&quot;focusout&quot;, handleLeave);
+    document.removeEventListener(&quot;keydown&quot;, handleKeyDown);
+    document.removeEventListener(&quot;contextmenu&quot;, handleContextMenu);
+    tooltip = null;
+  };
+
+  document.addEventListener(&quot;pointerover&quot;, handlePointerOpen);
+  document.addEventListener(&quot;pointerdown&quot;, handlePointer);
+  document.addEventListener(&quot;pointercancel&quot;, handlePointer);
+  document.addEventListener(&quot;click&quot;, handleTouchClick);
+  document.addEventListener(&quot;pointerout&quot;, handleLeave);
+  document.addEventListener(&quot;focusin&quot;, handleFocusIn);
+  document.addEventListener(&quot;focusout&quot;, handleLeave);
+  document.addEventListener(&quot;keydown&quot;, handleKeyDown);
+  document.addEventListener(&quot;contextmenu&quot;, handleContextMenu);
+  window.addEventListener(&quot;pagehide&quot;, destroy, { once: true });
+})();
+&lt;/script&gt;
+&lt;script id=&quot;codex-visualization-tabs&quot;&gt;
+(() =&gt; {
+  const selector = &#x27;.nav[role=&quot;tablist&quot;] [role=&quot;tab&quot;]&#x27;;
+  const disabled = &#x27;:disabled,[aria-disabled=&quot;true&quot;]&#x27;;
+  const selectTab = (selected) =&gt; {
+    const panelId = selected.getAttribute(&quot;aria-controls&quot;);
+    for (const tab of selected.closest(&#x27;[role=&quot;tablist&quot;]&#x27;).querySelectorAll(&#x27;[role=&quot;tab&quot;]&#x27;)) {
+      const active = tab === selected;
+      tab.classList.toggle(&quot;active&quot;, active);
+      tab.setAttribute(&quot;aria-selected&quot;, String(active));
+      const id = tab.getAttribute(&quot;aria-controls&quot;);
+      const panel = id &amp;&amp; document.getElementById(id);
+      if (panel != null) {
+        panel.hidden = id !== panelId;
+        if (!panel.hidden &amp;&amp; selected.id) {
+          panel.setAttribute(&quot;aria-labelledby&quot;, selected.id);
+        }
+      }
+    }
+  };
+  const interact = (event) =&gt; {
+    const tab = event.target?.closest?.(selector);
+    if (event.defaultPrevented || tab == null || tab.matches(disabled)) {
+      return;
+    }
+    if (event.type === &quot;click&quot;) {
+      selectTab(tab);
+      return;
+    }
+    const tabs = Array.from(
+      tab.closest(&#x27;[role=&quot;tablist&quot;]&#x27;).querySelectorAll(&#x27;[role=&quot;tab&quot;]&#x27;),
+    ).filter((candidate) =&gt; !candidate.matches(disabled));
+    const current = tabs.indexOf(tab);
+    let next;
+    if (event.key === &quot;ArrowRight&quot; || event.key === &quot;ArrowDown&quot;) {
+      next = (current + 1) % tabs.length;
+    } else if (event.key === &quot;ArrowLeft&quot; || event.key === &quot;ArrowUp&quot;) {
+      next = (current + tabs.length - 1) % tabs.length;
+    } else if (event.key === &quot;Home&quot;) {
+      next = 0;
+    } else if (event.key === &quot;End&quot;) {
+      next = tabs.length - 1;
+    } else {
+      return;
+    }
+    event.preventDefault();
+    tabs[next].focus();
+    selectTab(tabs[next]);
+  };
+
+  for (const list of document.querySelectorAll(&#x27;.nav[role=&quot;tablist&quot;]&#x27;)) {
+    const selected =
+      list.querySelector(&#x27;[role=&quot;tab&quot;][aria-selected=&quot;true&quot;]&#x27;) ??
+      list.querySelector(&#x27;[role=&quot;tab&quot;].active&#x27;) ??
+      list.querySelector(&#x27;[role=&quot;tab&quot;]&#x27;);
+    if (selected != null) {
+      selectTab(selected);
+    }
+  }
+  document.addEventListener(&quot;click&quot;, interact);
+  document.addEventListener(&quot;keydown&quot;, interact);
+  window.addEventListener(&quot;pagehide&quot;, () =&gt; {
+    document.removeEventListener(&quot;click&quot;, interact);
+    document.removeEventListener(&quot;keydown&quot;, interact);
+  }, { once: true });
+})();
+&lt;/script&gt;
+&lt;script id=&quot;codex-visualization-lucide&quot; async src=&quot;https://unpkg.com/lucide@1.17.0/dist/umd/lucide.js&quot;&gt;&lt;/script&gt;
+&lt;script&gt;
+(() =&gt; {
+  const initialize = () =&gt; {
+    globalThis.lucide?.createIcons({ attrs: { width: 16, height: 16 } });
+  };
+  if (globalThis.lucide != null) {
+    initialize();
+    return;
+  }
+  document
+    .getElementById(&quot;codex-visualization-lucide&quot;)
+    ?.addEventListener(&quot;load&quot;, initialize, { once: true });
+})();
+&lt;/script&gt;
+
+&lt;/body&gt;
+&lt;/html&gt;
+"></iframe>
+<script>(() => {
+  const frame = document.getElementById("codex-visualization");
+  if (!(frame instanceof HTMLIFrameElement)) {
+    return;
+  }
+  let viewportHeight = globalThis.innerHeight;
+  const storageKey = `codex:visualization-widget-state-v2:${JSON.stringify([
+    globalThis.location.pathname,
+    globalThis.location.search,
+  ])}`;
+  const parseState = (serializedState) => {
+    if (
+      typeof serializedState !== "string" ||
+      new TextEncoder().encode(serializedState).length > 16 * 1024
+    ) {
+      throw new TypeError(
+        "Widget state must be a JSON object of at most 16 KiB",
+      );
+    }
+    /** @type {unknown} */
+    const state = JSON.parse(serializedState);
+    if (
+      state == null ||
+      typeof state !== "object" ||
+      Array.isArray(state) ||
+      ("imageIds" in state &&
+        (!Array.isArray(state.imageIds) || state.imageIds.length > 0))
+    ) {
+      throw new TypeError("Widget state must be a JSON object");
+    }
+    const storedState = { modelContent: null, privateContent: null, ...state };
+    const canonicalState = JSON.stringify(
+      storedState,
+      (_key, /** @type {unknown} */ value) => {
+        if (typeof value === "number" && !Number.isFinite(value)) {
+          throw new TypeError("Widget state must contain finite numbers");
+        }
+        return value;
+      },
+    );
+    if (new TextEncoder().encode(canonicalState).length > 16 * 1024) {
+      throw new TypeError(
+        "Widget state must be a JSON object of at most 16 KiB",
+      );
+    }
+    return storedState;
+  };
+  let storage = null;
+  let state = null;
+  try {
+    const localStorage = globalThis.localStorage;
+    const probeKey = `${storageKey}:probe`;
+    localStorage.setItem(probeKey, "1");
+    localStorage.removeItem(probeKey);
+    storage = localStorage;
+    const savedState = storage.getItem(storageKey);
+    if (savedState != null) {
+      try {
+        state = parseState(savedState);
+      } catch {
+        // Invalid saved state does not disable future writes.
+      }
+    }
+  } catch {
+    storage = null;
+  }
+  const initialGlobals = {
+    widgetState: state,
+    statePersistence: storage == null ? "none" : "local",
+  };
+
+  const channel = new MessageChannel();
+  channel.port1.addEventListener("message", (event) => {
+    const data = event.data;
+    if (typeof data !== "object" || data == null) {
+      return;
+    }
+    if (data.type === "widget-state-write") {
+      if (!Number.isSafeInteger(data.id) || data.id <= 0) {
+        return;
+      }
+      let ok = false;
+      try {
+        if (storage != null) {
+          const state = parseState(data.state);
+          storage.setItem(storageKey, JSON.stringify(state));
+          ok = true;
+        }
+      } catch {
+        // Storage denial, quota limits, and invalid state return a failed receipt.
+      }
+      channel.port1.postMessage({
+        type: "widget-state-result",
+        id: data.id,
+        ok,
+      });
+      return;
+    }
+    if (data.type === "height") {
+      const height = data.height;
+      if (
+        typeof height === "number" &&
+        Number.isFinite(height) &&
+        height >= 0 &&
+        height <= 10_000
+      ) {
+        frame.style.height = Math.ceil(height) + "px";
+      }
+      return;
+    }
+    if (data.type === "scroll-to") {
+      const top = data.top;
+      if (
+        typeof top === "number" &&
+        Number.isFinite(top) &&
+        top >= 0 &&
+        globalThis.navigator.userActivation?.isActive === true
+      ) {
+        globalThis.scrollTo({
+          top: Math.ceil(
+            globalThis.scrollY + frame.getBoundingClientRect().top + top,
+          ),
+        });
+      }
+      return;
+    }
+    if (data.type === "open-external") {
+      const rawHref = data.href;
+      if (typeof rawHref !== "string") {
+        return;
+      }
+      let href;
+      try {
+        const url = new URL(rawHref, document.baseURI);
+        if (url.protocol !== "https:") {
+          return;
+        }
+        href = url.href;
+      } catch {
+        return;
+      }
+      if (globalThis.navigator.userActivation?.isActive === true) {
+        const anchor = document.createElement("a");
+        anchor.href = href;
+        anchor.rel = "noopener noreferrer";
+        anchor.target = "_blank";
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+      }
+      return;
+    }
+    if (data.type === "follow-up") {
+      const prompt = data.prompt;
+      if (
+        typeof prompt !== "string" ||
+        globalThis.navigator.userActivation?.isActive !== true
+      ) {
+        return;
+      }
+      const title = data.title;
+      globalThis.prompt(typeof title === "string" ? title : prompt, prompt);
+    }
+  });
+  channel.port1.start();
+  const srcdoc = frame.dataset.srcdoc;
+  if (srcdoc == null) {
+    return;
+  }
+  globalThis.addEventListener("resize", () => {
+    const height = Number.parseFloat(frame.style.height);
+    if (!Number.isFinite(height) || height <= viewportHeight) {
+      frame.style.removeProperty("height");
+    }
+    viewportHeight = globalThis.innerHeight;
+    channel.port1.postMessage({ type: "measure" });
+  });
+  frame.addEventListener(
+    "load",
+    () => {
+      frame.contentWindow?.postMessage(
+        { type: "codex-visualization-initialize" },
+        "*",
+        [channel.port2],
+      );
+    },
+    { once: true },
+  );
+  // Match the trusted bootstrap element, not the same text in an authored title.
+  frame.srcdoc = srcdoc.replace(
+    '<script type="application/json" id="codex-visualization-widget-state">__CODEX_VISUALIZATION_WIDGET_STATE__<\/script>',
+    () =>
+      '<script type="application/json" id="codex-visualization-widget-state">' +
+      JSON.stringify(initialGlobals).replaceAll("<", "\\u003c") +
+      "<\/script>",
+  );
+  delete frame.dataset.srcdoc;
+})();
+</script>
+</body>
+</html>

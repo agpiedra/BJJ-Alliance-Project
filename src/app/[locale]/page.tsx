@@ -69,7 +69,7 @@ export default async function HomePage({
             <Button size="lg" nativeButton={false} render={<a href={`/${locale}/register-academy`} />}>
               {t("cta")}
             </Button>
-            <a href={`/${locale}/login`} className="text-sm underline">
+            <a href={`/${locale}/login`} className="text-sm underline pointer-coarse:py-3">
               {t("loginLink")}
             </a>
           </div>
