@@ -144,6 +144,44 @@ describe("TodaysClassesCard", () => {
     expect(screen.getByText("Class recorded. Today's attendance already counted toward your progress, so this one adds nothing more.")).toBeInTheDocument();
     await waitFor(() => expect(refresh).toHaveBeenCalled());
   });
+
+  // What the result may say depends on what decides eligibility for the student's rank.
+  const RESULT = (over: Record<string, unknown>) => ({
+    ok: true,
+    classSessionId: "c-later",
+    student: { firstName: "A", lastName: "B", currentBelt: "BLACK", currentStripes: 2 },
+    progressOutcome: "counted",
+    thresholdReached: false,
+    summary: {
+      currentBelt: "BLACK", currentBeltLabelEs: "Negro", currentBeltLabelEn: "Black", currentBeltVisual: {}, currentStripes: 2, atBeltCount: 12, creditedClasses: 0, lifetimeCount: 412,
+      attendancesPerStripe: 30, maxStripes: 6, attendancesForExam: 30, nextTarget: "STRIPE", remainingAttendance: null, isEligible: false, accounting: "PER_INTERVAL", target: null, percent: 40,
+      timeAnchorMissing: false, notConfigured: false, reachedOn: null, progressBaselineAt: new Date(), progressBaselineKind: "AWARD", mode: "TIME", dueDate: null,
+      currentRankId: "r", track: "ADULT", currentRankOrder: 5, ...over,
+    },
+  });
+
+  it.each([
+    ["en", "You're checked in!", /counted toward your next promotion/],
+    ["es", "¡Asistencia registrada!", /contadas? hacia tu próxima promoción/],
+  ] as const)("a TIME-based degree (black belt): the result confirms the check-in and does NOT say attendance counts toward the next promotion (%s)", async (locale, confirmed, countLine) => {
+    selfCheckIn.mockResolvedValue(RESULT({}));
+    renderCard(locale, CLASSES);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button"));
+    });
+    expect(await screen.findByText(confirmed)).toBeInTheDocument();
+    expect(screen.queryByText(countLine)).toBeNull();
+  });
+
+  it("an attendance rank still sees how many attendances count and what remains (only the time-based rank loses that line)", async () => {
+    selfCheckIn.mockResolvedValue(RESULT({ mode: "ATTENDANCE", target: 30, remainingAttendance: 18, atBeltCount: 12, currentBelt: "WHITE" }));
+    renderCard("en", CLASSES);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button"));
+    });
+    expect(await screen.findByText("12 attendances counted toward your next promotion")).toBeInTheDocument();
+    expect(screen.getByText("18 attendances to go for your next stripe")).toBeInTheDocument();
+  });
 });
 
 /**

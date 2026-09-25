@@ -129,3 +129,4 @@ The registration concurrency and stale-availability findings are functional, not
 ## Change log
 
 - 2026-09-24: Phase 1 foundation: authority established; identity, tokens, typography and shared controls implemented; Archivo retired.
+- 2026-09-25: Student portal page phase (P1-P4 approved): two-column desktop grid, Home / Attendance / Schedule as accessible tabs, compact class rows, phone day-list schedule, theme item in the account menu; a time-based degree no longer implies attendance decides eligibility. Verification in `verification/portal/`. The kiosk redesign is a separate phase.

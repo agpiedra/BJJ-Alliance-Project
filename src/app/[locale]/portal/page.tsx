@@ -3,8 +3,6 @@ import { getTranslations } from "next-intl/server";
 import { requirePortalContext } from "@/lib/tenant/context";
 import { accessFromContext } from "@/lib/auth/derive-access";
 import { prisma } from "@/lib/prisma";
-import { BeltBar } from "@/components/belt-graphic/belt-bar";
-import { ProgressToNextGrade } from "@/components/belt-graphic/progress-to-next-grade";
 import { Badge } from "@/components/ui/badge";
 import { Pill } from "@/components/ui/pill";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -30,6 +28,10 @@ import type { ContactPaymentStatus } from "@/lib/students/contact-list";
 import { TodaysClassesCard } from "./todays-classes-card";
 import { AttendanceHistorySection } from "./attendance-history-section";
 import { PortalTopBar } from "./portal-top-bar";
+import { PortalTabs } from "./portal-tabs";
+import { ProgressCard } from "./progress-card";
+import { RecentAttendanceCard } from "./recent-attendance-card";
+import { ScheduleDayList } from "./schedule-day-list";
 import { getOrganizationBranding } from "@/lib/branding/get-branding";
 import { BrandingScope } from "@/components/branding/branding-scope";
 import { listClassSessions } from "../(staff)/admin/schedule/queries";
@@ -183,7 +185,6 @@ export default async function StudentPortalPage({
   const activeSessionCount = sessions.filter((s) => s.active).length;
 
   const t = await getTranslations("portal");
-  const tStudents = await getTranslations("students");
   const tPaymentStatus = await getTranslations("students.paymentStatus");
   const tAdminSchedule = await getTranslations("adminSchedule");
   const tClassType = await getTranslations("classType");
@@ -191,15 +192,130 @@ export default async function StudentPortalPage({
   // One display shaping for every surface (buildProgressView): an eligible student shows a full bar with the
   // count capped at the target - never 42 / 30 - and a time-based degree shows a due date, not a fraction.
   const progressView = buildProgressView(summary);
-  const progressTarget =
-    progressView.current !== null && progressView.target !== null
-      ? { current: progressView.current, target: progressView.target }
-      : null;
   const dueDateFormatted = formatTimestampInAcademyZone(summary.dueDate, locale);
   const legend: WeekCalendarLegendItem[] = CLASS_TYPE_LEGEND_ORDER.map((type) => ({
     colorClassName: CLASS_TYPE_COLOR_CLASS[type],
     label: tClassType(type),
   }));
+  const historyRows = historyPage.entries.map((entry) => toAttendanceRow(entry, locale));
+
+  const checkInCard = (
+    <TodaysClassesCard
+      organizationId={context.organizationId}
+      classes={todays.classes}
+      nextChangeAt={todays.nextChangeAt}
+      serverNow={todays.serverNow}
+    />
+  );
+  const progressCard = <ProgressCard locale={locale} summary={summary} view={progressView} dueDateLabel={dueDateFormatted} />;
+
+  const paymentCard = (
+    <Card>
+      <CardHeader className="border-b">
+        <CardTitle>{t("paymentStatus.heading")}</CardTitle>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-2 pt-4">
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-muted-foreground">{currentPaymentPeriod?.planName ?? "—"}</span>
+          <Pill variant={paymentPillVariant(paymentStatus)}>{paymentStatusLabel(paymentStatus, t, tPaymentStatus)}</Pill>
+        </div>
+        {overdue && <p className="text-sm text-muted-foreground">{t("paymentStatus.overdueNotice")}</p>}
+      </CardContent>
+    </Card>
+  );
+
+  const promotionCard = (
+    <Card>
+      <CardHeader className="border-b">
+        <CardTitle>{t("promotionHistory.heading")}</CardTitle>
+      </CardHeader>
+      <CardContent className="pt-4">
+        {promotionHistory.length === 0 ? (
+          <EmptyState message={t("promotionHistory.empty")} />
+        ) : (
+          <ul className="flex flex-col divide-y divide-border">
+            {promotionHistory.map((promotion) => (
+              <li key={promotion.id} className="flex flex-col gap-0.5 py-2 text-sm">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-medium">{formatTimestampInAcademyZone(promotion.awardedAt, locale)}</span>
+                  <Badge variant="outline">
+                    {locale === "es" ? promotion.fromBeltLabelEs : promotion.fromBeltLabelEn} {promotion.fromStripes} →{" "}
+                    {locale === "es" ? promotion.toBeltLabelEs : promotion.toBeltLabelEn} {promotion.toStripes}
+                  </Badge>
+                </div>
+                {promotion.notes && <span className="text-muted-foreground italic">{promotion.notes}</span>}
+              </li>
+            ))}
+          </ul>
+        )}
+      </CardContent>
+    </Card>
+  );
+
+  // HOME. Two columns from `lg` (check-in and recent attendance left; progress, payment and promotions right). On narrower screens the two
+  // column wrappers dissolve (`contents`) and `order` puts the cards in priority order: check-in, progress, recent attendance, payment,
+  // promotion history. Progress comes second on purpose: it is what a student looks for right after checking in.
+  const home = (
+    <div className="flex flex-col gap-4 lg:grid lg:grid-cols-[minmax(0,7fr)_minmax(0,5fr)] lg:items-start">
+      <div className="contents lg:flex lg:flex-col lg:gap-4">
+        <div className="order-1">{checkInCard}</div>
+        <div className="order-3">
+          <RecentAttendanceCard rows={historyRows} />
+        </div>
+      </div>
+      <div className="contents lg:flex lg:flex-col lg:gap-4">
+        <div className="order-2">{progressCard}</div>
+        <div className="order-4">{paymentCard}</div>
+        <div className="order-5">{promotionCard}</div>
+      </div>
+    </div>
+  );
+
+  // ATTENDANCE: the full history (defined total, older entries on demand). A new attendance changes the key, so the list restarts from the
+  // fresh first page (no gap under older pages). Progress sits beside it on desktop as context.
+  const attendance = (
+    <div className="flex flex-col gap-4 lg:grid lg:grid-cols-[minmax(0,7fr)_minmax(0,5fr)] lg:items-start">
+      <AttendanceHistorySection
+        key={`${attendanceTotals.entryCount}-${historyPage.entries[0]?.id ?? "none"}`}
+        organizationId={context.organizationId}
+        initialRows={historyRows}
+        initialCursor={historyPage.nextCursor}
+        totals={attendanceTotals}
+        creditedClasses={summary.creditedClasses}
+      />
+      <ProgressCard locale={locale} summary={summary} view={progressView} dueDateLabel={dueDateFormatted} />
+    </div>
+  );
+
+  // SCHEDULE: the seven-day calendar from `md`; a day-by-day list on phones (same data, same colours).
+  const schedule = (
+    <Card size="sm">
+      <CardHeader className="border-b">
+        <CardTitle>{t("schedule.heading")}</CardTitle>
+        <CardDescription>{t("schedule.description", { academyName: student.homeAcademy.name, count: activeSessionCount })}</CardDescription>
+      </CardHeader>
+      {sessions.length === 0 ? (
+        <CardContent className="pt-4">
+          <EmptyState message={tAdminSchedule("empty")} />
+        </CardContent>
+      ) : (
+        <>
+          <div className="hidden md:block">
+            <WeekCalendar days={calendarDays} blocks={calendarBlocks} legend={legend} legendNote={sundayHasClasses ? undefined : tAdminSchedule("calendar.sundayNote")} />
+          </div>
+          <ScheduleDayList days={calendarDays} blocks={calendarBlocks} sundayHasClasses={sundayHasClasses} />
+          <div className="flex flex-wrap gap-x-4 gap-y-1 px-4 pb-4 text-xs text-muted-foreground md:hidden">
+            {legend.map((item) => (
+              <span key={item.label} className="inline-flex items-center gap-1.5">
+                <span aria-hidden="true" className={`inline-block size-3 rounded-sm ${item.colorClassName}`} />
+                {item.label}
+              </span>
+            ))}
+          </div>
+        </>
+      )}
+    </Card>
+  );
 
   return (
     <BrandingScope branding={branding}>
@@ -216,145 +332,14 @@ export default async function StudentPortalPage({
           displayName: branding.displayName,
         }}
       />
-      <main className="mx-auto flex w-full max-w-md flex-col gap-6 p-4">
+      <main className="mx-auto flex w-full max-w-[1120px] flex-col px-4 py-5 sm:px-6 lg:px-8 lg:py-6">
         <h1 className="text-2xl font-bold">{t("greeting", { name: student.firstName })}</h1>
-
-        <Card>
-          <CardHeader className="border-b">
-            <CardTitle>{t("progress.heading")}</CardTitle>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-4 pt-4">
-            <div className="flex flex-col items-center gap-2 py-2">
-              <BeltBar belt={summary.currentBeltVisual} stripes={summary.currentStripes} />
-              <span className="text-sm font-medium">
-                {locale === "es" ? summary.currentBeltLabelEs : summary.currentBeltLabelEn} ·{" "}
-                {tStudents("beltStripes", { count: summary.currentStripes })}
-              </span>
-              {progressTarget && (
-                <ProgressToNextGrade
-                  aria-label={t("progress.heading")}
-                  current={progressTarget.current}
-                  target={progressTarget.target}
-                  className="w-full max-w-[220px]"
-                />
-              )}
-            </div>
-
-            <div className="flex flex-col gap-1 text-sm">
-              <p>{t("progress.atBeltCount", { count: progressView.actualCount })}</p>
-
-              {progressView.state === "in_progress" && (
-                <p className="text-muted-foreground">
-                  {t("progress.remainingToNextStripe", { count: progressView.remaining ?? 0 })}
-                </p>
-              )}
-
-              {/* Eligible always means ready for instructor review - never an automatic award. */}
-              {progressView.state === "eligible" && <p className="font-medium">{t("progress.eligibleForReview")}</p>}
-
-              {progressView.state === "time_pending" && dueDateFormatted && (
-                <p className="text-muted-foreground">{t("progress.timePending", { date: dueDateFormatted })}</p>
-              )}
-
-              {progressView.state === "time_anchor_missing" && (
-                <p className="text-muted-foreground">{t("progress.timeAnchorMissing")}</p>
-              )}
-
-              {progressView.state === "not_configured" && (
-                <p className="text-muted-foreground">{t("progress.notConfigured")}</p>
-              )}
-
-              <p className="text-muted-foreground">
-                {t("progress.lifetimeCount", { count: summary.lifetimeCount })}
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-
-        <TodaysClassesCard
-          organizationId={context.organizationId}
-          classes={todays.classes}
-          nextChangeAt={todays.nextChangeAt}
-          serverNow={todays.serverNow}
+        <p className="mb-4 text-sm text-muted-foreground">{student.homeAcademy.name}</p>
+        <PortalTabs
+          listLabel={t("nav.label")}
+          labels={{ home: t("nav.home"), attendance: t("nav.attendance"), schedule: t("nav.schedule") }}
+          panels={{ home, attendance, schedule }}
         />
-
-        {/* A new attendance changes the key, so the list restarts from the fresh first page (no gap under older pages). */}
-        <AttendanceHistorySection
-          key={`${attendanceTotals.entryCount}-${historyPage.entries[0]?.id ?? "none"}`}
-          organizationId={context.organizationId}
-          initialRows={historyPage.entries.map((entry) => toAttendanceRow(entry, locale))}
-          initialCursor={historyPage.nextCursor}
-          totals={attendanceTotals}
-          creditedClasses={summary.creditedClasses}
-        />
-
-        <Card>
-          <CardHeader className="border-b">
-            <CardTitle>{t("promotionHistory.heading")}</CardTitle>
-          </CardHeader>
-          <CardContent className="pt-4">
-            {promotionHistory.length === 0 ? (
-              <EmptyState message={t("promotionHistory.empty")} />
-            ) : (
-              <ul className="flex flex-col divide-y divide-border">
-                {promotionHistory.map((promotion) => (
-                  <li key={promotion.id} className="flex flex-col gap-0.5 py-2 text-sm">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="font-medium">
-                        {formatTimestampInAcademyZone(promotion.awardedAt, locale)}
-                      </span>
-                      <Badge variant="outline">
-                        {locale === "es" ? promotion.fromBeltLabelEs : promotion.fromBeltLabelEn} {promotion.fromStripes}{" "}
-                        → {locale === "es" ? promotion.toBeltLabelEs : promotion.toBeltLabelEn} {promotion.toStripes}
-                      </Badge>
-                    </div>
-                    {promotion.notes && (
-                      <span className="text-muted-foreground italic">{promotion.notes}</span>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="border-b">
-            <CardTitle>{t("paymentStatus.heading")}</CardTitle>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-2 pt-4">
-            <div className="flex items-center justify-between gap-2">
-              <span className="text-muted-foreground">{currentPaymentPeriod?.planName ?? "—"}</span>
-              <Pill variant={paymentPillVariant(paymentStatus)}>
-                {paymentStatusLabel(paymentStatus, t, tPaymentStatus)}
-              </Pill>
-            </div>
-            {overdue && (
-              <p className="text-sm text-muted-foreground">{t("paymentStatus.overdueNotice")}</p>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card size="sm">
-          <CardHeader className="border-b">
-            <CardTitle>{t("schedule.heading")}</CardTitle>
-            <CardDescription>
-              {t("schedule.description", { academyName: student.homeAcademy.name, count: activeSessionCount })}
-            </CardDescription>
-          </CardHeader>
-          {sessions.length === 0 ? (
-            <CardContent className="pt-4">
-              <EmptyState message={tAdminSchedule("empty")} />
-            </CardContent>
-          ) : (
-            <WeekCalendar
-              days={calendarDays}
-              blocks={calendarBlocks}
-              legend={legend}
-              legendNote={sundayHasClasses ? undefined : tAdminSchedule("calendar.sundayNote")}
-            />
-          )}
-        </Card>
       </main>
     </BrandingScope>
   );
