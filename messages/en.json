@@ -991,6 +991,17 @@
     "greeting": "Hi, {name}!",
     "signOut": "Sign out",
     "staffLink": "Staff",
+    "accountMenu": "Account menu",
+    "nav": {
+      "label": "Portal sections",
+      "home": "Home",
+      "attendance": "Attendance",
+      "schedule": "Schedule"
+    },
+    "recent": {
+      "heading": "Recent attendance",
+      "viewAll": "View full history"
+    },
     "progress": {
       "heading": "Your progress",
       "atBeltCount": "{count, plural, one {# attendance counted toward your next promotion} other {# attendances counted toward your next promotion}}",

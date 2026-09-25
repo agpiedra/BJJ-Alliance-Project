@@ -146,52 +146,51 @@ export function TodaysClassesCard({
         ) : (
           <ul aria-label={t("classesLabel")} className="flex flex-col divide-y divide-border">
             {classes.map((cls) => (
-              <li key={cls.id} className="flex flex-col gap-1.5 py-3 first:pt-0 last:pb-0">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex min-w-0 flex-col gap-1">
-                    <span className="font-medium">{cls.name}</span>
-                    <span className="text-sm text-muted-foreground tabular-nums">
+              // COMPACT ROW: name on the first line; time, class type and (for an open class) the "Open now" pill share the second, and
+              // the action or state sits on the right, so a class takes about 70px instead of stacking name / time / type / pill / button
+              // (about 190px per open class on a phone) and the progress card below is reachable without scrolling past every class.
+              // Touch targets stay comfortable: the Check in button is 44px on any touch device (48px via pointer-coarse:min-h-12).
+              <li key={cls.id} data-testid="class-row" className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 py-3 first:pt-0 last:pb-0">
+                <div className="flex min-w-0 flex-col gap-1">
+                  <span className="font-medium">{cls.name}</span>
+                  <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted-foreground">
+                    <span className="tabular-nums">
                       {cls.startTime} – {cls.endTime}
                     </span>
-                    <span className="flex flex-wrap items-center gap-1.5">
-                      <Badge variant="outline">{tClassType(cls.type)}</Badge>
-                      {!cls.countsTowardPromotion && (
-                        <span className="text-xs text-muted-foreground">{t("notCounted")}</span>
-                      )}
-                    </span>
-                  </div>
+                    <Badge variant="outline">{tClassType(cls.type)}</Badge>
+                    {cls.state.kind === "open" && <Pill variant="ok">{t("stateOpen")}</Pill>}
+                    {!cls.countsTowardPromotion && <span className="text-xs">{t("notCounted")}</span>}
+                  </span>
+                </div>
 
-                  <div className="shrink-0 text-right text-sm">
-                    {cls.state.kind === "open" && (
-                      <form
-                        action={(formData) => {
-                          setSubmittedId(cls.id);
-                          formAction(formData);
-                        }}
-                        className="flex flex-col items-end gap-1"
+                <div className="shrink-0 text-right text-sm">
+                  {cls.state.kind === "open" && (
+                    <form
+                      action={(formData) => {
+                        setSubmittedId(cls.id);
+                        formAction(formData);
+                      }}
+                    >
+                      <input type="hidden" name="classSessionId" value={cls.id} />
+                      <Button
+                        type="submit"
+                        disabled={isPending}
+                        className="px-4 pointer-coarse:min-h-12"
+                        aria-label={t("buttonLabel", { name: cls.name, time: cls.startTime })}
                       >
-                        <input type="hidden" name="classSessionId" value={cls.id} />
-                        <Pill variant="ok">{t("stateOpen")}</Pill>
-                        <Button
-                          type="submit"
-                          size="sm"
-                          disabled={isPending}
-                          aria-label={t("buttonLabel", { name: cls.name, time: cls.startTime })}
-                        >
-                          {isPending && submittedId === cls.id ? t("submitting") : t("button")}
-                        </Button>
-                      </form>
-                    )}
-                    {cls.state.kind === "checked_in" && <Pill variant="ok">{t("stateCheckedIn")}</Pill>}
-                    {cls.state.kind === "not_open_yet" && (
-                      <Pill variant="plain">{t("stateNotOpenYet", { time: cls.state.opensAt })}</Pill>
-                    )}
-                    {cls.state.kind === "closed" && <Pill variant="plain">{t("stateClosed")}</Pill>}
-                  </div>
+                        {isPending && submittedId === cls.id ? t("submitting") : t("button")}
+                      </Button>
+                    </form>
+                  )}
+                  {cls.state.kind === "checked_in" && <Pill variant="ok">{t("stateCheckedIn")}</Pill>}
+                  {cls.state.kind === "not_open_yet" && (
+                    <Pill variant="plain">{t("stateNotOpenYet", { time: cls.state.opensAt })}</Pill>
+                  )}
+                  {cls.state.kind === "closed" && <Pill variant="plain">{t("stateClosed")}</Pill>}
                 </div>
 
                 {errorText && submittedId === cls.id && (
-                  <p role="alert" className="text-sm text-destructive">
+                  <p role="alert" className="col-span-2 text-sm text-destructive">
                     {errorText}
                   </p>
                 )}
@@ -233,7 +232,9 @@ function SelfCheckInResult({
         <p className="text-muted-foreground">{t("progressBeforeLastPromotion")}</p>
       )}
 
-      <p className="text-muted-foreground">{t("atBeltCount", { count: view.actualCount })}</p>
+      {/* Only where attendance is what earns the next promotion (an attendance target exists). For a time-based degree (black belt)
+          eligibility is decided by time, so this line would wrongly imply that attendance counts toward it. */}
+      {view.current !== null && <p className="text-muted-foreground">{t("atBeltCount", { count: view.actualCount })}</p>}
 
       {view.state === "in_progress" && (
         <p className="text-muted-foreground">{t("remainingToNextStripe", { count: view.remaining ?? 0 })}</p>

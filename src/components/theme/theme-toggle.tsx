@@ -3,6 +3,7 @@
 import { Moon, Sun } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
+import { toggleTheme } from "@/lib/theme-preference";
 
 /**
  * Manual light/dark toggle (REDESIGN_BRIEF.md Phase 2). No next-themes
@@ -17,17 +18,8 @@ import { Button } from "@/components/ui/button";
 export function ThemeToggle() {
   const t = useTranslations("staffShell");
 
-  function toggle() {
-    const isDark = document.documentElement.classList.toggle("dark");
-    try {
-      localStorage.setItem("theme", isDark ? "dark" : "light");
-    } catch {
-      // Private browsing / storage disabled — theme just won't persist.
-    }
-  }
-
   return (
-    <Button variant="outline" size="sm" onClick={toggle} aria-label={t("themeToggle")}>
+    <Button variant="outline" size="sm" onClick={toggleTheme} aria-label={t("themeToggle")}>
       <Sun className="hidden size-4 dark:block" />
       <Moon className="size-4 dark:hidden" />
       <span>{t("themeToggle")}</span>

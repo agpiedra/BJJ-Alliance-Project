@@ -2,6 +2,7 @@
 
 import { useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { Moon, Sun } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { BrandBanner } from "@/components/brand/brand-banner";
 import {
@@ -14,6 +15,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { signOutStudent } from "@/lib/auth/sign-out-actions";
+import { toggleTheme } from "@/lib/theme-preference";
 
 function initialsFromName(firstName: string, lastName: string): string {
   const letters = [firstName[0], lastName[0]].filter(Boolean);
@@ -56,6 +58,7 @@ export interface PortalTopBarProps {
  */
 export function PortalTopBar({ locale, firstName, lastName, hasStaff, logo }: PortalTopBarProps) {
   const t = useTranslations("portal");
+  const tShell = useTranslations("staffShell");
   const router = useRouter();
   const [isSigningOut, startSignOut] = useTransition();
 
@@ -74,7 +77,7 @@ export function PortalTopBar({ locale, firstName, lastName, hasStaff, logo }: Po
       alt={logo?.displayName}
     >
       <DropdownMenu>
-        <DropdownMenuTrigger className="ml-auto flex size-8 pointer-coarse:size-11 items-center justify-center rounded-full border border-input bg-sidebar-accent text-xs font-semibold text-sidebar-accent-foreground">
+        <DropdownMenuTrigger aria-label={t("accountMenu")} className="ml-auto flex size-8 pointer-coarse:size-11 items-center justify-center rounded-full border border-input bg-sidebar-accent text-xs font-semibold text-sidebar-accent-foreground">
           {initialsFromName(firstName, lastName)}
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
@@ -85,6 +88,12 @@ export function PortalTopBar({ locale, firstName, lastName, hasStaff, logo }: Po
           </DropdownMenuGroup>
           <DropdownMenuSeparator />
           {hasStaff && <DropdownMenuItem onClick={() => router.push(`/${locale}/dashboard`)}>{t("staffLink")}</DropdownMenuItem>}
+          {/* Both icons render (identical SSR/CSR output); CSS picks the one that matches the current theme, as ThemeToggle does. */}
+          <DropdownMenuItem onClick={() => toggleTheme()}>
+            <Sun className="hidden size-4 dark:block" aria-hidden="true" />
+            <Moon className="size-4 dark:hidden" aria-hidden="true" />
+            {tShell("themeToggle")}
+          </DropdownMenuItem>
           <DropdownMenuItem onClick={handleSignOut} disabled={isSigningOut}>
             {t("signOut")}
           </DropdownMenuItem>

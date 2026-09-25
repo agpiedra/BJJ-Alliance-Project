@@ -991,6 +991,17 @@
     "greeting": "¡Hola, {name}!",
     "signOut": "Cerrar sesión",
     "staffLink": "Staff",
+    "accountMenu": "Menú de la cuenta",
+    "nav": {
+      "label": "Secciones del portal",
+      "home": "Inicio",
+      "attendance": "Asistencia",
+      "schedule": "Horario"
+    },
+    "recent": {
+      "heading": "Asistencia reciente",
+      "viewAll": "Ver historial completo"
+    },
     "progress": {
       "heading": "Tu progreso",
       "atBeltCount": "{count, plural, one {# asistencia contada hacia tu próxima promoción} other {# asistencias contadas hacia tu próxima promoción}}",
