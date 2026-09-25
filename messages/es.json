@@ -1080,6 +1080,8 @@
   },
   "kiosk": {
     "enterCode": "Ingresa tu código de 4 dígitos",
+    "codeStatus": "{count} de {total} dígitos ingresados",
+    "offline": "Sin conexión",
     "clear": "Borrar",
     "enter": "Entrar",
     "submitting": "Verificando...",

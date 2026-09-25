@@ -1080,6 +1080,8 @@
   },
   "kiosk": {
     "enterCode": "Enter your 4-digit code",
+    "codeStatus": "{count} of {total} digits entered",
+    "offline": "Offline",
     "clear": "Clear",
     "enter": "Enter",
     "submitting": "Checking in...",

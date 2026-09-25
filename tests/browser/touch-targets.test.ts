@@ -23,12 +23,13 @@ const POINTERS = [
   { name: "coarse (touch)", coarse: true },
 ] as const;
 
-// Sizes of the kiosk keys are explicit in kiosk-client.tsx (DIGIT_BUTTON_CLASS / ACTION_BUTTON_CLASS): h-20 w-20 below the `sm`
-// breakpoint (640px), h-28 w-28 (112px) from it up. Update these numbers together with that file.
+// Sizes of the kiosk keys are explicit in kiosk-client.tsx (KEY_SIZE_CLASS): 80 x 80 below the `sm` breakpoint (640px), 156 x 124 in
+// portrait from it up, and 132 x 108 on a tablet in landscape (>= 900px wide) where the keypad sits beside the prompt. (Until the kiosk
+// redesign they were 112 x 112.) Update these numbers together with that file.
 const VIEWPORTS = [
-  { name: "tablet landscape 1024x768", width: 1024, height: 768, key: 112 },
-  { name: "tablet portrait 768x1024", width: 768, height: 1024, key: 112 },
-  { name: "phone 390x844", width: 390, height: 844, key: 80 },
+  { name: "tablet landscape 1024x768", width: 1024, height: 768, key: { w: 132, h: 108 }, landscape: true },
+  { name: "tablet portrait 768x1024", width: 768, height: 1024, key: { w: 156, h: 124 }, landscape: false },
+  { name: "phone 390x844", width: 390, height: 844, key: { w: 80, h: 80 }, landscape: false },
 ] as const;
 
 interface Measure {
@@ -132,8 +133,8 @@ describe.each(POINTERS)("kiosk under a $name pointer", (pointer) => {
         const key = keys.nth(i);
         const label = (await key.textContent())?.trim();
         const m = await key.evaluate(measure);
-        expect(Math.round(m.w), `key "${label}" width`).toBe(viewport.key);
-        expect(Math.round(m.h), `key "${label}" height (was 44 on a coarse pointer before the fix)`).toBe(viewport.key);
+        expect(Math.round(m.w), `key "${label}" width`).toBe(viewport.key.w);
+        expect(Math.round(m.h), `key "${label}" height (was 44 on a coarse pointer before PR #62)`).toBe(viewport.key.h);
         expect(m.fits, `key "${label}" must contain its label`).toBe(true);
       }
     });
@@ -145,16 +146,21 @@ describe.each(POINTERS)("kiosk under a $name pointer", (pointer) => {
       );
       await openKiosk(page, pointer);
       await submitCode(page);
-      await page.getByRole("heading", { name: "Which class did you attend?" }).waitFor();
+      await page.getByRole("heading", { level: 1, name: "Which class did you attend?" }).waitFor();
       for (const entry of OPEN_CLASSES) {
         const row = page.locator("main button", { hasText: entry.name });
         const m = await row.evaluate(measure);
-        expect(m.h, `picker row "${entry.name}" height`).toBeGreaterThanOrEqual(44);
-        expect(m.fits, `picker row "${entry.name}" must contain its text (clipped at 44px before the fix)`).toBe(true);
+        // The redesign's rows are at least 104px (the kiosk passes a pointer-coarse twin so the shared 44px minimum does not replace it).
+        expect(m.h, `picker row "${entry.name}" keeps its own 104px minimum`).toBeGreaterThanOrEqual(104);
+        expect(m.fits, `picker row "${entry.name}" must contain its text (clipped at 44px before PR #62)`).toBe(true);
       }
       // the wrapped row is genuinely multi-line, so this also proves auto height survives on a coarse pointer
       const long = await page.locator("main button", { hasText: LONG_CLASS }).evaluate(measure);
-      expect(long.h, "the wrapped row is taller than the 44px minimum").toBeGreaterThan(60);
+      expect(long.h, "the wrapped row is taller than the 44px minimum").toBeGreaterThan(104);
+      // the time range never wraps inside itself, however long the class name is: it is one line of text
+      const time = await page.locator("main button", { hasText: LONG_CLASS }).locator(".font-mono").evaluate(measure);
+      expect(time.h, "the time range is a single line").toBeLessThan(40);
+      expect((await page.getByRole("button", { name: "Cancel" }).evaluate(measure)).h, "Cancel is a large target").toBeGreaterThanOrEqual(60);
     });
 
     it('the "Not this class?" control contains its label and is at least 44px', async () => {
@@ -165,9 +171,65 @@ describe.each(POINTERS)("kiosk under a $name pointer", (pointer) => {
       const control = page.getByRole("button", { name: "Not this class?" });
       await control.waitFor();
       const m = await control.evaluate(measure);
-      // auto height = the line (text-lg, 28px) plus py-3 (24px) = 52px; a forced 44px height squeezed the padding
-      expect(m.h, '"Not this class?" keeps its auto height (line + padding), not a forced 44px').toBeGreaterThanOrEqual(52);
-      expect(m.fits, '"Not this class?" must contain its label (clipped at 44px before the fix)').toBe(true);
+      // 60px minimum in the redesign (a pointer-coarse twin keeps it on touch); a forced 44px height squeezed it before PR #62
+      expect(m.h, '"Not this class?" keeps its own 60px minimum, not a forced 44px').toBeGreaterThanOrEqual(60);
+      expect(m.fits, '"Not this class?" must contain its label').toBe(true);
+    });
+
+    it("the keypad screen fits the tablet without scrolling, and its layout follows the orientation", async () => {
+      const page = await openPage(pointer, viewport);
+      await openKiosk(page, pointer);
+      const size = await page.evaluate(() => ({ h: document.documentElement.scrollHeight, w: document.documentElement.scrollWidth, ih: window.innerHeight, iw: window.innerWidth }));
+      expect(size.w, "no horizontal scroll").toBeLessThanOrEqual(size.iw);
+      expect(size.h, "the whole keypad screen fits without vertical scrolling").toBeLessThanOrEqual(size.ih);
+      const prompt = (await page.getByRole("heading", { level: 1 }).boundingBox())!;
+      const pad = (await page.locator("main .grid-cols-3").boundingBox())!;
+      if (viewport.landscape) expect(pad.x, "landscape: the keypad is in its own column beside the prompt").toBeGreaterThanOrEqual(prompt.x + prompt.width - 1);
+      else expect(pad.y, "portrait and phone: the keypad is under the prompt").toBeGreaterThan(prompt.y + prompt.height - 1);
+    });
+
+    it("says how many digits are in for assistive technology as they are pressed", async () => {
+      const page = await openPage(pointer, viewport);
+      await openKiosk(page, pointer);
+      await page.getByText("0 of 4 digits entered").waitFor({ state: "attached" });
+      await page.getByRole("button", { name: "1", exact: true }).click();
+      await page.getByRole("button", { name: "2", exact: true }).click();
+      await page.getByText("2 of 4 digits entered").waitFor({ state: "attached" });
+      expect(await page.getByText("2 of 4 digits entered").getAttribute("aria-live")).toBe("polite");
+    });
+
+    it("the timeout bar drains over the real timeout (6 s for a confirmation, 30 s for the picker) and disappears for reduced motion", async () => {
+      const page = await openPage(pointer, viewport);
+      await page.route("**/api/kiosk/check-in", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(COMPLETE_CHECK_IN) }));
+      await openKiosk(page, pointer);
+      await submitCode(page);
+      const bar = page.getByTestId("kiosk-timeout");
+      await bar.waitFor();
+      expect(await bar.getAttribute("data-timeout-ms")).toBe("6000");
+      expect(await bar.locator("div").evaluate((el) => getComputedStyle(el).animationDuration), "the animation runs for exactly the timeout").toBe("6s");
+      await page.emulateMedia({ reducedMotion: "reduce" });
+      expect(await bar.isVisible(), "no moving bar for people who ask for reduced motion").toBe(false);
+
+      const picker = await openPage(pointer, viewport);
+      await picker.route("**/api/kiosk/check-in", (route) =>
+        route.fulfill({ status: 400, contentType: "application/json", body: JSON.stringify({ ok: false, error: "class_selection_required", openClasses: OPEN_CLASSES }) }),
+      );
+      await openKiosk(picker, pointer);
+      await submitCode(picker);
+      await picker.getByTestId("kiosk-timeout").waitFor();
+      expect(await picker.getByTestId("kiosk-timeout").getAttribute("data-timeout-ms")).toBe("30000");
+      expect(await picker.getByTestId("kiosk-timeout").locator("div").evaluate((el) => getComputedStyle(el).animationDuration)).toBe("30s");
+    });
+
+    it("shows an Offline indicator in the banner while the browser is offline, and removes it when it is back", async () => {
+      const page = await openPage(pointer, viewport);
+      await openKiosk(page, pointer);
+      const chip = page.getByText("Offline", { exact: true });
+      expect(await chip.count()).toBe(0);
+      await page.context().setOffline(true);
+      await chip.waitFor({ state: "visible" });
+      await page.context().setOffline(false);
+      await chip.waitFor({ state: "detached" });
     });
   });
 });

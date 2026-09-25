@@ -37,7 +37,9 @@ const buttonVariants = cva(
       // kiosks). The 44px is a MINIMUM (`min-h-11`, and `min-w-11` for icon sizes so both dimensions reach it), never a forced
       // height/size: a fixed `pointer-coarse:h-11` outranks the unprefixed size a caller passes (the kiosk's h-28 keys, an `h-auto`
       // control around wrapping text), so on a touch tablet it shrank the kiosk keypad to 44px and clipped multi-line controls.
-      // Locked by tests/browser/touch-targets.test.ts (rendered sizes under mouse and coarse pointers).
+      // Locked by tests/browser/touch-targets.test.ts (rendered sizes under mouse and coarse pointers). Note the same specificity
+      // rule applies to a caller's own `min-h-*`: on a coarse pointer this `pointer-coarse:min-h-11` outranks it, so a caller that wants
+      // a LARGER minimum passes a `pointer-coarse:min-h-*` twin (tailwind-merge lets it replace this one), as the kiosk does.
       size: {
         default:
           "h-9 gap-1.5 px-3 pointer-coarse:min-h-11 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2",

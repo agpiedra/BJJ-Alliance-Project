@@ -5,6 +5,7 @@ import { getOrganizationBranding } from "@/lib/branding/get-branding";
 import { BrandingScope } from "@/components/branding/branding-scope";
 import type { KioskContext } from "@/lib/tenant/types";
 import { KioskClient } from "./kiosk-client";
+import { OfflineChip } from "./offline-chip";
 
 // Public, zero-credential tablet surface — spec explicitly calls for NO auth
 // guard here (not `requireStaffSession`, not a `middleware.ts` protected
@@ -66,6 +67,7 @@ export default async function KioskPage({
         alt={branding.displayName}
       >
         <span className="truncate font-medium">{academy.name}</span>
+        <OfflineChip />
       </BrandBanner>
       <KioskClient
         academyId={academy.id}
