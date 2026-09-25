@@ -33,19 +33,23 @@ const buttonVariants = cva(
           "border-destructive bg-bad-soft text-destructive hover:shadow-[inset_0_0_0_1px_var(--destructive)]",
         link: "text-primary underline-offset-4 hover:underline disabled:border-transparent disabled:bg-transparent",
       },
-      // Touch targets: compact on a fine pointer (dense tables), 44px on a coarse one (WCAG 2.2 target size, phones and kiosks).
+      // Touch targets: compact on a fine pointer (dense tables), AT LEAST 44px on a coarse one (WCAG 2.2 target size, phones and
+      // kiosks). The 44px is a MINIMUM (`min-h-11`, and `min-w-11` for icon sizes so both dimensions reach it), never a forced
+      // height/size: a fixed `pointer-coarse:h-11` outranks the unprefixed size a caller passes (the kiosk's h-28 keys, an `h-auto`
+      // control around wrapping text), so on a touch tablet it shrank the kiosk keypad to 44px and clipped multi-line controls.
+      // Locked by tests/browser/touch-targets.test.ts (rendered sizes under mouse and coarse pointers).
       size: {
         default:
-          "h-9 gap-1.5 px-3 pointer-coarse:h-11 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2",
-        xs: "h-7 gap-1 rounded-[min(var(--radius-md),10px)] px-2 text-xs pointer-coarse:h-11 in-data-[slot=button-group]:rounded-lg has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 [&_svg:not([class*='size-'])]:size-3",
-        sm: "h-8 gap-1 rounded-[min(var(--radius-md),12px)] px-2.5 text-[0.8rem] pointer-coarse:h-11 in-data-[slot=button-group]:rounded-lg has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 [&_svg:not([class*='size-'])]:size-3.5",
-        lg: "h-10 gap-1.5 px-3.5 pointer-coarse:h-11 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2",
-        icon: "size-9 pointer-coarse:size-11",
+          "h-9 gap-1.5 px-3 pointer-coarse:min-h-11 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2",
+        xs: "h-7 gap-1 rounded-[min(var(--radius-md),10px)] px-2 text-xs pointer-coarse:min-h-11 in-data-[slot=button-group]:rounded-lg has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 [&_svg:not([class*='size-'])]:size-3",
+        sm: "h-8 gap-1 rounded-[min(var(--radius-md),12px)] px-2.5 text-[0.8rem] pointer-coarse:min-h-11 in-data-[slot=button-group]:rounded-lg has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 [&_svg:not([class*='size-'])]:size-3.5",
+        lg: "h-10 gap-1.5 px-3.5 pointer-coarse:min-h-11 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2",
+        icon: "size-9 pointer-coarse:min-h-11 pointer-coarse:min-w-11",
         "icon-xs":
-          "size-7 rounded-[min(var(--radius-md),10px)] pointer-coarse:size-11 in-data-[slot=button-group]:rounded-lg [&_svg:not([class*='size-'])]:size-3",
+          "size-7 rounded-[min(var(--radius-md),10px)] pointer-coarse:min-h-11 pointer-coarse:min-w-11 in-data-[slot=button-group]:rounded-lg [&_svg:not([class*='size-'])]:size-3",
         "icon-sm":
-          "size-8 rounded-[min(var(--radius-md),12px)] pointer-coarse:size-11 in-data-[slot=button-group]:rounded-lg",
-        "icon-lg": "size-10 pointer-coarse:size-11",
+          "size-8 rounded-[min(var(--radius-md),12px)] pointer-coarse:min-h-11 pointer-coarse:min-w-11 in-data-[slot=button-group]:rounded-lg",
+        "icon-lg": "size-10 pointer-coarse:min-h-11 pointer-coarse:min-w-11",
       },
     },
     defaultVariants: {

@@ -1,3 +1,4 @@
+import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { BrandingScope } from "@/components/branding/branding-scope";
@@ -129,6 +130,36 @@ export default function DevComponentsPage() {
           <Button variant="default">Guardar</Button>
           <Button variant="outline">Actualizar</Button>
           <Button variant="ghost">Cancelar</Button>
+        </div>
+      </section>
+
+      {/* Rendered-browser regression target (tests/browser/touch-targets.test.ts): every size, plus the two cases callers rely on
+          (an explicit larger height, and `h-auto` around wrapping text). On a coarse pointer 44px is a MINIMUM: compact sizes grow
+          to it, larger or auto-height controls keep their own size. */}
+      <section className="flex flex-col gap-2" data-testid="button-sizes">
+        <h2 className="font-heading text-lg font-semibold">Button sizes and the 44px touch minimum</h2>
+        <div className="flex flex-wrap items-center gap-2">
+          {(["xs", "sm", "default", "lg"] as const).map((size) => (
+            <Button key={size} size={size} data-testid={`size-${size}`}>
+              {size}
+            </Button>
+          ))}
+          {(["icon-xs", "icon-sm", "icon", "icon-lg"] as const).map((size) => (
+            <Button key={size} size={size} variant="outline" aria-label={size} data-testid={`size-${size}`}>
+              <X />
+            </Button>
+          ))}
+        </div>
+        <div className="flex flex-wrap items-start gap-2">
+          <Button className="h-20 w-28" data-testid="explicit-large">
+            80px
+          </Button>
+          <Button variant="outline" className="h-auto w-56 justify-between gap-4 px-5 py-5 whitespace-normal" data-testid="auto-height-multiline">
+            <span className="flex flex-col gap-1 text-left">
+              <span>A long class name that has to wrap onto a second line</span>
+              <span className="text-xs font-normal">Gi</span>
+            </span>
+          </Button>
         </div>
       </section>
 

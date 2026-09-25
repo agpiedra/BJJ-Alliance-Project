@@ -69,10 +69,17 @@ describe("Button (MATROOM Phase 1)", () => {
     expect(c).not.toContain("disabled:opacity-50");
   });
 
-  it("every size grows to a 44px touch target on coarse pointers", () => {
-    for (const size of ["default", "sm", "lg", "icon", "icon-sm", "icon-lg"] as const) {
+  // The 44px touch target is a MINIMUM, never a forced size: `pointer-coarse:h-11` outranked a caller's explicit height and shrank the
+  // kiosk keypad to 44px on a touch tablet. This only pins the rule's shape; the rendered sizes under mouse and coarse pointers
+  // (keypad 112x112, multi-line controls contained, compact sizes growing to 44 in both dimensions) are asserted in a real browser by
+  // tests/browser/touch-targets.test.ts.
+  it("every size has a 44px MINIMUM on coarse pointers (icon sizes in both dimensions), not a forced height or size", () => {
+    for (const size of ["default", "xs", "sm", "lg", "icon", "icon-xs", "icon-sm", "icon-lg"] as const) {
       const { unmount } = render(<Button size={size}>x</Button>);
-      expect(classes(screen.getByRole("button")), size).toMatch(/pointer-coarse:(h|size)-11/);
+      const c = classes(screen.getByRole("button"));
+      expect(c, size).toContain("pointer-coarse:min-h-11");
+      if (size.startsWith("icon")) expect(c, size).toContain("pointer-coarse:min-w-11");
+      expect(c, size).not.toMatch(/pointer-coarse:(h|w|size)-11/);
       unmount();
     }
   });

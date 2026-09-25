@@ -89,7 +89,7 @@ The stored colours (`OrganizationBranding.primaryColor`, `sidebarBackground` and
 
 `Button`, `Input`, `Card`, `ProgressToNextGrade`, the sidebar primitives and the staff sidebar.
 
-- **Targets:** compact on a fine pointer (`h-9` default, `h-8` small); 44px (`h-11`) on a coarse pointer for every size. Tailwind `pointer-coarse:`. `globals.css` adds a coarse-pointer base rule so every plain form control (any class string), checkbox (24px, and its label row 44px), and `<summary>` row is 44px too; standalone text links take `pointer-coarse:py-3`. Inline links inside a sentence are exempt (WCAG 2.5.8).
+- **Targets:** compact on a fine pointer (`h-9` default, `h-8` small); **at least** 44px on a coarse pointer for every size, as a minimum (`pointer-coarse:min-h-11`, plus `min-w-11` for icon sizes), never a forced height: a forced `pointer-coarse:h-11` shrank the kiosk keypad and clipped multi-line controls on touch tablets (fixed 2026-09-25; see `verification/phase1/README.md`). Tailwind `pointer-coarse:`. `globals.css` adds a coarse-pointer base rule so every plain form control (any class string), checkbox (24px, and its label row 44px), and `<summary>` row is 44px too; standalone text links take `pointer-coarse:py-3`. Inline links inside a sentence are exempt (WCAG 2.5.8).
 - **Hover:** a hover state never changes the fill/label pair of a filled control (a translucent hover fill took a tenant's orange to 4.3:1 under its label). Filled variants (`primary`, `destructive`, destructive `Badge` links) add a 1px inner ring in the label colour; outline, secondary and ghost change their soft fill, checked at 4.5:1 for the label after hover.
 - **Boundary:** buttons other than ghost and link, and all inputs, have a `--input` border (or the tenant edge above).
 - **Disabled:** shown by fill (`--muted`), text (`--muted-foreground`) and border, not by fading the tenant colour.
@@ -120,7 +120,7 @@ From the approved brief: "Use demo details", "Preview submission", any design co
 
 ## 9. Verification
 
-Each phase records what it verified in its PR: light and dark, default and a tenant, English and Spanish, desktop and phone, in a real browser as a genuinely registered user (not a seeded account), plus the automated checks above. The Phase 1 verification screenshots are in `design/matroom/verification/phase1/`.
+Each phase records what it verified in its PR: light and dark, default and a tenant, English and Spanish, desktop and phone, in a real browser as a genuinely registered user (not a seeded account), plus the automated checks above. Anything that depends on the pointer type or on laid-out size is verified in a rendered browser under both a mouse and a coarse pointer at the target sizes (tablet landscape and portrait for the kiosk), asserting measured sizes and that content fits its control: class-name and minimum-size-only checks are not sufficient (`tests/browser`, `pnpm test:browser`). The Phase 1 verification screenshots are in `design/matroom/verification/phase1/`.
 
 ## 10. Separate findings
 

@@ -1,0 +1,211 @@
+import "dotenv/config";
+import { chromium, type Browser, type BrowserContext, type Page } from "playwright-core";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { SMOKE_BASE_URL } from "../helpers/smoke";
+
+/**
+ * Rendered-browser regression coverage for touch-target sizing (real Chrome, laid-out pixels, not class names).
+ *
+ * The regression this guards: Phase 1 gave the shared Button `pointer-coarse:h-11`, a FIXED 44px height. A variant-prefixed utility
+ * outranks the unprefixed sizes callers pass, so on a touch tablet the kiosk keypad collapsed from 112 x 112 to 112 x 44 (numerals
+ * overflowing their keys) and `h-auto` multi-line controls (class-picker rows, "Not this class?") were clipped at 44px. The rule is
+ * now a minimum (`pointer-coarse:min-h-11`, plus `min-w-11` for icon sizes). Every assertion below is on measured boxes:
+ *   - the keypad keys have their explicit size (both dimensions) under BOTH pointers,
+ *   - multi-line / auto-height controls are at least 44px and CONTAIN their text (every text line box lies inside the control),
+ *   - compact shared sizes still grow to 44 on a coarse pointer (both dimensions for icon buttons) and stay compact with a mouse.
+ * The emulation is asserted, not assumed: each page confirms `pointer: coarse` matches the requested pointer.
+ *
+ * Runs against a running `pnpm dev` (SMOKE_BASE_URL, localhost only) like tests/smoke. Kiosk API replies are mocked at the network
+ * layer (nothing is written): the real client component renders the picker and success screens from them.
+ */
+const POINTERS = [
+  { name: "mouse", coarse: false },
+  { name: "coarse (touch)", coarse: true },
+] as const;
+
+// Sizes of the kiosk keys are explicit in kiosk-client.tsx (DIGIT_BUTTON_CLASS / ACTION_BUTTON_CLASS): h-20 w-20 below the `sm`
+// breakpoint (640px), h-28 w-28 (112px) from it up. Update these numbers together with that file.
+const VIEWPORTS = [
+  { name: "tablet landscape 1024x768", width: 1024, height: 768, key: 112 },
+  { name: "tablet portrait 768x1024", width: 768, height: 1024, key: 112 },
+  { name: "phone 390x844", width: 390, height: 844, key: 80 },
+] as const;
+
+interface Measure {
+  w: number;
+  h: number;
+  /** every text line box lies inside the element's own box (1px tolerance): nothing overflows or is clipped */
+  fits: boolean;
+}
+
+const measure = new Function(
+  "el",
+  `const r = el.getBoundingClientRect();
+   let fits = true;
+   const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+   for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+     if (!n.nodeValue || !n.nodeValue.trim()) continue;
+     const range = document.createRange();
+     range.selectNodeContents(n);
+     for (const t of range.getClientRects()) {
+       if (t.top < r.top - 1 || t.bottom > r.bottom + 1 || t.left < r.left - 1 || t.right > r.right + 1) fits = false;
+     }
+   }
+   return { w: r.width, h: r.height, fits };`,
+) as (el: Element) => Measure;
+
+const COMPLETE_CHECK_IN = {
+  ok: true,
+  student: {
+    firstName: "Ana",
+    lastName: "Sample",
+    currentBelt: "WHITE",
+    currentBeltVisual: { primaryColor: "#F0EBE0", centerStripeColor: null, barColor: "#111116", stripeColors: ["#FFFFFF"], maxStripes: 4, visibleStripeSlots: 4 },
+    currentBeltLabelEs: "Blanco",
+    currentBeltLabelEn: "White",
+    currentStripes: 1,
+  },
+  summary: { atBeltCount: 20, remainingAttendance: 10, isEligible: false, nextTarget: "STRIPE", mode: "ATTENDANCE", target: 30, percent: 66.7, timeAnchorMissing: false, notConfigured: false, reachedOn: null },
+  thresholdReached: false,
+  progressOutcome: "counted",
+  isVisitor: false,
+  homeAcademyName: "Sample Academy",
+  attendanceRecordId: "rec-1",
+  canCorrect: true,
+  matchedClass: { id: "c1", name: "Advanced", dayOfWeek: "TUESDAY", startTime: "18:00" },
+};
+
+// A name long enough to wrap to several lines at every width used here.
+const LONG_CLASS = "Advanced Fundamentals Gi Class for Every Belt Level";
+const OPEN_CLASSES = [
+  { id: "c1", name: LONG_CLASS, startTime: "18:00", endTime: "19:15", type: "GI" },
+  { id: "c2", name: "Open Mat", startTime: "18:00", endTime: "19:00", type: "OPEN_MAT" },
+];
+
+let browser: Browser;
+let kioskSlug: string;
+const contexts: BrowserContext[] = [];
+
+async function openPage(pointer: (typeof POINTERS)[number], viewport: { width: number; height: number }): Promise<Page> {
+  const context = await browser.newContext({ viewport: { width: viewport.width, height: viewport.height }, hasTouch: pointer.coarse, isMobile: false });
+  contexts.push(context);
+  return context.newPage();
+}
+
+async function assertPointer(page: Page, pointer: (typeof POINTERS)[number]) {
+  const coarse = await page.evaluate(() => window.matchMedia("(pointer: coarse)").matches);
+  expect(coarse, `the ${pointer.name} emulation must actually set (pointer: coarse) = ${pointer.coarse}`).toBe(pointer.coarse);
+}
+
+async function openKiosk(page: Page, pointer: (typeof POINTERS)[number]) {
+  await page.goto(`${SMOKE_BASE_URL}/en/kiosk/${kioskSlug}`, { waitUntil: "networkidle" });
+  await page.getByRole("button", { name: "1", exact: true }).waitFor();
+  await assertPointer(page, pointer);
+}
+
+async function submitCode(page: Page) {
+  for (const digit of "1234") await page.getByRole("button", { name: digit, exact: true }).click();
+  await page.waitForFunction(() => [...document.querySelectorAll("button")].some((b) => b.textContent?.trim() === "Enter" && !b.disabled), null, { timeout: 15_000 });
+  await page.getByRole("button", { name: "Enter", exact: true }).click();
+}
+
+beforeAll(async () => {
+  browser = await chromium.launch({ channel: "chrome", executablePath: process.env.BROWSER_EXECUTABLE_PATH || undefined, headless: true });
+  // The public kiosk page renders its keypad for any active academy (the token is only checked by the API, which is mocked below).
+  // `escazu` is a deterministic seed academy (prisma/seed.ts); KIOSK_TEST_ACADEMY_SLUG points the suite at another one.
+  kioskSlug = process.env.KIOSK_TEST_ACADEMY_SLUG || "escazu";
+});
+
+afterAll(async () => {
+  for (const context of contexts) await context.close();
+  await browser?.close();
+});
+
+describe.each(POINTERS)("kiosk under a $name pointer", (pointer) => {
+  describe.each(VIEWPORTS)("$name", (viewport) => {
+    it("keypad digits and Clear / Enter keep their explicit size in both dimensions and contain their label", async () => {
+      const page = await openPage(pointer, viewport);
+      await openKiosk(page, pointer);
+      const keys = page.locator("main .grid-cols-3 button");
+      expect(await keys.count()).toBe(12);
+      for (let i = 0; i < 12; i++) {
+        const key = keys.nth(i);
+        const label = (await key.textContent())?.trim();
+        const m = await key.evaluate(measure);
+        expect(Math.round(m.w), `key "${label}" width`).toBe(viewport.key);
+        expect(Math.round(m.h), `key "${label}" height (was 44 on a coarse pointer before the fix)`).toBe(viewport.key);
+        expect(m.fits, `key "${label}" must contain its label`).toBe(true);
+      }
+    });
+
+    it("class-picker rows with wrapping text are at least 44px and contain their content", async () => {
+      const page = await openPage(pointer, viewport);
+      await page.route("**/api/kiosk/check-in", (route) =>
+        route.fulfill({ status: 400, contentType: "application/json", body: JSON.stringify({ ok: false, error: "class_selection_required", openClasses: OPEN_CLASSES }) }),
+      );
+      await openKiosk(page, pointer);
+      await submitCode(page);
+      await page.getByRole("heading", { name: "Which class did you attend?" }).waitFor();
+      for (const entry of OPEN_CLASSES) {
+        const row = page.locator("main button", { hasText: entry.name });
+        const m = await row.evaluate(measure);
+        expect(m.h, `picker row "${entry.name}" height`).toBeGreaterThanOrEqual(44);
+        expect(m.fits, `picker row "${entry.name}" must contain its text (clipped at 44px before the fix)`).toBe(true);
+      }
+      // the wrapped row is genuinely multi-line, so this also proves auto height survives on a coarse pointer
+      const long = await page.locator("main button", { hasText: LONG_CLASS }).evaluate(measure);
+      expect(long.h, "the wrapped row is taller than the 44px minimum").toBeGreaterThan(60);
+    });
+
+    it('the "Not this class?" control contains its label and is at least 44px', async () => {
+      const page = await openPage(pointer, viewport);
+      await page.route("**/api/kiosk/check-in", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(COMPLETE_CHECK_IN) }));
+      await openKiosk(page, pointer);
+      await submitCode(page);
+      const control = page.getByRole("button", { name: "Not this class?" });
+      await control.waitFor();
+      const m = await control.evaluate(measure);
+      // auto height = the line (text-lg, 28px) plus py-3 (24px) = 52px; a forced 44px height squeezed the padding
+      expect(m.h, '"Not this class?" keeps its auto height (line + padding), not a forced 44px').toBeGreaterThanOrEqual(52);
+      expect(m.fits, '"Not this class?" must contain its label (clipped at 44px before the fix)').toBe(true);
+    });
+  });
+});
+
+describe.each(POINTERS)("shared Button sizes under a $name pointer", (pointer) => {
+  describe.each(VIEWPORTS.slice(0, 2))("$name", (viewport) => {
+    const compact = { xs: 28, sm: 32, default: 36, lg: 40, "icon-xs": 28, "icon-sm": 32, icon: 36, "icon-lg": 40 } as const;
+
+    it("compact sizes stay compact with a mouse and grow to 44 (both dimensions for icon buttons) with a coarse pointer", async () => {
+      const page = await openPage(pointer, viewport);
+      await page.goto(`${SMOKE_BASE_URL}/en/dev/components`, { waitUntil: "networkidle" });
+      await page.getByTestId("button-sizes").waitFor();
+      await assertPointer(page, pointer);
+      for (const [size, fine] of Object.entries(compact)) {
+        const m = await page.getByTestId(`size-${size}`).evaluate(measure);
+        const isIcon = size.startsWith("icon");
+        if (pointer.coarse) {
+          expect(Math.round(m.h), `${size} height`).toBe(44);
+          if (isIcon) expect(Math.round(m.w), `${size} width`).toBe(44);
+        } else {
+          expect(Math.round(m.h), `${size} height`).toBe(fine);
+          if (isIcon) expect(Math.round(m.w), `${size} width`).toBe(fine);
+        }
+        expect(m.fits, `${size} must contain its content`).toBe(true);
+      }
+    });
+
+    it("an explicit larger size and an auto-height multi-line control keep their own size on both pointers", async () => {
+      const page = await openPage(pointer, viewport);
+      await page.goto(`${SMOKE_BASE_URL}/en/dev/components`, { waitUntil: "networkidle" });
+      await page.getByTestId("button-sizes").waitFor();
+      await assertPointer(page, pointer);
+      const large = await page.getByTestId("explicit-large").evaluate(measure);
+      expect(Math.round(large.h), "h-20 button height").toBe(80);
+      expect(Math.round(large.w), "w-28 button width").toBe(112);
+      const multi = await page.getByTestId("auto-height-multiline").evaluate(measure);
+      expect(multi.h, "auto-height multi-line control height").toBeGreaterThan(60);
+      expect(multi.fits, "auto-height multi-line control must contain its text").toBe(true);
+    });
+  });
+});
