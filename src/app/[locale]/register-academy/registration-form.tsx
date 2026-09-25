@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useState, useTransition } from "react";
+import { useActionState, useRef, useState, useTransition } from "react";
 import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { isCheckableSlug, slugFeedback, slugify, type SlugCheck } from "@/lib/organizations/slug";
@@ -21,11 +21,17 @@ export function RegistrationForm() {
   const [isCheckingSlug, startSlugCheck] = useTransition();
   const feedback = slugFeedback(slug, checked, isCheckingSlug);
 
+  // Only the newest request may write `checked`: a superseded response (slower, earlier, or for a slug the person has since
+  // returned to) is dropped, and starting any request drops the current result, so it never stands in for the new check.
+  const latestRequest = useRef(0);
+
   function checkSlug(candidate: string) {
+    const request = ++latestRequest.current;
+    setChecked(null);
     if (!isCheckableSlug(candidate)) return;
     startSlugCheck(async () => {
       const result = await checkSlugAvailability(candidate);
-      setChecked({ slug: candidate, available: result.available });
+      if (request === latestRequest.current) setChecked({ slug: candidate, available: result.available });
     });
   }
 

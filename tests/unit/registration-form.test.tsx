@@ -37,8 +37,8 @@ function mount(locale: "en" | "es") {
     name, slug,
     typeName: (v: string) => act(async () => { fireEvent.change(name, { target: { value: v } }); }),
     typeSlug: (v: string) => act(async () => { fireEvent.change(slug, { target: { value: v } }); }),
-    /** Deliver the answer to the oldest still-unanswered check for `slugValue`. */
-    answer: (slugValue: string, available: boolean) => act(async () => { const i = pending.findIndex((p) => p.slug === slugValue); pending.splice(i, 1)[0].answer(available); }),
+    /** Deliver the answer to the `nth` (0 = oldest) still-unanswered check for `slugValue`. */
+    answer: (slugValue: string, available: boolean, nth = 0) => act(async () => { const i = pending.map((p, at) => (p.slug === slugValue ? at : -1)).filter((at) => at >= 0)[nth]; pending.splice(i, 1)[0].answer(available); }),
     feedback: () => (screen.queryByText(copy.checking) ? "checking" : screen.queryByText(copy.available) ? "available" : screen.queryByText(copy.taken) ? "taken" : "none"),
   };
 }
@@ -95,6 +95,56 @@ describe.each(["en", "es"] as const)("registration form slug feedback (%s)", (lo
     expect(f.feedback()).toBe("checking"); // still waiting for the current slug's own answer, not "taken"
     await f.answer("harbor-zzz-free", true);
     expect(f.feedback()).toBe("available");
+  });
+
+  it("request A then B, B answered first: A's late answer does not overwrite B's result", async () => {
+    const f = mount(locale);
+    await f.typeSlug("harbor-aaa");
+    await f.typeSlug("harbor-bbb");
+    await f.answer("harbor-bbb", true);
+    expect(f.feedback()).toBe("available");
+    await f.answer("harbor-aaa", false); // superseded response arrives last
+    expect(f.feedback()).toBe("available");
+    // and the other polarity: B taken must not be flipped by A's "available"
+    await f.typeSlug("harbor-ccc");
+    await f.typeSlug("harbor-ddd");
+    await f.answer("harbor-ddd", false);
+    await f.answer("harbor-ccc", true);
+    expect(f.feedback()).toBe("taken");
+  });
+
+  it("A, edit to B, back to A: only the latest of the two A requests governs (either arrival order)", async () => {
+    const f = mount(locale);
+    await f.typeSlug("harbor-aaa"); // A#1
+    await f.typeSlug("harbor-bbb");
+    await f.typeSlug("harbor-aaa"); // A#2, the latest
+    await f.answer("harbor-aaa", true, 0); // A#1 (earlier) says available
+    expect(f.feedback()).toBe("checking"); // the earlier A result must not stand in for the new check
+    await f.answer("harbor-bbb", true);
+    expect(f.feedback()).toBe("checking");
+    await f.answer("harbor-aaa", false, 0); // A#2 says taken
+    expect(f.feedback()).toBe("taken");
+
+    // reverse arrival: the latest answers first, the superseded one later
+    await f.typeSlug("harbor-eee"); // E#1
+    await f.typeSlug("harbor-fff");
+    await f.typeSlug("harbor-eee"); // E#2
+    await f.answer("harbor-eee", false, 1); // E#2 (latest) says taken
+    expect(f.feedback()).toBe("taken");
+    await f.answer("harbor-eee", true, 0); // E#1 (superseded) arrives late
+    expect(f.feedback()).toBe("taken");
+  });
+
+  it("re-requesting the slug already on screen invalidates its result until the new answer arrives", async () => {
+    const f = mount(locale);
+    await f.typeName("Harbor");
+    await f.answer("harbor", true);
+    expect(f.feedback()).toBe("available");
+    await f.typeName("Harbor!"); // a different name, the same slug: a new check starts
+    expect(f.slug.value).toBe("harbor");
+    expect(f.feedback()).toBe("checking");
+    await f.answer("harbor", false);
+    expect(f.feedback()).toBe("taken");
   });
 
   it("hand-editing the slug down to one character or to nothing clears the feedback too", async () => {
