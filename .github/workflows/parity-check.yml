@@ -120,6 +120,13 @@ jobs:
       - name: Smoke tests — every page route through a real running server (non-5xx)
         run: pnpm test:smoke
 
+      # Real Chrome (preinstalled on the runner; no browser download) against the same running dev server: laid-out sizes under a
+      # mouse and a coarse (touch) pointer. Guards the kiosk keypad and multi-line controls on a touch tablet.
+      - name: Browser tests — kiosk and shared control sizes under mouse and coarse pointers
+        env:
+          BROWSER_EXECUTABLE_PATH: /usr/bin/google-chrome
+        run: pnpm test:browser
+
       - name: Stop the dev server
         if: always()
         run: kill "$(cat /tmp/dev-server.pid)" 2>/dev/null || true
