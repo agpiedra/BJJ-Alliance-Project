@@ -18,9 +18,20 @@ export function ProgressToNextGrade({ current, target, className }: ProgressToNe
 
   return (
     <div className={cn("flex items-center gap-2", className)}>
-      <div className="h-[5px] flex-1 overflow-hidden rounded-full bg-muted">
+      {/* MATROOM Phase 1: a real progressbar (value and range for assistive technology), a track edged with the >= 3:1
+          control-boundary token, and a fill in the data colour (>= 3:1 on the track). Near completion the fill takes the
+          tenant's colour through --brand-data, which BrandingScope lightness-adjusts to 3:1 per theme (the stored colour
+          is never changed). The "20 / 60" text beside it stays the exact value. */}
+      <div
+        role="progressbar"
+        aria-valuemin={0}
+        aria-valuemax={target}
+        aria-valuenow={Math.min(current, target)}
+        className="h-2 flex-1 overflow-hidden rounded-full border border-input bg-data-track"
+      >
         <div
-          className={cn("h-full rounded-full", nearComplete ? "bg-brand-gold" : "bg-foreground/40")}
+          data-fill
+          className={cn("h-full rounded-full", nearComplete ? "bg-brand-data" : "bg-data")}
           style={{ width: `${pct}%` }}
         />
       </div>

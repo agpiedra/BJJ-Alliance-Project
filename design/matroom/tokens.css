@@ -1,0 +1,151 @@
+/*
+ * MATROOM design tokens: the single source of the app's colour, radius and default-brand values.
+ * Authority: design/matroom/DESIGN.md. Imported by src/app/globals.css; asserted by tests/unit/design-tokens.test.ts
+ * (every text, boundary, status and focus pair below is measured against the surface it actually sits on).
+ *
+ * Names are the app's existing shadcn variable layer (--background, --card, --primary, ...), so every component
+ * already reading them picks the new palette up without a rename. Three families are deliberately NOT themable by a
+ * tenant (see DESIGN.md "Tenant branding"): the neutrals, the status colours and the chart colour (--data).
+ * A tenant's stored colours reach the UI only through BrandingScope, which overrides --brand-gold*, --sidebar* and
+ * the three presentation tokens declared here (--action-edge, --brand-data, --sidebar-muted).
+ *
+ * Palette: forest on ivory. Starting point was the approved landing values; --input (the control boundary, WCAG 1.4.11
+ * 3:1), the status set, the sidebar set and --data are new for the app. Light and dark are both first-class.
+ */
+
+:root {
+  /* Neutrals */
+  --background: #f5f3ec; /* ground */
+  --foreground: #1d392b; /* ink */
+  --card: #fffefa; /* paper */
+  --card-foreground: #1d392b;
+  --popover: #fffefa;
+  --popover-foreground: #1d392b;
+  --primary: #254b35; /* brand */
+  --primary-foreground: #fffefa;
+  --secondary: #e6ebdd; /* soft */
+  --secondary-foreground: #1d392b;
+  --muted: #e6ebdd;
+  --muted-foreground: #59675d;
+  --accent: #e6ebdd;
+  --accent-foreground: #1d392b;
+  --destructive: #87271d;
+  --border: #d8ded3; /* hairline: decorative dividers only, never a control boundary */
+  --input: #738b79; /* control boundary: >= 3:1 on ground, card and soft fill */
+  --ring: #1d392b; /* focus ring */
+  --chart-1: oklch(0.87 0 0);
+  --chart-2: oklch(0.556 0 0);
+  --chart-3: oklch(0.439 0 0);
+  --chart-4: oklch(0.371 0 0);
+  --chart-5: oklch(0.269 0 0);
+  /* 9px cards and popovers, ~5px controls (--radius-sm), pills via rounded-4xl */
+  --radius: 0.5625rem;
+
+  /* Default action colour. Named --brand-gold for history: it is the one knob a tenant's primaryColor overrides
+     (BrandingScope). With no tenant in scope (sign-in, registration, platform pages) it is MATROOM forest. */
+  --brand-gold: #254b35;
+  --brand-gold-foreground: #fffefa;
+  /* Presentation-only accessibility adjustments; a tenant's stored colours are never rewritten. */
+  --action-edge: transparent; /* a tenant button whose fill is under 3:1 against the surface gets a 1px --input edge */
+  --brand-data: var(--brand-gold); /* the tenant colour where it colours data (progress near completion), lightness-adjusted to 3:1 */
+
+  /* Sidebar and banner surface (paper, with a soft active fill and a 3px marker) */
+  --sidebar: #fffefa;
+  --sidebar-foreground: #1d392b;
+  --sidebar-primary: #e6ebdd; /* ACTIVE item background (BrandingScope maps a tenant's active colour here) */
+  --sidebar-primary-foreground: #1d392b;
+  --sidebar-accent: #ecede7; /* HOVER background */
+  --sidebar-accent-foreground: #1d392b;
+  --sidebar-border: #d8ded3;
+  --sidebar-ring: #1d392b;
+  --sidebar-muted: color-mix(in srgb, var(--sidebar-foreground) 74%, var(--sidebar)); /* group labels and footers */
+
+  /* Status: text >= 4.5:1 on ground, card and its own soft fill; border >= 3:1 on card */
+  --ok: #247a52;
+  --ok-soft: #e4f1eb;
+  --ok-line: #2c9a67;
+  --warn: #92610c;
+  --warn-soft: #f4ede1;
+  --warn-line: #ba7b0f;
+  --bad: #87271d;
+  --bad-soft: #f2e5e3;
+  --bad-line: #d23d2d;
+
+  /* Belt-progression palette: solid blocks, shared by BeltBar/BeltGraphic across both themes except belt-white. */
+  --belt-white: oklch(0.94 0.015 85);
+  --belt-blue: oklch(0.48 0.13 255);
+  --belt-purple: oklch(0.43 0.16 305);
+  --belt-brown: oklch(0.4 0.07 55);
+  --belt-black: oklch(0.18 0.01 285);
+
+  /* Class-modality palette: identical in both themes (solid blocks with white text). */
+  --class-gi: oklch(0.48 0.13 255);
+  --class-nogi: oklch(0.48 0.09 180);
+  --class-comp: oklch(0.52 0.14 35);
+  --class-strike: oklch(0.43 0.16 305);
+  --class-kids: oklch(0.47 0.09 75);
+  --class-open: oklch(0.45 0.03 265);
+
+  /* Chart colour: deliberately NOT overridable by BrandingScope. A director's brand colour belongs in chrome, never in
+     what a chart measures (a pale brand colour once made a chart's own data invisible). >= 3:1 on card, ground and track. */
+  --data: #254b35;
+  --data-muted: #738b79;
+  --data-track: #e6ebdd;
+}
+
+.dark {
+  --background: #141d19;
+  --foreground: #eff1e9;
+  --card: #202c25;
+  --card-foreground: #eff1e9;
+  --popover: #202c25;
+  --popover-foreground: #eff1e9;
+  --primary: #c9dfb4;
+  --primary-foreground: #182a1e;
+  --secondary: #2b3e30;
+  --secondary-foreground: #eff1e9;
+  --muted: #2b3e30;
+  --muted-foreground: #b4c1b7;
+  --accent: #2b3e30;
+  --accent-foreground: #eff1e9;
+  --destructive: #e48b81;
+  --border: #3c4e40;
+  --input: #6d8a76;
+  --ring: #eff1e9;
+  --chart-1: oklch(0.87 0 0);
+  --chart-2: oklch(0.556 0 0);
+  --chart-3: oklch(0.439 0 0);
+  --chart-4: oklch(0.371 0 0);
+  --chart-5: oklch(0.269 0 0);
+
+  --brand-gold: #c9dfb4;
+  --brand-gold-foreground: #182a1e;
+  --action-edge: transparent;
+  --brand-data: var(--brand-gold);
+
+  --sidebar: #202c25;
+  --sidebar-foreground: #eff1e9;
+  --sidebar-primary: #2b3e30;
+  --sidebar-primary-foreground: #eff1e9;
+  --sidebar-accent: #333e37;
+  --sidebar-accent-foreground: #eff1e9;
+  --sidebar-border: #3c4e40;
+  --sidebar-ring: #eff1e9;
+  --sidebar-muted: color-mix(in srgb, var(--sidebar-foreground) 74%, var(--sidebar));
+
+  --ok: #88ddb5;
+  --ok-soft: #264034;
+  --ok-line: #39c684;
+  --warn: #f4c471;
+  --warn-soft: #47381f;
+  --warn-line: #ec9c13;
+  --bad: #e48b81;
+  --bad-soft: #422724;
+  --bad-line: #d44535;
+
+  --belt-white: oklch(0.97 0.015 85);
+
+  --data: #c9dfb4;
+  --data-muted: #6d8a76;
+  --data-track: #2b3e30;
+}

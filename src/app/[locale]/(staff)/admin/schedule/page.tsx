@@ -147,7 +147,7 @@ export default async function AdminSchedulePage({
             <div
               role="group"
               aria-label={tCal("viewLabel")}
-              className="inline-flex overflow-hidden rounded-lg border border-border"
+              className="inline-flex overflow-hidden rounded-lg border border-input"
             >
               {viewLinks.map((link, index) => (
                 <a
@@ -156,7 +156,7 @@ export default async function AdminSchedulePage({
                   aria-pressed={view === link.key}
                   className={cn(
                     "px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground aria-pressed:bg-brand-gold aria-pressed:font-semibold aria-pressed:text-brand-gold-foreground",
-                    index > 0 && "border-l border-border",
+                    index > 0 && "border-l border-input",
                   )}
                 >
                   {link.label}

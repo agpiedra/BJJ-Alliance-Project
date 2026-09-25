@@ -1,6 +1,8 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
+/* Colours, radius and the default brand live in the design authority (design/matroom/DESIGN.md); this file maps them to Tailwind. */
+@import "../../design/matroom/tokens.css";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -9,7 +11,11 @@
   --color-foreground: var(--foreground);
   --font-sans: var(--font-sans);
   --font-mono: var(--font-mono);
-  --font-heading: var(--font-heading);
+  /* One family for the app (IBM Plex Sans): headings are semibold Plex, not a second face. */
+  --font-heading: var(--font-sans);
+  /* Editorial serif for Persuade surfaces only (landing, registration, platform sign-in). A system stack, not a vendored
+     font: Georgia on Windows/macOS/iOS, another serif elsewhere. Android fallback is verified before the landing page ships. */
+  --font-display: Georgia, "Times New Roman", serif;
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -40,6 +46,10 @@
   --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
   --color-brand-gold-foreground: var(--brand-gold-foreground);
+  --color-action-edge: var(--action-edge);
+  --color-brand-data: var(--brand-data);
+  --color-sidebar-muted: var(--sidebar-muted);
+  --color-data-track: var(--data-track);
   --color-brand-gold: var(--brand-gold);
   --color-ok: var(--ok);
   --color-ok-soft: var(--ok-soft);
@@ -72,177 +82,6 @@
   --radius-4xl: calc(var(--radius) * 2.6);
 }
 
-:root {
-  /* Alliance brand: clean off-white surfaces, true near-black ink, gold reserved
-     for the sanctioned accent tokens below (--brand-gold*) — never generic
-     component tokens like --primary/--accent. Neutrals carry a small warm
-     chroma toward hue 85 (REDESIGN_BRIEF.md Phase 1.1) so surfaces read as
-     chosen, not default grey. Contrast re-verified after the warm-neutral
-     pass (scripts are throwaway, ratios recorded here):
-     foreground/background ~= 18.7:1, foreground/card ~= 19.4:1,
-     muted-foreground/background ~= 4.6:1. */
-  --background: oklch(0.985 0.004 85);
-  --foreground: oklch(0.16 0.008 85);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.16 0.008 85);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.16 0.008 85);
-  --primary: oklch(0.16 0.008 85);
-  --primary-foreground: oklch(0.985 0.004 85);
-  --secondary: oklch(0.968 0.005 85);
-  --secondary-foreground: oklch(0.16 0.008 85);
-  --muted: oklch(0.968 0.005 85);
-  --muted-foreground: oklch(0.55 0.012 85);
-  --accent: oklch(0.968 0.005 85);
-  --accent-foreground: oklch(0.16 0.008 85);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.918 0.006 85);
-  --input: oklch(0.918 0.006 85);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --radius: 0.625rem;
-  /* Dedicated gold accent — sanctioned uses only: sidebar active-nav highlight,
-     banner accents, home page stat highlights, and (REDESIGN_BRIEF.md Phase 3
-     ruling) primary CTA buttons (Button's "primary" variant) — the mock
-     consistently renders primary actions (Inscribir alumno, Guardar pago,
-     Graduar) in solid gold. Never --primary/--accent themselves.
-     gold-foreground-on-gold contrast ~= 11.21:1 (verified, unaffected by the
-     warm-neutral pass — gold's own oklch values are untouched). */
-  --brand-gold: oklch(0.82 0.17 85);
-  --brand-gold-foreground: oklch(0.145 0 0);
-  /* Sidebar shell reads as a distinct near-black panel against the off-white
-     main content area (Task 2). sidebar-foreground-on-sidebar ~= 17.16:1. */
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: var(--brand-gold);
-  --sidebar-primary-foreground: var(--brand-gold-foreground);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
-
-  /* Semantic status colors (REDESIGN_BRIEF.md Phase 1.2). Distinct from
-     --brand-gold: gold means brand/"needs attention, eligible"; these three
-     mean pass/caution/fail and must never be swapped for gold.
-     Ruling: the brief's literal --ok/--warn lightness values (0.52/0.58)
-     measured at 4.43:1 and 3.76:1 against their own -soft fill — below
-     WCAG AA's 4.5:1 for small text (warn was also 4.17:1 directly on
-     --background). Darkened both (same hue/chroma) until they cleared AA
-     with margin: ok/ok-soft 5.72:1, ok/background 6.47:1, warn/warn-soft
-     5.27:1, warn/background 5.85:1. --bad was already compliant (4.67:1 /
-     5.48:1) and is unchanged. */
-  --ok: oklch(0.46 0.11 155);
-  --ok-soft: oklch(0.94 0.03 155);
-  --ok-line: oklch(0.85 0.06 155);
-  --warn: oklch(0.5 0.1 75);
-  --warn-soft: oklch(0.95 0.05 85);
-  --warn-line: oklch(0.86 0.08 85);
-  --bad: oklch(0.53 0.16 28);
-  --bad-soft: oklch(0.94 0.04 28);
-  --bad-line: oklch(0.85 0.07 28);
-
-  /* Belt-progression palette — solid blocks, white/near-black text on top,
-     shared by BeltBar/BeltGraphic across both themes except belt-white. */
-  --belt-white: oklch(0.94 0.015 85);
-  --belt-blue: oklch(0.48 0.13 255);
-  --belt-purple: oklch(0.43 0.16 305);
-  --belt-brown: oklch(0.4 0.07 55);
-  --belt-black: oklch(0.18 0.01 285);
-
-  /* Class-modality palette — identical in both themes (solid blocks with
-     white text already meet contrast; see Phase 1.2). */
-  --class-gi: oklch(0.48 0.13 255);
-  --class-nogi: oklch(0.48 0.09 180);
-  --class-comp: oklch(0.52 0.14 35);
-  --class-strike: oklch(0.43 0.16 305);
-  --class-kids: oklch(0.47 0.09 75);
-  --class-open: oklch(0.45 0.03 265);
-  /* Fixed data-visualization color, deliberately NOT overridable by
-     BrandingScope (unlike --brand-gold, which is — see that component's own
-     comment: `--brand-gold: ${branding.primary.background}`). A director's
-     chosen brand color belongs in chrome (buttons, banners, the sidebar),
-     never in what a chart measures — a pale brand color would otherwise
-     make a chart's own data invisible against --card, which is exactly what
-     happened, live, via --brand-gold on WeeklyAttendanceChart and BarList's
-     own default before this fix. Blue (hue 255, matching this codebase's
-     existing --class-gi) is as far from gold's hue (85) as two hues get, so
-     it can never visually merge with the sanctioned gold-accent chrome.
-     Measured via real oklch->sRGB->WCAG-relative-luminance conversion, not
-     eyeballed (WCAG 1.4.11, non-text graphical objects, >= 3:1):
-     --data vs --card (white) = 7.20:1. --data-muted vs --card = 3.64:1. */
-  --data: oklch(0.46 0.14 255);
-  --data-muted: oklch(0.62 0.09 255);
-}
-
-.dark {
-  /* Same warm-neutral bias as :root (Phase 1.1), applied to dark's own
-     lightness values — the brief gives an explicit table for :root only and
-     says "mirror the same treatment" for .dark, so this ruling keeps each
-     token's existing L and adds the same small hue-85 chroma magnitude used
-     on its light counterpart. --border/--input are white-with-alpha
-     overlays, not solid greys — they already pick up warmth from the
-     (now-warmed) surface underneath, so they're left alone rather than
-     warmed a second time. */
-  --background: oklch(0.145 0.006 85);
-  --foreground: oklch(0.985 0.004 85);
-  --card: oklch(0.205 0.006 85);
-  --card-foreground: oklch(0.985 0.004 85);
-  --popover: oklch(0.205 0.006 85);
-  --popover-foreground: oklch(0.985 0.004 85);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0.006 85);
-  --secondary: oklch(0.269 0.006 85);
-  --secondary-foreground: oklch(0.985 0.004 85);
-  --muted: oklch(0.269 0.006 85);
-  --muted-foreground: oklch(0.708 0.01 85);
-  --accent: oklch(0.269 0.006 85);
-  --accent-foreground: oklch(0.985 0.004 85);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  /* Gold does not invert between themes. */
-  --brand-gold: oklch(0.82 0.17 85);
-  --brand-gold-foreground: oklch(0.145 0 0);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: var(--brand-gold);
-  --sidebar-primary-foreground: var(--brand-gold-foreground);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
-
-  /* Chosen for dark, not auto-inverted from :root's values — a lighter blue
-     is needed against a near-black --card here, a completely different L
-     than the light-theme pair above. Same hue (255), same non-brandable
-     guarantee. Measured: --data vs --card (dark, oklch(0.205 0.006 85)) =
-     6.21:1. --data-muted vs --card (dark) = 3.69:1. */
-  --data: oklch(0.68 0.13 255);
-  --data-muted: oklch(0.55 0.1 255);
-
-  /* Only the semantic trio + belt-white lighten for dark (Phase 1.2); the
-     -soft/-line variants and every class-* color are intentionally absent
-     here and fall through to :root's values unchanged via normal CSS custom
-     property inheritance. Trio values shifted down from the brief's
-     suggestion by the same delta applied to their :root counterparts above
-     (ok/warn darkened for AA, bad unchanged) — verified 7.77:1 / 7.31:1 /
-     8.17:1 against --background. */
-  --ok: oklch(0.7 0.11 155);
-  --warn: oklch(0.7 0.1 75);
-  --bad: oklch(0.75 0.16 28);
-  --belt-white: oklch(0.97 0.015 85);
-}
-
 @layer base {
   * {
     @apply border-border outline-ring/50;
@@ -258,13 +97,32 @@
     font-size: 1.9375rem; /* ~31px, Phase 1.3 */
     text-wrap: balance;
   }
-  /* Phase 3: "outline: 2px solid var(--accent); outline-offset: 2px on every
-     interactive element" — brand-gold, same convention as the sidebar/Button
-     gold rulings. Layers alongside (doesn't replace) individual components'
-     own focus-visible ring utilities. */
+  /* Focus: a 2px ink outline with a 2px offset on every interactive element (--ring is 3:1 or better on ground, card and
+     soft fill in both themes). It is deliberately NOT the tenant's colour: a tenant colour can be invisible on a surface.
+     On the sidebar and banner, whose surface a tenant can make any colour, it takes the sidebar's own foreground. */
   :focus-visible {
-    outline: 2px solid var(--brand-gold);
+    outline: 2px solid var(--ring);
     outline-offset: 2px;
+  }
+  [data-sidebar="sidebar"] :focus-visible,
+  [data-sidebar="banner"] :focus-visible {
+    outline-color: var(--sidebar-foreground);
+  }
+  /* Every plain form control gets the >= 3:1 boundary token instead of the decorative hairline (WCAG 1.4.11), and a
+     placeholder that reads (Tailwind's default is 50% of the text colour). Explicit border-colour utilities still win. */
+  input:where(:not([type="checkbox"], [type="radio"], [type="hidden"], [type="range"], [type="color"])),
+  select,
+  textarea {
+    border-color: var(--input);
+  }
+  input::placeholder,
+  textarea::placeholder {
+    color: var(--muted-foreground);
+    opacity: 1;
+  }
+  input[type="checkbox"],
+  input[type="radio"] {
+    accent-color: var(--primary);
   }
   @media (prefers-reduced-motion: reduce) {
     *,

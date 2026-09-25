@@ -1,5 +1,6 @@
 import { cn } from "cn";
 import { PLATFORM_NAME } from "@/lib/platform";
+import { MatroomWordmark } from "./matroom-mark";
 
 export interface LogoMarkProps {
   /** Width/height of the plaque in pixels. Defaults to a nav-bar-friendly size. */
@@ -75,12 +76,6 @@ export function LogoMark({ size = 40, className, logoUrl, initials, initialsBack
     );
   }
 
-  return (
-    <span
-      className={cn("inline-flex shrink-0 items-center whitespace-nowrap font-bold tracking-tight", className)}
-      style={{ height: size, fontSize: size * 0.4 }}
-    >
-      {PLATFORM_NAME}
-    </span>
-  );
+  // No organization: the platform's own MATROOM mark and wordmark (never an organization's logo).
+  return <MatroomWordmark size={Math.max(14, Math.round(size * 0.45))} className={className} />;
 }

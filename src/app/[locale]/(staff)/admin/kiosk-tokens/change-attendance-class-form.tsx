@@ -3,12 +3,11 @@
 import { useActionState, useId } from "react";
 import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
+import { FIELD_CLASS } from "@/components/ui/input";
 import { reassignAttendanceRecord } from "./reassign-attendance-action";
 import type { ActionState } from "@/lib/action-state";
 
 const INITIAL_STATE: ActionState = {};
-const FIELD_CLASS =
-  "h-8 rounded-lg border border-input bg-transparent px-2.5 text-sm text-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none";
 
 /**
  * One row's `Cambiar` action: a collapsed <details> holding a select of that

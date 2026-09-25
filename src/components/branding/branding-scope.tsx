@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import type { ResolvedBranding } from "@/lib/branding/get-branding";
+import { resolveTenantPresentation } from "@/lib/theme";
 
 /**
  * MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 4 — the one place a resolved
@@ -40,6 +41,13 @@ import type { ResolvedBranding } from "@/lib/branding/get-branding";
  */
 export function BrandingScope({ branding, children }: { branding: ResolvedBranding; children: ReactNode }) {
   const scopeAttr = `org-${branding.organizationId}`;
+  // MATROOM Phase 1 (design/matroom/DESIGN.md "Tenant branding"): three PRESENTATION tokens on top of the stored colours,
+  // derived here at render time and never persisted. The stored colours below are emitted exactly as stored.
+  //  - --action-edge: a 1px boundary on the tenant's buttons in the theme where their fill is under 3:1 against the surface.
+  //  - --brand-data: the tenant colour where it colours data (progress near completion), lightness-adjusted to 3:1 per theme.
+  //  - --sidebar-muted: re-declared here because a custom property using var() resolves where it is DECLARED; the shared
+  //    definition would otherwise keep mixing the default sidebar's colours instead of this tenant's.
+  const presentation = resolveTenantPresentation(branding.primary.background);
   return (
     <div data-branding={scopeAttr} className="contents">
       <style>{`
@@ -53,6 +61,13 @@ export function BrandingScope({ branding, children }: { branding: ResolvedBrandi
           --sidebar-accent: ${branding.sidebar.hoverBackground};
           --sidebar-accent-foreground: ${branding.sidebar.hoverForeground};
           --sidebar-border: ${branding.sidebar.border};
+          --sidebar-muted: color-mix(in srgb, ${branding.sidebar.foreground} 74%, ${branding.sidebar.background});
+          --action-edge: ${presentation.light.actionEdge};
+          --brand-data: ${presentation.light.brandData};
+        }
+        .dark [data-branding="${scopeAttr}"] {
+          --action-edge: ${presentation.dark.actionEdge};
+          --brand-data: ${presentation.dark.brandData};
         }
       `}</style>
       {children}

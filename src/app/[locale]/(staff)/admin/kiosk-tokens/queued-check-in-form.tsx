@@ -4,12 +4,11 @@ import { useActionState, useId, useState } from "react";
 import { DateTime } from "luxon";
 import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
+import { FIELD_CLASS } from "@/components/ui/input";
 import { dismissQueuedCheckInAction, resolveQueuedCheckInAction } from "./queued-check-in-actions";
 import type { ActionState } from "@/lib/action-state";
 
 const INITIAL_STATE: ActionState = {};
-const FIELD_CLASS =
-  "h-8 rounded-lg border border-input bg-transparent px-2.5 text-sm text-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none";
 const WEEKDAY_OF: Record<string, number> = { MONDAY: 1, TUESDAY: 2, WEDNESDAY: 3, THURSDAY: 4, FRIDAY: 5, SATURDAY: 6, SUNDAY: 7 };
 
 export interface QueuedClassOption {

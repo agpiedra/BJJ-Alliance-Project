@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { Search } from "lucide-react";
 import { cn } from "cn";
-import { Input } from "@/components/ui/input";
+import { FIELD_CLASS, Input } from "@/components/ui/input";
 
 export function FilterBar({ children, className }: { children: ReactNode; className?: string }) {
   return (
@@ -32,7 +32,7 @@ export function FilterBarSelect({ className, ...props }: React.ComponentProps<"s
   return (
     <select
       className={cn(
-        "h-8 rounded-lg border border-input bg-transparent px-2.5 text-sm text-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none",
+        FIELD_CLASS,
         className,
       )}
       {...props}

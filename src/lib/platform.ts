@@ -4,12 +4,12 @@
  * (login, register-academy, accept-invitation, forgot/reset-password, the
  * unavailable/no-access/select-organization pages, the marketing home) and
  * the browser-tab `<title>`/PWA manifest, which are global and can never be
- * per-organization. No real product name has been chosen yet.
+ * per-organization. The product name is MATROOM (chosen for the MATROOM redesign, design/matroom/DESIGN.md).
  *
- * This is the ONE place that changes when it is. Every other file that
+ * This is the ONE place the name is defined. Every other file that
  * needs the platform's name imports this constant — never a second
  * hardcoded copy, and never Alliance's own name, which belongs only to
  * Alliance's own organization (its real name lives in the Organization row
  * `getOrganizationBranding` already resolves).
  */
-export const PLATFORM_NAME = "[Platform name TBD]";
+export const PLATFORM_NAME = "MATROOM";

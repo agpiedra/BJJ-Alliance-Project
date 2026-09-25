@@ -7,12 +7,11 @@ import { Button } from "@/components/ui/button";
 import { updateClassSession } from "./actions";
 import { DayOfWeek, ClassType } from "@/generated/prisma/browser";
 import type { ActionState } from "@/lib/action-state";
+import { FIELD_CLASS } from "@/components/ui/input";
 
 const INITIAL_STATE: ActionState = {};
 const DAY_OPTIONS = Object.values(DayOfWeek);
 const TYPE_OPTIONS = Object.values(ClassType);
-const FIELD_CLASS =
-  "h-8 rounded-lg border border-input bg-transparent px-2.5 text-sm text-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none";
 
 type EditableClassSession = {
   id: string;

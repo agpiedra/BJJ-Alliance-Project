@@ -1,0 +1,73 @@
+/* PROPOSED MATROOM app tokens (light + dark). Scoped to [data-theme]; nothing here is applied to the app. */
+[data-theme="light"] {
+  --bg: #f5f3ec;
+  --paper: #fffefa;
+  --ink: #1d392b;
+  --muted: #59675d;
+  --line: #d8ded3;
+  --soft: #e6ebdd;
+  --brand: #254b35;
+  --on-brand: #fffefa;
+  --field: #738b79;
+  --focus: #1d392b;
+  --hover: #e6ebdd;
+  --data-fill: #254b35;
+  --data-track: #e6ebdd;
+  --sidebar: #fffefa;
+  --sidebar-ink: #1d392b;
+  --sidebar-active: #e6ebdd;
+  --sidebar-active-ink: #1d392b;
+  --sidebar-line: #d8ded3;
+  --ok: #247a52;
+  --ok-soft: #e4f1eb;
+  --ok-line: #2c9a67;
+  --warn: #92610c;
+  --warn-soft: #f4ede1;
+  --warn-line: #ba7b0f;
+  --bad: #87271d;
+  --bad-soft: #f2e5e3;
+  --bad-line: #d23d2d;
+  color-scheme: light;
+}
+[data-theme="dark"] {
+  --bg: #141d19;
+  --paper: #202c25;
+  --ink: #eff1e9;
+  --muted: #b4c1b7;
+  --line: #3c4e40;
+  --soft: #2b3e30;
+  --brand: #c9dfb4;
+  --on-brand: #182a1e;
+  --field: #6d8a76;
+  --focus: #eff1e9;
+  --hover: #2b3e30;
+  --data-fill: #c9dfb4;
+  --data-track: #2b3e30;
+  --sidebar: #202c25;
+  --sidebar-ink: #eff1e9;
+  --sidebar-active: #2b3e30;
+  --sidebar-active-ink: #eff1e9;
+  --sidebar-line: #3c4e40;
+  --ok: #88ddb5;
+  --ok-soft: #264034;
+  --ok-line: #39c684;
+  --warn: #f4c471;
+  --warn-soft: #47381f;
+  --warn-line: #ec9c13;
+  --bad: #e48b81;
+  --bad-soft: #422724;
+  --bad-line: #d44535;
+  color-scheme: dark;
+}
+/* A fictional tenant (Option B): tenant tokens replace the action colour and the sidebar; neutrals stay MATROOM. Derived with the repo's theme.ts. */
+[data-tenant="harbor"] {
+  --action: #C2410C;
+  --action-fg: #fbfaf6;
+  --sidebar: #123B4A;
+  --sidebar-ink: #fbfaf6;
+  --sidebar-active: #C2410C;
+  --sidebar-active-ink: #fbfaf6;
+  --sidebar-line: rgba(255, 255, 255, 0.1);
+}
+[data-theme="light"] [data-tenant="harbor"] { --data-fill: #c2410c; }
+[data-theme="dark"] [data-tenant="harbor"] { --data-fill: #e84e0e; }

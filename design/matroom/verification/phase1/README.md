@@ -1,0 +1,19 @@
+# Phase 1 verification (2026-09-24)
+
+Real-browser verification of the Phase 1 foundation (Playwright Chromium against the dev server), as users created through the product flow, never seeded accounts: the academy was registered at `/register-academy`, approved as platform super-admin, its owner accepted the invitation and logged in, set the tenant colours in Branding (`#C2410C` brand, `#123B4A` sidebar; a fictional "Verify Harbor P1"), and a student signed up at the academy's public sign-up and was approved by the owner. The organization stayed on the stored default colours (Alliance-style gold and near-black) for the first screenshots (`tenant-stored-defaults-*`). All verification rows were deleted afterwards.
+
+## Matrix
+
+16 routes (owner: dashboard, students, student detail, payments, analytics, schedule, kiosk tokens, branding, staff, locations; student: portal; public: home, sign-in, register, forgot password, kiosk) x light and dark x English and Spanish x desktop (1280) and phone (390), plus the phone sidebar sheet, on the default MATROOM surfaces (sign-in, registration, home) and the tenant surfaces (everything else). Per load: WCAG contrast of every rendered text node, control boundary and placeholder against the colour actually painted behind it; the focus ring of the first 12 tab stops; horizontal overflow; console and page errors. Tool: `tools/audit-app.cjs` in the review folder (not in the repo).
+
+## Results, honestly
+
+- **Run 1** (128 loads, before the fixes below): measured failures, of two kinds. Real: the tenant colour used as text on the week calendar's "today" label (4.44:1 at 9.5 px for the orange; about 1.5:1 for a gold tenant), the analytics and schedule segmented controls bounded only by the 1.2:1 hairline, the sidebar trigger's focus ring invisible on a dark-sidebar tenant (1.06:1: my first sidebar focus rule matched every element carrying `data-sidebar`), five field-class strings that switched the focus outline off, and the avatar button at 1.44:1 in dark. Measurement artifacts (fixed in the tool): text inside closed `<details>`, a focus probe read mid-transition, native month inputs focusing an inner segment.
+- **Run 2** (128 loads, final source): 8,504 measurements, 0 text failures, 0 focus failures, no overflow; 36 boundary rows, all the avatar on nine routes, which was a **stale dev-server cache** (old server HTML, hence also 72 hydration warnings), not the source.
+- **Re-run on a clean dev server**, the nine affected routes, English, both themes, both viewports (36 loads): 2,824 measurements, 0 below threshold, 0 focus failures, 0 errors, no overflow. The Spanish loads of those nine routes were not re-run after the restart.
+- **A regression the measurements could not see:** my first `Button` change re-passed its `children` as JSX children, which rendered the schedule page's "New class" Sheet trigger **empty** in the real app (contrast tools do not see an empty button; a screenshot did). Fixed (children stay in `props`), pinned by a unit test, and the audit now flags empty controls. Final check, all 16 routes, light, English, desktop and phone (32 loads): 0 below threshold, 0 empty controls, 0 focus failures, 0 errors, no overflow.
+- Not exercised in a browser: hover states, real touch devices (the 44px coarse-pointer size is asserted by unit test and Tailwind's `pointer-coarse`), the dev-only `/dev/components` page's Sheet.
+
+## Images
+
+Curated from the run (JPEG, about 1.7 MB in total): sign-in, registration, home, dashboard (light/dark, English/Spanish, desktop/phone), the phone sidebar sheet, student detail, schedule, analytics, branding, the student portal (light desktop, dark Spanish phone), the kiosk (dark desktop, light Spanish phone), the dev controls gallery (default and tenant, light and dark), and the tenant-with-stored-defaults dashboards. Known and out of Phase 1: the phone sheet is not tenant-coloured (DESIGN.md section 7, item 10).

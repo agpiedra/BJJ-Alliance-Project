@@ -1,4 +1,7 @@
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { BrandingScope } from "@/components/branding/branding-scope";
+import { resolvePrimaryTheme, resolveSidebarTheme } from "@/lib/theme";
 import { Pill } from "@/components/ui/pill";
 import { StatTile, StatRow } from "@/components/ui/stat-tile";
 import {
@@ -37,6 +40,67 @@ const EXAMPLE_BLACK: BeltVisualData = {
   visibleStripeSlots: 4,
 };
 
+// A fictional tenant (never a real organization) so the tenant-branded look of the shared controls can be reviewed beside the
+// default one. Built with the same theme functions get-branding.ts uses.
+const HARBOR_PRIMARY = resolvePrimaryTheme("#C2410C");
+const HARBOR = {
+  organizationId: "dev-harbor",
+  displayName: "Harbor Jiu-Jitsu (fictional)",
+  initials: "HJ",
+  logoUrl: null,
+  primary: HARBOR_PRIMARY,
+  sidebar: resolveSidebarTheme({ background: "#123B4A", activeBackgroundDefault: HARBOR_PRIMARY.background }),
+};
+
+/** MATROOM Phase 1 shared-control states: default, disabled, loading, invalid. Focus: press Tab (the ring is the real one). */
+function ControlStates({ title }: { title: string }) {
+  const variants = ["primary", "default", "outline", "secondary", "ghost", "destructive"] as const;
+  return (
+    <div className="flex flex-col gap-4 rounded-lg border border-border bg-background p-4">
+      <h3 className="font-heading text-base font-semibold">{title}</h3>
+      {variants.map((variant) => (
+        <div key={variant} className="flex flex-wrap items-center gap-2">
+          <span className="w-24 font-mono text-xs text-muted-foreground">{variant}</span>
+          <Button variant={variant}>Guardar</Button>
+          <Button variant={variant} disabled>
+            Guardar
+          </Button>
+          <Button variant={variant} loading>
+            Guardando...
+          </Button>
+        </div>
+      ))}
+      <div className="grid gap-3 sm:grid-cols-2">
+        <label className="flex flex-col gap-1 text-sm font-medium">
+          Correo electrónico
+          <Input type="email" placeholder="nombre@ejemplo.com" />
+        </label>
+        <label className="flex flex-col gap-1 text-sm font-medium">
+          Contraseña (con error)
+          <Input type="password" defaultValue="incorrecta" aria-invalid="true" aria-describedby="dev-err" />
+          <span id="dev-err" className="text-sm font-normal text-bad">
+            Correo o contraseña incorrectos.
+          </span>
+        </label>
+        <label className="flex flex-col gap-1 text-sm font-medium">
+          Deshabilitado
+          <Input defaultValue="ana@ejemplo.com" disabled />
+        </label>
+        <label className="flex flex-col gap-1 text-sm font-medium">
+          País
+          <select className="h-9 rounded-sm border bg-card px-3 text-sm pointer-coarse:h-11" defaultValue="cr">
+            <option value="cr">Costa Rica</option>
+          </select>
+        </label>
+      </div>
+      <div className="flex flex-col gap-2">
+        <ProgressToNextGrade current={20} target={60} />
+        <ProgressToNextGrade current={58} target={60} />
+      </div>
+    </div>
+  );
+}
+
 /**
  * Dev-only preview of the Phase 3 component library (REDESIGN_BRIEF.md) —
  * same purpose as the pre-existing dev/belts page, not linked from any real
@@ -47,6 +111,16 @@ export default function DevComponentsPage() {
   return (
     <main className="flex flex-col gap-8 p-6">
       <h1 className="text-2xl font-bold">Component library preview</h1>
+
+      <section className="flex flex-col gap-2">
+        <h2 className="font-heading text-lg font-semibold">Controls and states (MATROOM Phase 1)</h2>
+        <div className="grid gap-4 lg:grid-cols-2">
+          <ControlStates title="MATROOM default (no tenant)" />
+          <BrandingScope branding={HARBOR}>
+            <ControlStates title="Tenant: Harbor Jiu-Jitsu (fictional)" />
+          </BrandingScope>
+        </div>
+      </section>
 
       <section className="flex flex-col gap-2">
         <h2 className="font-heading text-lg font-semibold">Buttons</h2>
