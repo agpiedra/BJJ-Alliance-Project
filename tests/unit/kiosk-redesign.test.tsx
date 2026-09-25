@@ -101,6 +101,16 @@ describe.each(["en", "es"] as const)("digit-count status and keys (%s)", (locale
     expect(enter().disabled).toBe(false);
     expect((screen.getByRole("button", { name: "5" }) as HTMLButtonElement).disabled).toBe(true); // the digit keys stop at four
   });
+
+  it("Enter is the primary action (the tenant's action fill), Clear is secondary, digits are outlined", () => {
+    renderKiosk(locale);
+    const key = (name: string) => screen.getByRole("button", { name }).className;
+    expect(key(locale === "en" ? "Enter" : "Entrar")).toContain("bg-brand-gold");
+    expect(key(locale === "en" ? "Clear" : "Borrar")).toContain("bg-secondary");
+    expect(key(locale === "en" ? "Clear" : "Borrar")).not.toContain("bg-brand-gold");
+    expect(key("7")).toContain("bg-card");
+    expect(key("7")).not.toContain("bg-brand-gold");
+  });
 });
 
 describe("one H1 per screen", () => {
