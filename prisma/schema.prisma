@@ -270,6 +270,9 @@ model Organization {
   promotionConfigs    PromotionConfig[]
   paymentPlans        PaymentPlan[]
   paymentPeriods      PaymentPeriod[]
+  duesPolicyVersions     DuesPolicyVersion[]
+  paymentPlanTerms       PaymentPlanTerms[]
+  studentPlanAssignments StudentPlanAssignment[]
   kioskAttempts       KioskAttempt[]
   queuedCheckIns      QueuedCheckIn[]
   staffAssignments    StaffAssignment[]
@@ -452,6 +455,7 @@ model Academy {
   promotionCredits  PromotionCredit[]
   paymentPlans      PaymentPlan[]
   paymentPeriods    PaymentPeriod[]
+  duesPolicyVersions DuesPolicyVersion[]
   auditLogs         AuditLog[]
   kioskAttempts     KioskAttempt[]
   queuedCheckIns    QueuedCheckIn[]
@@ -505,6 +509,9 @@ model User {
   promotionsAwarded       Promotion[]
   promotionCreditsGranted PromotionCredit[]
   paymentPeriodsRecorded  PaymentPeriod[]
+  duesPolicyVersionsCreated      DuesPolicyVersion[]
+  paymentPlanTermsCreated        PaymentPlanTerms[]
+  studentPlanAssignmentsCreated  StudentPlanAssignment[]
   notifications           Notification[]
   organizationMemberships OrganizationMembership[]
   organizationsApproved   Organization[]           @relation("OrganizationApprovedBy")
@@ -681,6 +688,7 @@ model Student {
   promotions        Promotion[]
   promotionCredits  PromotionCredit[]
   paymentPeriods    PaymentPeriod[]
+  planAssignments   StudentPlanAssignment[]
   organization      Organization       @relation(fields: [organizationId], references: [id])
 
   @@unique([organizationId, codeHash])
@@ -1005,6 +1013,8 @@ model PaymentPlan {
 
   academy        Academy         @relation(fields: [organizationId, academyId], references: [organizationId, id])
   paymentPeriods PaymentPeriod[]
+  terms          PaymentPlanTerms[]
+  studentAssignments StudentPlanAssignment[]
   organization   Organization    @relation(fields: [organizationId], references: [id])
 
   @@unique([academyId, name])
@@ -1059,6 +1069,100 @@ model PaymentPeriod {
   @@unique([studentId, year, month])
   @@index([academyId, year, month])
   @@index([organizationId])
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Student dues: CONFIGURATION tables (PR 2A). Additive and dark: nothing reads or writes them yet, no seed, migration or default
+// carries an amount, a fee, a price or a limit, and the legacy PaymentPlan / PaymentPeriod above are untouched.
+//
+// What the DATABASE enforces for all three tables: tenant-safe composite foreign keys (a row can only point at a branch, plan or
+// student of its own organization), the version-uniqueness keys below, and the CHECK constraints in the migration (Prisma's schema
+// language cannot express CHECKs; the migration SQL is the source, and tests/integration/dues-config-schema.test.ts proves each one
+// against a real database): month 1 to 12, year 2000 to 2100 (a typo guard, not a business rule), days 1 to 31, positive prices,
+// non-negative fees, positive month counts. Foreign keys restrict; nothing cascades, so money history cannot be deleted through them.
+//
+// What the database does NOT enforce, and later writers must: these tables are "append-only" BY CONVENTION ONLY. Nothing prevents an
+// UPDATE or DELETE (there is no trigger), so a writer that edits or removes a row can rewrite history; the intended writers only
+// insert a new version. Also writer-enforced: a plan's terms are all in ONE currency (a CHECK cannot span rows; the pure library in
+// src/lib/dues/coverage.ts rejects a mixed history), an assignment's plan belongs to the student's branch, a policy's fee currency
+// matches the currency it is applied to, and effective months are not in the past. Amounts are Decimal(10, 2) with a Currency, like
+// PaymentPeriod; converting to the library's integer minor units must be exact and range-checked (no floating-point multiplication,
+// no silent rounding) and is done by the writer PR that first needs it.
+// ---------------------------------------------------------------------------------------------------------------------
+
+/// A branch's dues settings from one month onward. A change is a NEW row with a later effective month (by convention, see above);
+/// obligations created later snapshot the values they were created with, so a later version never rewrites an existing charge.
+/// The branch is the Academy, so Escazú and Escalante can differ independently in due day, grace day and late fee.
+model DuesPolicyVersion {
+  id                String   @id @default(cuid())
+  organizationId    String
+  academyId         String
+  effectiveYear     Int
+  effectiveMonth    Int
+  /// The day of the month a payment is due (clamped to short months by the calculation library).
+  dueDay            Int
+  /// The day of the FOLLOWING month, inclusive, through which payment is still on time. The confirmed next-month rule; a
+  /// days-after-due rule is deliberately not modelled.
+  graceDay          Int
+  lateFeeAmount     Decimal  @db.Decimal(10, 2)
+  lateFeeCurrency   Currency
+  /// NULL means "not entered". It is NOT read as unlimited and NOT read as disabled: what a branch with no limit may do is decided
+  /// later, when a writer needs it.
+  maxPrepaidMonths  Int?
+  createdById       String
+  createdAt         DateTime @default(now())
+
+  academy      Academy      @relation(fields: [organizationId, academyId], references: [organizationId, id])
+  createdBy    User         @relation(fields: [createdById], references: [id])
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@unique([academyId, effectiveYear, effectiveMonth])
+  @@index([organizationId])
+}
+
+/// The price and length of a PaymentPlan from one month onward: a plan covering 1 month is the ordinary monthly plan, more is a
+/// multi-month package priced as a whole. PaymentPlan itself (and its mutable legacy defaultAmount) is unchanged.
+model PaymentPlanTerms {
+  id             String   @id @default(cuid())
+  organizationId String
+  planId         String
+  effectiveYear  Int
+  effectiveMonth Int
+  /// The price of the whole offer (not per month).
+  priceAmount    Decimal  @db.Decimal(10, 2)
+  currency       Currency
+  monthsCovered  Int
+  createdById    String
+  createdAt      DateTime @default(now())
+
+  plan         PaymentPlan  @relation(fields: [organizationId, planId], references: [organizationId, id])
+  createdBy    User         @relation(fields: [createdById], references: [id])
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@unique([planId, effectiveYear, effectiveMonth])
+  @@index([organizationId])
+}
+
+/// Which plan a student is on from one month onward. A change is a new row with a later effective month; a NULL planId means
+/// "explicitly not assigned from that month". The composite plan key is enforced only when planId is set (Postgres MATCH SIMPLE).
+model StudentPlanAssignment {
+  id             String   @id @default(cuid())
+  organizationId String
+  studentId      String
+  planId         String?
+  effectiveYear  Int
+  effectiveMonth Int
+  createdById    String
+  createdAt      DateTime @default(now())
+
+  student      Student      @relation(fields: [organizationId, studentId], references: [organizationId, id])
+  plan         PaymentPlan? @relation(fields: [organizationId, planId], references: [organizationId, id])
+  createdBy    User         @relation(fields: [createdById], references: [id])
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@unique([studentId, effectiveYear, effectiveMonth])
+  @@index([organizationId])
+  @@index([planId])
 }
 
 model KioskAttempt {
