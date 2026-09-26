@@ -1089,6 +1089,7 @@
     "thresholdReachedHeading": "¡Listo para evaluación, {name}!",
     "remainingToNextStripe": "{count, plural, =0 {Ya puedes ser evaluado por tu instructor} one {Falta # asistencia para tu próxima franja} other {Faltan # asistencias para tu próxima franja}}",
     "eligibleForReview": "Elegible para revisión del instructor",
+    "timePendingSeePortal": "Tu siguiente grado depende del tiempo. Consulta tu portal de estudiante para ver los detalles.",
     "progressAlreadyCounted": "Clase registrada. La asistencia de hoy ya contó para tu progreso, así que esta no suma más.",
     "progressNotPromotionClass": "Clase registrada. Esta clase no cuenta para la promoción.",
     "progressBeforeLastPromotion": "Clase registrada. Fue antes de tu última promoción, así que no cuenta para la siguiente.",

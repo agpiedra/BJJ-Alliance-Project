@@ -1089,6 +1089,7 @@
     "thresholdReachedHeading": "Ready for review, {name}!",
     "remainingToNextStripe": "{count, plural, =0 {You're eligible for instructor review} one {# attendance to go for your next stripe} other {# attendances to go for your next stripe}}",
     "eligibleForReview": "Eligible for instructor review",
+    "timePendingSeePortal": "Your next degree is based on time. See your student portal for the details.",
     "progressAlreadyCounted": "Class recorded. Today's attendance already counted toward your progress, so this one adds nothing more.",
     "progressNotPromotionClass": "Class recorded. This class doesn't count toward promotion.",
     "progressBeforeLastPromotion": "Class recorded. It took place before your last promotion, so it does not count toward the next one.",

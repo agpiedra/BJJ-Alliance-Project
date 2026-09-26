@@ -176,6 +176,28 @@ describe.each(POINTERS)("kiosk under a $name pointer", (pointer) => {
       expect(m.fits, '"Not this class?" must contain its label').toBe(true);
     });
 
+    it.each([
+      { state: "time_pending", summary: { mode: "TIME", target: null, remainingAttendance: null, percent: 20 }, text: "See your student portal for the details." },
+      { state: "time_anchor_missing", summary: { mode: "TIME", target: null, remainingAttendance: null, percent: 20, timeAnchorMissing: true }, text: "date of your last promotion" },
+      { state: "not_configured", summary: { mode: "TIME", target: null, remainingAttendance: null, percent: 20, notConfigured: true }, text: "not set up yet" },
+    ])("a time-based degree ($state, MOCKED reply) shows context, never an unexplained count, and everything fits", async ({ summary, text }) => {
+      const page = await openPage(pointer, viewport);
+      const body = { ...COMPLETE_CHECK_IN, summary: { ...COMPLETE_CHECK_IN.summary, atBeltCount: 12, ...summary } };
+      await page.route("**/api/kiosk/check-in", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) }));
+      await openKiosk(page, pointer);
+      await submitCode(page);
+      const context = page.getByText(text);
+      await context.waitFor();
+      expect((await context.evaluate(measure)).fits, "the context line must fit its box").toBe(true);
+      expect(await page.getByRole("progressbar").count(), "no attendance bar for a time-based degree").toBe(0);
+      expect(await page.getByText("12", { exact: true }).count(), "no bare attendance count").toBe(0);
+      expect(await page.locator("main").innerText(), "no fraction").not.toMatch(/\d+ \/ \d+/);
+      const notThis = await page.getByRole("button", { name: "Not this class?" }).evaluate(measure);
+      expect(notThis.h).toBeGreaterThanOrEqual(60);
+      const scrolls = await page.evaluate(() => document.documentElement.scrollHeight > window.innerHeight + 1 || document.documentElement.scrollWidth > window.innerWidth + 1);
+      expect(scrolls, "the success screen fits the viewport without scrolling").toBe(false);
+    });
+
     it("the keypad screen fits the tablet without scrolling, and its layout follows the orientation", async () => {
       const page = await openPage(pointer, viewport);
       await openKiosk(page, pointer);

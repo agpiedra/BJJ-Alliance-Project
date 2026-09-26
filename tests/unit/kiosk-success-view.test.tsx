@@ -130,18 +130,19 @@ describe("the kiosk success screen, rendered from the API's own summary shape", 
     expect(document.body.textContent).not.toMatch(/NaN|undefined/);
   });
 
-  it("a terminal belt with no further progress shows just the count — no NaN, no eligibility claim", () => {
+  it("a terminal belt with no further progress shows no count (nothing explains a bare number) — no NaN, no eligibility claim", () => {
     renderView(summary({ atBeltCount: 12, remainingAttendance: null, isEligible: false, nextTarget: "NONE", target: null, percent: null }));
-    expect(screen.getByText("12")).toBeTruthy();
+    expect(screen.queryByText("12")).toBeNull();
     expect(screen.queryByText(enMessages.kiosk.eligibleForReview)).toBeNull();
     expect(document.body.textContent).not.toMatch(/NaN|undefined/);
   });
 
-  it("a time-based black belt shows the attendance count and no attendance fraction", () => {
+  it("a time-based black belt shows no attendance count and no attendance fraction (the count does not decide a time-based degree)", () => {
     renderView(
       summary({ atBeltCount: 80, remainingAttendance: null, isEligible: false, mode: "TIME", target: null, percent: 20 }),
     );
-    expect(screen.getByText("80")).toBeTruthy();
+    expect(screen.queryByText("80")).toBeNull();
+    expect(screen.queryByRole("progressbar")).toBeNull();
     expect(document.body.textContent).not.toMatch(/ \/ |NaN|undefined/);
   });
 });

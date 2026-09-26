@@ -813,11 +813,12 @@ export function SuccessView({ result, onCorrect }: { result: CheckInSuccess; onC
 
       <div className="flex w-full max-w-lg flex-col items-center gap-6 min-[900px]:landscape:max-w-none min-[900px]:landscape:items-stretch min-[900px]:landscape:text-left">
         <div className="flex flex-col items-center gap-3 min-[900px]:landscape:items-stretch">
-          {/* Shown as the engine gives it: "20 / 30" where there is an attendance target; for a rank with none (time-based) the bare count
-              is kept exactly as it was (its wording is unchanged by this redesign). */}
-          <p className="font-mono text-5xl font-medium tabular-nums sm:text-[56px] sm:leading-none">
-            {view.current !== null && view.target !== null ? `${view.current} / ${view.target}` : view.actualCount}
-          </p>
+          {/* The fraction and its bar exist only where there is an attendance target ("20 / 30"). A rank with none (a time-based degree, a
+              terminal belt) shows no number at all: the attendance count does not decide it, and a bare count under the belt has nothing to
+              explain it. Time-based ranks get context instead, below; the kiosk has no due date to show, so it never invents one. */}
+          {view.current !== null && view.target !== null && (
+            <p className="font-mono text-5xl font-medium tabular-nums sm:text-[56px] sm:leading-none">{`${view.current} / ${view.target}`}</p>
+          )}
 
           {percent !== null && (
             <div
@@ -835,6 +836,10 @@ export function SuccessView({ result, onCorrect }: { result: CheckInSuccess; onC
           {view.state === "in_progress" && <p className="text-xl text-muted-foreground sm:text-2xl">{t("remainingToNextStripe", { count: view.remaining ?? 0 })}</p>}
 
           {view.state === "eligible" && <p className="text-xl font-medium sm:text-2xl">{t("eligibleForReview")}</p>}
+
+          {view.state === "time_pending" && <p className="max-w-md text-xl text-muted-foreground sm:text-2xl">{t("timePendingSeePortal")}</p>}
+          {view.state === "time_anchor_missing" && <p className="max-w-md text-xl text-muted-foreground sm:text-2xl">{tProgress("timeAnchorMissing")}</p>}
+          {view.state === "not_configured" && <p className="max-w-md text-xl text-muted-foreground sm:text-2xl">{tProgress("notConfigured")}</p>}
 
           {/* Truthful about what this tap did for progress: recorded either way, but only the first
               qualifying class of the day is a progress day. */}

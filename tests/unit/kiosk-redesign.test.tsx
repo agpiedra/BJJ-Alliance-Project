@@ -19,7 +19,7 @@ vi.mock("@/lib/kiosk/offline-queue", () => ({
   flushOfflineQueue: () => flush(),
 }));
 
-const { KioskClient } = await import("../../src/app/[locale]/kiosk/[academySlug]/kiosk-client");
+const { KioskClient, SuccessView } = await import("../../src/app/[locale]/kiosk/[academySlug]/kiosk-client");
 const { OfflineChip } = await import("../../src/app/[locale]/kiosk/[academySlug]/offline-chip");
 
 const CLASS_A = { id: "cls-a", name: "Fundamentals", startTime: "18:00", endTime: "19:00", type: "GI" };
@@ -282,5 +282,88 @@ describe.each(["en", "es"] as const)("offline indicator (%s)", (locale) => {
     Object.defineProperty(navigator, "onLine", { configurable: true, value: false });
     chip();
     expect(screen.getByText(label)).toBeTruthy();
+  });
+});
+
+/**
+ * The success view's progress area. An attendance fraction and its bar exist only where there is an attendance target; a time-based degree
+ * (whose eligibility the attendance count does not decide) shows context instead of an unexplained bare count, and never a due date (the kiosk
+ * is not given one: the portal has it). Everything else on the screen stays: the confirmation, belt, saved class and "Not this class?".
+ */
+describe.each(["en", "es"] as const)("success view: progress area (%s)", (locale) => {
+  type Result = Parameters<typeof SuccessView>[0]["result"];
+  const messages = locale === "en" ? enMessages : esMessages;
+  const summary = (overrides: Record<string, unknown>) => ({ ...SUCCESS.summary, ...overrides });
+  const show = (sum: Record<string, unknown>, extra: Record<string, unknown> = {}) =>
+    render(
+      <NextIntlClientProvider locale={locale} messages={messages}>
+        <SuccessView result={{ ...SUCCESS, ...extra, summary: sum } as unknown as Result} onCorrect={() => {}} />
+      </NextIntlClientProvider>,
+    );
+  const TIME = { mode: "TIME", target: null, remainingAttendance: null, percent: 20, atBeltCount: 12 };
+  /** Nothing about the attendance count: no fraction, no bar, no bare "12". */
+  const noCount = () => {
+    expect(screen.queryByText("12")).toBeNull();
+    expect(screen.queryByRole("progressbar")).toBeNull();
+    expect(document.body.textContent).not.toMatch(/ \/ |NaN|undefined/);
+  };
+  /** The parts of the screen that must survive: heading, belt, saved class and the correction control. */
+  const keeps = () => {
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toContain("Carla Cartago");
+    expect(screen.getByText(locale === "en" ? "White" : "Blanco")).toBeTruthy();
+    expect(screen.getByText("Fundamentals")).toBeTruthy();
+    expect(screen.getByRole("button", { name: messages.kiosk.notThisClass })).toBeTruthy();
+  };
+
+  it("time_pending: context that points to the portal, no count, no bar, no invented date", () => {
+    show(summary({ ...TIME }));
+    expect(screen.getByText(messages.kiosk.timePendingSeePortal)).toBeTruthy();
+    expect(document.body.textContent).not.toMatch(/\d{4}|\b\d{1,2}\/\d{1,2}\b/); // no date of any shape
+    noCount();
+    keeps();
+  });
+
+  it("time_anchor_missing: says the instructor must enter the last promotion date, no count", () => {
+    show(summary({ ...TIME, timeAnchorMissing: true }));
+    expect(screen.getByText(messages.portal.progress.timeAnchorMissing)).toBeTruthy();
+    noCount();
+    keeps();
+  });
+
+  it("not_configured: says the degree is not set up yet, no count", () => {
+    show(summary({ ...TIME, notConfigured: true }));
+    expect(screen.getByText(messages.portal.progress.notConfigured)).toBeTruthy();
+    noCount();
+    keeps();
+  });
+
+  it("a time-based degree that is eligible keeps 'eligible for instructor review', without a count or bar", () => {
+    show(summary({ ...TIME, isEligible: true }), { thresholdReached: true });
+    expect(screen.getByText(messages.kiosk.eligibleForReview)).toBeTruthy();
+    expect(screen.queryByText(messages.kiosk.timePendingSeePortal)).toBeNull();
+    noCount();
+    expect(screen.getByRole("button", { name: messages.kiosk.notThisClass })).toBeTruthy();
+  });
+
+  it("attendance-based progress: the fraction, the bar and what remains", () => {
+    show(summary({}));
+    expect(screen.getByText("12 / 30")).toBeTruthy();
+    const bar = screen.getByRole("progressbar");
+    expect([bar.getAttribute("aria-valuenow"), bar.getAttribute("aria-valuemax")]).toEqual(["12", "30"]);
+    expect(screen.queryByText(messages.kiosk.timePendingSeePortal)).toBeNull();
+    keeps();
+  });
+
+  it("attendance-based, eligible: the capped fraction, a full bar and 'eligible for instructor review'", () => {
+    show(summary({ atBeltCount: 42, remainingAttendance: 0, isEligible: true, percent: 100 }), { thresholdReached: true });
+    expect(screen.getByText("30 / 30")).toBeTruthy();
+    expect(screen.getByRole("progressbar").getAttribute("aria-valuenow")).toBe("30");
+    expect(screen.getByText(messages.kiosk.eligibleForReview)).toBeTruthy();
+  });
+
+  it("hybrid: it has an attendance target, so the fraction and bar are shown", () => {
+    show(summary({ mode: "HYBRID" }));
+    expect(screen.getByText("12 / 30")).toBeTruthy();
+    expect(screen.getByRole("progressbar")).toBeTruthy();
   });
 });
