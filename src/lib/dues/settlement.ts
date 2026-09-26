@@ -63,8 +63,14 @@ export function lateFeeToAssessMinor(obligation: ObligationTerms & { settledOn: 
   return obligation.lateFeeMinor;
 }
 
-/** Total late fees across obligations as of `asOf`: one fee per overdue obligation, so two overdue months are two fees. */
+/**
+ * Total late fees across obligations as of `asOf`, in their ONE shared currency: one fee per overdue obligation, so two overdue months
+ * are two fees. Obligations in different currencies are rejected (there is no conversion here), so group by currency before calling.
+ */
 export function totalLateFeesMinor(obligations: readonly (ObligationTerms & { settledOn: CalendarDate | null })[], asOf: CalendarDate): number {
+  if (new Set(obligations.map((o) => o.currency)).size > 1) {
+    throw new RangeError("Late fees in different currencies cannot be added; group the obligations by currency first");
+  }
   return obligations.reduce((sum, o) => sum + lateFeeToAssessMinor(o, asOf), 0);
 }
 
@@ -78,6 +84,7 @@ export function outstandingItems(open: readonly ObligationTerms[], receivedOn: C
   return orderOldestFirst(open).map((o) => ({ id: o.id, currency: o.currency, amountMinor: amountDueMinor(o, receivedOn) }));
 }
 
+/** `selectableTotalsMinor` is in the items' currency, and is always empty on `CURRENCY_MISMATCH`. */
 export type SettlementResult =
   | { ok: true; settledIds: string[]; totalMinor: number }
   | { ok: false; reason: "NOT_A_SELECTABLE_TOTAL" | "CURRENCY_MISMATCH"; selectableTotalsMinor: number[] };
@@ -97,9 +104,12 @@ export function settleReceipt(items: readonly SettlementItem[], receiptMinor: nu
     return running + item.amountMinor;
   }, 0);
 
+  // Mixed currencies, or a receipt in a currency other than the items': refused with NO totals. The totals are in the items' currency,
+  // so offering them for a receipt in another one would read as amounts in the wrong unit.
   const currencies = new Set(items.map((item) => item.currency));
-  if (currencies.size > 1) return { ok: false, reason: "CURRENCY_MISMATCH", selectableTotalsMinor: [] };
-  if (currencies.size === 1 && !currencies.has(receiptCurrency)) return { ok: false, reason: "CURRENCY_MISMATCH", selectableTotalsMinor: totals };
+  if (currencies.size > 1 || (currencies.size === 1 && !currencies.has(receiptCurrency))) {
+    return { ok: false, reason: "CURRENCY_MISMATCH", selectableTotalsMinor: [] };
+  }
 
   const k = totals.indexOf(receiptMinor);
   if (k === -1) return { ok: false, reason: "NOT_A_SELECTABLE_TOTAL", selectableTotalsMinor: totals };

@@ -95,6 +95,23 @@ describe("one late fee per monthly obligation, never repeated", () => {
     expect(totalLateFeesMinor(list, d(2027, 2, 1))).toBe(4000);
   });
 
+  it("rejects obligations in different currencies instead of adding USD cents to colones (no conversion)", () => {
+    const usd = { ...OCT, settledOn: null };
+    const crc = { ...obligation("nov-crc", { year: 2026, month: 11 }, { currency: "CRC", tuitionMinor: 50000, lateFeeMinor: 10000 }), settledOn: null };
+    // both overdue on Dec 6: the old code returned 2000 + 10000 = 12000, a meaningless mixed number
+    expect(() => totalLateFeesMinor([usd, crc], d(2026, 12, 6))).toThrow(RangeError);
+    // a mixed list is rejected even when only one of them is overdue, and even when nothing is
+    expect(() => totalLateFeesMinor([usd, crc], d(2026, 11, 6))).toThrow(RangeError);
+    expect(() => totalLateFeesMinor([usd, crc], d(2026, 10, 1))).toThrow(RangeError);
+  });
+
+  it("sums obligations that all share one currency, whichever it is; grouping by currency is the caller's job", () => {
+    const crcA = { ...obligation("a", { year: 2026, month: 10 }, { currency: "CRC", tuitionMinor: 50000, lateFeeMinor: 10000 }), settledOn: null };
+    const crcB = { ...obligation("b", { year: 2026, month: 11 }, { currency: "CRC", tuitionMinor: 50000, lateFeeMinor: 10000 }), settledOn: null };
+    expect(totalLateFeesMinor([crcA, crcB], d(2026, 12, 6))).toBe(20000);
+    expect(totalLateFeesMinor([], d(2026, 12, 6))).toBe(0);
+  });
+
   it("an on-time obligation among overdue ones adds no fee", () => {
     const list = [
       { ...OCT, settledOn: d(2026, 11, 1) },
@@ -167,10 +184,13 @@ describe("settlement is oldest-first and whole-obligation only", () => {
     expect(r).toEqual({ ok: true, settledIds: ["oct"], totalMinor: 10000 });
   });
 
-  it("refuses a receipt in another currency (conversion is out of scope for this library)", () => {
+  it("refuses a receipt in another currency (conversion is out of scope) and offers NO selectable totals", () => {
+    // The obligations' totals are USD cents; presenting [10000] to a CRC payer would read as 10,000 colones.
     const items = outstandingItems([OCT], d(2026, 11, 3));
     const r = settleReceipt(items, 5000000, "CRC");
-    expect(r).toEqual({ ok: false, reason: "CURRENCY_MISMATCH", selectableTotalsMinor: [10000] });
+    expect(r).toEqual({ ok: false, reason: "CURRENCY_MISMATCH", selectableTotalsMinor: [] });
+    // even when the number happens to equal a USD total, it is not accepted as a CRC receipt
+    expect(settleReceipt(items, 10000, "CRC")).toEqual({ ok: false, reason: "CURRENCY_MISMATCH", selectableTotalsMinor: [] });
   });
 
   it("refuses obligations that mix currencies rather than adding them", () => {
