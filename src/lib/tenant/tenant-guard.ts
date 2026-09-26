@@ -27,6 +27,10 @@ export const TENANT_SCOPED_MODELS = new Set([
   "PromotionConfig",
   "PaymentPlan",
   "PaymentPeriod",
+  // Student dues configuration (PR 2A): tenant-scoped from day one, before any writer exists.
+  "DuesPolicyVersion",
+  "PaymentPlanTerms",
+  "StudentPlanAssignment",
   "KioskAttempt",
   "QueuedCheckIn",
   "StaffAssignment",
