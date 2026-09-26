@@ -120,7 +120,7 @@ From the approved brief: "Use demo details", "Preview submission", any design co
 
 ## 9. Verification
 
-Each phase records what it verified in its PR: light and dark, default and a tenant, English and Spanish, desktop and phone, in a real browser as a genuinely registered user (not a seeded account), plus the automated checks above. Anything that depends on the pointer type or on laid-out size is verified in a rendered browser under both a mouse and a coarse pointer at the target sizes (tablet landscape and portrait for the kiosk), asserting measured sizes and that content fits its control: class-name and minimum-size-only checks are not sufficient (`tests/browser`, `pnpm test:browser`). The Phase 1 verification screenshots are in `design/matroom/verification/phase1/`.
+Each phase records what it verified in its PR: light and dark, default and a tenant, English and Spanish, desktop and phone, in a real browser as a genuinely registered user (not a seeded account), plus the automated checks above. Anything that depends on the pointer type or on laid-out size is verified in a rendered browser under both a mouse and a coarse pointer at the target sizes (tablet landscape and portrait for the kiosk), asserting measured sizes and that content fits its control: class-name and minimum-size-only checks are not sufficient (`tests/browser`, `pnpm test:browser`). The Phase 1 verification screenshots are in `design/matroom/verification/phase1/`, the portal's in `verification/portal/` and the kiosk's in `verification/kiosk/`.
 
 ## 10. Separate findings
 
@@ -130,3 +130,4 @@ The registration concurrency and stale-availability findings are functional, not
 
 - 2026-09-24: Phase 1 foundation: authority established; identity, tokens, typography and shared controls implemented; Archivo retired.
 - 2026-09-25: Student portal page phase (P1-P4 approved): two-column desktop grid, Home / Attendance / Schedule as accessible tabs, compact class rows, phone day-list schedule, theme item in the account menu; a time-based degree no longer implies attendance decides eligibility. Verification in `verification/portal/`. The kiosk redesign is a separate phase.
+- 2026-09-25: Kiosk redesign phase (K1-K2, T1 approved): landscape two-column layout and portrait layout, larger keypad (Clear secondary, Enter primary), readable overlapping-class picker, offline indicator, in-flow sync banner, digit-count status and a timeout bar driven by the timer that actually resets the screen. PR #62's 44px minimum is kept (larger minimums use `pointer-coarse:` twins). Behaviour, requests and the offline queue are unchanged. Verification in `verification/kiosk/`.

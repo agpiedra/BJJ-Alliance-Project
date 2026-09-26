@@ -157,3 +157,18 @@
     }
   }
 }
+
+/* The kiosk's "the keypad returns in N seconds" bar. --kiosk-timeout-ms is set from the SAME number that arms the real timeout
+   (kiosk-client.tsx armReset), so the bar drains over exactly as long as the screen will stay. Hidden under reduced motion by its markup. */
+@keyframes kiosk-timeout-drain {
+  from {
+    transform: scaleX(1);
+  }
+  to {
+    transform: scaleX(0);
+  }
+}
+.kiosk-timeout-fill {
+  transform-origin: left center;
+  animation: kiosk-timeout-drain var(--kiosk-timeout-ms, 6000ms) linear forwards;
+}

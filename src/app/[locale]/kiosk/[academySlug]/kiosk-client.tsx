@@ -1,11 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { DateTime } from "luxon";
-import { CheckCircle2 } from "lucide-react";
+import { CheckCircle2, ChevronRight, CircleAlert, Clock, Info, Loader2, Lock, ShieldAlert, TriangleAlert, WifiOff, type LucideIcon } from "lucide-react";
+import { cn } from "cn";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import { BeltGraphic, type BeltVisualData } from "@/components/belt-graphic/belt-graphic";
 import { enqueueOfflineCheckIn, flushOfflineQueue } from "@/lib/kiosk/offline-queue";
 import { ZONE } from "@/lib/scheduling/zone";
@@ -155,6 +155,11 @@ export function KioskClient({
   const [droppedCount, setDroppedCount] = useState(0);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // The visible timeout indicator. It is driven by the SAME number that arms the reset (armReset below), so it can never disagree
+  // with the real timeout: it exists only while a reset is pending, restarts every time one is armed (a new epoch remounts it) and
+  // is removed the moment the timer is cleared (a correction being saved has no pending reset, so it shows no bar).
+  const epochRef = useRef(0);
+  const [pendingReset, setPendingReset] = useState<{ ms: number; epoch: number } | null>(null);
 
   const clearTimers = useCallback(() => {
     if (timeoutRef.current) {
@@ -165,6 +170,7 @@ export function KioskClient({
       clearInterval(intervalRef.current);
       intervalRef.current = null;
     }
+    setPendingReset(null);
   }, []);
 
   // Timers must never outlive the component or leak across a phase change
@@ -203,6 +209,16 @@ export function KioskClient({
     setPhase({ kind: "entry", code: "", submitting: false });
   }, [clearTimers]);
 
+  /** Return to the keypad after `ms`, and show a bar that drains over exactly `ms`. Every "go back to the keypad by itself" goes through here. */
+  const armReset = useCallback(
+    (ms: number) => {
+      timeoutRef.current = setTimeout(resetToEntry, ms);
+      epochRef.current += 1;
+      setPendingReset({ ms, epoch: epochRef.current });
+    },
+    [resetToEntry],
+  );
+
   const queueCheckIn = useCallback(
     async (code: string, pickedClassSessionId?: string) => {
       // enqueueOfflineCheckIn can fail two ways: it resolves `false` when
@@ -225,14 +241,14 @@ export function KioskClient({
 
       if (!persisted) {
         setPhase({ kind: "error", reason: "queue_failed" });
-        timeoutRef.current = setTimeout(resetToEntry, ERROR_DISPLAY_MS);
+        armReset(ERROR_DISPLAY_MS);
         return;
       }
 
       setPhase({ kind: "queued" });
-      timeoutRef.current = setTimeout(resetToEntry, QUEUED_DISPLAY_MS);
+      armReset(QUEUED_DISPLAY_MS);
     },
-    [academySlug, token, clearTimers, resetToEntry],
+    [academySlug, token, clearTimers, armReset],
   );
 
   const submitCode = useCallback(
@@ -276,7 +292,7 @@ export function KioskClient({
       } catch {
         clearTimers();
         setPhase({ kind: "error", reason: "network_error" });
-        timeoutRef.current = setTimeout(resetToEntry, ERROR_DISPLAY_MS);
+        armReset(ERROR_DISPLAY_MS);
         return;
       }
 
@@ -284,7 +300,7 @@ export function KioskClient({
 
       if (response.status === 200 && isCheckInSuccess(body)) {
         setPhase({ kind: "success", result: body });
-        timeoutRef.current = setTimeout(resetToEntry, SUCCESS_DISPLAY_MS);
+        armReset(SUCCESS_DISPLAY_MS);
         return;
       }
 
@@ -319,15 +335,15 @@ export function KioskClient({
       const openClasses = readPicklist(body, "openClasses");
       if ((reason === "class_selection_required" || reason === "class_not_open") && openClasses.length > 0) {
         setPhase({ kind: "picking", code, picklist: openClasses, closedNotice: reason === "class_not_open" });
-        timeoutRef.current = setTimeout(resetToEntry, PICKER_DISPLAY_MS);
+        armReset(PICKER_DISPLAY_MS);
         return;
       }
 
       const shown: CheckInFailureReason = reason === "class_not_open" || reason === "class_selection_required" ? "no_open_class" : reason;
       setPhase({ kind: "error", reason: shown });
-      timeoutRef.current = setTimeout(resetToEntry, shown === "no_open_class" ? UNAVAILABLE_DISPLAY_MS : ERROR_DISPLAY_MS);
+      armReset(shown === "no_open_class" ? UNAVAILABLE_DISPLAY_MS : ERROR_DISPLAY_MS);
     },
-    [academySlug, token, clearTimers, resetToEntry, queueCheckIn],
+    [academySlug, token, clearTimers, queueCheckIn, armReset],
   );
 
   /** Confirmation screen -> "¿No es esta clase?": fetch that day's classes. */
@@ -353,16 +369,16 @@ export function KioskClient({
       // already safely recorded, so this is a cosmetic failure, not a lost tap.
       if (picklist.length === 0) {
         setPhase({ kind: "success", result });
-        timeoutRef.current = setTimeout(resetToEntry, SUCCESS_DISPLAY_MS);
+        armReset(SUCCESS_DISPLAY_MS);
         return;
       }
 
       // Timer starts only once the picker is actually interactive — a slow
       // fetch must not eat the student's reading time.
       setPhase({ kind: "correcting", result, picklist, submitting: false, failed: false });
-      timeoutRef.current = setTimeout(resetToEntry, PICKER_DISPLAY_MS);
+      armReset(PICKER_DISPLAY_MS);
     },
-    [academySlug, token, clearTimers, resetToEntry],
+    [academySlug, token, clearTimers, armReset],
   );
 
   /** Correction chosen: reassign the record already written, then return to
@@ -394,14 +410,14 @@ export function KioskClient({
 
       if (!matchedClass) {
         setPhase({ kind: "correcting", result, picklist, submitting: false, failed: true });
-        timeoutRef.current = setTimeout(resetToEntry, PICKER_DISPLAY_MS);
+        armReset(PICKER_DISPLAY_MS);
         return;
       }
 
       setPhase({ kind: "success", result: { ...result, matchedClass } });
-      timeoutRef.current = setTimeout(resetToEntry, SUCCESS_DISPLAY_MS);
+      armReset(SUCCESS_DISPLAY_MS);
     },
-    [academySlug, token, clearTimers, resetToEntry],
+    [academySlug, token, clearTimers, armReset],
   );
 
   /** Correction cancelled: back to the confirmation, which still shows the class the attendance is saved in. */
@@ -409,9 +425,9 @@ export function KioskClient({
     (result: CheckInSuccess) => {
       clearTimers();
       setPhase({ kind: "success", result });
-      timeoutRef.current = setTimeout(resetToEntry, SUCCESS_DISPLAY_MS);
+      armReset(SUCCESS_DISPLAY_MS);
     },
-    [clearTimers, resetToEntry],
+    [clearTimers, armReset],
   );
 
   // Restyle only: the brief's PIN pad spec ("3x4 numpad" with `Borrar` /
@@ -435,103 +451,139 @@ export function KioskClient({
     void submitCode(phase.code);
   };
 
+  const hasOwnHeading = phase.kind === "entry" || phase.kind === "picking" || phase.kind === "correcting" || phase.kind === "success";
+
   return (
-    <main className="flex min-h-[calc(100vh-3rem)] flex-col items-center justify-center gap-6 p-6">
-      {/* Persistent, staff-facing. Deliberately outside the `phase` state
-          machine so it never auto-dismisses: a lost check-in has to be
-          reported to a person, and nobody watches a kiosk tablet's console. */}
+    <main className="relative flex min-h-[calc(100dvh-3rem)] flex-col">
+      {/* Persistent, staff-facing. Deliberately outside the `phase` state machine so it never auto-dismisses: a lost check-in has to be
+          reported to a person, and nobody watches a kiosk tablet's console. It sits IN the page flow, directly under the banner (it used to
+          be fixed over the banner and covered the academy name), so the keypad simply moves down while it is shown. */}
       {droppedCount > 0 && (
-        <div
-          role="status"
-          className="fixed inset-x-0 top-0 z-50 flex items-center justify-center gap-3 bg-destructive px-4 py-2 text-sm text-destructive-foreground"
-        >
+        <div role="status" className="flex flex-wrap items-center justify-center gap-x-4 gap-y-2 border-b-2 border-bad-line bg-bad-soft px-4 py-3 text-lg font-medium text-bad">
+          <CircleAlert aria-hidden="true" className="size-6 shrink-0" />
           <span>{t("syncDropped", { count: droppedCount })}</span>
-          <Button
-            type="button"
-            size="sm"
-            variant="secondary"
-            onClick={() => setDroppedCount(0)}
-          >
+          <Button type="button" size="lg" variant="outline" className="border-bad text-bad" onClick={() => setDroppedCount(0)}>
             {t("syncDroppedDismiss")}
           </Button>
         </div>
       )}
 
-      {/* Hidden during the success phase so that view can genuinely fill the
-          screen, per the brief's "full-screen success state" — everywhere
-          else the academy name stays visible for context. */}
-      {phase.kind !== "success" && (
-        <h1 className="text-center text-3xl font-bold">{academyName}</h1>
-      )}
+      <div className="flex flex-1 flex-col items-center justify-center gap-6 px-6 py-6 pb-10 min-[900px]:landscape:px-14">
+        {/* Screens that have no heading of their own (a refusal, the lockout, the offline confirmation) still get one H1, the academy,
+            for assistive technology; the banner already shows the name to everyone else. */}
+        {!hasOwnHeading && <h1 className="sr-only">{academyName}</h1>}
 
-      {phase.kind === "entry" && (
-        <EntryView
-          code={phase.code}
-          submitting={phase.submitting}
-          onDigit={pressDigit}
-          onClear={pressClear}
-          onEnter={pressEnter}
-        />
-      )}
+        {phase.kind === "entry" && (
+          <EntryView code={phase.code} submitting={phase.submitting} onDigit={pressDigit} onClear={pressClear} onEnter={pressEnter} />
+        )}
 
-      {phase.kind === "success" && (
-        <SuccessView result={phase.result} onCorrect={() => void openCorrection(phase.result)} />
-      )}
+        {phase.kind === "success" && <SuccessView result={phase.result} onCorrect={() => void openCorrection(phase.result)} />}
 
-      {phase.kind === "picking" && (
-        <ClassPicker
-          heading={t("pickClassHeading")}
-          description={t("pickClassDescription")}
-          notice={phase.closedNotice ? t("pickClassClosedNotice") : undefined}
-          picklist={phase.picklist}
-          submitting={false}
-          cancelLabel={t("pickClassCancel")}
-          onCancel={resetToEntry}
-          onPick={(classSessionId) => void submitCode(phase.code, classSessionId)}
-        />
-      )}
+        {phase.kind === "picking" && (
+          <ClassPicker
+            heading={t("pickClassHeading")}
+            description={t("pickClassDescription")}
+            notice={phase.closedNotice ? t("pickClassClosedNotice") : undefined}
+            picklist={phase.picklist}
+            submitting={false}
+            cancelLabel={t("pickClassCancel")}
+            onCancel={resetToEntry}
+            onPick={(classSessionId) => void submitCode(phase.code, classSessionId)}
+          />
+        )}
 
-      {phase.kind === "correcting" && (
-        <ClassPicker
-          heading={t("correctClassHeading")}
-          description={t("correctClassDescription")}
-          picklist={phase.picklist}
-          submitting={phase.submitting}
-          error={phase.failed ? t("correctClassFailed") : undefined}
-          cancelLabel={t("pickClassCancel")}
-          onCancel={() => cancelCorrection(phase.result)}
-          onPick={(classSessionId) => void applyCorrection(phase.result, phase.picklist, classSessionId)}
-        />
-      )}
+        {phase.kind === "correcting" && (
+          <ClassPicker
+            heading={t("correctClassHeading")}
+            description={t("correctClassDescription")}
+            picklist={phase.picklist}
+            submitting={phase.submitting}
+            error={phase.failed ? t("correctClassFailed") : undefined}
+            cancelLabel={t("pickClassCancel")}
+            onCancel={() => cancelCorrection(phase.result)}
+            onPick={(classSessionId) => void applyCorrection(phase.result, phase.picklist, classSessionId)}
+          />
+        )}
 
-      {phase.kind === "queued" && (
-        <Card className="w-full max-w-sm">
-          <CardContent className="flex flex-col items-center gap-2 py-8 text-center">
-            <p className="text-lg font-medium">{t("queuedOffline")}</p>
-          </CardContent>
-        </Card>
-      )}
+        {phase.kind === "queued" && <NoticeCard tone="ok" icon={WifiOff} role="status" message={t("queuedOffline")} />}
 
-      {phase.kind === "error" && (
-        <Card className="w-full max-w-sm">
-          <CardContent className="flex flex-col items-center gap-2 py-8 text-center">
-            <p className="text-lg font-medium">{t(errorMessageKey(phase.reason))}</p>
-          </CardContent>
-        </Card>
-      )}
+        {phase.kind === "error" && <NoticeCard {...errorPresentation(phase.reason)} message={t(errorMessageKey(phase.reason))} />}
 
-      {phase.kind === "locked" && (
-        <Card className="w-full max-w-sm">
-          <CardContent className="flex flex-col items-center gap-2 py-8 text-center">
-            <p className="text-lg font-medium">
-              {phase.reason === "locked_out" ? t("lockedOut") : t("rateLimited")}
-            </p>
-            <p className="text-3xl font-bold tabular-nums">{phase.retryAfterSeconds}s</p>
-          </CardContent>
-        </Card>
+        {phase.kind === "locked" && (
+          <NoticeCard
+            tone={phase.reason === "locked_out" ? "bad" : "warn"}
+            icon={Lock}
+            message={phase.reason === "locked_out" ? t("lockedOut") : t("rateLimited")}
+            count={`${phase.retryAfterSeconds}s`}
+          />
+        )}
+      </div>
+
+      {/* How long until the keypad comes back by itself. The same number arms the reset (armReset), and a new arm remounts the bar so it
+          restarts. Decorative (the text on screen is the message), and hidden entirely for people who ask for reduced motion. */}
+      {pendingReset && phase.kind !== "entry" && (
+        <div aria-hidden="true" data-testid="kiosk-timeout" data-timeout-ms={pendingReset.ms} className="absolute inset-x-0 bottom-0 h-2 border-t border-input bg-data-track motion-reduce:hidden">
+          <div key={pendingReset.epoch} className="kiosk-timeout-fill h-full bg-data" style={{ "--kiosk-timeout-ms": `${pendingReset.ms}ms` } as CSSProperties} />
+        </div>
       )}
     </main>
   );
+}
+
+type NoticeTone = "ok" | "warn" | "bad" | "info";
+
+const NOTICE_TONE_CLASS: Record<NoticeTone, string> = {
+  ok: "border-ok-line bg-ok-soft text-ok",
+  warn: "border-warn-line bg-warn-soft text-warn",
+  bad: "border-bad-line bg-bad-soft text-bad",
+  info: "border-input bg-card text-foreground",
+};
+
+/** Refusals, the lockout and the offline confirmation: an icon, the words and a tone, never colour alone. Wording is the app's own. */
+function NoticeCard({
+  tone,
+  icon: Icon,
+  message,
+  count,
+  role = "alert",
+}: {
+  tone: NoticeTone;
+  icon: LucideIcon;
+  message: string;
+  count?: string;
+  role?: "alert" | "status";
+}) {
+  return (
+    <div role={role} className={cn("flex w-full max-w-xl flex-col items-center gap-4 rounded-lg border-2 px-7 py-8 text-center", NOTICE_TONE_CLASS[tone])}>
+      <Icon aria-hidden="true" className="size-14" />
+      <p className="text-2xl font-semibold text-balance sm:text-3xl">{message}</p>
+      {count && <p className="font-mono text-6xl font-medium tabular-nums text-foreground">{count}</p>}
+    </div>
+  );
+}
+
+/** Tone and icon per refusal: red for what the student cannot fix, amber for waiting or asking someone, neutral for "already in". */
+function errorPresentation(reason: CheckInFailureReason): { tone: NoticeTone; icon: LucideIcon } {
+  switch (reason) {
+    case "invalid_code":
+    case "invalid_request":
+      return { tone: "bad", icon: CircleAlert };
+    case "already_checked_in":
+      return { tone: "info", icon: Info };
+    case "no_open_class":
+    case "class_not_open":
+    case "class_selection_required":
+      return { tone: "warn", icon: Clock };
+    case "invalid_token":
+      return { tone: "bad", icon: ShieldAlert };
+    case "org_unavailable":
+      return { tone: "warn", icon: TriangleAlert };
+    case "network_error":
+      return { tone: "warn", icon: WifiOff };
+    case "queue_failed":
+    default:
+      return { tone: "bad", icon: CircleAlert };
+  }
 }
 
 function errorMessageKey(reason: CheckInFailureReason): string {
@@ -558,12 +610,13 @@ function errorMessageKey(reason: CheckInFailureReason): string {
   }
 }
 
-// Wall-mounted, read at 1-2 metres (REDESIGN_BRIEF.md Phase 8): ~64px
-// numerals and huge tap targets at rest, scaled down below `sm` only so the
-// grid still obeys the phone-width rule (Rule 6) — this screen is never
-// actually loaded on a phone, but must not overflow one either.
-const DIGIT_BUTTON_CLASS = "h-20 w-20 text-4xl sm:h-28 sm:w-28 sm:text-[64px]";
-const ACTION_BUTTON_CLASS = "h-20 w-20 text-lg sm:h-28 sm:w-28 sm:text-2xl";
+// Wall-mounted, read at 1-2 metres: 56px numerals and huge keys with a 2px boundary. Sizes are EXPLICIT and asserted in a real browser
+// (tests/browser/touch-targets.test.ts) under a mouse and a coarse pointer: 80 x 80 on a phone (this screen is never really loaded on
+// one, but must not overflow it), 156 x 124 in portrait from `sm`, and 132 x 108 on a tablet in landscape (>= 900px wide), where the
+// keypad sits beside the prompt and the whole screen fits 1024 x 768 without scrolling. Update the tests together with these numbers.
+const KEY_SIZE_CLASS = "h-20 w-20 sm:h-[124px] sm:w-[156px] min-[900px]:landscape:h-[108px] min-[900px]:landscape:w-[132px]";
+const DIGIT_BUTTON_CLASS = `${KEY_SIZE_CLASS} border-2 text-4xl font-medium sm:text-[56px]`;
+const ACTION_BUTTON_CLASS = `${KEY_SIZE_CLASS} border-2 text-lg sm:text-2xl`;
 
 function EntryView({
   code,
@@ -596,70 +649,55 @@ function EntryView({
   }, []);
 
   return (
-    <div className="flex flex-col items-center gap-8">
-      <p className="text-xl text-muted-foreground sm:text-2xl">{t("enterCode")}</p>
+    // Portrait / phone: one centred column (prompt, dots, keypad, clock). Landscape tablet: two columns, the prompt, dots and clock on the
+    // left and the keypad on the right, so the whole screen fits 1024 x 768 without scrolling.
+    <div className="grid w-full justify-items-center gap-8 min-[900px]:landscape:max-w-5xl min-[900px]:landscape:grid-cols-[minmax(0,1fr)_auto] min-[900px]:landscape:grid-rows-[1fr_auto] min-[900px]:landscape:justify-items-start min-[900px]:landscape:gap-x-16 min-[900px]:landscape:gap-y-6">
+      <div className="flex flex-col items-center gap-6 min-[900px]:landscape:col-start-1 min-[900px]:landscape:row-start-1 min-[900px]:landscape:items-start min-[900px]:landscape:self-center">
+        <h1 className="text-center text-3xl font-semibold text-balance min-[900px]:landscape:text-left sm:text-[40px] sm:leading-tight">{t("enterCode")}</h1>
 
-      <div className="flex gap-4" aria-hidden="true">
-        {dots.map((filled, index) => (
-          <span
-            key={index}
-            className={`size-6 rounded-full border-2 border-foreground sm:size-7 ${filled ? "bg-foreground" : "bg-transparent"}`}
-          />
-        ))}
+        <div className="flex gap-4 sm:gap-5" aria-hidden="true">
+          {dots.map((filled, index) => (
+            <span key={index} className={`size-6 rounded-full border-[3px] border-foreground sm:size-[30px] ${filled ? "bg-foreground" : "bg-transparent"}`} />
+          ))}
+        </div>
+
+        {/* The dots are decorative for assistive technology, so how many digits are in is said here (polite, read as it changes). */}
+        <p role="status" aria-live="polite" className="sr-only">
+          {t("codeStatus", { count: code.length, total: CODE_LENGTH })}
+        </p>
+
+        {submitting && (
+          <p className="flex items-center gap-2 text-xl text-muted-foreground">
+            <Loader2 aria-hidden="true" className="size-6 animate-spin" />
+            {t("submitting")}
+          </p>
+        )}
       </div>
 
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-3 gap-3 sm:gap-4 min-[900px]:landscape:col-start-2 min-[900px]:landscape:row-span-2 min-[900px]:landscape:row-start-1 min-[900px]:landscape:gap-3.5 min-[900px]:landscape:self-center">
         {["1", "2", "3", "4", "5", "6", "7", "8", "9"].map((digit) => (
-          <Button
-            key={digit}
-            type="button"
-            variant="outline"
-            className={DIGIT_BUTTON_CLASS}
-            disabled={submitting || codeComplete}
-            onClick={() => onDigit(digit)}
-          >
+          <Button key={digit} type="button" variant="outline" className={DIGIT_BUTTON_CLASS} disabled={submitting || codeComplete} onClick={() => onDigit(digit)}>
             {digit}
           </Button>
         ))}
-        {/* Bottom row is Borrar / 0 / Entrar — the brief's literal 3x4 layout
-            ("Borrar / Entrar in gold"), replacing the old Clear/0/Backspace
-            row and its auto-submit-on-4th-digit trigger. */}
-        <Button
-          type="button"
-          variant="primary"
-          className={ACTION_BUTTON_CLASS}
-          disabled={submitting || code.length === 0}
-          onClick={onClear}
-        >
+        {/* Bottom row: Clear / 0 / Enter, the brief's 3x4 layout. Clear is a secondary key (it discards); Enter is the one primary action and
+            stays disabled until all four digits are in. */}
+        <Button type="button" variant="secondary" className={ACTION_BUTTON_CLASS} disabled={submitting || code.length === 0} onClick={onClear}>
           {t("clear")}
         </Button>
-        <Button
-          type="button"
-          variant="outline"
-          className={DIGIT_BUTTON_CLASS}
-          disabled={submitting || codeComplete}
-          onClick={() => onDigit("0")}
-        >
+        <Button type="button" variant="outline" className={DIGIT_BUTTON_CLASS} disabled={submitting || codeComplete} onClick={() => onDigit("0")}>
           0
         </Button>
-        <Button
-          type="button"
-          variant="primary"
-          className={ACTION_BUTTON_CLASS}
-          disabled={submitting || !codeComplete}
-          onClick={onEnter}
-        >
+        <Button type="button" variant="primary" className={ACTION_BUTTON_CLASS} disabled={submitting || !codeComplete} onClick={onEnter}>
           {t("enter")}
         </Button>
       </div>
 
-      {submitting && <p className="text-muted-foreground">{t("submitting")}</p>}
-
       {now && (
-        <p className="font-mono text-sm text-muted-foreground sm:text-base">
-          {now.setLocale(locale).toLocaleString(DateTime.DATE_FULL)}
-          {" · "}
-          {now.setLocale(locale).toLocaleString(DateTime.TIME_SIMPLE)}
+        <p className="font-mono text-base text-muted-foreground min-[900px]:landscape:col-start-1 min-[900px]:landscape:row-start-2 min-[900px]:landscape:self-end sm:text-xl">
+          <span className="whitespace-nowrap">{now.setLocale(locale).toLocaleString(DateTime.DATE_FULL)}</span>
+          <span className="min-[900px]:landscape:hidden">{" · "}</span>
+          <span className="whitespace-nowrap min-[900px]:landscape:block">{now.setLocale(locale).toLocaleString(DateTime.TIME_SIMPLE)}</span>
         </p>
       )}
     </div>
@@ -696,8 +734,8 @@ function ClassPicker({
 }) {
   const tType = useTranslations("classType");
   return (
-    <div className="flex w-full max-w-xl flex-col items-center gap-6">
-      <h2 className="text-center font-heading text-3xl font-semibold text-balance sm:text-4xl">{heading}</h2>
+    <div className="flex w-full max-w-2xl flex-col items-center gap-6">
+      <h1 className="text-center text-3xl font-semibold text-balance sm:text-4xl">{heading}</h1>
       <p className="text-center text-lg text-muted-foreground sm:text-xl">{description}</p>
       {notice && (
         <p role="status" className="text-center text-lg font-medium sm:text-xl">
@@ -712,25 +750,31 @@ function ClassPicker({
             type="button"
             variant="outline"
             disabled={submitting}
-            className="h-auto w-full justify-between gap-4 px-5 py-5 text-left text-xl whitespace-normal sm:py-6 sm:text-2xl"
+            className="h-auto min-h-[104px] pointer-coarse:min-h-[104px] w-full justify-between gap-4 border-2 px-5 py-5 text-left text-xl whitespace-normal sm:px-6 sm:text-2xl"
             onClick={() => onPick(entry.id)}
           >
-            <span className="flex flex-col gap-1">
-              <span>{entry.name}</span>
-              <span className="text-base font-normal text-muted-foreground sm:text-lg">
-                {tType.has(entry.type) ? tType(entry.type) : entry.type}
-              </span>
+            <span className="flex min-w-0 flex-col gap-1">
+              <span className="text-2xl font-semibold sm:text-[28px] sm:leading-tight">{entry.name}</span>
+              <span className="text-base font-normal text-muted-foreground sm:text-lg">{tType.has(entry.type) ? tType(entry.type) : entry.type}</span>
             </span>
-            <span className="font-mono tabular-nums">
-              {entry.startTime} – {entry.endTime}
+            {/* The time range never wraps inside itself, however long the class name is. */}
+            <span className="flex shrink-0 items-center gap-3">
+              <span className="font-mono text-xl font-medium whitespace-nowrap tabular-nums sm:text-2xl">
+                {entry.startTime} – {entry.endTime}
+              </span>
+              <ChevronRight aria-hidden="true" className="size-7 text-muted-foreground" />
             </span>
           </Button>
         ))}
       </div>
 
-      {error && <p className="text-center text-lg text-bad">{error}</p>}
+      {error && (
+        <p role="alert" className="text-center text-lg font-medium text-bad sm:text-xl">
+          {error}
+        </p>
+      )}
 
-      <Button type="button" variant="ghost" disabled={submitting} className="h-auto px-6 py-4 text-lg sm:text-xl" onClick={onCancel}>
+      <Button type="button" variant="ghost" disabled={submitting} className="h-auto min-h-[60px] pointer-coarse:min-h-[60px] px-8 py-4 text-lg underline underline-offset-4 sm:text-xl" onClick={onCancel}>
         {cancelLabel}
       </Button>
     </div>
@@ -748,78 +792,80 @@ export function SuccessView({ result, onCorrect }: { result: CheckInSuccess; onC
   // (The kiosk shows no due date, so none is passed.)
   const view = buildProgressView({ ...summary, dueDate: null });
 
+  const tProgress = useTranslations("portal.progress");
+  const percent = view.current !== null && view.target !== null && view.target > 0 ? Math.round((view.current / view.target) * 100) : null;
+
   return (
-    <div className="flex w-full flex-1 flex-col items-center justify-center gap-6 text-center">
-      <CheckCircle2 className="size-20 text-ok sm:size-28" aria-hidden="true" />
+    // Portrait: one centred column. Landscape tablet: two columns, who and which belt on the left, progress and the class it was saved in on
+    // the right. The name is the screen's H1 (the academy is already in the banner).
+    <div className="grid w-full max-w-5xl items-center justify-items-center gap-8 text-center min-[900px]:landscape:grid-cols-2 min-[900px]:landscape:gap-12 min-[900px]:landscape:justify-items-stretch">
+      <div className="flex flex-col items-center justify-center gap-5">
+        <CheckCircle2 className="size-20 text-ok sm:size-24" aria-hidden="true" />
 
-      <h2 className="font-heading text-4xl font-semibold text-balance sm:text-6xl">
-        {thresholdReached ? t("thresholdReachedHeading", { name }) : t("successHeading", { name })}
-      </h2>
+        <h1 className="text-4xl font-semibold text-balance sm:text-[52px] sm:leading-[1.1]">
+          {thresholdReached ? t("thresholdReachedHeading", { name }) : t("successHeading", { name })}
+        </h1>
 
-      <BeltGraphic
-        belt={student.currentBeltVisual}
-        label={locale === "es" ? student.currentBeltLabelEs : student.currentBeltLabelEn}
-        stripes={student.currentStripes}
-      />
+        <BeltGraphic belt={student.currentBeltVisual} label={locale === "es" ? student.currentBeltLabelEs : student.currentBeltLabelEn} stripes={student.currentStripes} />
 
-      {isVisitor && (
-        <span className="rounded-full bg-secondary px-4 py-1.5 text-lg text-secondary-foreground">
-          {t("visitorBadge", { academy: homeAcademyName })}
-        </span>
-      )}
-
-      <div className="flex flex-col items-center gap-2">
-        <p className="font-mono text-3xl tabular-nums sm:text-5xl">
-          {view.current !== null && view.target !== null ? `${view.current} / ${view.target}` : view.actualCount}
-        </p>
-
-        {view.state === "in_progress" && (
-          <p className="text-xl text-muted-foreground sm:text-2xl">
-            {t("remainingToNextStripe", { count: view.remaining ?? 0 })}
-          </p>
-        )}
-
-        {view.state === "eligible" && <p className="text-xl font-medium sm:text-2xl">{t("eligibleForReview")}</p>}
-
-        {/* Truthful about what this tap did for progress: recorded either way, but only the first
-            qualifying class of the day is a progress day. */}
-        {progressOutcome === "already_counted_today" && (
-          <p className="text-lg text-muted-foreground sm:text-xl">{t("progressAlreadyCounted")}</p>
-        )}
-        {progressOutcome === "not_promotion_class" && (
-          <p className="text-lg text-muted-foreground sm:text-xl">{t("progressNotPromotionClass")}</p>
-        )}
-        {progressOutcome === "before_last_promotion" && (
-          <p className="text-lg text-muted-foreground sm:text-xl">{t("progressBeforeLastPromotion")}</p>
-        )}
+        {isVisitor && <span className="rounded-full border border-input bg-secondary px-4 py-1.5 text-lg text-secondary-foreground">{t("visitorBadge", { academy: homeAcademyName })}</span>}
       </div>
 
-      {/* The safety net that makes automatic matching acceptable (Phase 9):
-          the kiosk NAMES the class it chose and offers to change it on the
-          spot. Omitted entirely for an UNMATCHED save — there is no class to
-          name, and the tap is already queued for staff review on the Kiosco
-          page's "Marcajes de hoy" table. */}
-      {matchedClass && (
-        <Card className="w-full max-w-md">
-          <CardContent className="flex flex-col items-center gap-2 py-5 text-center">
+      <div className="flex w-full max-w-lg flex-col items-center gap-6 min-[900px]:landscape:max-w-none min-[900px]:landscape:items-stretch min-[900px]:landscape:text-left">
+        <div className="flex flex-col items-center gap-3 min-[900px]:landscape:items-stretch">
+          {/* The fraction and its bar exist only where there is an attendance target ("20 / 30"). A rank with none (a time-based degree, a
+              terminal belt) shows no number at all: the attendance count does not decide it, and a bare count under the belt has nothing to
+              explain it. Time-based ranks get context instead, below; the kiosk has no due date to show, so it never invents one. */}
+          {view.current !== null && view.target !== null && (
+            <p className="font-mono text-5xl font-medium tabular-nums sm:text-[56px] sm:leading-none">{`${view.current} / ${view.target}`}</p>
+          )}
+
+          {percent !== null && (
+            <div
+              role="progressbar"
+              aria-label={tProgress("heading")}
+              aria-valuemin={0}
+              aria-valuemax={view.target ?? 0}
+              aria-valuenow={view.current ?? 0}
+              className="h-4 w-full overflow-hidden rounded-full border-2 border-input bg-data-track"
+            >
+              <div className={cn("h-full rounded-full", percent >= 90 ? "bg-brand-data" : "bg-data")} style={{ width: `${percent}%` }} />
+            </div>
+          )}
+
+          {view.state === "in_progress" && <p className="text-xl text-muted-foreground sm:text-2xl">{t("remainingToNextStripe", { count: view.remaining ?? 0 })}</p>}
+
+          {view.state === "eligible" && <p className="text-xl font-medium sm:text-2xl">{t("eligibleForReview")}</p>}
+
+          {view.state === "time_pending" && <p className="max-w-md text-xl text-muted-foreground sm:text-2xl">{t("timePendingSeePortal")}</p>}
+          {view.state === "time_anchor_missing" && <p className="max-w-md text-xl text-muted-foreground sm:text-2xl">{tProgress("timeAnchorMissing")}</p>}
+          {view.state === "not_configured" && <p className="max-w-md text-xl text-muted-foreground sm:text-2xl">{tProgress("notConfigured")}</p>}
+
+          {/* Truthful about what this tap did for progress: recorded either way, but only the first
+              qualifying class of the day is a progress day. */}
+          {progressOutcome === "already_counted_today" && <p className="text-lg text-muted-foreground sm:text-xl">{t("progressAlreadyCounted")}</p>}
+          {progressOutcome === "not_promotion_class" && <p className="text-lg text-muted-foreground sm:text-xl">{t("progressNotPromotionClass")}</p>}
+          {progressOutcome === "before_last_promotion" && <p className="text-lg text-muted-foreground sm:text-xl">{t("progressBeforeLastPromotion")}</p>}
+        </div>
+
+        {/* The safety net that makes automatic matching acceptable (Phase 9): the kiosk NAMES the class it chose and offers to change it on the
+            spot. Omitted entirely for an UNMATCHED save: there is no class to name, and the tap is already queued for staff review on the
+            Kiosco page's "Marcajes de hoy" table. */}
+        {matchedClass && (
+          <div className="flex w-full flex-col items-center gap-2 rounded-lg border border-border bg-card px-5 py-5 text-center min-[900px]:landscape:items-start min-[900px]:landscape:text-left">
             <p className="text-sm tracking-wide text-muted-foreground uppercase">{t("savedIn")}</p>
-            <p className="text-xl font-medium sm:text-2xl">{matchedClass.name}</p>
+            <p className="text-2xl font-semibold">{matchedClass.name}</p>
             <p className="text-lg text-muted-foreground">
               {tDay(matchedClass.dayOfWeek)} {matchedClass.startTime}
             </p>
             {result.canCorrect !== false && (
-              <Button
-                type="button"
-                variant="ghost"
-                className="h-auto px-4 py-3 text-lg underline underline-offset-4 sm:text-xl"
-                onClick={onCorrect}
-              >
+              <Button type="button" variant="outline" className="mt-2 h-auto min-h-[60px] pointer-coarse:min-h-[60px] border-2 px-5 py-3 text-lg sm:text-xl" onClick={onCorrect}>
                 {t("notThisClass")}
               </Button>
             )}
-          </CardContent>
-        </Card>
-      )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
