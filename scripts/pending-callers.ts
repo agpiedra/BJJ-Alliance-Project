@@ -121,6 +121,26 @@ const PENDING_CALLERS: PendingCaller[] = [
     dueBy: "Phase 4",
     reason: "Pure validation `updateTrackConfig` calls internally; also due Phase 4 once a caller can invoke it standalone (e.g. a live-preview check before submit).",
   },
+  // Student dues, PR 1 (calculation library only: pure functions, no schema, jobs or UI). Every export below is used only by its unit
+  // tests until the ledger PR wires it in; the payment proposal's PR sequence (docs outside the repo) names that PR.
+  {
+    symbol: "dueDateFor / graceDeadlineFor / enrollmentTiming (and the calendar helpers)",
+    file: "src/lib/dues/calendar.ts",
+    dueBy: "student-dues ledger PR (proposal PR 4)",
+    reason: "Due dates, inclusive next-month grace deadlines and signup-versus-recurring timing; the ledger's enrollment path and monthly job call them.",
+  },
+  {
+    symbol: "amountDueMinor / lateFeeToAssessMinor / outstandingItems / settleReceipt",
+    file: "src/lib/dues/settlement.ts",
+    dueBy: "student-dues ledger PR (proposal PR 4)",
+    reason: "Once-per-obligation late fee and oldest-first whole-obligation settlement totals; the fee job and payment entry call them.",
+  },
+  {
+    symbol: "firstUncoveredMonth / planPrepaidMonths / planPackage / monthsToCreate / priceFor",
+    file: "src/lib/dues/coverage.ts",
+    dueBy: "student-dues ledger PR (proposal PR 4); packages proposal PR 5",
+    reason: "Consecutive prepaid and package coverage, overlap detection and per-month price versions; payment entry and the monthly job call them.",
+  },
 ];
 
 function main() {
