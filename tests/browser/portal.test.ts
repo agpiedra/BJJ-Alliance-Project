@@ -165,6 +165,10 @@ describe("portal tabs in a real browser", () => {
     expect(await dark()).toBe(!before);
     expect(await page.evaluate(() => localStorage.getItem("theme"))).toBe(before ? "light" : "dark");
     await page.getByRole("button", { name: "Account menu" }).click();
-    expect(await page.getByRole("menuitem", { name: "Sign out" }).isVisible()).toBe(true);
+    // isVisible() answers immediately and does not wait, so reading it straight after the click is a synchronization weakness
+    // (it failed once in CI with `false`). waitFor() is a bounded wait for the same visible state; the assertion below is kept.
+    const signOut = page.getByRole("menuitem", { name: "Sign out" });
+    await signOut.waitFor({ state: "visible" });
+    expect(await signOut.isVisible()).toBe(true);
   });
 });
