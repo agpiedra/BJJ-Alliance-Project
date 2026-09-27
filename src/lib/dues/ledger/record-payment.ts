@@ -6,7 +6,7 @@ import { parseMoney } from "@/lib/dues/config-input";
 import { feeAssessableFrom, lateFeeApplies, orderOldestFirst, outstandingItems, settleReceipt, type ObligationTerms } from "@/lib/dues/settlement";
 import { inactiveLedgerActivation, type LedgerDeps } from "@/lib/dues/ledger/activation";
 import { fromDbDate, inTenantScope, isRealDate, lockStudent, minusDays, todayIn, toDbDate } from "@/lib/dues/ledger/common";
-import { columnToMinor, decimalToMinor, minorToDecimal } from "@/lib/dues/ledger/minor-units";
+import { MAX_MINOR_UNITS, columnToMinor, decimalToMinor, minorToDecimal } from "@/lib/dues/ledger/minor-units";
 import { CURRENCIES } from "@/lib/payments/format-money";
 
 /**
@@ -29,6 +29,15 @@ import { CURRENCIES } from "@/lib/payments/format-money";
  *
  * Not in scope, on purpose: CRC-for-USD conversion (D1), prepaid or future months (D24), packages, signup, opening balances, reversals,
  * refunds, who may call it (D5), and a default backdating limit (D4: `maxBackdateDays` is a required parameter).
+ *
+ * A COLUMN-CAPACITY BOUNDARY THAT IS NOT A BUSINESS RULE: each obligation's amount and fee are individually bounded by their own
+ * `Decimal(10,2)` columns, but a SUM of several is not, and neither is one obligation's tuition plus its own applicable late fee — both
+ * can exceed what `DuesPayment.tenderAmount` (also `Decimal(10,2)`) can ever hold. When the OLDEST outstanding obligation's own amount
+ * due already exceeds that, no payment can ever settle it (oldest-first admits no way past it), so this is refused explicitly
+ * (`amountUnsupported`) before anything else is checked. No obligation is split, no fee is waived, no amount is clamped, and no schema
+ * changes: an amount this large is a genuine gap, reported honestly. For a LATER total that would exceed it, the totals this writer
+ * offers in a refusal (`selectableTotals`) simply stop before the first one that would not fit — an earlier, smaller, still-payable
+ * prefix is never withheld because of what comes after it.
  */
 export type RecordDuesPaymentError =
   | "notActive"
@@ -42,6 +51,7 @@ export type RecordDuesPaymentError =
   | "notASelectableTotal"
   | "totalMismatch"
   | "feeAlreadyAssessed"
+  | "amountUnsupported"
   | "conflict";
 
 export type RecordDuesPaymentResult =
@@ -54,6 +64,22 @@ const MAX_NOTES = 500;
 
 const refuse = (error: RecordDuesPaymentError, extra: { selectableTotals?: string[]; alreadySettledIds?: string[] } = {}): RecordDuesPaymentResult => ({ ok: false, error, ...extra });
 const ymd = (d: CalendarDate) => `${d.year}-${String(d.month).padStart(2, "0")}-${String(d.day).padStart(2, "0")}`;
+
+/**
+ * The running totals, oldest first, this writer could actually offer for a refusal message: at most `MAX_SELECTED` obligations, and only
+ * while the cumulative amount still fits `Decimal(10,2)` (`MAX_MINOR_UNITS`). Stops at the first count or amount it cannot represent — a
+ * later, larger total is simply never offered; it never withholds an earlier, still-payable prefix.
+ */
+function selectablePrefixTotals(items: readonly { amountMinor: number }[]): string[] {
+  const totals: string[] = [];
+  let running = 0;
+  for (let i = 0; i < items.length && i < MAX_SELECTED; i++) {
+    running += items[i].amountMinor;
+    if (running > MAX_MINOR_UNITS) break;
+    totals.push(minorToDecimal(running));
+  }
+  return totals;
+}
 
 export async function recordDuesPayment(
   args: {
@@ -157,14 +183,18 @@ export async function recordDuesPayment(
       // The exact total: the tender must equal the running total of the first k obligations at their amount due on the received date,
       // in one currency (PR 1's validator), AND that k must be the number of obligations the caller chose.
       const items = outstandingItems(openTerms, receivedOn);
+
+      // The oldest outstanding obligation's own amount due can itself exceed what a payment column can hold (tuition plus its own
+      // applicable fee, each individually in range, summed). Oldest-first admits no way to settle anything while it stands, so this is
+      // refused explicitly here — before the totals below are even built — never split, waived or clamped.
+      if (items.length > 0 && items[0].amountMinor > MAX_MINOR_UNITS) return refuse("amountUnsupported");
+
       const result = settleReceipt(items, tenderMinor, tender.currency);
       if (!result.ok) {
-        return result.reason === "CURRENCY_MISMATCH"
-          ? refuse("currencyMismatch")
-          : refuse("notASelectableTotal", { selectableTotals: result.selectableTotalsMinor.map(minorToDecimal) });
+        return result.reason === "CURRENCY_MISMATCH" ? refuse("currencyMismatch") : refuse("notASelectableTotal", { selectableTotals: selectablePrefixTotals(items) });
       }
       if (result.settledIds.length !== chosen.length || !result.settledIds.every((id) => chosenIds.has(id))) {
-        return refuse("totalMismatch", { selectableTotals: items.map((_, i) => minorToDecimal(items.slice(0, i + 1).reduce((sum, item) => sum + item.amountMinor, 0))) });
+        return refuse("totalMismatch", { selectableTotals: selectablePrefixTotals(items) });
       }
 
       // ---- every check passed: write, atomically ----

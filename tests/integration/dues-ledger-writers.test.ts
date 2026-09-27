@@ -733,3 +733,81 @@ describe("recordDuesPayment: validate first, then write", () => {
     expect(await pay(ana.id, [sep], "100.00", { now: OCT_5, day: 5 })).toMatchObject({ ok: true });
   });
 });
+
+/**
+ * A payment's total is a sum of obligation amounts, but the sum, and even a single obligation's tuition plus its own late fee, is not
+ * bounded by the CHECK constraints that bound each column alone: two obligations each within Decimal(10,2)'s range can sum past it,
+ * and a fee added to near-maximum tuition can too. `minorToDecimal` refuses (by design) to format such a value, so any code path that
+ * blindly formats a cumulative or combined total for a REFUSAL MESSAGE must stop before reaching one, not let the RangeError escape.
+ * Reproduced through the real writer, with real obligations (never hand-built minor-unit numbers).
+ */
+describe("payment total boundary: Decimal(10,2)'s own range, not this writer's business rules", () => {
+  let boundaryBranch: { id: string };
+  let feeBranch: { id: string };
+
+  beforeAll(async () => {
+    boundaryBranch = await prisma.academy.create({ data: { organizationId: a.org.id, name: "Writers boundary", slug: `writers-boundary-${suffix}`, kioskTokenHash: `writers-boundary-${suffix}` } });
+    feeBranch = await prisma.academy.create({ data: { organizationId: a.org.id, name: "Writers boundary fee", slug: `writers-boundary-fee-${suffix}`, kioskTokenHash: `writers-boundary-fee-${suffix}` } });
+    await prisma.duesPolicyVersion.create({
+      data: { organizationId: a.org.id, academyId: boundaryBranch.id, effectiveYear: 2027, effectiveMonth: 1, dueDay: 20, graceDay: 5, lateFeeAmount: "0.00", lateFeeCurrency: "USD", createdById: a.admin.id },
+    });
+    await prisma.duesPolicyVersion.create({
+      data: { organizationId: a.org.id, academyId: feeBranch.id, effectiveYear: 2027, effectiveMonth: 1, dueDay: 20, graceDay: 5, lateFeeAmount: "20000000.00", lateFeeCurrency: "USD", createdById: a.admin.id },
+    });
+  }, 30_000);
+
+  /** Two individually valid (within-range) obligations, September and October 2030, USD 60,000,000.00 each — their sum (120,000,000.00)
+   * exceeds Decimal(10,2)'s 99,999,999.99 maximum, but each one alone does not. */
+  async function twoObligationsSummingOverTheLimit() {
+    const student = await newStudent(a, boundaryBranch.id, "boundary");
+    const { terms } = await newTerms(`boundary-${student.id}`, { academyId: boundaryBranch.id, price: "60000000.00" });
+    const policy = await prisma.duesPolicyVersion.findFirstOrThrow({ where: { organizationId: a.org.id, academyId: boundaryBranch.id } });
+    const ids: string[] = [];
+    for (const month of [9, 10]) {
+      const r = await createMonthlyObligation({ context: context(a), studentId: student.id, coverage: { year: 2030, month }, planTermsId: terms.id, policyVersionId: policy.id }, deps(DEC_2030));
+      if (!r.ok) throw new Error(r.error);
+      ids.push(r.obligationId);
+    }
+    return { student, ids };
+  }
+
+  it("(1) an incorrect amount against the two-obligation total is refused with only the in-range total offered, never a crash", async () => {
+    const { student, ids } = await twoObligationsSummingOverTheLimit();
+    const before = await counts(a.org.id);
+    const r = await pay(student.id, ids, "70000000.00", { now: OCT_5, day: 5 }); // matches neither 60,000,000.00 nor the (unrepresentable) 120,000,000.00
+    expect(r).toMatchObject({ ok: false, error: "notASelectableTotal", selectableTotals: ["60000000.00"] });
+    expect(await counts(a.org.id)).toEqual(before);
+  });
+
+  it("(2) the oldest of the two stays payable on its own, even though the pair's total cannot be represented", async () => {
+    const { student, ids } = await twoObligationsSummingOverTheLimit();
+    const [sep, oct] = ids;
+    expect(await pay(student.id, [sep], "60000000.00", { now: OCT_5, day: 5 })).toMatchObject({ ok: true, totalMinor: 6_000_000_000 });
+    // and, once it is the oldest outstanding one, October is payable the very same way
+    expect(await pay(student.id, [oct], "60000000.00", { now: OCT_5, day: 5 })).toMatchObject({ ok: true, totalMinor: 6_000_000_000 });
+  });
+
+  it("(3) an obligation whose tuition plus its own applicable late fee exceeds the column's capacity is an explicit refusal, never split, waived, clamped or crashed", async () => {
+    const student = await newStudent(a, feeBranch.id, "boundary-fee");
+    const { terms } = await newTerms(`boundary-fee-${student.id}`, { academyId: feeBranch.id, price: "90000000.00" }); // + the branch's 20,000,000.00 fee = 110,000,000.00
+    const policy = await prisma.duesPolicyVersion.findFirstOrThrow({ where: { organizationId: a.org.id, academyId: feeBranch.id } });
+    const created = await createMonthlyObligation({ context: context(a), studentId: student.id, coverage: { year: 2030, month: 9 }, planTermsId: terms.id, policyVersionId: policy.id }, deps(DEC_2030));
+    if (!created.ok) throw new Error(created.error);
+    const before = await counts(a.org.id);
+    const originalRow = JSON.stringify(await prisma.duesObligation.findUniqueOrThrow({ where: { id: created.obligationId } }));
+    const r = await pay(student.id, [created.obligationId], "90000000.00", { now: OCT_6, day: 6 }); // paid LATE, so the fee applies; no amount could ever match tuition+fee here
+    expect(r).toEqual({ ok: false, error: "amountUnsupported" });
+    expect(await counts(a.org.id)).toEqual(before);
+    // not split, not waived, not clamped: the obligation's own row is untouched
+    expect(JSON.stringify(await prisma.duesObligation.findUniqueOrThrow({ where: { id: created.obligationId } }))).toBe(originalRow);
+  });
+
+  it("(4) totalMismatch also offers only in-range totals: a valid amount for a smaller prefix, wrong selection, while the full total is unrepresentable", async () => {
+    const { student, ids } = await twoObligationsSummingOverTheLimit();
+    const before = await counts(a.org.id);
+    // both obligations chosen (the correct oldest-first pair), but the amount matches only the first one
+    const r = await pay(student.id, ids, "60000000.00", { now: OCT_5, day: 5 });
+    expect(r).toMatchObject({ ok: false, error: "totalMismatch", selectableTotals: ["60000000.00"] });
+    expect(await counts(a.org.id)).toEqual(before);
+  });
+});
