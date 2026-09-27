@@ -9,6 +9,7 @@ import { Prisma } from "@/generated/prisma/client";
 import { CUSTOM_PROMO_PLAN_NAMES, isCustomPromoPlanName } from "@/lib/payments/custom-promo-plan-name";
 import { CURRENCIES } from "@/lib/payments/format-money";
 import type { ActionState } from "@/lib/action-state";
+import { NOT_PACKAGE_PLAN, isPackagePlan } from "@/lib/dues/package-plans";
 
 /**
  * Plan management — list, create, edit, DEACTIVATE. Never delete.
@@ -25,6 +26,11 @@ import type { ActionState } from "@/lib/action-state";
  * the plans of the academies they run). Every write re-reads the plan from the
  * database and re-checks its academy against the session: a client-submitted
  * `planId` or `academyId` is never trusted as already in scope.
+ *
+ * Package plans (multi-month, owner-configured in `dues/config-actions.ts`) are
+ * the owner's alone: a director sees none, so for a director editing or toggling
+ * one is `notFound`. They are also outside the "last active plan" rule below,
+ * because they are never available to the payment flow that rule protects.
  */
 
 /** `decimal(10,2)` holds up to 99,999,999.99. */
@@ -145,6 +151,7 @@ export async function updatePlan(organizationId: string, _prevState: ActionState
 
   const existing = await prisma.paymentPlan.findUnique({ where: { id: planId, organizationId: context.organizationId } });
   if (!existing || !isAcademyInTenantScope(context, existing.academyId)) return { error: "notFound" };
+  if (context.organizationRole !== "ADMIN" && (await isPackagePlan(context.organizationId, existing.id))) return { error: "notFound" };
   // The promo plan is system-managed: every Pagos render upserts it by name, so
   // renaming or hiding it would break the custom-promotion flow.
   if (isCustomPromoPlanName(existing.name)) return { error: "systemPlan" };
@@ -207,9 +214,10 @@ async function setPlanActive(organizationId: string, planId: string, active: boo
   const existing = await prisma.paymentPlan.findUnique({ where: { id: planId, organizationId: context.organizationId } });
   if (!existing || !isAcademyInTenantScope(context, existing.academyId)) return { error: "notFound" };
   if (isCustomPromoPlanName(existing.name)) return { error: "systemPlan" };
+  if (context.organizationRole !== "ADMIN" && (await isPackagePlan(context.organizationId, existing.id))) return { error: "notFound" };
   if (existing.active === active) return { ok: true };
 
-  if (!active) {
+  if (!active && !(await isPackagePlan(context.organizationId, existing.id))) {
     // An academy with no active plan can't record a single payment. Count the
     // OTHER active plans — the system promo plan doesn't count, it can't
     // stand in for an ordinary monthly plan.
@@ -220,6 +228,7 @@ async function setPlanActive(organizationId: string, planId: string, active: boo
         active: true,
         id: { not: existing.id },
         NOT: { name: { in: [...CUSTOM_PROMO_PLAN_NAMES] } },
+        ...NOT_PACKAGE_PLAN,
       },
     });
     if (otherActive === 0) return { error: "lastActivePlan" };

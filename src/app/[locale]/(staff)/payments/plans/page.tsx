@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { isCustomPromoPlanName } from "@/lib/payments/custom-promo-plan-name";
 import { formatMoney } from "@/lib/payments/format-money";
 import { listPlansForManagement } from "@/lib/payments/list-plans";
+import { DuesSection } from "./dues-section";
 import { CreatePlanForm, CurrencyForm, PlanRowActions } from "./plan-forms";
 
 // Plans change without a redeploy; never statically frozen.
@@ -29,12 +30,28 @@ export default async function PaymentPlansPage() {
   const academies = await getScopedDb(context).academy.findMany({
     where: { ...(scope.academyId ? { id: { in: scope.academyId.in } } : {}) },
     orderBy: { name: "asc" },
-    select: { id: true, name: true },
+    select: { id: true, name: true, timezone: true },
   });
 
-  const [plans, organization] = await Promise.all([
-    listPlansForManagement(context.organizationId, academies.map((a) => a.id)),
+  // Dues configuration (prices, package plans, due dates) is the owner's alone; a director's page is exactly what it was, minus any
+  // package plan. The actions in `dues/config-actions.ts` enforce this regardless of what is rendered.
+  const isOwner = context.organizationRole === "ADMIN";
+  const academyIds = academies.map((a) => a.id);
+  const [plans, organization, terms, policies] = await Promise.all([
+    listPlansForManagement(context.organizationId, academyIds, { includePackages: isOwner }),
     prisma.organization.findUniqueOrThrow({ where: { id: context.organizationId }, select: { currency: true, name: true } }),
+    isOwner
+      ? prisma.paymentPlanTerms.findMany({
+          where: { organizationId: context.organizationId, plan: { academyId: { in: academyIds } } },
+          orderBy: [{ effectiveYear: "asc" }, { effectiveMonth: "asc" }],
+        })
+      : [],
+    isOwner
+      ? prisma.duesPolicyVersion.findMany({
+          where: { organizationId: context.organizationId, academyId: { in: academyIds } },
+          orderBy: [{ effectiveYear: "asc" }, { effectiveMonth: "asc" }],
+        })
+      : [],
   ]);
   const currency = organization.currency;
 
@@ -77,7 +94,10 @@ export default async function PaymentPlansPage() {
                       {academyPlans.map((plan) => (
                         <tr key={plan.id} className="border-t">
                           <td className="py-2 pr-4 align-top">
-                            <div className="font-medium">{plan.name}</div>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="font-medium">{plan.name}</span>
+                              {plan.isPackage && <Badge variant="outline">{t("dues.package.badge")}</Badge>}
+                            </div>
                             {plan.description && <div className="text-xs text-muted-foreground">{plan.description}</div>}
                           </td>
                           <td className="py-2 pr-4 align-top whitespace-nowrap">
@@ -108,6 +128,17 @@ export default async function PaymentPlansPage() {
                 </div>
               )}
               <CreatePlanForm organizationId={context.organizationId} academyId={academy.id} currency={currency} />
+              {isOwner && (
+                <DuesSection
+                  organizationId={context.organizationId}
+                  academy={academy}
+                  plans={academyPlans.filter((plan) => !isCustomPromoPlanName(plan.name))}
+                  terms={terms.filter((row) => academyPlans.some((plan) => plan.id === row.planId))}
+                  policies={policies.filter((row) => row.academyId === academy.id)}
+                  organizationCurrency={currency}
+                  locale={locale}
+                />
+              )}
             </CardContent>
           </Card>
         );

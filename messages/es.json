@@ -947,6 +947,103 @@
         "nameTakenInactive": "Un plan desactivado ya tiene ese nombre — reactívalo desde la lista.",
         "systemPlan": "Este es un plan del sistema y no se puede cambiar ni ocultar.",
         "lastActivePlan": "Este es el último plan activo de la academia. Crea o reactiva otro primero, o no se podría registrar ningún pago."
+      },
+      "dues": {
+        "heading": "Configuración de cuotas",
+        "notice": "Se guarda solo aquí. Guardar la configuración no activa el nuevo cobro: los pagos y el estado de mora siguen las reglas actuales hasta que se active el nuevo cobro.",
+        "package": {
+          "badge": "Paquete"
+        },
+        "terms": {
+          "heading": "Precios y duración",
+          "body": "Cada versión aplica desde su mes de vigencia. Una versión cuyo mes aún no comienza se puede corregir; las versiones vigentes y pasadas no se pueden cambiar.",
+          "none": "Este plan aún no tiene precios guardados.",
+          "columns": {
+            "from": "Vigente desde",
+            "price": "Precio",
+            "months": "Duración",
+            "state": "Estado",
+            "actions": "Acciones"
+          },
+          "duration": "{count, plural, one {# mes} other {# meses}}",
+          "add": {
+            "open": "Agregar un precio",
+            "submit": "Guardar precio",
+            "success": "Precio guardado."
+          },
+          "correct": {
+            "open": "Corregir",
+            "close": "Cerrar",
+            "submit": "Guardar corrección",
+            "success": "Corrección guardada."
+          }
+        },
+        "state": {
+          "current": "Vigente",
+          "scheduled": "Programada",
+          "past": "Pasada"
+        },
+        "newPackage": {
+          "heading": "Nuevo plan de paquete",
+          "body": "Un paquete es un plan propio: dos o más meses por un precio. Se guarda solo como configuración y todavía no se puede elegir para un pago.",
+          "submit": "Crear plan de paquete",
+          "success": "Plan de paquete creado."
+        },
+        "policy": {
+          "heading": "Fechas de pago y recargo",
+          "body": "Aplica a todos los planes de esta sede desde su mes de vigencia. Una versión cuyo mes aún no comienza se puede corregir.",
+          "none": "Esta sede aún no tiene configuración de cuotas guardada.",
+          "columns": {
+            "from": "Vigente desde",
+            "dueDay": "Día de pago",
+            "graceDay": "Día de gracia",
+            "lateFee": "Recargo",
+            "limit": "Límite de prepago",
+            "state": "Estado",
+            "actions": "Acciones"
+          },
+          "limitNotEntered": "Sin ingresar. El prepago no está disponible.",
+          "graceHint": "El pago sigue a tiempo hasta este día del mes siguiente.",
+          "limitHint": "Déjalo vacío si aún no está decidido. El prepago sigue sin estar disponible hasta que ingreses un límite.",
+          "add": {
+            "open": "Agregar configuración de cuotas",
+            "submit": "Guardar configuración de cuotas",
+            "success": "Configuración de cuotas guardada."
+          },
+          "correct": {
+            "open": "Corregir",
+            "close": "Cerrar",
+            "submit": "Guardar corrección",
+            "success": "Corrección guardada."
+          }
+        },
+        "fields": {
+          "effectiveYear": "Año de vigencia",
+          "effectiveMonth": "Mes de vigencia",
+          "price": "Precio",
+          "currency": "Moneda",
+          "monthsCovered": "Meses que cubre",
+          "packageName": "Nombre del paquete",
+          "description": "Descripción (opcional)",
+          "dueDay": "Día de pago (1 a 31)",
+          "graceDay": "Día de gracia del mes siguiente (1 a 31)",
+          "lateFee": "Recargo por mora",
+          "lateFeeCurrency": "Moneda del recargo",
+          "maxPrepaidMonths": "Límite de prepago (meses)"
+        },
+        "error": {
+          "invalid": "Revisa los campos marcados. Los montos usan dígitos y máximo dos decimales, por ejemplo 45 o 45.50.",
+          "notFound": "No se encontró esa sede o ese plan.",
+          "systemPlan": "Este es un plan del sistema y no se puede configurar.",
+          "nameTaken": "Ya existe un plan con ese nombre en esta sede.",
+          "nameTakenInactive": "Un plan desactivado ya tiene ese nombre. Reactívalo desde la lista.",
+          "pastMonth": "El mes de vigencia no puede ser anterior al mes actual.",
+          "notFuture": "Solo se puede corregir una versión cuyo mes aún no comienza.",
+          "versionExists": "Ya existe una versión para ese mes. Elige otro mes, o corrige la existente si aún no comienza.",
+          "currencyMismatch": "Esta sede usa una sola moneda para toda su configuración de cuotas. Usa la moneda ya guardada.",
+          "durationMismatch": "Un plan mensual sigue siendo mensual y un paquete sigue siendo paquete. Crea un plan aparte para otra duración.",
+          "stale": "Otra persona cambió esta versión. Recarga la página e inténtalo de nuevo."
+        }
       }
     },
     "table": {
