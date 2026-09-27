@@ -31,6 +31,12 @@ export const TENANT_SCOPED_MODELS = new Set([
   "DuesPolicyVersion",
   "PaymentPlanTerms",
   "StudentPlanAssignment",
+  // Student dues ledger (PR 2B): tenant-scoped from day one, before any writer exists.
+  "DuesObligation",
+  "DuesCoverage",
+  "DuesLateFee",
+  "DuesPayment",
+  "DuesSettlement",
   "KioskAttempt",
   "QueuedCheckIn",
   "StaffAssignment",

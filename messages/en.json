@@ -1042,7 +1042,8 @@
           "versionExists": "A version already exists for that month. Pick another month, or correct the existing one if it has not started.",
           "currencyMismatch": "This location uses one currency for all its dues configuration. Use the currency already saved for it.",
           "durationMismatch": "A monthly plan stays monthly and a package stays a package. Create a separate plan for a different duration.",
-          "stale": "Someone else changed this version. Reload the page and try again."
+          "stale": "Someone else changed this version. Reload the page and try again.",
+          "referenced": "This version is already used by a financial record, so it can no longer be corrected. Add a new version for a later month instead."
         }
       }
     },

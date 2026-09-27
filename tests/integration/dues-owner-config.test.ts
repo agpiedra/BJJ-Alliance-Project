@@ -97,6 +97,12 @@ beforeAll(async () => {
 
 afterAll(async () => {
   currentSession = null;
+  // The ledger refuses deletes by trigger; the one test that created an obligation is cleaned up in a test-only transaction that switches
+  // triggers off for itself alone (the migration is untouched).
+  await prisma.$transaction(async (tx) => {
+    await tx.$executeRawUnsafe("SET LOCAL session_replication_role = replica");
+    await tx.$executeRawUnsafe(`DELETE FROM "DuesObligation" WHERE "organizationId" = ANY($1::text[])`, [a?.org.id, b?.org.id].filter(Boolean));
+  });
   for (const fx of [a, b]) {
     if (!fx) continue;
     await prisma.auditLog.deleteMany({ where: { organizationId: fx.org.id } });
@@ -285,6 +291,47 @@ describe("D25: only a version whose month is still in the future can be correcte
       expect((await prisma.paymentPlanTerms.findUniqueOrThrow({ where: { id: row.id } })).priceAmount.toFixed(2)).toBe(row.priceAmount.toFixed(2));
     }
     expect((await counts(a.org.id)).audits).toBe(audits);
+  });
+
+  it("refuses to correct a version that a financial record references (a prepaid package can depend on a future version), and changes nothing", async () => {
+    asOwner();
+    const month = addMonths(now(), 45);
+    expect(await createPackagePlan(a.org.id, {}, packageForm({ name: `Referenced ${suffix}`, ...ym(month) }))).toEqual({ ok: true });
+    const plan = await prisma.paymentPlan.findFirstOrThrow({ where: { organizationId: a.org.id, name: `Referenced ${suffix}` } });
+    const terms = await prisma.paymentPlanTerms.findFirstOrThrow({ where: { planId: plan.id } });
+    await prisma.duesObligation.create({
+      data: {
+        organizationId: a.org.id, studentId: studentA.id, academyId: a.academy.id, type: "PACKAGE", origin: "STAFF", coverageYear: month.year, coverageMonth: month.month,
+        monthsCovered: 3, amount: "120.00", currency: "USD", planTermsId: terms.id, createdById: a.admin.id,
+      },
+    });
+    const audits = (await counts(a.org.id)).audits;
+    const r = await correctPlanTerms(a.org.id, {}, form({ termsId: terms.id, expectedRevision: termsRevision(terms), priceAmount: "130.00", currency: "USD", monthsCovered: "3" }));
+    expect(r).toEqual({ error: "referenced" });
+    expect((await prisma.paymentPlanTerms.findUniqueOrThrow({ where: { id: terms.id } })).priceAmount.toFixed(2)).toBe("120.00");
+    expect((await counts(a.org.id)).audits).toBe(audits);
+  });
+
+  it("refuses to correct a policy version that a monthly obligation references, and changes nothing", async () => {
+    asOwner();
+    const month = addMonths(now(), 46);
+    expect(await addPolicyVersion(a.org.id, {}, policyForm({ academyId: a2.id, ...ym(month), lateFeeAmount: "9.00" }))).toEqual({ ok: true });
+    const policy = await prisma.duesPolicyVersion.findFirstOrThrow({ where: { academyId: a2.id, effectiveYear: month.year, effectiveMonth: month.month } });
+    const terms = await futureTerms(47);
+    await prisma.duesObligation.create({
+      data: {
+        organizationId: a.org.id, studentId: studentA.id, academyId: a2.id, type: "MONTHLY", origin: "SCHEDULED_JOB", coverageYear: month.year, coverageMonth: month.month,
+        monthsCovered: 1, amount: "60.00", currency: "USD", lateFeeAmount: "9.00", dueOn: new Date(Date.UTC(month.year, month.month - 1, 20)),
+        graceDeadline: new Date(Date.UTC(month.year, month.month, 5)), planTermsId: terms.id, policyVersionId: policy.id, createdById: a.admin.id,
+      },
+    });
+    const r = await correctPolicyVersion(
+      a.org.id,
+      {},
+      form({ policyId: policy.id, expectedRevision: policyRevision(policy), dueDay: "10", graceDay: "3", lateFeeAmount: "9.99", lateFeeCurrency: "USD", maxPrepaidMonths: "" }),
+    );
+    expect(r).toEqual({ error: "referenced" });
+    expect((await prisma.duesPolicyVersion.findUniqueOrThrow({ where: { id: policy.id } })).lateFeeAmount.toFixed(2)).toBe("9.00");
   });
 
   it("a correction cannot change a plan between monthly and package, and cannot introduce a second currency", async () => {
