@@ -316,12 +316,13 @@ BEGIN
   RETURN NEW;
 END $$;
 
--- An obligation's snapshot never changes. Its due and grace dates are the only exception: rescheduling is decided later (D5) and will
--- be an audited action.
+-- An obligation's whole snapshot never changes: amount, currency, coverage, fee AND its due and grace dates. Rescheduling, cancelling and
+-- price exceptions have no approved policy (D5, D8), so the database gives them no exception; a later migration adds one when a policy
+-- is approved. An UPDATE that changes nothing is harmless and allowed.
 CREATE FUNCTION dues_obligation_immutable() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
-  IF (to_jsonb(NEW) - 'dueOn' - 'graceDeadline') IS DISTINCT FROM (to_jsonb(OLD) - 'dueOn' - 'graceDeadline') THEN
-    RAISE EXCEPTION 'dues_ledger: obligation fields other than the due and grace dates are immutable' USING ERRCODE = '23514';
+  IF to_jsonb(NEW) IS DISTINCT FROM to_jsonb(OLD) THEN
+    RAISE EXCEPTION 'dues_ledger: obligation rows are immutable (nothing, including the due and grace dates, may change)' USING ERRCODE = '23514';
   END IF;
   RETURN NEW;
 END $$;

@@ -81,7 +81,7 @@ function dbMessage(error: unknown): string {
 }
 
 /** The database must refuse `op`, and `hint` (a constraint, index or trigger message) must appear in the database's own message. The transaction stays usable. */
-async function refused(tx: Db, op: () => Promise<unknown>, hint: string) {
+async function refused(tx: Db, op: () => Promise<unknown>, hint: string, label = "") {
   await tx.$executeRawUnsafe("SAVEPOINT refusal_probe");
   let error: unknown;
   try {
@@ -90,7 +90,7 @@ async function refused(tx: Db, op: () => Promise<unknown>, hint: string) {
     error = e;
   }
   await tx.$executeRawUnsafe("ROLLBACK TO SAVEPOINT refusal_probe");
-  expect(error, `the database must refuse this write (expected: ${hint})`).toBeDefined();
+  expect(error, `the database must refuse this write (expected: ${hint}): ${label || op.toString().slice(0, 200)}`).toBeDefined();
   expect(dbMessage(error), `the refusal must come from the expected database object (${hint})`).toContain(hint);
 }
 
@@ -512,7 +512,7 @@ describe("reversal marker: set once, nothing else changes, never deleted", () =>
     });
   });
 
-  it("late fee: only its removal marker may be set, once; obligations change only their due and grace dates; coverage never changes", async () => {
+  it("late fee: only its removal marker may be set, once; coverage rows never change", async () => {
     await isolated(async (tx) => {
       const october = await createObligation(tx);
       const fee = await tx.duesLateFee.create({ data: { organizationId: a.org.id, obligationId: october.id, assessableFrom: dateOf(2031, 3, 6) } });
@@ -522,15 +522,36 @@ describe("reversal marker: set once, nothing else changes, never deleted", () =>
       await tx.duesLateFee.update({ where: { id: fee.id }, data: removal });
       await refused(tx, () => tx.duesLateFee.update({ where: { id: fee.id }, data: { ...removal, removalKind: "VOIDED" } }), "dues_ledger: only the removal marker may be set, once");
 
-      await refused(tx, () => tx.duesObligation.update({ where: { id: october.id }, data: { amount: "1.00" } }), "dues_ledger: obligation fields other than the due and grace dates are immutable");
-      await refused(tx, () => tx.duesObligation.update({ where: { id: october.id }, data: { currency: "CRC" } }), "dues_ledger: obligation fields other than the due and grace dates are immutable");
-      await refused(tx, () => tx.duesObligation.update({ where: { id: october.id }, data: { coverageMonth: 1 } }), "dues_ledger: obligation fields other than the due and grace dates are immutable");
-      await refused(tx, () => tx.duesObligation.update({ where: { id: october.id }, data: { lateFeeAmount: "0.00" } }), "dues_ledger: obligation fields other than the due and grace dates are immutable");
-      // rescheduling is decided later (D5), so the dates stay updatable by the database
-      await tx.duesObligation.update({ where: { id: october.id }, data: { dueOn: dateOf(2031, 3, 25) } });
-
       const coverage = await tx.duesCoverage.findFirstOrThrow({ where: { obligationId: october.id } });
       await refused(tx, () => tx.duesCoverage.update({ where: { id: coverage.id }, data: { month: 12 } }), "dues_ledger: coverage rows are never updated");
+    });
+  });
+
+  it("an obligation's whole snapshot is immutable, INCLUDING its due and grace dates: any change is refused and the row is unchanged", async () => {
+    await isolated(async (tx) => {
+      const october = await createObligation(tx);
+      const before = JSON.stringify(await tx.duesObligation.findUniqueOrThrow({ where: { id: october.id } }));
+      const immutable = "dues_ledger: obligation rows are immutable";
+      // Rescheduling has no approved policy, so the database gives it no exception either.
+      await refused(tx, () => tx.duesObligation.update({ where: { id: october.id }, data: { dueOn: dateOf(2031, 3, 25) } }), immutable);
+      await refused(tx, () => tx.duesObligation.update({ where: { id: october.id }, data: { graceDeadline: dateOf(2031, 4, 20) } }), immutable);
+      await refused(tx, () => tx.duesObligation.update({ where: { id: october.id }, data: { dueOn: dateOf(2031, 3, 25), graceDeadline: dateOf(2031, 4, 20) } }), immutable);
+      await refused(tx, () => tx.duesObligation.updateMany({ where: { id: october.id }, data: { graceDeadline: dateOf(2031, 4, 20) } }), immutable);
+      await refused(tx, () => tx.$executeRawUnsafe(`UPDATE "DuesObligation" SET "dueOn" = "dueOn" + 1 WHERE "id" = '${october.id}'`), immutable);
+      // and every other column
+      for (const data of [
+        { amount: "1.00" }, { currency: "CRC" as const }, { coverageMonth: october.coverageMonth === 1 ? 2 : 1 }, { coverageYear: 2040 }, { monthsCovered: 2 }, { lateFeeAmount: "0.00" },
+        { type: "PACKAGE" as const }, { origin: "STAFF" as const }, { planTermsId: termsPackage.id }, { policyVersionId: policyCrc.id }, { createdById: null },
+        { createdAt: new Date(0) }, { studentId: bruno.id }, { academyId: a2.id },
+      ]) {
+        await refused(tx, () => tx.duesObligation.update({ where: { id: october.id }, data }), immutable, JSON.stringify(data));
+      }
+      expect(JSON.stringify(await tx.duesObligation.findUniqueOrThrow({ where: { id: october.id } })), "the original row must be unchanged").toBe(before);
+      // a package has no dates; it cannot gain one either
+      const pack = await createObligation(tx, {
+        type: "PACKAGE", monthsCovered: 3, planTermsId: termsPackage.id, amount: "270.00", dueOn: null, graceDeadline: null, lateFeeAmount: null, policyVersionId: null,
+      });
+      await refused(tx, () => tx.duesObligation.update({ where: { id: pack.id }, data: { dueOn: dateOf(2031, 3, 25) } }), immutable);
     });
   });
 

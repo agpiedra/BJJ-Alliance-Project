@@ -1212,7 +1212,8 @@ model StudentPlanAssignment {
 //    stays as history and the obligation can be settled again by a new row;
 //  - history is never deleted: payments, settlements, coverage rows and obligations reject DELETE. A payment or settlement rejects any
 //    UPDATE except setting its reversal marker once, and that update cannot change any other column; a coverage row rejects every
-//    UPDATE; an obligation rejects changes to everything except its due and grace dates (rescheduling is decided later, D5);
+//    UPDATE; an obligation rejects ANY change, its due and grace dates included (rescheduling, cancellation and exceptions have no
+//    approved policy, so the database gives them no exception; a later migration adds one when a policy is approved);
 //  - a configuration version (PaymentPlanTerms, DuesPolicyVersion) that an obligation references rejects UPDATE, and an obligation
 //    can only be created against a version of its own branch, currency and duration. The two checks lock the version row, so a
 //    concurrent obligation insert and a concurrent correction (decision D25) cannot both succeed.
@@ -1250,7 +1251,7 @@ enum DuesLateFeeRemovalKind {
 }
 
 /// One charge: a monthly obligation for one calendar month, or a package covering several. Amounts, currency, dates and fee are
-/// snapshots of the configuration it was priced from and never change (only the due and grace dates may, later, by an audited action).
+/// snapshots of the configuration it was priced from and never change, the due and grace dates included (a trigger rejects any UPDATE).
 /// There is no status: "settled" means "has an active settlement", "unpaid" means "has none".
 model DuesObligation {
   id              String               @id @default(cuid())
