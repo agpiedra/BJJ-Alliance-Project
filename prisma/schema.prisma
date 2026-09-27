@@ -273,6 +273,11 @@ model Organization {
   duesPolicyVersions     DuesPolicyVersion[]
   paymentPlanTerms       PaymentPlanTerms[]
   studentPlanAssignments StudentPlanAssignment[]
+  duesObligations        DuesObligation[]
+  duesCoverage           DuesCoverage[]
+  duesLateFees           DuesLateFee[]
+  duesPayments           DuesPayment[]
+  duesSettlements        DuesSettlement[]
   kioskAttempts       KioskAttempt[]
   queuedCheckIns      QueuedCheckIn[]
   staffAssignments    StaffAssignment[]
@@ -456,6 +461,8 @@ model Academy {
   paymentPlans      PaymentPlan[]
   paymentPeriods    PaymentPeriod[]
   duesPolicyVersions DuesPolicyVersion[]
+  duesObligations   DuesObligation[]
+  duesPayments      DuesPayment[]
   auditLogs         AuditLog[]
   kioskAttempts     KioskAttempt[]
   queuedCheckIns    QueuedCheckIn[]
@@ -512,6 +519,11 @@ model User {
   duesPolicyVersionsCreated      DuesPolicyVersion[]
   paymentPlanTermsCreated        PaymentPlanTerms[]
   studentPlanAssignmentsCreated  StudentPlanAssignment[]
+  duesObligationsCreated         DuesObligation[]
+  duesLateFeesRemoved            DuesLateFee[]
+  duesPaymentsRecorded           DuesPayment[]           @relation("DuesPaymentRecordedBy")
+  duesPaymentsReversed           DuesPayment[]           @relation("DuesPaymentReversedBy")
+  duesSettlementsReversed        DuesSettlement[]
   notifications           Notification[]
   organizationMemberships OrganizationMembership[]
   organizationsApproved   Organization[]           @relation("OrganizationApprovedBy")
@@ -689,6 +701,9 @@ model Student {
   promotionCredits  PromotionCredit[]
   paymentPeriods    PaymentPeriod[]
   planAssignments   StudentPlanAssignment[]
+  duesObligations   DuesObligation[]
+  duesCoverage      DuesCoverage[]
+  duesPayments      DuesPayment[]
   organization      Organization       @relation(fields: [organizationId], references: [id])
 
   @@unique([organizationId, codeHash])
@@ -1081,9 +1096,10 @@ model PaymentPeriod {
 // against a real database): month 1 to 12, year 2000 to 2100 (a typo guard, not a business rule), days 1 to 31, positive prices,
 // non-negative fees, positive month counts. Foreign keys restrict; nothing cascades, so money history cannot be deleted through them.
 //
-// What the database does NOT enforce, and later writers must: these tables are "append-only" BY CONVENTION ONLY. Nothing prevents an
-// UPDATE or DELETE (there is no trigger), so a writer that edits or removes a row can rewrite history; the intended writers only
-// insert a new version. Also writer-enforced: a plan's terms are all in ONE currency (a CHECK cannot span rows; the pure library in
+// What the database does NOT enforce, and later writers must: these tables are "append-only" BY CONVENTION ONLY, with ONE database
+// exception added by the ledger schema (PR 2B): a version that an obligation references rejects UPDATE (and DELETE, by the restrict
+// foreign key). Otherwise nothing prevents an UPDATE or DELETE, so a writer that edits or removes an unreferenced row can rewrite
+// history; the intended writers only insert a new version. Also writer-enforced: a plan's terms are all in ONE currency (a CHECK cannot span rows; the pure library in
 // src/lib/dues/coverage.ts rejects a mixed history), an assignment's plan belongs to the student's branch, a policy's fee currency
 // matches the currency it is applied to, and effective months are not in the past. Amounts are Decimal(10, 2) with a Currency, like
 // PaymentPeriod; converting to the library's integer minor units must be exact and range-checked (no floating-point multiplication,
@@ -1091,9 +1107,10 @@ model PaymentPeriod {
 //
 // The one approved exception to insert-only (owner-configuration PR, decision D25): the owner's correction action may UPDATE a version
 // whose effective month is still in the future in the branch's timezone, atomically with a before/after AuditLog row and only if the
-// editor's revision token still matches (a stale edit is refused). Current and past versions are never updated. That exception rests on
-// nothing referencing a version yet. A future prepayment CAN depend on a future version, so before any financial writer ships, versions
-// that a sold, assigned or prepaid obligation references must be protected from correction and paid prices and coverage must stay frozen.
+// editor's revision token still matches (a stale edit is refused). Current and past versions are never updated. A future prepayment CAN
+// depend on a future version, so the ledger schema (PR 2B) refuses any UPDATE of a version that an obligation references, by a trigger that
+// also holds against an obligation created at the same moment; an obligation snapshots its amount, currency, dates and fee, so a paid
+// price and its coverage stay frozen.
 // The owner-configuration writers also serialize per branch (they lock the Academy row) to keep the single-currency rules true under
 // simultaneous saves; the database still cannot enforce them.
 // ---------------------------------------------------------------------------------------------------------------------
@@ -1123,8 +1140,11 @@ model DuesPolicyVersion {
   academy      Academy      @relation(fields: [organizationId, academyId], references: [organizationId, id])
   createdBy    User         @relation(fields: [createdById], references: [id])
   organization Organization @relation(fields: [organizationId], references: [id])
+  obligations  DuesObligation[]
 
   @@unique([academyId, effectiveYear, effectiveMonth])
+  /// Target of DuesObligation's tenant-safe foreign key (PR 2B).
+  @@unique([organizationId, id])
   @@index([organizationId])
 }
 
@@ -1146,8 +1166,11 @@ model PaymentPlanTerms {
   plan         PaymentPlan  @relation(fields: [organizationId, planId], references: [organizationId, id])
   createdBy    User         @relation(fields: [createdById], references: [id])
   organization Organization @relation(fields: [organizationId], references: [id])
+  obligations  DuesObligation[]
 
   @@unique([planId, effectiveYear, effectiveMonth])
+  /// Target of DuesObligation's tenant-safe foreign key (PR 2B).
+  @@unique([organizationId, id])
   @@index([organizationId])
 }
 
@@ -1171,6 +1194,210 @@ model StudentPlanAssignment {
   @@unique([studentId, effectiveYear, effectiveMonth])
   @@index([organizationId])
   @@index([planId])
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Student dues: LEDGER tables (PR 2B). Additive and dark: nothing reads or writes them yet (no writer, no reader, no seed, no
+// default amount, fee, limit or date), and the legacy PaymentPlan / PaymentPeriod and every legacy payment record are untouched.
+//
+// WHAT THE DATABASE ENFORCES (the migration SQL is the source for everything Prisma's schema language cannot express: CHECKs,
+// partial unique indexes and triggers; tests/integration/dues-ledger-schema.test.ts proves each one against a real database):
+//  - tenant- and student-safe composite foreign keys: a coverage row, a payment, a settlement and a fee can only point at rows of
+//    the same organization, and a settlement's payment and obligation must belong to the same student; foreign keys restrict and
+//    nothing cascades;
+//  - one monthly obligation per student per coverage month; ONE COVERAGE ROW PER STUDENT PER CALENDAR MONTH, UNCONDITIONALLY, with no
+//    release or cancellation column (a payment reversal never releases coverage; releasing it, and cancelling an obligation, are
+//    separate operations whose rules are not approved); one late fee per obligation;
+//  - AT MOST ONE ACTIVE SETTLEMENT per obligation (partial unique index on rows with no reversal marker); a reversed settlement
+//    stays as history and the obligation can be settled again by a new row;
+//  - history is never deleted: payments, settlements, coverage rows and obligations reject DELETE. A payment or settlement rejects any
+//    UPDATE except setting its reversal marker once, and that update cannot change any other column; a coverage row rejects every
+//    UPDATE; an obligation rejects changes to everything except its due and grace dates (rescheduling is decided later, D5);
+//  - a configuration version (PaymentPlanTerms, DuesPolicyVersion) that an obligation references rejects UPDATE, and an obligation
+//    can only be created against a version of its own branch, currency and duration. The two checks lock the version row, so a
+//    concurrent obligation insert and a concurrent correction (decision D25) cannot both succeed.
+//
+// WHAT IT DOES NOT ENFORCE (future writers must, each with a real-database test):
+//  - a settlement has NO amount columns: it cannot disagree with its obligation's amount, fee or currency, and that is ALL this
+//    guarantees. It does NOT guarantee that a payment covers the full amount or that the tender's currency matches; the payment must
+//    be validated against its obligations (tender = sum of amounts plus applicable fees, one currency) inside one transaction;
+//  - reversing a payment must eventually reverse ALL its active settlements atomically. The payment marker and each settlement marker
+//    are separate rows; nothing here enforces that they are set together, so a writer must do it in one transaction;
+//  - full settlement, oldest outstanding first, consecutive coverage, the fee applying only after the grace deadline, a package's
+//    coverage rows matching its `monthsCovered`, and the prepayment limit.
+// Amounts are Decimal(10, 2) with a Currency, like PaymentPeriod; converting to the calculation library's integer minor units must be
+// exact and range-checked (no floating-point multiplication, no silent rounding).
+//
+// PENDING POLICIES, deliberately NOT modelled: refunds, coverage release, obligation cancellation, what happens when a reversed
+// payment had CREATED its obligations (prepaid months, packages), late-fee treatment after an obligation reopens, signup and opening
+// obligations, exchange rates.
+// ---------------------------------------------------------------------------------------------------------------------
+
+enum DuesObligationType {
+  MONTHLY
+  PACKAGE
+}
+
+enum DuesObligationOrigin {
+  SCHEDULED_JOB
+  PREPAYMENT
+  STAFF
+}
+
+enum DuesLateFeeRemovalKind {
+  WAIVED
+  VOIDED
+}
+
+/// One charge: a monthly obligation for one calendar month, or a package covering several. Amounts, currency, dates and fee are
+/// snapshots of the configuration it was priced from and never change (only the due and grace dates may, later, by an audited action).
+/// There is no status: "settled" means "has an active settlement", "unpaid" means "has none".
+model DuesObligation {
+  id              String               @id @default(cuid())
+  organizationId  String
+  studentId       String
+  /// The branch at creation.
+  academyId       String
+  type            DuesObligationType
+  origin          DuesObligationOrigin
+  /// The first covered calendar month.
+  coverageYear    Int
+  coverageMonth   Int
+  /// 1 for MONTHLY, 2 or more for PACKAGE.
+  monthsCovered   Int
+  amount          Decimal              @db.Decimal(10, 2)
+  currency        Currency
+  /// MONTHLY only (zero allowed): the fee this obligation incurs if it is late, in `currency`.
+  lateFeeAmount   Decimal?             @db.Decimal(10, 2)
+  dueOn           DateTime?            @db.Date
+  graceDeadline   DateTime?            @db.Date
+  /// The terms version it was priced from (provenance; the amount is snapshotted above).
+  planTermsId     String
+  /// MONTHLY only: the policy version its dates and fee came from.
+  policyVersionId String?
+  /// Null = created by the system job.
+  createdById     String?
+  createdAt       DateTime             @default(now())
+
+  student       Student           @relation(fields: [organizationId, studentId], references: [organizationId, id])
+  academy       Academy           @relation(fields: [organizationId, academyId], references: [organizationId, id])
+  planTerms     PaymentPlanTerms  @relation(fields: [organizationId, planTermsId], references: [organizationId, id])
+  policyVersion DuesPolicyVersion? @relation(fields: [organizationId, policyVersionId], references: [organizationId, id], onDelete: Restrict)
+  createdBy     User?             @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  organization  Organization      @relation(fields: [organizationId], references: [id])
+  coverage      DuesCoverage[]
+  /// At most one: the database has a unique index on DuesLateFee.obligationId (Prisma types it one-to-many because the foreign key also carries the type).
+  lateFees      DuesLateFee[]
+  settlements   DuesSettlement[]
+
+  /// Targets of the composite foreign keys of coverage, fees, settlements.
+  @@unique([organizationId, id])
+  @@unique([organizationId, id, studentId])
+  @@unique([organizationId, id, type])
+  @@index([organizationId])
+  @@index([studentId, coverageYear, coverageMonth])
+  @@index([planTermsId])
+  @@index([policyVersionId])
+}
+
+/// One row per covered calendar month, written with its obligation. Never updated, never deleted; unique per student and month with no
+/// release column, so coverage stays reserved through a payment reversal.
+model DuesCoverage {
+  id             String   @id @default(cuid())
+  organizationId String
+  studentId      String
+  obligationId   String
+  year           Int
+  month          Int
+
+  student      Student        @relation(fields: [organizationId, studentId], references: [organizationId, id])
+  obligation   DuesObligation @relation(fields: [organizationId, obligationId, studentId], references: [organizationId, id, studentId])
+  organization Organization   @relation(fields: [organizationId], references: [id])
+
+  @@unique([studentId, year, month])
+  @@index([organizationId])
+  @@index([obligationId])
+}
+
+/// At most one per obligation, ever (a removed fee stays as a row and can never be assessed again). No amount column: the fee is the
+/// obligation's own `lateFeeAmount` in its `currency`. Only the removal marker may be set, once.
+model DuesLateFee {
+  id             String                  @id @default(cuid())
+  organizationId String
+  obligationId   String                  @unique
+  /// Always MONTHLY (CHECK); part of the foreign key so a fee cannot point at a package.
+  obligationType DuesObligationType      @default(MONTHLY)
+  assessableFrom DateTime                @db.Date
+  assessedAt     DateTime                @default(now())
+  removedAt      DateTime?
+  removalKind    DuesLateFeeRemovalKind?
+  removedById    String?
+  removalReason  String?
+
+  obligation   DuesObligation   @relation(fields: [organizationId, obligationId, obligationType], references: [organizationId, id, type])
+  removedBy    User?            @relation(fields: [removedById], references: [id], onDelete: Restrict)
+  organization Organization     @relation(fields: [organizationId], references: [id])
+  settlements  DuesSettlement[]
+
+  @@unique([organizationId, id, obligationId])
+  @@index([organizationId])
+}
+
+/// Money received. Never edited or deleted; the only permitted update sets the reversal marker once (reversedAt, reversedById and a
+/// non-blank reversalReason together). No exchange-rate or receipt-status columns (decision D1 pending).
+model DuesPayment {
+  id             String        @id @default(cuid())
+  organizationId String
+  studentId      String
+  academyId      String
+  /// The calendar date in the branch's timezone.
+  receivedOn     DateTime      @db.Date
+  tenderCurrency Currency
+  tenderAmount   Decimal       @db.Decimal(10, 2)
+  method         PaymentMethod
+  recordedById   String
+  recordedAt     DateTime      @default(now())
+  notes          String?
+  reversedAt     DateTime?
+  reversedById   String?
+  reversalReason String?
+
+  student      Student          @relation(fields: [organizationId, studentId], references: [organizationId, id])
+  academy      Academy          @relation(fields: [organizationId, academyId], references: [organizationId, id])
+  recordedBy   User             @relation("DuesPaymentRecordedBy", fields: [recordedById], references: [id])
+  reversedBy   User?            @relation("DuesPaymentReversedBy", fields: [reversedById], references: [id], onDelete: Restrict)
+  organization Organization     @relation(fields: [organizationId], references: [id])
+  settlements  DuesSettlement[]
+
+  @@unique([organizationId, id, studentId])
+  @@index([organizationId])
+  @@index([studentId, receivedOn])
+}
+
+/// One payment settling one obligation, in full. No amount columns. Never edited or deleted; the only permitted update sets the reversal
+/// marker once. At most one ACTIVE (unreversed) settlement per obligation (partial unique index in the migration).
+model DuesSettlement {
+  id             String    @id @default(cuid())
+  organizationId String
+  studentId      String
+  paymentId      String
+  obligationId   String
+  /// Set when the fee was part of what this payment settled.
+  lateFeeId      String?
+  createdAt      DateTime  @default(now())
+  reversedAt     DateTime?
+  reversedById   String?
+  reversalReason String?
+
+  payment      DuesPayment    @relation(fields: [organizationId, paymentId, studentId], references: [organizationId, id, studentId])
+  obligation   DuesObligation @relation(fields: [organizationId, obligationId, studentId], references: [organizationId, id, studentId])
+  lateFee      DuesLateFee?   @relation(fields: [organizationId, lateFeeId, obligationId], references: [organizationId, id, obligationId], onDelete: Restrict)
+  reversedBy   User?          @relation(fields: [reversedById], references: [id], onDelete: Restrict)
+  organization Organization   @relation(fields: [organizationId], references: [id])
+
+  @@index([organizationId])
+  @@index([paymentId])
+  @@index([obligationId])
 }
 
 model KioskAttempt {

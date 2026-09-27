@@ -1042,7 +1042,8 @@
           "versionExists": "Ya existe una versión para ese mes. Elige otro mes, o corrige la existente si aún no comienza.",
           "currencyMismatch": "Esta sede usa una sola moneda para toda su configuración de cuotas. Usa la moneda ya guardada.",
           "durationMismatch": "Un plan mensual sigue siendo mensual y un paquete sigue siendo paquete. Crea un plan aparte para otra duración.",
-          "stale": "Otra persona cambió esta versión. Recarga la página e inténtalo de nuevo."
+          "stale": "Otra persona cambió esta versión. Recarga la página e inténtalo de nuevo.",
+          "referenced": "Esta versión ya la usa un registro financiero, así que ya no se puede corregir. Agrega una versión nueva para un mes posterior."
         }
       }
     },

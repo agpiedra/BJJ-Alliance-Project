@@ -41,9 +41,11 @@ import {
  *    edit is refused, never merged over someone else's). A current or past version is never changed.
  *  - D24: a blank prepayment limit is saved as NULL, "not entered". No default is applied anywhere.
  *
- * BEFORE ANY FINANCIAL WRITER SHIPS (ledger PR 2B onward): a future version CAN be depended on by a future prepayment, so the "future
- * versions are editable" exception above must be narrowed first. Versions a sold, assigned or prepaid obligation references have to be
- * protected, and the price and coverage already paid must stay frozen. Nothing references a version today, so nothing can be affected.
+ * A future version CAN be depended on by a future prepayment, so the "future versions are editable" exception above is narrowed by the
+ * ledger schema (PR 2B): a version that any obligation references cannot be changed, enforced by a database trigger that also holds
+ * against an obligation created at the same moment (the correction is then `referenced`). No financial writer exists yet, so no version
+ * is referenced today. A future writer must lock the version row (`SELECT ... FOR SHARE`) before reading its price and in the same
+ * transaction as the obligation insert; the trigger checks branch, currency and duration, not the amount.
  */
 
 type Tx = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
@@ -173,6 +175,13 @@ async function refreshPlanPages(): Promise<void> {
 
 const isUniqueViolation = (error: unknown) => error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002";
 
+/**
+ * A financial record references this version, so the database trigger (`dues_config_referenced`, migration 20260927153000) refused the
+ * change. The trigger is the guarantee (it also holds against an obligation being created at the same moment); this only turns its
+ * refusal into a message. The transaction has already rolled back, so nothing was written and no audit row exists.
+ */
+const isReferencedViolation = (error: unknown) => error instanceof Error && error.message.includes("dues_config_referenced");
+
 /** Runs a save's transaction and turns a rejection (or the unique constraint, the backstop) into the action's result. */
 async function commit(work: () => Promise<Rejection | null>, uniqueError: string): Promise<ActionState> {
   let outcome: Rejection | null;
@@ -180,6 +189,7 @@ async function commit(work: () => Promise<Rejection | null>, uniqueError: string
     outcome = await work();
   } catch (error) {
     if (isUniqueViolation(error)) return { error: uniqueError };
+    if (isReferencedViolation(error)) return { error: "referenced" };
     throw error;
   }
   if (outcome) return { error: outcome.rejected };
