@@ -8,6 +8,7 @@ import { generateStudentCode } from "@/lib/students/generate-code";
 import { notifyNewSignup } from "@/lib/notifications/notify-new-signup";
 import { fireAndForget } from "@/lib/notifications/fire-and-forget";
 import { Role, StudentStatus } from "@/generated/prisma/client";
+import { todayInAsDbDate } from "@/lib/students/status-history";
 
 const signupSchema = z
   .object({
@@ -163,6 +164,22 @@ export async function signup(orgSlug: string, _prevState: SignupState, formData:
         emergencyContact: data.emergencyContact,
         codeHash,
         status: StudentStatus.PENDING,
+      },
+    });
+
+    // Eligibility-prerequisites brief, 3.2: the first `StudentStatusChange` row. No lock is needed — a row that does not yet exist
+    // cannot be locked, and nothing else can reference this student's freshly-generated id until this transaction commits.
+    // `actorId: user.id` — this is the one public, unauthenticated writer; there is no staff actor, so the record is the
+    // applicant's own newly-created portal user, the same one `Student.userId` links to.
+    await tx.studentStatusChange.create({
+      data: {
+        organizationId: student.organizationId,
+        studentId: student.id,
+        status: StudentStatus.PENDING,
+        effectiveOn: todayInAsDbDate(homeAcademy.timezone, new Date()),
+        sequence: 1,
+        source: "EVENT",
+        actorId: user.id,
       },
     });
 

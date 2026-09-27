@@ -1,7 +1,10 @@
 import { DateTime } from "luxon";
-import { prisma } from "@/lib/prisma";
 import type { TenantContext } from "@/lib/tenant/types";
 import type { CalendarDate } from "@/lib/dues/calendar";
+import { lockStudent, type Tx } from "@/lib/students/lock";
+
+export { lockStudent };
+export type { Tx };
 
 /**
  * Shared by the two ledger writers. GLOBAL LOCK ORDER for every ledger writer (deadlock-free because each waits only on locks that come
@@ -14,7 +17,6 @@ import type { CalendarDate } from "@/lib/dues/calendar";
  *
  * Every raw statement filters by `organizationId` as well as by id.
  */
-export type Tx = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
 
 /** The same scope rule as `isAcademyInTenantScope` (an owner's "ALL", or a listed branch), without importing the request-facing module. */
 export function inTenantScope(context: TenantContext, academyId: string): boolean {
@@ -25,13 +27,6 @@ export function inTenantScope(context: TenantContext, academyId: string): boolea
 export async function lockBranchShared(tx: Tx, organizationId: string, academyId: string): Promise<{ timezone: string } | null> {
   const rows = await tx.$queryRaw<{ timezone: string }[]>`
     SELECT "timezone" FROM "Academy" WHERE "id" = ${academyId} AND "organizationId" = ${organizationId} FOR SHARE`;
-  return rows[0] ?? null;
-}
-
-/** The student row, `FOR UPDATE`. Returns its home branch, or null when it is not in the organization. */
-export async function lockStudent(tx: Tx, organizationId: string, studentId: string): Promise<{ homeAcademyId: string } | null> {
-  const rows = await tx.$queryRaw<{ homeAcademyId: string }[]>`
-    SELECT "homeAcademyId" FROM "Student" WHERE "id" = ${studentId} AND "organizationId" = ${organizationId} FOR UPDATE`;
   return rows[0] ?? null;
 }
 

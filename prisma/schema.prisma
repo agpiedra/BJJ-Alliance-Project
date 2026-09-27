@@ -96,6 +96,14 @@ enum StudentStatus {
   ARCHIVED
 }
 
+/// Eligibility-prerequisites brief, section 3.2. EVENT = a real staff action (create, signup, approve, archive, restore, pause,
+/// resume). BASELINE = the owner-reviewed one-time observation of an existing student's status at capture time (section 4) -
+/// never a claim about any date before that capture.
+enum StatusChangeSource {
+  EVENT
+  BASELINE
+}
+
 enum AttendanceType {
   CHECKIN
   ADJUSTMENT
@@ -273,6 +281,7 @@ model Organization {
   duesPolicyVersions     DuesPolicyVersion[]
   paymentPlanTerms       PaymentPlanTerms[]
   studentPlanAssignments StudentPlanAssignment[]
+  studentStatusChanges   StudentStatusChange[]
   duesObligations        DuesObligation[]
   duesCoverage           DuesCoverage[]
   duesLateFees           DuesLateFee[]
@@ -519,6 +528,7 @@ model User {
   duesPolicyVersionsCreated      DuesPolicyVersion[]
   paymentPlanTermsCreated        PaymentPlanTerms[]
   studentPlanAssignmentsCreated  StudentPlanAssignment[]
+  studentStatusChangesActed      StudentStatusChange[]
   duesObligationsCreated         DuesObligation[]
   duesLateFeesRemoved            DuesLateFee[]
   duesPaymentsRecorded           DuesPayment[]           @relation("DuesPaymentRecordedBy")
@@ -701,6 +711,7 @@ model Student {
   promotionCredits  PromotionCredit[]
   paymentPeriods    PaymentPeriod[]
   planAssignments   StudentPlanAssignment[]
+  statusHistory     StudentStatusChange[]
   duesObligations   DuesObligation[]
   duesCoverage      DuesCoverage[]
   duesPayments      DuesPayment[]
@@ -1194,6 +1205,37 @@ model StudentPlanAssignment {
   @@unique([studentId, effectiveYear, effectiveMonth])
   @@index([organizationId])
   @@index([planId])
+}
+
+/// Eligibility-prerequisites brief, section 3.2: the single append-only fact "this student's status became X, effective on calendar
+/// date D", written atomically inside every status-changing action (create, signup, approve, archive, restore, pause, resume) and by
+/// the one-time baseline action (section 4). `sequence` — not `createdAt` — orders two rows that share an `effectiveOn`: it is
+/// assigned as MAX(sequence)+1 UNDER THE STUDENT LOCK, so it reflects the true commit order even when two transactions' own
+/// transaction-start timestamps would disagree with it. No correction path in this PR (section 5.1) — a wrong row is not
+/// deleted or edited; a further real action states what actually happened.
+model StudentStatusChange {
+  id             String             @id @default(cuid())
+  organizationId String
+  studentId      String
+  status         StudentStatus
+  effectiveOn    DateTime           @db.Date
+  sequence       Int
+  source         StatusChangeSource
+  /// Null is reserved for a future automated writer; every writer in this PR supplies a real actor.
+  actorId        String?
+  createdAt      DateTime           @default(now())
+
+  // onDelete: Cascade is a deliberate exception to this schema's usual restrict-everywhere default (no other Student relation
+  // cascades). Production code never hard-deletes a Student — archiving is the only removal path anywhere in the app — so this
+  // can only ever fire in test fixture teardown, where every other test file's existing cleanup already deletes a Student
+  // directly without knowing this new child table exists.
+  student      Student       @relation(fields: [organizationId, studentId], references: [organizationId, id], onDelete: Cascade)
+  actor        User?         @relation(fields: [actorId], references: [id])
+  organization Organization  @relation(fields: [organizationId], references: [id])
+
+  @@unique([studentId, sequence])
+  @@index([studentId, effectiveOn, sequence])
+  @@index([organizationId])
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
