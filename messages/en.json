@@ -947,6 +947,103 @@
         "nameTakenInactive": "A deactivated plan already has that name — reactivate it from the list instead.",
         "systemPlan": "This is a system plan and can't be changed or hidden.",
         "lastActivePlan": "This is the academy's last active plan. Create or reactivate another one first, or no payment could be recorded."
+      },
+      "dues": {
+        "heading": "Dues configuration",
+        "notice": "Saved here only. Saving configuration does not activate new billing: payments and overdue status keep following the current rules until new billing is switched on.",
+        "package": {
+          "badge": "Package"
+        },
+        "terms": {
+          "heading": "Prices and duration",
+          "body": "Each version applies from its effective month. A version whose month has not started can still be corrected; current and past versions cannot be changed.",
+          "none": "No prices saved for this plan yet.",
+          "columns": {
+            "from": "Effective from",
+            "price": "Price",
+            "months": "Duration",
+            "state": "State",
+            "actions": "Actions"
+          },
+          "duration": "{count, plural, one {# month} other {# months}}",
+          "add": {
+            "open": "Add a price",
+            "submit": "Save price",
+            "success": "Price saved."
+          },
+          "correct": {
+            "open": "Correct",
+            "close": "Close",
+            "submit": "Save correction",
+            "success": "Correction saved."
+          }
+        },
+        "state": {
+          "current": "Current",
+          "scheduled": "Scheduled",
+          "past": "Past"
+        },
+        "newPackage": {
+          "heading": "New package plan",
+          "body": "A package is its own plan: two or more months for one price. It is saved as configuration only and cannot be picked for a payment yet.",
+          "submit": "Create package plan",
+          "success": "Package plan created."
+        },
+        "policy": {
+          "heading": "Due dates and late fee",
+          "body": "Applies to every plan at this location from its effective month. A version whose month has not started can still be corrected.",
+          "none": "No dues settings saved for this location yet.",
+          "columns": {
+            "from": "Effective from",
+            "dueDay": "Due day",
+            "graceDay": "Grace day",
+            "lateFee": "Late fee",
+            "limit": "Prepayment limit",
+            "state": "State",
+            "actions": "Actions"
+          },
+          "limitNotEntered": "Not entered. Prepayment is not available.",
+          "graceHint": "Payment is still on time through this day of the following month.",
+          "limitHint": "Leave blank if not decided. Prepayment stays unavailable until you enter a limit.",
+          "add": {
+            "open": "Add dues settings",
+            "submit": "Save dues settings",
+            "success": "Dues settings saved."
+          },
+          "correct": {
+            "open": "Correct",
+            "close": "Close",
+            "submit": "Save correction",
+            "success": "Correction saved."
+          }
+        },
+        "fields": {
+          "effectiveYear": "Effective year",
+          "effectiveMonth": "Effective month",
+          "price": "Price",
+          "currency": "Currency",
+          "monthsCovered": "Months covered",
+          "packageName": "Package name",
+          "description": "Description (optional)",
+          "dueDay": "Due day (1 to 31)",
+          "graceDay": "Grace day of next month (1 to 31)",
+          "lateFee": "Late fee",
+          "lateFeeCurrency": "Fee currency",
+          "maxPrepaidMonths": "Prepayment limit (months)"
+        },
+        "error": {
+          "invalid": "Check the highlighted fields. Amounts use digits and at most two decimals, for example 45 or 45.50.",
+          "notFound": "That location or plan wasn't found.",
+          "systemPlan": "This is a system plan and can't be configured.",
+          "nameTaken": "A plan with that name already exists at this location.",
+          "nameTakenInactive": "A deactivated plan already has that name. Reactivate it from the list instead.",
+          "pastMonth": "The effective month cannot be before the current month.",
+          "notFuture": "Only a version whose month has not started can be corrected.",
+          "versionExists": "A version already exists for that month. Pick another month, or correct the existing one if it has not started.",
+          "currencyMismatch": "This location uses one currency for all its dues configuration. Use the currency already saved for it.",
+          "durationMismatch": "A monthly plan stays monthly and a package stays a package. Create a separate plan for a different duration.",
+          "stale": "Someone else changed this version. Reload the page and try again."
+        }
       }
     },
     "table": {

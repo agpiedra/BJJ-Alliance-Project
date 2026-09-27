@@ -1088,6 +1088,14 @@ model PaymentPeriod {
 // matches the currency it is applied to, and effective months are not in the past. Amounts are Decimal(10, 2) with a Currency, like
 // PaymentPeriod; converting to the library's integer minor units must be exact and range-checked (no floating-point multiplication,
 // no silent rounding) and is done by the writer PR that first needs it.
+//
+// The one approved exception to insert-only (owner-configuration PR, decision D25): the owner's correction action may UPDATE a version
+// whose effective month is still in the future in the branch's timezone, atomically with a before/after AuditLog row and only if the
+// editor's revision token still matches (a stale edit is refused). Current and past versions are never updated. That exception rests on
+// nothing referencing a version yet. A future prepayment CAN depend on a future version, so before any financial writer ships, versions
+// that a sold, assigned or prepaid obligation references must be protected from correction and paid prices and coverage must stay frozen.
+// The owner-configuration writers also serialize per branch (they lock the Academy row) to keep the single-currency rules true under
+// simultaneous saves; the database still cannot enforce them.
 // ---------------------------------------------------------------------------------------------------------------------
 
 /// A branch's dues settings from one month onward. A change is a NEW row with a later effective month (by convention, see above);

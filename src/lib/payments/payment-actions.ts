@@ -11,6 +11,7 @@ import { CUSTOM_PROMO_PLAN_NAMES, isCustomPromoPlanName } from "@/lib/payments/c
 import { ALL_DEFAULT_PLAN_NAMES } from "@/lib/payments/default-plan-name";
 import { currentCrDateParts } from "@/lib/payments/get-current-period";
 import { isPeriodMoreThanOneMonthInFuture } from "@/lib/payments/period-window";
+import { NOT_PACKAGE_PLAN } from "@/lib/dues/package-plans";
 import type { ActionState } from "@/lib/action-state";
 
 const recordPaymentSchema = z.object({
@@ -96,10 +97,12 @@ export async function recordPayment(
 
   const plan = await prisma.paymentPlan.findUnique({
     where: { id: data.planId, organizationId: student.organizationId },
-    select: { id: true, academyId: true, name: true, active: true },
+    // `_count.terms` > 0 = a multi-month package plan: this flow records ONE calendar month, so a package plan id (forged or stale) is
+    // refused here exactly like an unknown plan, whatever the picker showed.
+    select: { id: true, academyId: true, name: true, active: true, _count: { select: { terms: { where: { monthsCovered: { gt: 1 } } } } } },
   });
 
-  if (!plan || plan.academyId !== student.homeAcademyId) {
+  if (!plan || plan.academyId !== student.homeAcademyId || plan._count.terms > 0) {
     return { error: "invalidPlan" };
   }
 
@@ -327,6 +330,7 @@ export async function markPaymentPaid(
         academyId: student.homeAcademyId,
         name: { in: [...ALL_DEFAULT_PLAN_NAMES] },
         active: true,
+        ...NOT_PACKAGE_PLAN,
       },
       select: { id: true },
     });
@@ -339,6 +343,7 @@ export async function markPaymentPaid(
             academyId: student.homeAcademyId,
             active: true,
             NOT: { name: { in: [...CUSTOM_PROMO_PLAN_NAMES] } },
+            ...NOT_PACKAGE_PLAN,
           },
           orderBy: { name: "asc" },
           select: { id: true },
