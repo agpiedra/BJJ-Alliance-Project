@@ -141,6 +141,15 @@ const PENDING_CALLERS: PendingCaller[] = [
     dueBy: "student-dues ledger PR (proposal PR 4); packages proposal PR 5",
     reason: "Consecutive prepaid and package coverage, overlap detection and per-month price versions; payment entry and the monthly job call them.",
   },
+  // Student dues, PR 4a (the first ledger writers: plain library functions, closed by default). No caller exists on purpose:
+  // tests/unit/dues-ledger-not-exposed.test.ts fails if anything outside src/lib/dues/ledger imports them.
+  {
+    symbol: "createMonthlyObligation / recordDuesPayment (and the exact minor-unit conversion)",
+    file: "src/lib/dues/ledger/ (create-monthly-obligation.ts, record-payment.ts, minor-units.ts)",
+    dueBy: "payment-write integration stage (proposal PR 6); the monthly job PR calls createMonthlyObligation",
+    reason:
+      "The ledger's obligation-creation and payment-settlement writers, deliberately unreachable from live billing until activation: the injected activation defaults to inactive and is NOT authorization. The first caller must take activation from trusted organization state, never from request data.",
+  },
 ];
 
 function main() {
