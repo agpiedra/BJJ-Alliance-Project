@@ -32,4 +32,12 @@ export interface LedgerDeps {
    * real contention), instead of hoping `Promise.all` happens to collide at the SQL level.
    */
   beforeLateFeeInsert?: (obligationId: string) => Promise<void>;
+  /**
+   * Test-only synchronization point, called by `correctLateFeeAndSettle` (correct-late-fee.ts) right after the fee void and its
+   * own audit row are written, but before it composes `recordDuesPaymentInTx` in the same transaction — never referenced by
+   * production code, never given a value outside a test. Lets a test force a failure late in the transaction to prove the void
+   * (already written, not yet committed) rolls back along with everything else, rather than assuming Prisma's transaction
+   * semantics "just work" without ever exercising it.
+   */
+  afterVoidForTest?: () => Promise<void>;
 }

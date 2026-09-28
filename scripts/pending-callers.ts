@@ -174,6 +174,17 @@ const PENDING_CALLERS: PendingCaller[] = [
     reason:
       "Per student: locks the student row, reads open MONTHLY obligations, and calls assessLateFeeInTx (record-payment.ts, the transaction-aware core recordDuesPayment's own inline fee logic was extracted into) for each, by id. That helper re-reads obligation/settlement/fee state itself under the lock and repeats the activation check itself, so this runner trusts nothing but the id, today's date and actorId: null (the existing 'automated system action' convention). Built and tested ahead of a route/action/scheduler entry, deliberately, so activation stays a single later decision. Genuinely flagged, not blocking: no waiver/void writer exists yet, so recordDuesPayment's existing feeAlreadyAssessed refusal becomes reachable in ordinary use once this ships — an activation prerequisite, not something this PR needs to resolve.",
   },
+  // Late-fee-correction brief: the owner-only writer that resolves exactly that reachable feeAlreadyAssessed case — a fee wrongly
+  // assessed before an on-time payment was recorded. No production caller exists on purpose — not a route, not a server action,
+  // no scheduler entry, no UI. Lives inside src/lib/dues/ledger/ (it composes recordDuesPaymentInTx directly), so it needs no
+  // entry in the ledger's own no-caller guard — that guard only restricts imports from OUTSIDE the ledger directory.
+  {
+    symbol: "correctLateFeeAndSettle",
+    file: "src/lib/dues/ledger/correct-late-fee.ts",
+    dueBy: "activation / scheduler rollout stage, and a UI for owners to use it",
+    reason:
+      "Voids a fee that was wrongly assessed given an owner-confirmed (not independently verified) receivedOn, and records the full settlement it was blocking, in one transaction: never a void without its matching settlement, never a settlement bypassing oldest-first validation. Composes recordDuesPaymentInTx directly (no nested transaction) via a throw-and-convert mechanism so any settlement refusal rolls back the provisional void too. Owner-only (context.organizationRole === 'ADMIN', checked here, not deferred to a caller); reuses the ordinary payment's maxBackdateDays limit unchanged (no separate correction allowance); VOID only — WAIVED, refunds and reversal remain exactly as undecided as before this PR.",
+  },
 ];
 
 function main() {
