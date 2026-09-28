@@ -3,10 +3,11 @@ import { prisma } from "@/lib/prisma";
 import type { TenantContext } from "@/lib/tenant/types";
 import { compareDates, type CalendarDate } from "@/lib/dues/calendar";
 import { parseMoney } from "@/lib/dues/config-input";
-import { feeAssessableFrom, lateFeeApplies, orderOldestFirst, outstandingItems, settleReceipt, type ObligationTerms } from "@/lib/dues/settlement";
+import { feeAssessableFrom, lateFeeApplies, lateFeeToAssessMinor, orderOldestFirst, outstandingItems, settleReceipt, type ObligationTerms } from "@/lib/dues/settlement";
 import { inactiveLedgerActivation, type LedgerDeps } from "@/lib/dues/ledger/activation";
-import { fromDbDate, inTenantScope, isRealDate, lockStudent, minusDays, todayIn, toDbDate } from "@/lib/dues/ledger/common";
+import { fromDbDate, inTenantScope, isRealDate, lockStudent, minusDays, todayIn, toDbDate, type Tx } from "@/lib/dues/ledger/common";
 import { MAX_MINOR_UNITS, columnToMinor, decimalToMinor, minorToDecimal } from "@/lib/dues/ledger/minor-units";
+import { isUniqueViolationOnConstraint } from "@/lib/dues/ledger/unique-violation";
 import { CURRENCIES } from "@/lib/payments/format-money";
 
 /**
@@ -39,6 +40,105 @@ import { CURRENCIES } from "@/lib/payments/format-money";
  * offers in a refusal (`selectableTotals`) simply stop before the first one that would not fit — an earlier, smaller, still-payable
  * prefix is never withheld because of what comes after it.
  */
+export type AssessLateFeeError = "notActive" | "notFound" | "invalid";
+/**
+ * `feeId` and `owed` answer two different questions, deliberately kept separate: `feeId` is the fee ROW that exists for this
+ * obligation, if any (created now, reused, or a waived/voided one found as-is) — the runner's own "was there already a fee
+ * record here" question. `owed` is whether that fee is CURRENTLY active and chargeable — false for a waived or voided row
+ * regardless of whether it would otherwise apply, and the one `recordDuesPayment` must use to decide `DuesSettlement.lateFeeId`
+ * (which must reference an active fee or nothing, never a waived one).
+ */
+export type AssessLateFeeResult = { ok: true; feeId: string | null; owed: boolean; created: boolean } | { ok: false; error: AssessLateFeeError };
+
+/**
+ * Late-fee-assessment brief §6: the transaction-aware core `recordDuesPayment`'s own inline fee logic used to duplicate, extracted so
+ * the (not-yet-built-here) proactive runner can share it. Trusts NOTHING from its caller except `obligationId`, `asOf` and `actorId` —
+ * obligation, active-settlement and fee state are all re-read here, fresh, under the caller's already-held student lock, never accepted
+ * as a snapshot. Repeats the activation check itself (the same lesson the monthly-generation PR's own review already applied to
+ * `createMonthlyObligationInTx`): a caller that skips it gets refused here too.
+ *
+ * `asOf` is the date lateness is judged against — the caller's to supply, not a business fact to re-derive: the proactive runner passes
+ * today (in the branch's timezone); `recordDuesPayment` passes the payment's own `receivedOn`, since a fee's lateness is judged by the
+ * RECEIVED date of the settlement (`settlement.ts:37,56-58`), not by when this transaction happens to run.
+ *
+ * `settledOn` (fed into `lateFeeToAssessMinor`) comes from the obligation's active, UNREVERSED settlement's PAYMENT's `receivedOn` —
+ * never `DuesSettlement.createdAt` or `DuesPayment.recordedAt` (both are row-creation instants, not the received date), and a reversed
+ * settlement is excluded entirely (not an active payment for this purpose).
+ */
+export async function assessLateFeeInTx(
+  tx: Tx,
+  args: { context: TenantContext; obligationId: string; asOf: CalendarDate; actorId: string | null },
+  deps: LedgerDeps = {},
+): Promise<AssessLateFeeResult> {
+  const { context, obligationId, asOf, actorId } = args;
+  const organizationId = context.organizationId;
+  const activation = deps.activation ?? inactiveLedgerActivation;
+  if (!(await activation.isActive(organizationId))) return { ok: false, error: "notActive" };
+  if (!isRealDate(asOf)) return { ok: false, error: "invalid" };
+
+  const obligation = await tx.duesObligation.findFirst({
+    where: { id: obligationId, organizationId, type: "MONTHLY" },
+    select: { id: true, academyId: true, amount: true, currency: true, lateFeeAmount: true, graceDeadline: true, coverageYear: true, coverageMonth: true },
+  });
+  if (!obligation || !inTenantScope(context, obligation.academyId) || obligation.graceDeadline === null) return { ok: false, error: "notFound" };
+
+  const activeSettlement = await tx.duesSettlement.findFirst({
+    where: { organizationId, obligationId: obligation.id, reversedAt: null },
+    select: { payment: { select: { receivedOn: true } } },
+  });
+  const settledOn = activeSettlement ? fromDbDate(activeSettlement.payment.receivedOn) : null;
+
+  const existingFee = await tx.duesLateFee.findFirst({ where: { organizationId, obligationId: obligation.id }, select: { id: true, removedAt: true } });
+  if (existingFee) return { ok: true, feeId: existingFee.id, owed: existingFee.removedAt === null, created: false };
+
+  const graceDeadline = fromDbDate(obligation.graceDeadline);
+  const owedMinor = lateFeeToAssessMinor(
+    {
+      id: obligation.id,
+      coverage: { year: obligation.coverageYear, month: obligation.coverageMonth },
+      currency: obligation.currency,
+      tuitionMinor: columnToMinor(obligation.amount),
+      lateFeeMinor: obligation.lateFeeAmount === null ? 0 : columnToMinor(obligation.lateFeeAmount),
+      graceDeadline,
+      settledOn,
+    },
+    asOf,
+  );
+  if (owedMinor === 0) return { ok: true, feeId: null, owed: false, created: false };
+
+  const assessable = feeAssessableFrom(graceDeadline);
+  // Corrected: a caught P2002 cannot be recovered from with a follow-up query in the SAME transaction — Postgres aborts a
+  // transaction the instant any statement inside it fails, and every later statement (even a plain SELECT) then fails too with
+  // "current transaction is aborted" until a ROLLBACK. `ON CONFLICT DO NOTHING` never throws for the race it targets in the first
+  // place, so there is nothing to recover from: it either wins (a row comes back) or loses (nothing comes back, no exception,
+  // transaction fully healthy either way) — proven against a real duplicate insert, not assumed. `id` is generated here, not left
+  // to a DB default, because Prisma's `@default(cuid())` is applied client-side, not by the column itself.
+  if (deps.beforeLateFeeInsert) await deps.beforeLateFeeInsert(obligation.id);
+  const newId = crypto.randomUUID();
+  const inserted = await tx.$queryRaw<{ id: string }[]>`
+    INSERT INTO "DuesLateFee" ("id", "organizationId", "obligationId", "assessableFrom")
+    VALUES (${newId}, ${organizationId}, ${obligation.id}, ${toDbDate(assessable)})
+    ON CONFLICT ("obligationId") DO NOTHING
+    RETURNING "id"
+  `;
+  if (inserted.length > 0) {
+    const feeId = inserted[0].id;
+    await tx.auditLog.create({
+      data: {
+        actorId, organizationId, academyId: obligation.academyId, action: "duesLateFee.assess", entityType: "DuesLateFee", entityId: feeId,
+        before: Prisma.DbNull, after: { obligationId: obligation.id, assessableFrom: ymd(assessable), amount: minorToDecimal(owedMinor), currency: obligation.currency },
+      },
+    });
+    return { ok: true, feeId, owed: true, created: true };
+  }
+  // Lost the race: no row was inserted, nothing threw, the transaction is fully usable. A plain read finds the winner's row.
+  const wonByOther = await tx.duesLateFee.findFirst({ where: { organizationId, obligationId: obligation.id }, select: { id: true, removedAt: true } });
+  if (!wonByOther) {
+    throw new Error(`DuesLateFee insert conflicted for obligation ${obligation.id} but no row was found immediately after — impossible under ON CONFLICT DO NOTHING`);
+  }
+  return { ok: true, feeId: wonByOther.id, owed: wonByOther.removedAt === null, created: false };
+}
+
 export type RecordDuesPaymentError =
   | "notActive"
   | "invalid"
@@ -202,26 +302,21 @@ export async function recordDuesPayment(
       const feeIds: string[] = [];
       const lateFeeFor = new Map<string, string | null>();
       for (const o of settlementOrder) {
-        if (!feeOwed.get(o.id)) {
-          lateFeeFor.set(o.id, null);
-          continue;
+        // assessLateFeeInTx re-reads obligation/settlement/fee state itself, fresh, under this same lock — it does not trust the
+        // `feeOwed`/`o.lateFees` snapshot validation already computed above. `asOf: receivedOn`: lateness is judged by the RECEIVED
+        // date of THIS settlement, not by whatever the real clock reads while this transaction happens to run.
+        const assessed = await assessLateFeeInTx(tx, { context, obligationId: o.id, asOf: receivedOn, actorId: context.actorUserId }, deps);
+        // Under this held lock, re-reading the same data validation already read cannot disagree — but if it somehow ever does, abort
+        // the whole transaction rather than commit a settlement whose lateFeeId doesn't match what was actually decided.
+        if (!assessed.ok) throw new Error(`assessLateFeeInTx unexpectedly refused (${assessed.error}) for obligation ${o.id} inside an already-validated payment`);
+        const expectedOwed = feeOwed.get(o.id) ?? false;
+        if (expectedOwed !== assessed.owed) {
+          throw new Error(`assessLateFeeInTx's fresh read disagreed with recordDuesPayment's own validated fee state for obligation ${o.id}`);
         }
-        const existingFee = o.lateFees[0] ?? null;
-        if (existingFee) {
-          lateFeeFor.set(o.id, existingFee.id); // reuse the one active fee row
-          continue;
-        }
-        const t = termsById.get(o.id)!;
-        const assessable = feeAssessableFrom(t.graceDeadline);
-        const fee = await tx.duesLateFee.create({ data: { organizationId, obligationId: o.id, assessableFrom: toDbDate(assessable) } });
-        await tx.auditLog.create({
-          data: {
-            actorId: context.actorUserId, organizationId, academyId: student.homeAcademyId, action: "duesLateFee.assess", entityType: "DuesLateFee", entityId: fee.id,
-            before: Prisma.DbNull, after: { obligationId: o.id, assessableFrom: ymd(assessable), amount: minorToDecimal(t.lateFeeMinor), currency: o.currency },
-          },
-        });
-        feeIds.push(fee.id);
-        lateFeeFor.set(o.id, fee.id);
+        if (assessed.created && assessed.feeId) feeIds.push(assessed.feeId);
+        // lateFeeId references an ACTIVE fee only — never a waived/voided one, even if assessLateFeeInTx found that row (its
+        // `feeId` answers "does a fee row exist," not "is it owed"; `owed` is the one this decision actually turns on).
+        lateFeeFor.set(o.id, assessed.owed ? assessed.feeId : null);
       }
 
       const payment = await tx.duesPayment.create({
@@ -250,8 +345,18 @@ export async function recordDuesPayment(
       return { ok: true, paymentId: payment.id, settlementIds, feeIds, totalMinor: tenderMinor };
     });
   } catch (error) {
-    // The one-active-settlement index is the backstop behind the student lock: losing that race is a replay, not a crash.
-    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") return refuse("alreadySettled");
+    // P2002 is not one thing: identify the CONSTRAINT, not the table (a table can have more than one unique index — this schema's
+    // own DuesLateFee does). DuesSettlement's partial unique index (the one-active-settlement-per-obligation backstop behind the
+    // student lock — a replay, not a crash) is the expected one here.
+    if (isUniqueViolationOnConstraint(error, "DuesSettlement_one_active_per_obligation_key")) return refuse("alreadySettled");
+    // DuesLateFee_obligationId_key is kept here as a documented, unreachable backstop, not live code: assessLateFeeInTx no longer
+    // performs an unprotected insert that could violate it (it uses `INSERT ... ON CONFLICT DO NOTHING`, which cannot throw for
+    // this constraint), so this branch has no path to it today. Left in deliberately, matching this codebase's existing precedent
+    // of a documented defensive check with no live path (eligibility.ts's branch-scope check, 5.4) — if a future change to
+    // assessLateFeeInTx ever reintroduces an unprotected insert, this is what stops it from being misreported as `alreadySettled`.
+    if (isUniqueViolationOnConstraint(error, "DuesLateFee_obligationId_key")) return refuse("conflict");
+    // Anything else — including a PK collision or the composite DuesLateFee_organizationId_id_obligationId_key — is genuinely
+    // unexpected and must be re-thrown, never silently absorbed into either label above.
     throw error;
   }
 }
