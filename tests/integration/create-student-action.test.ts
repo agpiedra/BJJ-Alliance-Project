@@ -116,6 +116,7 @@ describe("createStudent", () => {
     });
     await prisma.promotionCredit.deleteMany({ where: { studentId: { in: studentIds } } });
     if (studentIds.length > 0) {
+      await prisma.studentStatusChange.deleteMany({ where: { studentId: { in: studentIds } } });
       await prisma.student.deleteMany({ where: { id: { in: studentIds } } });
     }
     if (cleanupUserIds.length > 0) {

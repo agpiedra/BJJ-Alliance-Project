@@ -10,6 +10,8 @@ import { isAcademyInTenantScope, resolveActionContext } from "@/lib/tenant/conte
 import { getScopedDb } from "@/lib/tenant/scoped-client";
 import { Prisma, StudentStatus } from "@/generated/prisma/client";
 import type { ActionState } from "@/lib/action-state";
+import { lockStudent } from "@/lib/students/lock";
+import { appendStatusChange, todayInAsDbDate } from "@/lib/students/status-history";
 
 /**
  * `currentBelt` / `currentStripes` are deliberately ABSENT from this schema
@@ -239,7 +241,7 @@ export async function archiveStudent(
 
   const student = await getScopedDb(context).student.findUnique({
     where: { id: parsed.data.studentId },
-    select: { id: true, homeAcademyId: true, organizationId: true, status: true, userId: true },
+    select: { id: true, homeAcademyId: true, organizationId: true, status: true, userId: true, homeAcademy: { select: { timezone: true } } },
   });
 
   if (!student || !isAcademyInTenantScope(context, student.homeAcademyId)) {
@@ -250,6 +252,11 @@ export async function archiveStudent(
 
   try {
     await prisma.$transaction(async (tx) => {
+      // Eligibility-prerequisites brief, 3.2: every status-changing action locks the student row FIRST, before its own update
+      // and before the history row's `sequence` is computed — this is what makes `sequence` reflect the true commit order.
+      const locked = await lockStudent(tx, student.organizationId, student.id);
+      if (!locked) throw new StudentWriteMissError();
+
       const result = await tx.student.updateMany({
         // The status they are archived FROM is re-asserted in the WHERE, so a
         // concurrent change (an approval) cannot leave the stored value wrong.
@@ -263,6 +270,15 @@ export async function archiveStudent(
 
       // They leave the portal with the roster (a STUDENT membership only — never a staff one).
       const membership = await revokeStudentMembership(tx, student);
+
+      await appendStatusChange(tx, {
+        organizationId: student.organizationId,
+        studentId: student.id,
+        status: StudentStatus.ARCHIVED,
+        effectiveOn: todayInAsDbDate(student.homeAcademy.timezone, new Date()),
+        source: "EVENT",
+        actorId: context.actorUserId,
+      });
 
       await tx.auditLog.create({
         data: {
@@ -330,7 +346,15 @@ export async function restoreStudent(
 
   const student = await getScopedDb(context).student.findUnique({
     where: { id: parsed.data.studentId },
-    select: { id: true, homeAcademyId: true, organizationId: true, status: true, userId: true, statusBeforeArchive: true },
+    select: {
+      id: true,
+      homeAcademyId: true,
+      organizationId: true,
+      status: true,
+      userId: true,
+      statusBeforeArchive: true,
+      homeAcademy: { select: { timezone: true } },
+    },
   });
 
   if (!student || !isAcademyInTenantScope(context, student.homeAcademyId)) {
@@ -347,6 +371,9 @@ export async function restoreStudent(
 
   try {
     await prisma.$transaction(async (tx) => {
+      const locked = await lockStudent(tx, student.organizationId, student.id);
+      if (!locked) throw new StudentWriteMissError();
+
       const result = await tx.student.updateMany({
         where: {
           id: student.id,
@@ -362,6 +389,15 @@ export async function restoreStudent(
       }
 
       const membership = target === StudentStatus.PENDING ? ("none" as const) : await grantStudentMembership(tx, student);
+
+      await appendStatusChange(tx, {
+        organizationId: student.organizationId,
+        studentId: student.id,
+        status: target,
+        effectiveOn: todayInAsDbDate(student.homeAcademy.timezone, new Date()),
+        source: "EVENT",
+        actorId: context.actorUserId,
+      });
 
       await tx.auditLog.create({
         data: {
@@ -416,7 +452,7 @@ export async function approveStudent(
 
   const student = await getScopedDb(context).student.findUnique({
     where: { id: parsed.data.studentId },
-    select: { id: true, homeAcademyId: true, organizationId: true, status: true, userId: true },
+    select: { id: true, homeAcademyId: true, organizationId: true, status: true, userId: true, homeAcademy: { select: { timezone: true } } },
   });
 
   if (!student || !isAcademyInTenantScope(context, student.homeAcademyId)) {
@@ -429,6 +465,9 @@ export async function approveStudent(
 
   try {
     await prisma.$transaction(async (tx) => {
+      const locked = await lockStudent(tx, student.organizationId, student.id);
+      if (!locked) throw new StudentWriteMissError();
+
       const result = await tx.student.updateMany({
         where: {
           id: student.id,
@@ -446,6 +485,15 @@ export async function approveStudent(
       // Approval is the moment they belong here — and what lets them into /portal.
       const membership = await grantStudentMembership(tx, student);
 
+      await appendStatusChange(tx, {
+        organizationId: student.organizationId,
+        studentId: student.id,
+        status: StudentStatus.ACTIVE,
+        effectiveOn: todayInAsDbDate(student.homeAcademy.timezone, new Date()),
+        source: "EVENT",
+        actorId: context.actorUserId,
+      });
+
       await tx.auditLog.create({
         data: {
           actorId: context.actorUserId,
@@ -462,6 +510,173 @@ export async function approveStudent(
   } catch (error) {
     if (error instanceof StudentWriteMissError) {
       return { error: "notPending" };
+    }
+    throw error;
+  }
+
+  await refreshStudentPages(parsed.data.studentId);
+  return { ok: true };
+}
+
+/**
+ * ADMIN/DIRECTOR only (same gate as `archiveStudent`/`restoreStudent`). Eligibility-prerequisites brief, 3.2: pauses an ACTIVE
+ * student, effective today. This is a status fact only — it does not itself decide any month's billing (that is 6.2's job,
+ * `src/lib/dues/eligibility.ts`, unbuilt and uncalled in this PR) and it writes nothing to any ledger table. Existing debt is
+ * untouched at any status; `recordDuesPayment` already accepts payment regardless of the student's current status.
+ *
+ * Refuses from `PENDING`, `ARCHIVED` or an already-`INACTIVE` student — pausing can never be used to skip approval or
+ * restoration. Never triggered by attendance or absence; this is exclusively an explicit staff action.
+ */
+export async function pauseStudent(
+  organizationId: string,
+  _prevState: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const auth = await resolveActionContext(organizationId, ["ADMIN", "DIRECTOR"]);
+  if (!auth.ok) return { error: "notFound" };
+  const context = auth.context;
+
+  const parsed = studentIdSchema.safeParse(Object.fromEntries(formData.entries()));
+  if (!parsed.success) {
+    return { error: "notFound" };
+  }
+
+  const student = await getScopedDb(context).student.findUnique({
+    where: { id: parsed.data.studentId },
+    select: { id: true, homeAcademyId: true, organizationId: true, status: true, homeAcademy: { select: { timezone: true } } },
+  });
+
+  if (!student || !isAcademyInTenantScope(context, student.homeAcademyId)) {
+    return { error: "notFound" };
+  }
+
+  if (student.status !== StudentStatus.ACTIVE) {
+    return { error: "notActive" };
+  }
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      const locked = await lockStudent(tx, student.organizationId, student.id);
+      if (!locked) throw new StudentWriteMissError();
+
+      const result = await tx.student.updateMany({
+        where: { id: student.id, organizationId: student.organizationId, homeAcademyId: student.homeAcademyId, status: StudentStatus.ACTIVE },
+        data: { status: StudentStatus.INACTIVE },
+      });
+
+      if (result.count === 0) {
+        throw new StudentWriteMissError();
+      }
+
+      await appendStatusChange(tx, {
+        organizationId: student.organizationId,
+        studentId: student.id,
+        status: StudentStatus.INACTIVE,
+        effectiveOn: todayInAsDbDate(student.homeAcademy.timezone, new Date()),
+        source: "EVENT",
+        actorId: context.actorUserId,
+      });
+
+      await tx.auditLog.create({
+        data: {
+          actorId: context.actorUserId,
+          organizationId: student.organizationId,
+          academyId: student.homeAcademyId,
+          action: "student.pause",
+          entityType: "Student",
+          entityId: student.id,
+          before: { status: StudentStatus.ACTIVE },
+          after: { status: StudentStatus.INACTIVE },
+        },
+      });
+    });
+  } catch (error) {
+    if (error instanceof StudentWriteMissError) {
+      return { error: "notActive" };
+    }
+    throw error;
+  }
+
+  await refreshStudentPages(parsed.data.studentId);
+  return { ok: true };
+}
+
+/**
+ * ADMIN/DIRECTOR only. The reverse of `pauseStudent`: an INACTIVE student becomes ACTIVE again, effective today.
+ *
+ * Whether — and how — resuming bills the coverage month it happens in is the approved rule documented in the
+ * eligibility-prerequisites brief, section 3.4. This action does NOT implement that rule: it writes only the status column, its
+ * `StudentStatusChange` row and its audit row, atomically, exactly like every other action in this file. It never imports or
+ * calls anything under `src/lib/dues/ledger/` — that composition was proposed and explicitly reverted (3.4 explains why: it
+ * would not share this transaction and would reverse `createMonthlyObligation`'s own lock order). The obligation-creation rule
+ * is left for the later payment-write integration PR to build as its own, separately-designed, shared transaction.
+ */
+export async function resumeStudent(
+  organizationId: string,
+  _prevState: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const auth = await resolveActionContext(organizationId, ["ADMIN", "DIRECTOR"]);
+  if (!auth.ok) return { error: "notFound" };
+  const context = auth.context;
+
+  const parsed = studentIdSchema.safeParse(Object.fromEntries(formData.entries()));
+  if (!parsed.success) {
+    return { error: "notFound" };
+  }
+
+  const student = await getScopedDb(context).student.findUnique({
+    where: { id: parsed.data.studentId },
+    select: { id: true, homeAcademyId: true, organizationId: true, status: true, homeAcademy: { select: { timezone: true } } },
+  });
+
+  if (!student || !isAcademyInTenantScope(context, student.homeAcademyId)) {
+    return { error: "notFound" };
+  }
+
+  if (student.status !== StudentStatus.INACTIVE) {
+    return { error: "notInactive" };
+  }
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      const locked = await lockStudent(tx, student.organizationId, student.id);
+      if (!locked) throw new StudentWriteMissError();
+
+      const result = await tx.student.updateMany({
+        where: { id: student.id, organizationId: student.organizationId, homeAcademyId: student.homeAcademyId, status: StudentStatus.INACTIVE },
+        data: { status: StudentStatus.ACTIVE },
+      });
+
+      if (result.count === 0) {
+        throw new StudentWriteMissError();
+      }
+
+      await appendStatusChange(tx, {
+        organizationId: student.organizationId,
+        studentId: student.id,
+        status: StudentStatus.ACTIVE,
+        effectiveOn: todayInAsDbDate(student.homeAcademy.timezone, new Date()),
+        source: "EVENT",
+        actorId: context.actorUserId,
+      });
+
+      await tx.auditLog.create({
+        data: {
+          actorId: context.actorUserId,
+          organizationId: student.organizationId,
+          academyId: student.homeAcademyId,
+          action: "student.resume",
+          entityType: "Student",
+          entityId: student.id,
+          before: { status: StudentStatus.INACTIVE },
+          after: { status: StudentStatus.ACTIVE },
+        },
+      });
+    });
+  } catch (error) {
+    if (error instanceof StudentWriteMissError) {
+      return { error: "notInactive" };
     }
     throw error;
   }

@@ -7,6 +7,7 @@ import { isAcademyInTenantScope, resolveActionContext } from "@/lib/tenant/conte
 import { getScopedDb } from "@/lib/tenant/scoped-client";
 import { Prisma, StudentStatus } from "@/generated/prisma/client";
 import type { ActionState } from "@/lib/action-state";
+import { todayInAsDbDate } from "@/lib/students/status-history";
 
 const createStudentSchema = z
   .object({
@@ -75,7 +76,7 @@ export async function createStudent(
 
   const academy = await getScopedDb(context).academy.findUnique({
     where: { id: data.homeAcademyId },
-    select: { organizationId: true },
+    select: { organizationId: true, timezone: true },
   });
   // Never trust a client-submitted academy id, even from an authenticated
   // DIRECTOR — a DIRECTOR assigned only to Escalante must not be able to
@@ -141,6 +142,20 @@ export async function createStudent(
         codeHash,
         status: StudentStatus.ACTIVE,
         userId: null,
+      },
+    });
+
+    // Eligibility-prerequisites brief, 3.2: the first `StudentStatusChange` row. No lock is needed — a row that does not yet exist
+    // cannot be locked, and nothing else can reference this student's freshly-generated id until this transaction commits.
+    await tx.studentStatusChange.create({
+      data: {
+        organizationId: student.organizationId,
+        studentId: student.id,
+        status: StudentStatus.ACTIVE,
+        effectiveOn: todayInAsDbDate(academy.timezone, new Date()),
+        sequence: 1,
+        source: "EVENT",
+        actorId: context.actorUserId,
       },
     });
 

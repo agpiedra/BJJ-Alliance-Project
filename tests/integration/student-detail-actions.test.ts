@@ -85,6 +85,7 @@ async function cleanup() {
     });
   }
   if (cleanupStudentIds.length > 0) {
+    await prisma.studentStatusChange.deleteMany({ where: { studentId: { in: cleanupStudentIds } } });
     await prisma.student.deleteMany({ where: { id: { in: cleanupStudentIds } } });
   }
   if (cleanupUserIds.length > 0) {

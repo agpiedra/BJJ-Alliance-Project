@@ -46,6 +46,7 @@ describe("signup — a staff-created student's email is REFUSED, never duplicate
       select: { id: true },
     });
     await prisma.auditLog.deleteMany({ where: { entityId: { in: students.map((s) => s.id) } } });
+    await prisma.studentStatusChange.deleteMany({ where: { studentId: { in: students.map((s) => s.id) } } });
     await prisma.student.deleteMany({ where: { email: { in: cleanupEmails } } });
     await prisma.user.deleteMany({ where: { email: { in: cleanupEmails } } });
   });

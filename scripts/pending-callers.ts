@@ -150,6 +150,15 @@ const PENDING_CALLERS: PendingCaller[] = [
     reason:
       "The ledger's obligation-creation and payment-settlement writers, deliberately unreachable from live billing until activation: the injected activation defaults to inactive and is NOT authorization. The first caller must take activation from trusted organization state, never from request data.",
   },
+  // Eligibility-prerequisites brief, section 6.2: a pure function with no database access of its own — no caller exists on
+  // purpose. The monthly job PR is what calls it, once StudentStatusChange and StudentPlanAssignment have real data to read.
+  {
+    symbol: "eligibleAndAssigned",
+    file: "src/lib/dues/eligibility.ts",
+    dueBy: "the monthly job PR",
+    reason:
+      "The eligibility-and-assignment read the monthly job will call for every student, every month. Built and unit-tested ahead of that job so the job itself can be a thin, fully-tested piece of code with no judgment calls left in it.",
+  },
 ];
 
 function main() {
