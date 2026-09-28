@@ -163,6 +163,17 @@ const PENDING_CALLERS: PendingCaller[] = [
     reason:
       "Per student, per branch, per month: reads status and assignment history under one held student lock, decides via eligibleAndAssigned, and calls createMonthlyObligationInTx inside that same transaction. Closed by the same LedgerActivation default (inactive) createMonthlyObligationInTx itself checks. Built and tested ahead of a route/action/scheduler entry, deliberately, so activation stays a single later decision rather than something this PR has to make.",
   },
+  // Late-fee-assessment brief: the proactive runner that finally makes an overdue fee assessable before anyone tries to pay.
+  // No production caller exists on purpose — not a route, not a server action, no scheduler entry (vercel.json's crons array is
+  // untouched). tests/unit/dues-ledger-not-exposed.test.ts names this file, alongside monthly-generation.ts, as an authorized
+  // caller of the ledger.
+  {
+    symbol: "assessLateFeesForStudent",
+    file: "src/lib/dues/late-fee-assessment.ts",
+    dueBy: "activation / scheduler rollout stage",
+    reason:
+      "Per student: locks the student row, reads open MONTHLY obligations, and calls assessLateFeeInTx (record-payment.ts, the transaction-aware core recordDuesPayment's own inline fee logic was extracted into) for each, by id. That helper re-reads obligation/settlement/fee state itself under the lock and repeats the activation check itself, so this runner trusts nothing but the id, today's date and actorId: null (the existing 'automated system action' convention). Built and tested ahead of a route/action/scheduler entry, deliberately, so activation stays a single later decision. Genuinely flagged, not blocking: no waiver/void writer exists yet, so recordDuesPayment's existing feeAlreadyAssessed refusal becomes reachable in ordinary use once this ships — an activation prerequisite, not something this PR needs to resolve.",
+  },
 ];
 
 function main() {
