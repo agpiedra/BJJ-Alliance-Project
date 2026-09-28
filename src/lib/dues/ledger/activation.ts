@@ -40,4 +40,11 @@ export interface LedgerDeps {
    * semantics "just work" without ever exercising it.
    */
   afterVoidForTest?: () => Promise<void>;
+  /**
+   * Test-only synchronization point, called by `reversePayment` (reverse-payment.ts) right after the payment's and its
+   * settlements' reversal markers (and their audit row) are written, but before the transaction commits — never referenced by
+   * production code, never given a value outside a test. Lets a test force a failure at that point to prove the markers roll
+   * back together, rather than assuming Prisma's transaction semantics "just work" without ever exercising it.
+   */
+  afterReversalMarkersForTest?: () => Promise<void>;
 }

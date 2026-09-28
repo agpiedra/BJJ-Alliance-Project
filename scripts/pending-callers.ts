@@ -185,6 +185,16 @@ const PENDING_CALLERS: PendingCaller[] = [
     reason:
       "Voids a fee that was wrongly assessed given an owner-confirmed (not independently verified) receivedOn, and records the full settlement it was blocking, in one transaction: never a void without its matching settlement, never a settlement bypassing oldest-first validation. Composes recordDuesPaymentInTx directly (no nested transaction) via a throw-and-convert mechanism so any settlement refusal rolls back the provisional void too. Owner-only (context.organizationRole === 'ADMIN', checked here, not deferred to a caller); reuses the ordinary payment's maxBackdateDays limit unchanged (no separate correction allowance); VOID only — WAIVED, refunds and reversal remain exactly as undecided as before this PR.",
   },
+  // Payment-reversal brief: reverses a recorded payment and every one of its active settlements atomically. No production caller
+  // exists on purpose — not a route, not a server action, no scheduler entry, no UI. Lives inside src/lib/dues/ledger/ (it
+  // composes lockStudent/inTenantScope directly), so it needs no entry in the ledger's own no-caller guard.
+  {
+    symbol: "reversePayment",
+    file: "src/lib/dues/ledger/reverse-payment.ts",
+    dueBy: "activation / scheduler rollout stage, and a UI for owners to use it",
+    reason:
+      "Reverses a payment and all its active settlements together, in one transaction, under the student lock, trusting nothing re-read before it. Two approved policy decisions: reversing a settlement with a valid, never-voided fee makes both the tuition and the fee owed again (no new logic — the fee row is untouched, so it's already correct); reversing a settlement whose obligation has a VOIDED fee is refused outright (voidedFeeBlocksReversal, a temporary restriction on the obligation's current fee state, not a claim the payment being reversed caused that void — no provenance field added). Refuses type !== MONTHLY (unsupportedObligationType) as a runtime scope boundary — MONTHLY does not distinguish an ordinary obligation from a future prepayment purchase, so supporting prepayment/package settlements later means revisiting this writer before either is exposed. Owner-only (context.organizationRole === 'ADMIN', checked here); refunds, fee restoration and cancellation remain out of scope.",
+  },
 ];
 
 function main() {
