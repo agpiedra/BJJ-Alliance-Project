@@ -181,58 +181,82 @@ function selectablePrefixTotals(items: readonly { amountMinor: number }[]): stri
   return totals;
 }
 
-export async function recordDuesPayment(
+/**
+ * Late-fee-correction brief §2: the same format checks the public wrapper below already ran, extracted so `recordDuesPaymentInTx`
+ * can re-run them itself for a direct caller (the correction writer) that bypasses the wrapper entirely — one validator, not two
+ * copies that could drift apart. Does not validate `studentId`/tenant scope; those depend on what shape the student arrives in at
+ * each call site (a raw id for the wrapper, an already-resolved row for a direct caller) and are checked separately at each site.
+ */
+function validatePaymentInput(input: {
+  receivedOn: CalendarDate;
+  tender: { currency: Currency; amount: string };
+  method: PaymentMethod;
+  obligationIds: string[];
+  notes?: string;
+  maxBackdateDays: number;
+}): RecordDuesPaymentError | null {
+  if (!Array.isArray(input.obligationIds) || input.obligationIds.length < 1 || input.obligationIds.length > MAX_SELECTED) return "invalid";
+  if (input.obligationIds.some((id) => typeof id !== "string" || id === "") || new Set(input.obligationIds).size !== input.obligationIds.length) return "invalid";
+  if (!(CURRENCIES as readonly string[]).includes(input.tender?.currency)) return "invalid";
+  if (!parseMoney(input.tender.amount, { allowZero: false }).ok) return "invalid";
+  if (!(Object.values(PaymentMethod) as string[]).includes(input.method)) return "invalid";
+  if (!input.receivedOn || !isRealDate(input.receivedOn)) return "invalid";
+  if (!Number.isInteger(input.maxBackdateDays) || input.maxBackdateDays < 0 || input.maxBackdateDays > MAX_BACKDATE_DAYS) return "invalid";
+  if (input.notes !== undefined && (typeof input.notes !== "string" || input.notes.length > MAX_NOTES)) return "invalid";
+  return null;
+}
+
+/**
+ * Late-fee-correction brief §2: `recordDuesPayment`'s validate-then-write transaction body, extracted so the correction writer can
+ * compose it inside its own already-open transaction (which has already voided a fee and needs the settlement in the SAME
+ * transaction) instead of nesting a second `prisma.$transaction` inside the first — the exact composition mistake found and
+ * reverted earlier this session. Trusts nothing from its caller: repeats the activation check, re-validates input format, and
+ * re-checks `inTenantScope` on the given `student` even though it arrives pre-resolved — the same "trust nothing" discipline
+ * `createMonthlyObligationInTx`/`assessLateFeeInTx` already apply, extended here to the largest of the four extractions this
+ * session. `P2002` classification is NOT handled here — a caller that opens the transaction must catch it, since this function
+ * never calls `prisma.$transaction` itself (see `classifyRecordPaymentError`, reused by both this file's own public wrapper and
+ * the correction writer).
+ */
+export async function recordDuesPaymentInTx(
+  tx: Tx,
   args: {
     context: TenantContext;
-    studentId: string;
+    student: { id: string; homeAcademyId: string };
     receivedOn: CalendarDate;
     tender: { currency: Currency; amount: string };
     method: PaymentMethod;
-    /** The obligations this payment settles, chosen explicitly. Never recomputed. */
     obligationIds: string[];
     notes?: string;
-    /** How many days before today the received date may be. Required; no default (decision D4 is pending). */
     maxBackdateDays: number;
   },
   deps: LedgerDeps = {},
 ): Promise<RecordDuesPaymentResult> {
-  const { context, studentId, receivedOn, tender, method, obligationIds, notes, maxBackdateDays } = args;
+  const { context, student, receivedOn, tender, method, obligationIds, notes, maxBackdateDays } = args;
   const organizationId = context.organizationId;
   const activation = deps.activation ?? inactiveLedgerActivation;
   if (!(await activation.isActive(organizationId))) return refuse("notActive");
+  const inputError = validatePaymentInput({ receivedOn, tender, method, obligationIds, notes, maxBackdateDays });
+  if (inputError) return refuse(inputError);
+  if (typeof student?.id !== "string" || student.id === "" || typeof student?.homeAcademyId !== "string" || student.homeAcademyId === "") return refuse("invalid");
+  if (!inTenantScope(context, student.homeAcademyId)) return refuse("notFound");
 
-  // ---- input validation (no database access) ----
-  if (typeof studentId !== "string" || studentId === "") return refuse("invalid");
-  if (!Array.isArray(obligationIds) || obligationIds.length < 1 || obligationIds.length > MAX_SELECTED) return refuse("invalid");
-  if (obligationIds.some((id) => typeof id !== "string" || id === "") || new Set(obligationIds).size !== obligationIds.length) return refuse("invalid");
-  if (!(CURRENCIES as readonly string[]).includes(tender?.currency)) return refuse("invalid");
   const parsedAmount = parseMoney(tender.amount, { allowZero: false });
-  if (!parsedAmount.ok) return refuse("invalid");
+  if (!parsedAmount.ok) return refuse("invalid"); // re-validated above; narrows the type for the write below
   const tenderMinor = decimalToMinor(parsedAmount.value);
-  if (!(Object.values(PaymentMethod) as string[]).includes(method)) return refuse("invalid");
-  if (!receivedOn || !isRealDate(receivedOn)) return refuse("invalid");
-  if (!Number.isInteger(maxBackdateDays) || maxBackdateDays < 0 || maxBackdateDays > MAX_BACKDATE_DAYS) return refuse("invalid");
-  if (notes !== undefined && (typeof notes !== "string" || notes.length > MAX_NOTES)) return refuse("invalid");
 
-  // Re-read the student scoped to the organization; a forged or foreign id is `notFound`, never trusted.
-  const student = await prisma.student.findFirst({ where: { id: studentId, organizationId }, select: { id: true, homeAcademyId: true } });
-  if (!student || !inTenantScope(context, student.homeAcademyId)) return refuse("notFound");
+  // The student row FOR UPDATE serializes every ledger write for this student. This path reads only the obligations' immutable
+  // snapshots, so it needs no configuration lock.
+  const locked = await lockStudent(tx, organizationId, student.id);
+  if (!locked || locked.homeAcademyId !== student.homeAcademyId) return refuse("conflict");
+  const branch = await tx.academy.findFirst({ where: { id: student.homeAcademyId, organizationId }, select: { timezone: true } });
+  if (!branch) return refuse("notFound");
 
-  try {
-    return await prisma.$transaction(async (tx): Promise<RecordDuesPaymentResult> => {
-      // The student row FOR UPDATE serializes every ledger write for this student. This path reads only the obligations' immutable
-      // snapshots, so it needs no configuration lock.
-      const locked = await lockStudent(tx, organizationId, student.id);
-      if (!locked || locked.homeAcademyId !== student.homeAcademyId) return refuse("conflict");
-      const branch = await tx.academy.findFirst({ where: { id: student.homeAcademyId, organizationId }, select: { timezone: true } });
-      if (!branch) return refuse("notFound");
+  const today = todayIn(branch.timezone, (deps.now ?? (() => new Date()))());
+  if (compareDates(receivedOn, today) > 0) return refuse("futureDate");
+  if (compareDates(receivedOn, minusDays(today, maxBackdateDays)) < 0) return refuse("tooOld");
 
-      const today = todayIn(branch.timezone, (deps.now ?? (() => new Date()))());
-      if (compareDates(receivedOn, today) > 0) return refuse("futureDate");
-      if (compareDates(receivedOn, minusDays(today, maxBackdateDays)) < 0) return refuse("tooOld");
-
-      // ---- load, then validate. NOTHING is written until every check below has passed. ----
-      const all = await tx.duesObligation.findMany({
+  // ---- load, then validate. NOTHING is written until every check below has passed. ----
+  const all = await tx.duesObligation.findMany({
         where: { organizationId, studentId: student.id, type: "MONTHLY" },
         include: { lateFees: true, settlements: { where: { reversedAt: null }, select: { id: true } } },
       });
@@ -343,20 +367,68 @@ export async function recordDuesPayment(
         },
       });
       return { ok: true, paymentId: payment.id, settlementIds, feeIds, totalMinor: tenderMinor };
-    });
+}
+
+/**
+ * `recordDuesPaymentInTx`'s only failure mode that isn't a typed refusal: a `P2002` thrown from inside its own transaction, which
+ * only ever reaches a CALLER of `prisma.$transaction` (this function is never inside one itself). Not one thing: identify the
+ * CONSTRAINT, not the table (a table can have more than one unique index — this schema's own `DuesLateFee` does). Returns `null`
+ * for anything unrecognized — including a PK collision or the composite `DuesLateFee_organizationId_id_obligationId_key` — so the
+ * caller re-throws it, never silently absorbing a genuinely unexpected error into either label below.
+ */
+export function classifyRecordPaymentError(error: unknown): RecordDuesPaymentResult | null {
+  // DuesSettlement's partial unique index (the one-active-settlement-per-obligation backstop behind the student lock — a replay,
+  // not a crash) is the expected one here.
+  if (isUniqueViolationOnConstraint(error, "DuesSettlement_one_active_per_obligation_key")) return refuse("alreadySettled");
+  // DuesLateFee_obligationId_key is kept here as a documented, unreachable backstop, not live code: assessLateFeeInTx no longer
+  // performs an unprotected insert that could violate it (it uses `INSERT ... ON CONFLICT DO NOTHING`, which cannot throw for this
+  // constraint), so this branch has no path to it today. Left in deliberately, matching this codebase's existing precedent of a
+  // documented defensive check with no live path (eligibility.ts's branch-scope check, 5.4) — if a future change ever reintroduces
+  // an unprotected insert somewhere in this transaction, this is what stops it from being misreported as `alreadySettled`.
+  if (isUniqueViolationOnConstraint(error, "DuesLateFee_obligationId_key")) return refuse("conflict");
+  return null;
+}
+
+/**
+ * Create ONE monthly obligation and its coverage row, atomically (ledger writer 2 of 2, PR 4a) — a thin wrapper. Its own
+ * pre-transaction checks (activation, format validation, the student lookup) are unchanged from before this function's transaction
+ * body was extracted into `recordDuesPaymentInTx`, above; it then opens one transaction and delegates to that function, which
+ * repeats every one of these checks itself for a caller that reaches it directly (the late-fee-correction writer composes it
+ * inside its own transaction, never through this wrapper).
+ */
+export async function recordDuesPayment(
+  args: {
+    context: TenantContext;
+    studentId: string;
+    receivedOn: CalendarDate;
+    tender: { currency: Currency; amount: string };
+    method: PaymentMethod;
+    /** The obligations this payment settles, chosen explicitly. Never recomputed. */
+    obligationIds: string[];
+    notes?: string;
+    /** How many days before today the received date may be. Required; no default (decision D4 is pending). */
+    maxBackdateDays: number;
+  },
+  deps: LedgerDeps = {},
+): Promise<RecordDuesPaymentResult> {
+  const { context, studentId, receivedOn, tender, method, obligationIds, notes, maxBackdateDays } = args;
+  const organizationId = context.organizationId;
+  const activation = deps.activation ?? inactiveLedgerActivation;
+  if (!(await activation.isActive(organizationId))) return refuse("notActive");
+
+  if (typeof studentId !== "string" || studentId === "") return refuse("invalid");
+  const inputError = validatePaymentInput({ receivedOn, tender, method, obligationIds, notes, maxBackdateDays });
+  if (inputError) return refuse(inputError);
+
+  // Re-read the student scoped to the organization; a forged or foreign id is `notFound`, never trusted.
+  const student = await prisma.student.findFirst({ where: { id: studentId, organizationId }, select: { id: true, homeAcademyId: true } });
+  if (!student || !inTenantScope(context, student.homeAcademyId)) return refuse("notFound");
+
+  try {
+    return await prisma.$transaction((tx) => recordDuesPaymentInTx(tx, { context, student, receivedOn, tender, method, obligationIds, notes, maxBackdateDays }, deps));
   } catch (error) {
-    // P2002 is not one thing: identify the CONSTRAINT, not the table (a table can have more than one unique index — this schema's
-    // own DuesLateFee does). DuesSettlement's partial unique index (the one-active-settlement-per-obligation backstop behind the
-    // student lock — a replay, not a crash) is the expected one here.
-    if (isUniqueViolationOnConstraint(error, "DuesSettlement_one_active_per_obligation_key")) return refuse("alreadySettled");
-    // DuesLateFee_obligationId_key is kept here as a documented, unreachable backstop, not live code: assessLateFeeInTx no longer
-    // performs an unprotected insert that could violate it (it uses `INSERT ... ON CONFLICT DO NOTHING`, which cannot throw for
-    // this constraint), so this branch has no path to it today. Left in deliberately, matching this codebase's existing precedent
-    // of a documented defensive check with no live path (eligibility.ts's branch-scope check, 5.4) — if a future change to
-    // assessLateFeeInTx ever reintroduces an unprotected insert, this is what stops it from being misreported as `alreadySettled`.
-    if (isUniqueViolationOnConstraint(error, "DuesLateFee_obligationId_key")) return refuse("conflict");
-    // Anything else — including a PK collision or the composite DuesLateFee_organizationId_id_obligationId_key — is genuinely
-    // unexpected and must be re-thrown, never silently absorbed into either label above.
+    const classified = classifyRecordPaymentError(error);
+    if (classified) return classified;
     throw error;
   }
 }
