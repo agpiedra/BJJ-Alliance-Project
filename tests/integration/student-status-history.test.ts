@@ -158,6 +158,29 @@ describe("status history is written atomically, inside the same transaction as e
   });
 });
 
+describe("StudentStatusChange is protected by RESTRICT, not CASCADE (real-database regression)", () => {
+  it("deleting a student with status history is refused, and the history remains intact", async () => {
+    const s = await newStudent(a, a.academy.id, "PENDING", "delete-guard");
+    actAs(a.admin.id);
+    expect(await approveStudent(a.org.id, {}, form({ studentId: s.id }))).toEqual({ ok: true });
+    const before = await history(s.id);
+    expect(before).toHaveLength(1);
+
+    let error: unknown;
+    try {
+      await prisma.student.delete({ where: { id: s.id } });
+    } catch (e) {
+      error = e;
+    }
+    expect(error).toBeInstanceOf(Object);
+    expect((error as { code?: string }).code).toBe("P2003"); // foreign key constraint violation, not a silent no-op
+
+    // The student and its history both survive the refused delete, unmodified.
+    expect(await prisma.student.findUnique({ where: { id: s.id } })).not.toBeNull();
+    expect(await history(s.id)).toEqual(before);
+  });
+});
+
 describe("pauseStudent / resumeStudent: preconditions", () => {
   it("pause requires ACTIVE — refuses PENDING, ARCHIVED and already-INACTIVE", async () => {
     actAs(a.admin.id);

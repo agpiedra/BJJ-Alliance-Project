@@ -26,7 +26,7 @@ CREATE INDEX "StudentStatusChange_organizationId_idx" ON "StudentStatusChange"("
 CREATE UNIQUE INDEX "StudentStatusChange_studentId_sequence_key" ON "StudentStatusChange"("studentId", "sequence");
 
 -- AddForeignKey
-ALTER TABLE "StudentStatusChange" ADD CONSTRAINT "StudentStatusChange_organizationId_studentId_fkey" FOREIGN KEY ("organizationId", "studentId") REFERENCES "Student"("organizationId", "id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "StudentStatusChange" ADD CONSTRAINT "StudentStatusChange_organizationId_studentId_fkey" FOREIGN KEY ("organizationId", "studentId") REFERENCES "Student"("organizationId", "id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "StudentStatusChange" ADD CONSTRAINT "StudentStatusChange_actorId_fkey" FOREIGN KEY ("actorId") REFERENCES "User"("id") ON DELETE SET NULL ON UPDATE CASCADE;

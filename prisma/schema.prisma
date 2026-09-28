@@ -1225,11 +1225,12 @@ model StudentStatusChange {
   actorId        String?
   createdAt      DateTime           @default(now())
 
-  // onDelete: Cascade is a deliberate exception to this schema's usual restrict-everywhere default (no other Student relation
-  // cascades). Production code never hard-deletes a Student — archiving is the only removal path anywhere in the app — so this
-  // can only ever fire in test fixture teardown, where every other test file's existing cleanup already deletes a Student
-  // directly without knowing this new child table exists.
-  student      Student       @relation(fields: [organizationId, studentId], references: [organizationId, id], onDelete: Cascade)
+  // Restrict, like every other Student relation in this schema (no onDelete override). A Student's status history must never
+  // disappear as a side effect of deleting the Student — the absence of a production hard-delete path today is not a reason to
+  // let the database silently allow one to erase history if one is ever added. Test fixtures that delete a Student directly
+  // must delete its StudentStatusChange rows first (tests/integration/student-status-history.test.ts has the real-database
+  // regression proving the restriction holds and the history survives).
+  student      Student       @relation(fields: [organizationId, studentId], references: [organizationId, id])
   actor        User?         @relation(fields: [actorId], references: [id])
   organization Organization  @relation(fields: [organizationId], references: [id])
 

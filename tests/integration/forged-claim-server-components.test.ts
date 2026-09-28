@@ -175,6 +175,7 @@ describe("a forged or stale staff claim is stopped by the page, not the middlewa
     await prisma.kioskAttempt.deleteMany({ where: { organizationId: { in: orgIds } } });
     await prisma.auditLog.deleteMany({ where: { organizationId: { in: orgIds } } });
     await prisma.notification.deleteMany({ where: { organizationId: { in: orgIds } } });
+    await prisma.studentStatusChange.deleteMany({ where: { organizationId: { in: orgIds } } });
     await prisma.student.deleteMany({ where: { organizationId: { in: orgIds } } });
     await prisma.invitation.deleteMany({ where: { organizationId: { in: orgIds } } });
     await prisma.paymentPlan.deleteMany({ where: { organizationId: { in: orgIds } } });
