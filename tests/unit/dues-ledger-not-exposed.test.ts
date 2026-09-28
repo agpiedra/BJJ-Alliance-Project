@@ -3,17 +3,20 @@ import { describe, expect, it } from "vitest";
 import { productionSourceFiles, stripComments } from "../helpers/source-files";
 
 /**
- * The first ledger writers (PR 4a) must stay unreachable from live billing until the approved activation stage. Three structural checks
+ * The first ledger writers (PR 4a) must stay unreachable from live billing until the approved activation stage. Structural checks
  * (the runtime gate is tested in tests/integration/dues-ledger-writers.test.ts):
  *
- *  1. NOTHING outside `src/lib/dues/ledger/` imports them: no page, route, server action, cron, script or other library. The only other
- *     importers are tests. When the payment-write integration PR adds the first caller, it updates this test on purpose.
+ *  1. Nothing outside `src/lib/dues/ledger/` imports them, EXCEPT the one authorized monthly-generation caller
+ *     (`AUTHORIZED_CALLER` below, monthly-generation brief §5.2): no other page, route, server action, cron, script or library.
+ *     The only other importers are tests. This test names that one file explicitly rather than allowing a broad pattern — a
+ *     second file starting to import from the ledger still fails it, exactly as before this PR.
  *  2. They are plain library functions: no `"use server"` (which would make an exported function an invocable endpoint), no route, no
  *     client component.
  *  3. They are registered in `scripts/pending-callers.ts`, the repo's list of code built ahead of its caller.
  */
 const LEDGER_DIR = "src/lib/dues/ledger/";
 const IMPORTS_LEDGER = /(?:from\s+|import\s*\(\s*|require\s*\(\s*)["'][^"']*dues\/ledger(?:\/[^"']*)?["']/;
+const AUTHORIZED_CALLER = "src/lib/dues/monthly-generation.ts";
 
 describe("the ledger writers are not reachable from production code", () => {
   const files = productionSourceFiles();
@@ -24,12 +27,18 @@ describe("the ledger writers are not reachable from production code", () => {
     expect(names).toEqual(expect.arrayContaining(["activation.ts", "create-monthly-obligation.ts", "index.ts", "minor-units.ts", "record-payment.ts"]));
   });
 
-  it("no file outside src/lib/dues/ledger imports it", () => {
+  it("no file outside src/lib/dues/ledger imports it, except the one authorized monthly-generation caller", () => {
     const importers = files
       .filter((f) => !f.file.replaceAll("\\", "/").startsWith(LEDGER_DIR))
       .filter((f) => IMPORTS_LEDGER.test(stripComments(f.text)))
-      .map((f) => f.file);
-    expect(importers, "the writers must have no production caller until the payment-write integration stage").toEqual([]);
+      .map((f) => f.file.replaceAll("\\", "/"));
+    expect(importers, "only the monthly-generation runner may import the ledger until the payment-write integration stage").toEqual([AUTHORIZED_CALLER]);
+  });
+
+  it("the authorized caller genuinely imports from the ledger (so the check above isn't vacuous)", () => {
+    const runner = files.find((f) => f.file.replaceAll("\\", "/") === AUTHORIZED_CALLER);
+    expect(runner, `${AUTHORIZED_CALLER} must exist`).toBeTruthy();
+    expect(IMPORTS_LEDGER.test(stripComments(runner!.text))).toBe(true);
   });
 
   it("no ledger file is a server action, a client component or a route", () => {

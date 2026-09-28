@@ -141,23 +141,27 @@ const PENDING_CALLERS: PendingCaller[] = [
     dueBy: "student-dues ledger PR (proposal PR 4); packages proposal PR 5",
     reason: "Consecutive prepaid and package coverage, overlap detection and per-month price versions; payment entry and the monthly job call them.",
   },
-  // Student dues, PR 4a (the first ledger writers: plain library functions, closed by default). No caller exists on purpose:
-  // tests/unit/dues-ledger-not-exposed.test.ts fails if anything outside src/lib/dues/ledger imports them.
+  // Student dues, PR 4a (the first ledger writers: plain library functions, closed by default). The monthly-generation runner
+  // (below) is now `createMonthlyObligationInTx`'s one authorized caller — but the PUBLIC `createMonthlyObligation` wrapper and
+  // `recordDuesPayment` still have none: tests/unit/dues-ledger-not-exposed.test.ts fails if anything else outside
+  // src/lib/dues/ledger imports either.
   {
-    symbol: "createMonthlyObligation / recordDuesPayment (and the exact minor-unit conversion)",
+    symbol: "createMonthlyObligation (the public wrapper) / recordDuesPayment (and the exact minor-unit conversion)",
     file: "src/lib/dues/ledger/ (create-monthly-obligation.ts, record-payment.ts, minor-units.ts)",
-    dueBy: "payment-write integration stage (proposal PR 6); the monthly job PR calls createMonthlyObligation",
+    dueBy: "payment-write integration stage (proposal PR 6)",
     reason:
-      "The ledger's obligation-creation and payment-settlement writers, deliberately unreachable from live billing until activation: the injected activation defaults to inactive and is NOT authorization. The first caller must take activation from trusted organization state, never from request data.",
+      "The ledger's obligation-creation and payment-settlement writers, deliberately unreachable from live billing until activation: the injected activation defaults to inactive and is NOT authorization. The first caller must take activation from trusted organization state, never from request data. (createMonthlyObligationInTx, the transaction-aware core the public wrapper now delegates to, has its first real caller — the monthly-generation runner, below — but the public function itself still awaits payment-write integration.)",
   },
-  // Eligibility-prerequisites brief, section 6.2: a pure function with no database access of its own — no caller exists on
-  // purpose. The monthly job PR is what calls it, once StudentStatusChange and StudentPlanAssignment have real data to read.
+  // Monthly-generation brief: the function that finally connects eligibleAndAssigned and createMonthlyObligationInTx. No
+  // production caller exists on purpose — not a route, not a server action, no scheduler entry (vercel.json's crons array is
+  // untouched). tests/unit/dues-ledger-not-exposed.test.ts and dues-eligibility-not-exposed.test.ts both name this file as the
+  // one authorized caller of the ledger and the eligibility reader respectively.
   {
-    symbol: "eligibleAndAssigned",
-    file: "src/lib/dues/eligibility.ts",
-    dueBy: "the monthly job PR",
+    symbol: "generateMonthlyObligationForStudent",
+    file: "src/lib/dues/monthly-generation.ts",
+    dueBy: "activation / scheduler rollout stage",
     reason:
-      "The eligibility-and-assignment read the monthly job will call for every student, every month. Built and unit-tested ahead of that job so the job itself can be a thin, fully-tested piece of code with no judgment calls left in it.",
+      "Per student, per branch, per month: reads status and assignment history under one held student lock, decides via eligibleAndAssigned, and calls createMonthlyObligationInTx inside that same transaction. Closed by the same LedgerActivation default (inactive) createMonthlyObligationInTx itself checks. Built and tested ahead of a route/action/scheduler entry, deliberately, so activation stays a single later decision rather than something this PR has to make.",
   },
 ];
 
