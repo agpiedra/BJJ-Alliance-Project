@@ -28,6 +28,9 @@ import type { ActionState } from "@/lib/action-state";
  * first-time current-month assignment is strictly serialized against a concurrent monthly-generation attempt for the same student —
  * whichever transaction acquires the lock first fully determines what the other sees. `correctAssignment` needs no such lock: its own
  * `notFuture` precondition already makes it structurally incapable of touching a current-month row.
+ *
+ * The current-month check is evaluated ONCE, inside the transaction, right after the lock — never before it. A pre-lock check would
+ * race the wait itself: a month current when the check ran can turn past while this call sat blocked behind a concurrent holder.
  */
 
 type Rejection = { rejected: string };
@@ -82,13 +85,14 @@ export async function assignPlan(organizationId: string, _prevState: ActionState
   const plan = await resolvePlanId(context.organizationId, student.homeAcademyId, text(formData, "planId"));
   if (!plan.ok) return { error: "invalid", fieldErrors: { planId: ["invalid"] } };
 
-  if (compareYearMonth(month.value, currentMonthIn(student.homeAcademy.timezone)) < 0) return { error: "pastMonth" };
-
   let outcome: Rejection | null;
   try {
     outcome = await prisma.$transaction(async (tx) => {
       const locked = await lockStudent(tx, context.organizationId, student.id);
       if (!locked) return reject("notFound"); // vanished between the pre-transaction read and the lock — no live path today
+      // Evaluated fresh, under the lock, not before it: a month current when this action started can turn past while it waited
+      // for a concurrent holder (monthly-generation.ts brief §5) — checking before the wait would miss that.
+      if (compareYearMonth(month.value, currentMonthIn(student.homeAcademy.timezone)) < 0) return reject("pastMonth");
       const created = await tx.studentPlanAssignment.create({
         data: {
           organizationId: context.organizationId,

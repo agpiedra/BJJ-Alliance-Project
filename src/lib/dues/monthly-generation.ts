@@ -1,7 +1,7 @@
 import type { TenantContext } from "@/lib/tenant/types";
 import type { YearMonth } from "@/lib/dues/calendar";
 import { eligibleAndAssigned, type AssignmentRow, type StatusHistoryRow } from "@/lib/dues/eligibility";
-import { createMonthlyObligationInTx, type CreateMonthlyObligationError } from "@/lib/dues/ledger/create-monthly-obligation";
+import { createMonthlyObligationInTx, isValidCoverageMonth, type CreateMonthlyObligationError } from "@/lib/dues/ledger/create-monthly-obligation";
 import { fromDbDate, inTenantScope, latestEffective, lockBranchShared, lockStudent } from "@/lib/dues/ledger/common";
 import type { LedgerDeps } from "@/lib/dues/ledger/activation";
 import { prisma } from "@/lib/prisma";
@@ -28,6 +28,9 @@ import { prisma } from "@/lib/prisma";
  * No caller. Not a route, not a server action, no scheduler entry (`vercel.json`'s `crons` array is untouched, §7) — a
  * plain library function, tested by calling it directly, closed by the same `LedgerActivation` default (inactive)
  * `createMonthlyObligationInTx` itself checks.
+ *
+ * `month` is validated (`isValidCoverageMonth`) before anything else — before the student lookup, before any lock, before
+ * eligibility or configuration is read — so a malformed month never reaches those, not even as a wasted query.
  */
 export type MonthlyGenerationOutcome =
   | { category: "created"; obligationId: string }
@@ -42,6 +45,7 @@ export async function generateMonthlyObligationForStudent(
   month: YearMonth,
   deps: LedgerDeps = {},
 ): Promise<MonthlyGenerationOutcome> {
+  if (!isValidCoverageMonth(month)) return { category: "failure", reason: "invalid" };
   const organizationId = context.organizationId;
 
   // Re-read the student scoped to the organization; a forged or foreign id is a failure, never trusted — the same

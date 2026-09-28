@@ -1,10 +1,13 @@
 import "dotenv/config";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { getTestPrismaClient } from "../helpers/test-db";
+import { prisma as appPrisma } from "../../src/lib/prisma";
 import { makeAccountingOrg } from "../helpers/accounting-org";
 import type { TenantContext } from "../../src/lib/tenant/types";
 import { generateMonthlyObligationForStudent } from "../../src/lib/dues/monthly-generation";
+import { createMonthlyObligationInTx } from "../../src/lib/dues/ledger/create-monthly-obligation";
 import type { LedgerActivation } from "../../src/lib/dues/ledger/activation";
+import type { YearMonth } from "../../src/lib/dues/calendar";
 
 let currentSession: { user: { id: string; role: string } | null } | null = null;
 vi.mock("@/auth", () => ({ auth: () => Promise.resolve(currentSession), signIn: vi.fn() }));
@@ -315,5 +318,113 @@ describe("recovery and immutability (brief §3/§4) — verified, not assumed", 
     expect(delayedRow.dueOn).toEqual(onTimeRow.dueOn);
     expect(delayedRow.graceDeadline).toEqual(onTimeRow.graceDeadline);
     expect(delayedRow.currency).toBe(onTimeRow.currency);
+  });
+});
+
+describe("createMonthlyObligationInTx validates its own inputs — it must not trust a caller that skipped them", () => {
+  it("refuses malformed coverage months (month 13, non-integer year, year 1999, year 2101), writing nothing", async () => {
+    const student = await newEligibleStudent("badmonth");
+    const badMonths: YearMonth[] = [
+      { year: 2030, month: 13 },
+      { year: Number.NaN, month: 9 },
+      { year: 1999, month: 9 },
+      { year: 2101, month: 9 },
+    ];
+    for (const coverage of badMonths) {
+      const result = await appPrisma.$transaction((tx) =>
+        createMonthlyObligationInTx(
+          tx,
+          { context: context(), student: { id: student.id, homeAcademyId: a.academy.id }, coverage, planTermsId: "not-checked-yet", policyVersionId: "not-checked-yet" },
+          { activation: ACTIVE, now: DEC_2030 },
+        ),
+      );
+      expect(result).toEqual({ ok: false, error: "invalid" });
+    }
+    expect(await prisma.duesObligation.count({ where: { organizationId: a.org.id, studentId: student.id } })).toBe(0);
+    expect(await prisma.duesCoverage.count({ where: { organizationId: a.org.id, studentId: student.id } })).toBe(0);
+    expect(await prisma.auditLog.count({ where: { organizationId: a.org.id, entityId: student.id } })).toBe(0);
+  });
+
+  it("refuses null, undefined and shapeless coverage cleanly — assertYearMonth's property access must not throw uncaught past isValidCoverageMonth's catch", async () => {
+    const student = await newEligibleStudent("nullmonth");
+    const bypassed: unknown[] = [null, undefined, {}];
+    for (const coverage of bypassed) {
+      const result = await appPrisma.$transaction((tx) =>
+        createMonthlyObligationInTx(
+          tx,
+          { context: context(), student: { id: student.id, homeAcademyId: a.academy.id }, coverage: coverage as YearMonth, planTermsId: "not-checked-yet", policyVersionId: "not-checked-yet" },
+          { activation: ACTIVE, now: DEC_2030 },
+        ),
+      );
+      expect(result).toEqual({ ok: false, error: "invalid" });
+    }
+    expect(await prisma.duesObligation.count({ where: { organizationId: a.org.id, studentId: student.id } })).toBe(0);
+  });
+
+  it("refuses a same-organization student outside the context's allowed branches, even though the caller already resolved homeAcademyId correctly", async () => {
+    const otherAcademy = await prisma.academy.create({
+      data: { organizationId: a.org.id, name: `Other branch ${suffix}`, slug: `other-branch-${suffix}`, kioskTokenHash: `other-branch-${suffix}` },
+    });
+    const student = await newEligibleStudent("outofscope"); // home academy is a.academy.id
+    const scopedElsewhere = context({ organizationRole: "DIRECTOR", academyIds: [otherAcademy.id] }); // does NOT include a.academy.id
+    // Real, valid ids for the student's OWN branch — a masked mutation-test trap: bogus ids would ALSO refuse "notFound" for
+    // an unrelated reason (the terms/policy lookup), hiding whether the scope check itself ever ran. With real ids, removing
+    // the scope check would let this actually create an obligation instead of refusing — a clearly different, wrong result.
+    const policy = await prisma.duesPolicyVersion.findFirstOrThrow({ where: { organizationId: a.org.id, academyId: a.academy.id } });
+
+    const result = await appPrisma.$transaction((tx) =>
+      createMonthlyObligationInTx(
+        tx,
+        { context: scopedElsewhere, student: { id: student.id, homeAcademyId: a.academy.id }, coverage: { year: 2030, month: 9 }, planTermsId: terms.id, policyVersionId: policy.id },
+        { activation: ACTIVE, now: DEC_2030 },
+      ),
+    );
+    expect(result).toEqual({ ok: false, error: "notFound" });
+    expect(await prisma.duesObligation.count({ where: { organizationId: a.org.id, studentId: student.id } })).toBe(0);
+    expect(await prisma.auditLog.count({ where: { organizationId: a.org.id, entityId: student.id } })).toBe(0);
+
+    await prisma.academy.delete({ where: { id: otherAcademy.id } });
+  });
+});
+
+describe("generateMonthlyObligationForStudent rejects an invalid month before any lookup", () => {
+  it("an invalid month on a nonexistent student id returns 'invalid', not 'notFound' — proving the month check runs before the student lookup", async () => {
+    const outcome = await generateMonthlyObligationForStudent(context(), "does-not-exist-at-all", { year: 2030, month: 13 }, { activation: ACTIVE, now: DEC_2030 });
+    expect(outcome).toEqual({ category: "failure", reason: "invalid" });
+  });
+
+  it("null, undefined and shapeless coverage refuse cleanly, never an uncaught exception", async () => {
+    for (const month of [null, undefined, {}] as unknown[]) {
+      const outcome = await generateMonthlyObligationForStudent(context(), "does-not-exist-at-all", month as YearMonth, { activation: ACTIVE, now: DEC_2030 });
+      expect(outcome).toEqual({ category: "failure", reason: "invalid" });
+    }
+  });
+});
+
+describe("assignPlan's current-month check races its own lock wait, not a false assumption", () => {
+  it("a month current when assignPlan is called can turn past while it waits on a held lock — it refuses pastMonth, never a stale ok", async () => {
+    const student = await newEligibleStudent("boundary");
+    const { startedPromise, release, held } = holdStudentLock(student.id);
+    await startedPromise;
+
+    try {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date("2030-09-30T23:59:00-06:00")); // still September, Costa Rica time (a.academy's zone)
+      actAs(a.admin.id);
+      let assignDone = false;
+      const assigning = assignPlan(a.org.id, {}, form({ studentId: student.id, effectiveYear: "2030", effectiveMonth: "9", planId })).then((r) => ((assignDone = true), r));
+      const blocked = await waitUntilBlockedOnLock(['FROM "Student"', "FOR UPDATE"]);
+      expect(blocked, "assignPlan must genuinely wait on the student row lock before its month check runs").toBe(true);
+      expect(assignDone).toBe(false);
+
+      vi.setSystemTime(new Date("2030-10-01T00:05:00-06:00")); // October now — September just turned past while assignPlan waited
+      release();
+      await held;
+
+      expect(await assigning).toEqual({ error: "pastMonth" });
+      expect(await prisma.studentPlanAssignment.count({ where: { organizationId: a.org.id, studentId: student.id } })).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

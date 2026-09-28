@@ -1,7 +1,7 @@
 import { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import type { TenantContext } from "@/lib/tenant/types";
-import { compareYearMonth, dueDateFor, graceDeadlineFor, type YearMonth } from "@/lib/dues/calendar";
+import { assertYearMonth, compareYearMonth, dueDateFor, graceDeadlineFor, type YearMonth } from "@/lib/dues/calendar";
 import { currentMonthIn } from "@/lib/dues/config-input";
 import { inactiveLedgerActivation, type LedgerDeps } from "@/lib/dues/ledger/activation";
 import { inTenantScope, latestEffective, lockBranchShared, lockPolicyShared, lockStudent, lockTermsShared, toDbDate, type Tx } from "@/lib/dues/ledger/common";
@@ -21,14 +21,25 @@ export type CreateMonthlyObligationResult = { ok: true; created: boolean; obliga
 
 const refuse = (error: CreateMonthlyObligationError): CreateMonthlyObligationResult => ({ ok: false, error });
 
+/** A calendar month, and one this schema's dues tables can actually hold (`assertYearMonth`'s range plus the 2000-2100 bound the columns are sized for). Shared so the public wrapper, the transaction-aware core and the monthly-generation runner check coverage the same one way, not three slightly different ones. */
+export function isValidCoverageMonth(coverage: YearMonth): boolean {
+  try {
+    assertYearMonth(coverage);
+  } catch {
+    return false;
+  }
+  return coverage.year >= 2000 && coverage.year <= 2100;
+}
+
 /**
  * The transaction-aware core of `createMonthlyObligation` (below), extracted (monthly-generation brief §5.2) so the monthly-generation
  * runner — `src/lib/dues/monthly-generation.ts`, the ledger's one other authorized caller — can compose it inside its OWN transaction,
  * which already holds the branch/student locks before this runs, instead of nesting a second transaction inside the first (which would
  * not share a transaction and would reverse the lock order — the exact composition mistake found and reverted in an earlier phase).
  *
- * Every database operation here uses the supplied `tx`; nothing falls back to the global `prisma` client. The activation check is
- * repeated here, not only in the public wrapper below, so the closed-by-default gate applies to both entry points, not just one.
+ * Every database operation here uses the supplied `tx`; nothing falls back to the global `prisma` client. The activation check,
+ * coverage-month validation and tenant/branch-scope check are all repeated here, not only in the public wrapper below, so this
+ * function trusts nothing from its caller — a direct caller that skipped any of them gets the same refusal the wrapper would give.
  */
 export async function createMonthlyObligationInTx(
   tx: Tx,
@@ -39,6 +50,8 @@ export async function createMonthlyObligationInTx(
   const organizationId = context.organizationId;
   const activation = deps.activation ?? inactiveLedgerActivation;
   if (!(await activation.isActive(organizationId))) return refuse("notActive");
+  if (!isValidCoverageMonth(coverage)) return refuse("invalid");
+  if (!inTenantScope(context, student.homeAcademyId)) return refuse("notFound");
 
   // 1. branch FOR SHARE (waits for an in-flight configuration save), 2. student FOR UPDATE
   const branch = await lockBranchShared(tx, organizationId, student.homeAcademyId);
@@ -148,9 +161,7 @@ export async function createMonthlyObligation(
   const activation = deps.activation ?? inactiveLedgerActivation;
   if (!(await activation.isActive(organizationId))) return refuse("notActive");
 
-  if (![coverage.year, coverage.month].every(Number.isInteger) || coverage.year < 2000 || coverage.year > 2100 || coverage.month < 1 || coverage.month > 12) {
-    return refuse("invalid");
-  }
+  if (!isValidCoverageMonth(coverage)) return refuse("invalid");
   if (typeof studentId !== "string" || typeof planTermsId !== "string" || typeof policyVersionId !== "string") return refuse("invalid");
 
   // Re-read the student scoped to the organization; a forged or foreign id is `notFound`, never trusted.
