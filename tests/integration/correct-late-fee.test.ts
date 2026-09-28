@@ -173,6 +173,43 @@ describe("correctLateFeeAndSettle: the brief's exact example", () => {
   });
 });
 
+describe("receivedOn is validated before lateFeeApplies and before any provisional void", () => {
+  const malformed: Array<{ label: string; receivedOn: unknown }> = [
+    { label: "null", receivedOn: null },
+    { label: "undefined", receivedOn: undefined },
+    { label: "empty object", receivedOn: {} },
+    { label: "impossible month", receivedOn: { year: 2030, month: 13, day: 1 } },
+    { label: "impossible day (Feb 30)", receivedOn: { year: 2030, month: 2, day: 30 } },
+  ];
+
+  for (const { label, receivedOn } of malformed) {
+    it(`${label}: refuses invalid, never throws, fee and ledger untouched`, async () => {
+      const s = await newStudent("badreceivedon");
+      const obligationId = await newObligation(s.id);
+      const feeId = feeIdFor(await assessAsOf(s.id, 11, 6), obligationId);
+      const before = await currentFee(feeId);
+      const beforeCounts = await ledgerCounts(a.org.id);
+
+      let result: Awaited<ReturnType<typeof correct>> | undefined;
+      let threw: unknown;
+      try {
+        result = await correct({ lateFeeId: feeId, expectedRevision: feeRevision(before), receivedOn: receivedOn as never });
+      } catch (e) {
+        threw = e;
+      }
+      expect(threw, "must return a typed refusal, never throw").toBeUndefined();
+      expect(result).toEqual({ ok: false, error: "invalid" });
+
+      const after = await currentFee(feeId);
+      expect(after.removedAt).toBeNull();
+      expect(after.removalKind).toBeNull();
+      expect(after.removedById).toBeNull();
+      expect(after.removalReason).toBeNull();
+      expect(await ledgerCounts(a.org.id)).toEqual(beforeCounts);
+    });
+  }
+});
+
 describe("every refusal-after-provisional-void case leaves the fee untouched and writes nothing else", () => {
   it("wrong tender amount: notASelectableTotal, fee not voided", async () => {
     const s = await newStudent("wrongamount");

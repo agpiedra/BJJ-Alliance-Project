@@ -5,7 +5,7 @@ import type { CalendarDate } from "@/lib/dues/calendar";
 import { versionRevision } from "@/lib/dues/config-input";
 import { lateFeeApplies } from "@/lib/dues/settlement";
 import { inactiveLedgerActivation, type LedgerDeps } from "@/lib/dues/ledger/activation";
-import { fromDbDate, inTenantScope, lockStudent } from "@/lib/dues/ledger/common";
+import { fromDbDate, inTenantScope, isRealDate, lockStudent } from "@/lib/dues/ledger/common";
 import { classifyRecordPaymentError, recordDuesPaymentInTx, type RecordDuesPaymentError, type RecordDuesPaymentResult } from "@/lib/dues/ledger/record-payment";
 
 /**
@@ -79,6 +79,11 @@ export async function correctLateFeeAndSettle(
   if (typeof lateFeeId !== "string" || lateFeeId === "") return refuse("invalid");
   if (typeof expectedRevision !== "string" || expectedRevision === "") return refuse("invalid");
   if (typeof removalReason !== "string" || removalReason.trim() === "") return refuse("invalid"); // refuse cleanly; don't let a blank reason surface as a raw DB constraint violation
+  // receivedOn feeds lateFeeApplies (below) before any DB read — compareDates does raw property access and arithmetic with no
+  // validation of its own, so a null/undefined/malformed/impossible date must be rejected here, before that comparison and
+  // before any provisional void, not left to throw uncaught or silently compare wrong. Same check recordDuesPaymentInTx's own
+  // validatePaymentInput already uses for this exact field.
+  if (!receivedOn || !isRealDate(receivedOn)) return refuse("invalid");
 
   try {
     return await prisma.$transaction(async (tx): Promise<CorrectLateFeeResult> => {

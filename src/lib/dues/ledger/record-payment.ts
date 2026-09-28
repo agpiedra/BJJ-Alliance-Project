@@ -390,7 +390,7 @@ export function classifyRecordPaymentError(error: unknown): RecordDuesPaymentRes
 }
 
 /**
- * Create ONE monthly obligation and its coverage row, atomically (ledger writer 2 of 2, PR 4a) — a thin wrapper. Its own
+ * Record ONE payment and its settlements, atomically (ledger writer 2 of 2, PR 4a) — a thin wrapper. Its own
  * pre-transaction checks (activation, format validation, the student lookup) are unchanged from before this function's transaction
  * body was extracted into `recordDuesPaymentInTx`, above; it then opens one transaction and delegates to that function, which
  * repeats every one of these checks itself for a caller that reaches it directly (the late-fee-correction writer composes it
