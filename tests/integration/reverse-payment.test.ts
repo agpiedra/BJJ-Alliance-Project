@@ -374,6 +374,19 @@ describe("reversePayment: defensive backstops with no live path today, forced by
   });
 });
 
+/**
+ * Two distinct kinds of proof live in this describe block, and their names say which:
+ *  - "...once fully committed, is correctly seen by a later real X call" tests are SEQUENTIAL: reversal is proven to genuinely
+ *    block on a lock (a generic bystander stands in for "someone else already has it"), then releases, then completes, and only
+ *    AFTER it has fully resolved is the real other writer called. This proves a later call correctly observes reversal's
+ *    committed effect — real, useful coverage — but NOT that the two writers serialize correctly when actually racing for the
+ *    same lock at the same time, since reversal's transaction has already committed by the time the other writer even starts.
+ *  - "...genuinely overlaps a live X attempt" tests are the actual overlapping-transaction proof: reversal is paused mid-transaction
+ *    via `afterReversalMarkersForTest` (its provisional writes made, lock still held, not yet committed), the real other writer is
+ *    started while that transaction is still open, proven to genuinely block on it (`waitUntilBlockedOnLock`), then reversal's
+ *    transaction is released to commit, and only then does the other writer proceed — this is what actually proves the lock
+ *    serializes two writers racing for it, not just that a later call sees an earlier one's result.
+ */
 describe("reversePayment: concurrency — serializes on the student lock", () => {
   it("reversal waits for a concurrent holder of the student lock, then proceeds", async () => {
     const s = await newStudent("concurrency");
@@ -392,11 +405,12 @@ describe("reversePayment: concurrency — serializes on the student lock", () =>
     expect((await reversing).ok).toBe(true);
   });
 
-  it("reversal vs. a live recordDuesPayment attempt for the same student: serialized, no lost update", async () => {
+  it("SEQUENTIAL: once reversal has fully committed, a later real recordDuesPayment call correctly sees it (not a live race)", async () => {
     // A holds a payment about to be reversed; B is a second, still-unpaid obligation for the same student. A combined payment for
     // [A, B] can only succeed once A is genuinely open again — it fails `alreadySettled`/`notOldestFirst` against a stale view of
-    // A. Proving the real `recordDuesPayment` call succeeds here (not just that reversal itself returned ok) is the actual proof
-    // that it saw the reversal's committed effect, not a lock that merely serialized without the write being visible after.
+    // A. Reversal is fully awaited and resolved BEFORE recordDuesPayment is even called, so this proves a later call correctly
+    // observes reversal's committed effect — it does not prove the two writers serialize correctly while actually racing for the
+    // lock at the same time (see the "genuinely overlaps" test below for that).
     const s = await newStudent("vspayment");
     const obligationA = await newObligation(s.id, 9); // due Sep 20, grace Oct 5
     const obligationB = await newObligation(s.id, 10); // due Oct 20, grace Nov 5
@@ -413,17 +427,54 @@ describe("reversePayment: concurrency — serializes on the student lock", () =>
     await held;
     expect((await reversing).ok).toBe(true);
 
-    // The real recordDuesPayment writer, run only now: it must see A as open, not the stale pre-reversal snapshot.
+    // The real recordDuesPayment writer, called only after reversal has fully resolved: it must see A as open, not a stale
+    // pre-reversal snapshot.
     const combined = await pay(s.id, [obligationA, obligationB], "200.00", { year: 2030, month: 10, day: 1 });
     expect(combined.settlementIds).toHaveLength(2);
     expect(await prisma.duesSettlement.count({ where: { obligationId: obligationA, reversedAt: null } })).toBe(1);
     expect(await prisma.duesSettlement.count({ where: { obligationId: obligationB, reversedAt: null } })).toBe(1);
   });
 
-  it("reversal vs. a live assessLateFeesForStudent run for the same student: serialized, consistent fee state", async () => {
-    // The fee on A survives the reversal untouched (Decision A). Running the real assessLateFeesForStudent runner only after
-    // reversal completes must see that existing fee row and correctly report `alreadyAssessed`, never a duplicate — proving the
-    // runner's own fresh read reflects the reversal's committed write, not a lock that merely blocked without a visible effect.
+  it("reversePayment genuinely overlaps a live recordDuesPayment attempt: the payment blocks on reversal's own open transaction", async () => {
+    // Unlike the SEQUENTIAL test above, reversal's own transaction is paused mid-flight (via afterReversalMarkersForTest) — its
+    // provisional writes made, student lock still held, not yet committed — and the real recordDuesPayment call is started while
+    // that transaction is still open. Proving it genuinely blocks on THAT open transaction (not a bystander's) is what actually
+    // proves the two writers serialize when racing for the same lock, not merely that a later call sees an earlier result.
+    const s = await newStudent("overlappayment");
+    const obligationA = await newObligation(s.id, 9); // due Sep 20, grace Oct 5
+    const obligationB = await newObligation(s.id, 10); // due Oct 20, grace Nov 5
+    const paidA = await pay(s.id, [obligationA], "100.00", { year: 2030, month: 9, day: 15 }); // on time
+
+    let pausedResolve!: () => void;
+    const paused = new Promise<void>((r) => (pausedResolve = r));
+    let releaseGate!: () => void;
+    const gate = new Promise<void>((r) => (releaseGate = r));
+    const reversing = reverse({ paymentId: paidA.paymentId }, { afterReversalMarkersForTest: async () => { pausedResolve(); await gate; } });
+
+    try {
+      await paused; // reversal's markers are written; its transaction is still open, the student lock still held
+
+      let paymentDone = false;
+      const paying = pay(s.id, [obligationA, obligationB], "200.00", { year: 2030, month: 10, day: 1 }).then((r) => ((paymentDone = true), r));
+      const blocked = await waitUntilBlockedOnLock(['FROM "Student"', "FOR UPDATE"]);
+      expect(blocked, "recordDuesPayment must genuinely block on reversal's still-open transaction").toBe(true);
+      expect(paymentDone).toBe(false);
+
+      releaseGate();
+      expect((await reversing).ok).toBe(true);
+      const combined = await paying;
+      expect(combined.settlementIds).toHaveLength(2);
+      expect(await prisma.duesSettlement.count({ where: { obligationId: obligationA, reversedAt: null } })).toBe(1);
+      expect(await prisma.duesSettlement.count({ where: { obligationId: obligationB, reversedAt: null } })).toBe(1);
+    } finally {
+      releaseGate(); // idempotent; guarantees reversal's transaction is never left open if an assertion above throws
+    }
+  });
+
+  it("SEQUENTIAL: once reversal has fully committed, a later real assessLateFeesForStudent run correctly sees it (not a live race)", async () => {
+    // The fee on A survives the reversal untouched (Decision A). Reversal is fully awaited and resolved BEFORE
+    // assessLateFeesForStudent is even called, so this proves a later run correctly observes reversal's committed write — it does
+    // not prove the two writers serialize while actually racing for the lock (see the "genuinely overlaps" test below for that).
     const s = await newStudent("vsassess");
     const obligationId = await newObligation(s.id);
     const paid = await pay(s.id, [obligationId], "120.00", { year: 2030, month: 11, day: 10 }); // after Nov 5 grace: late, assesses a fee
@@ -440,7 +491,8 @@ describe("reversePayment: concurrency — serializes on the student lock", () =>
     await held;
     expect((await reversing).ok).toBe(true);
 
-    // The real assessLateFeesForStudent runner, run only now: it must see the fee row reversal left untouched.
+    // The real assessLateFeesForStudent runner, called only after reversal has fully resolved: it must see the fee row reversal
+    // left untouched.
     const assessed = await assessLateFeesForStudent(context(), s.id, deps());
     expect(assessed.ok).toBe(true);
     if (!assessed.ok) return;
@@ -448,10 +500,50 @@ describe("reversePayment: concurrency — serializes on the student lock", () =>
     expect(await prisma.duesLateFee.count({ where: { obligationId } })).toBe(1); // never duplicated
   });
 
-  it("reversal vs. a live correctLateFeeAndSettle attempt for the same student: serialized, no cross-contamination", async () => {
+  it("reversePayment genuinely overlaps a live assessLateFeesForStudent run: assessment blocks on reversal's open transaction, then creates exactly one new fee", async () => {
+    // A DIFFERENT, sharper scenario than the SEQUENTIAL test above on purpose: an obligation already carrying a fee would report
+    // `alreadyAssessed` regardless of whether assessment's read happened before or after reversal — a weak proof of ordering. Here
+    // the obligation is settled ON TIME (no fee exists at all) and reversed AFTER its own grace deadline has already passed
+    // (against the fixed Dec 1 clock). A stale, pre-reversal (still-settled) read would create nothing; only a genuinely fresh
+    // read of the reopened, overdue obligation can create a NEW fee — so `category: "assessed"` (not `"alreadyAssessed"`) is the
+    // one outcome consistent with assessment having actually waited for reversal's commit, not raced past it.
+    const s = await newStudent("overlapassess");
+    const obligationId = await newObligation(s.id, 9); // due Sep 20, grace Oct 5 — well past by the Dec 1 clock
+    const paid = await pay(s.id, [obligationId], "100.00", { year: 2030, month: 9, day: 15 }); // on time: settles clean, no fee
+    expect(await prisma.duesLateFee.count({ where: { obligationId } })).toBe(0);
+
+    let pausedResolve!: () => void;
+    const paused = new Promise<void>((r) => (pausedResolve = r));
+    let releaseGate!: () => void;
+    const gate = new Promise<void>((r) => (releaseGate = r));
+    const reversing = reverse({ paymentId: paid.paymentId }, { afterReversalMarkersForTest: async () => { pausedResolve(); await gate; } });
+
+    try {
+      await paused;
+
+      let assessDone = false;
+      const assessing = assessLateFeesForStudent(context(), s.id, deps()).then((r) => ((assessDone = true), r));
+      const blocked = await waitUntilBlockedOnLock(['FROM "Student"', "FOR UPDATE"]);
+      expect(blocked, "assessLateFeesForStudent must genuinely block on reversal's still-open transaction").toBe(true);
+      expect(assessDone).toBe(false);
+
+      releaseGate();
+      expect((await reversing).ok).toBe(true);
+      const assessed = await assessing;
+      expect(assessed.ok).toBe(true);
+      if (!assessed.ok) return;
+      expect(assessed.outcomes.find((o) => o.obligationId === obligationId)).toMatchObject({ category: "assessed" });
+      expect(await prisma.duesLateFee.count({ where: { obligationId } })).toBe(1);
+    } finally {
+      releaseGate();
+    }
+  });
+
+  it("SEQUENTIAL: once reversal has fully committed, a later real correctLateFeeAndSettle attempt correctly sees it (not a live race)", async () => {
     // A wrongly-assessed fee on obligation X (correctable); an unrelated, already-paid obligation Y on the same student is what
-    // gets reversed. Running the real correctLateFeeAndSettle writer only after the reversal completes proves it operates on a
-    // fresh, post-reversal view of the student's ledger, and that the two writers' effects never bleed into each other.
+    // gets reversed. Reversal is fully awaited and resolved BEFORE correctLateFeeAndSettle is even called, so this proves a later
+    // call operates on a fresh, post-reversal view and that the two writers' effects never bleed into each other — it does not
+    // prove the two writers serialize while actually racing for the lock (see the "genuinely overlaps" test below for that).
     const s = await newStudent("vscorrect");
     // X must stay the OLDER obligation: once Y's reversal reopens it, oldest-first would otherwise block X's correction. Y is
     // settled BEFORE X is even created, so the later assessAsOf run (which assesses every open obligation) never touches Y.
@@ -487,6 +579,48 @@ describe("reversePayment: concurrency — serializes on the student lock", () =>
     expect((await prisma.duesLateFee.findUniqueOrThrow({ where: { id: feeId } })).removalKind).toBe("VOIDED");
     // Y stayed genuinely reversed — the correction on X never touched it.
     expect(await prisma.duesSettlement.count({ where: { obligationId: obligationY, reversedAt: null } })).toBe(0);
+  });
+
+  it("reversePayment genuinely overlaps a live correctLateFeeAndSettle attempt: correction blocks on reversal's open transaction, no cross-contamination", async () => {
+    const s = await newStudent("overlapcorrect");
+    const obligationY = await newObligation(s.id, 10); // due Oct 20, grace Nov 5, newer and unrelated
+    const paidY = await pay(s.id, [obligationY], "100.00", { year: 2030, month: 10, day: 1 }); // on time, unrelated to X's fee
+    const obligationX = await newObligation(s.id, 8); // due Aug 20, grace Sep 5 — older than Y
+    const outcomes = await assessAsOf(s.id, 9, 6);
+    const feeId = feeIdFor(outcomes, obligationX);
+    const before = await prisma.duesLateFee.findUniqueOrThrow({ where: { id: feeId } });
+
+    let pausedResolve!: () => void;
+    const paused = new Promise<void>((r) => (pausedResolve = r));
+    let releaseGate!: () => void;
+    const gate = new Promise<void>((r) => (releaseGate = r));
+    const reversing = reverse({ paymentId: paidY.paymentId }, { afterReversalMarkersForTest: async () => { pausedResolve(); await gate; } });
+
+    try {
+      await paused;
+
+      let correctDone = false;
+      const correcting = correctLateFeeAndSettle(
+        {
+          context: context(), lateFeeId: feeId, expectedRevision: versionRevision({ removedAt: before.removedAt ? before.removedAt.toISOString() : null, removalKind: before.removalKind }),
+          removalReason: "student showed a receipt dated the actual payment date", receivedOn: { year: 2030, month: 9, day: 5 }, tender: { currency: "USD", amount: "100.00" }, method: "EFECTIVO", maxBackdateDays: 90,
+        },
+        deps(),
+      ).then((r) => ((correctDone = true), r));
+      const blocked = await waitUntilBlockedOnLock(['FROM "Student"', "FOR UPDATE"]);
+      expect(blocked, "correctLateFeeAndSettle must genuinely block on reversal's still-open transaction").toBe(true);
+      expect(correctDone).toBe(false);
+
+      releaseGate();
+      expect((await reversing).ok).toBe(true);
+      const corrected = await correcting;
+      expect(corrected.ok).toBe(true);
+      if (!corrected.ok) return;
+      expect((await prisma.duesLateFee.findUniqueOrThrow({ where: { id: feeId } })).removalKind).toBe("VOIDED");
+      expect(await prisma.duesSettlement.count({ where: { obligationId: obligationY, reversedAt: null } })).toBe(0);
+    } finally {
+      releaseGate();
+    }
   });
 
   it("two concurrent reversals of the same payment: only one wins, the loser refuses cleanly", async () => {
