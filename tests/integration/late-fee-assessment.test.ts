@@ -9,6 +9,7 @@ import { recordDuesPayment } from "../../src/lib/dues/ledger/record-payment";
 import { assessLateFeeInTx } from "../../src/lib/dues/ledger/record-payment";
 import { assessLateFeesForStudent } from "../../src/lib/dues/late-fee-assessment";
 import type { LedgerActivation } from "../../src/lib/dues/ledger/activation";
+import { isUniqueViolationOnConstraint } from "../../src/lib/dues/ledger/unique-violation";
 
 /**
  * Late-fee-assessment brief, proved against the REAL test database, following the exact fixture/concurrency conventions
@@ -285,19 +286,84 @@ describe("both concurrency orders of an on-time payment recorded after grace (br
 });
 
 describe("concurrent assessment for the same student serializes on the lock (brief §3)", () => {
-  it("two concurrent generation calls for the same student: exactly one fee results", async () => {
-    const s = await newStudent("concurrent");
+  it("a genuine, deterministic race on the same obligation: the loser's ON CONFLICT path finds the winner's row without throwing", async () => {
+    const s = await newStudent("race");
     const obligationId = await newObligation(s.id, feePolicy);
-    const [r1, r2] = await Promise.all([
-      appPrisma.$transaction((tx) => assessLateFeeInTx(tx, { context: context(), obligationId, asOf: { year: 2030, month: 12, day: 1 }, actorId: null }, deps())),
-      appPrisma.$transaction((tx) => assessLateFeeInTx(tx, { context: context(), obligationId, asOf: { year: 2030, month: 12, day: 1 }, actorId: null }, deps())),
-    ]);
-    expect(r1.ok && r2.ok).toBe(true);
-    const feeId1 = (r1 as { feeId: string | null }).feeId;
-    const feeId2 = (r2 as { feeId: string | null }).feeId;
-    expect(feeId1).not.toBeNull();
-    expect(feeId1).toBe(feeId2); // both calls agree on the SAME fee, whichever created it and whichever lost the race
+
+    let loserStarted!: () => void;
+    const loserStartedPromise = new Promise<void>((r) => (loserStarted = r));
+    let releaseLoser!: () => void;
+    const loserGate = new Promise<void>((r) => (releaseLoser = r));
+
+    // Loser: reads "no existing fee," then genuinely pauses right before its own insert — deterministic, not a Promise.all hope.
+    const loser = appPrisma.$transaction((tx) =>
+      assessLateFeeInTx(tx, { context: context(), obligationId, asOf: { year: 2030, month: 12, day: 1 }, actorId: null }, {
+        ...deps(),
+        beforeLateFeeInsert: async () => {
+          loserStarted();
+          await loserGate;
+        },
+      }),
+    );
+    await loserStartedPromise;
+
+    // Winner: also reads "no existing fee" (the loser hasn't inserted yet), inserts, and commits fully, uncontended.
+    const winner = await appPrisma.$transaction((tx) => assessLateFeeInTx(tx, { context: context(), obligationId, asOf: { year: 2030, month: 12, day: 1 }, actorId: null }, deps()));
+    expect(winner.ok).toBe(true);
+    if (!winner.ok) return;
+    expect(winner.created).toBe(true);
+
+    // Release the loser: its insert now genuinely conflicts with the winner's already-committed row. Under the old design this
+    // would throw an aborted-transaction error from the follow-up read; under ON CONFLICT DO NOTHING it must not throw at all.
+    releaseLoser();
+    const loserResult = await loser;
+    expect(loserResult.ok).toBe(true);
+    if (!loserResult.ok) return;
+    expect(loserResult.created).toBe(false);
+    expect(loserResult.feeId).toBe(winner.feeId);
+
     expect(await prisma.duesLateFee.count({ where: { organizationId: a.org.id, obligationId } })).toBe(1);
+  });
+
+  it("the runner's shared per-student transaction survives a race on its first obligation and still assesses the second in the SAME transaction (proves the transaction is genuinely usable afterward, not merely that one query didn't throw in isolation)", async () => {
+    const s = await newStudent("survives");
+    const first = await newObligation(s.id, feePolicy, { month: 9 });
+    const second = await newObligation(s.id, feePolicy, { month: 10 });
+
+    let pausedResolve!: () => void;
+    const paused = new Promise<void>((r) => (pausedResolve = r));
+    let releaseGate!: () => void;
+    const gate = new Promise<void>((r) => (releaseGate = r));
+
+    const running = assessLateFeesForStudent(context(), s.id, {
+      ...deps(),
+      beforeLateFeeInsert: async (obligationId) => {
+        if (obligationId !== first) return; // let the second obligation's own insert through unpaused
+        pausedResolve();
+        await gate;
+      },
+    });
+    await paused;
+
+    // While the runner's own transaction sits paused before inserting the first obligation's fee, an independent call wins that
+    // exact race from outside — this is the only way to genuinely contend for the SAME row without controlling the runner's own
+    // internals from within.
+    const winner = await appPrisma.$transaction((tx) => assessLateFeeInTx(tx, { context: context(), obligationId: first, asOf: { year: 2030, month: 12, day: 1 }, actorId: null }, deps()));
+    expect(winner.ok).toBe(true);
+    if (!winner.ok) return;
+    expect(winner.created).toBe(true);
+
+    releaseGate();
+    const result = await running;
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const byId = new Map(result.outcomes.map((o) => [o.obligationId, o]));
+    // The first obligation's own outcome inside the runner: lost the race, but still resolved cleanly to the winner's fee.
+    expect(byId.get(first)).toMatchObject({ category: "alreadyAssessed" });
+    // The proof this test exists for: the SAME shared transaction, having just absorbed that race on obligation `first`, still
+    // successfully assesses `second` — impossible if the transaction had been left aborted, as the old try/catch design would have.
+    expect(byId.get(second)).toMatchObject({ category: "assessed" });
+    expect(await prisma.duesLateFee.count({ where: { organizationId: a.org.id, obligationId: first } })).toBe(1);
   });
 });
 
@@ -319,5 +385,59 @@ describe("the runner: assessLateFeesForStudent (brief §7/§8)", () => {
 
   it("a forged or foreign student id refuses notFound", async () => {
     expect(await assessLateFeesForStudent(context(), "does-not-exist-at-all", deps())).toEqual({ ok: false, reason: "notFound" });
+  });
+});
+
+describe("the P2002 classifier, against REAL Postgres violations, not mocked ones (brief §6.3)", () => {
+  it("identifies a genuine DuesLateFee_obligationId_key violation", async () => {
+    // Uses the ORM's own `.create()`, not `assessLateFeeInTx` (which no longer throws this at all — that's the fix) and not
+    // `$queryRawUnsafe` (which Prisma wraps as P2010 "raw query failed", not P2002, even though the same constraint fired
+    // underneath — confirmed by trying that first). This proves the classifier against the real error shape any ORM-level
+    // caller of this table would actually see, which is what `recordDuesPayment`'s own outer catch is written to expect.
+    const s = await newStudent("realp2002fee");
+    const obligationId = await newObligation(s.id, feePolicy);
+    await appPrisma.duesLateFee.create({ data: { organizationId: a.org.id, obligationId, assessableFrom: new Date("2030-01-01") } });
+    let caught: unknown;
+    try {
+      await appPrisma.duesLateFee.create({ data: { organizationId: a.org.id, obligationId, assessableFrom: new Date("2030-01-01") } });
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeDefined();
+    expect(isUniqueViolationOnConstraint(caught, "DuesLateFee_obligationId_key")).toBe(true);
+    expect(isUniqueViolationOnConstraint(caught, "DuesLateFee_organizationId_id_obligationId_key")).toBe(false);
+    expect(isUniqueViolationOnConstraint(caught, "DuesSettlement_one_active_per_obligation_key")).toBe(false);
+  });
+
+  it("identifies a genuine DuesSettlement_one_active_per_obligation_key violation", async () => {
+    const s = await newStudent("realp2002settle");
+    const obligationId = await newObligation(s.id, feePolicy);
+    const payment = await appPrisma.duesPayment.create({
+      data: { organizationId: a.org.id, studentId: s.id, academyId: a.academy.id, receivedOn: new Date("2030-09-05"), tenderCurrency: "USD", tenderAmount: "100.00", method: "EFECTIVO", recordedById: a.admin.id },
+    });
+    await appPrisma.duesSettlement.create({ data: { organizationId: a.org.id, studentId: s.id, paymentId: payment.id, obligationId } });
+    let caught: unknown;
+    try {
+      await appPrisma.duesSettlement.create({ data: { organizationId: a.org.id, studentId: s.id, paymentId: payment.id, obligationId } });
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeDefined();
+    expect(isUniqueViolationOnConstraint(caught, "DuesSettlement_one_active_per_obligation_key")).toBe(true);
+    expect(isUniqueViolationOnConstraint(caught, "DuesLateFee_obligationId_key")).toBe(false);
+  });
+
+  it("never mislabels a genuinely unrelated real violation", async () => {
+    const email = `p2002-unrelated-${suffix}@example.com`;
+    await appPrisma.user.create({ data: { email, passwordHash: "x", role: "ADMIN" } });
+    let caught: unknown;
+    try {
+      await appPrisma.user.create({ data: { email, passwordHash: "x", role: "ADMIN" } });
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeDefined();
+    expect(isUniqueViolationOnConstraint(caught, "DuesLateFee_obligationId_key")).toBe(false);
+    expect(isUniqueViolationOnConstraint(caught, "DuesSettlement_one_active_per_obligation_key")).toBe(false);
   });
 });

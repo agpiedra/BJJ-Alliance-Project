@@ -7,7 +7,7 @@ import { feeAssessableFrom, lateFeeApplies, lateFeeToAssessMinor, orderOldestFir
 import { inactiveLedgerActivation, type LedgerDeps } from "@/lib/dues/ledger/activation";
 import { fromDbDate, inTenantScope, isRealDate, lockStudent, minusDays, todayIn, toDbDate, type Tx } from "@/lib/dues/ledger/common";
 import { MAX_MINOR_UNITS, columnToMinor, decimalToMinor, minorToDecimal } from "@/lib/dues/ledger/minor-units";
-import { isUniqueViolationOn } from "@/lib/dues/ledger/unique-violation";
+import { isUniqueViolationOnConstraint } from "@/lib/dues/ledger/unique-violation";
 import { CURRENCIES } from "@/lib/payments/format-money";
 
 /**
@@ -107,26 +107,36 @@ export async function assessLateFeeInTx(
   if (owedMinor === 0) return { ok: true, feeId: null, owed: false, created: false };
 
   const assessable = feeAssessableFrom(graceDeadline);
-  try {
-    const fee = await tx.duesLateFee.create({ data: { organizationId, obligationId: obligation.id, assessableFrom: toDbDate(assessable) } });
+  // Corrected: a caught P2002 cannot be recovered from with a follow-up query in the SAME transaction — Postgres aborts a
+  // transaction the instant any statement inside it fails, and every later statement (even a plain SELECT) then fails too with
+  // "current transaction is aborted" until a ROLLBACK. `ON CONFLICT DO NOTHING` never throws for the race it targets in the first
+  // place, so there is nothing to recover from: it either wins (a row comes back) or loses (nothing comes back, no exception,
+  // transaction fully healthy either way) — proven against a real duplicate insert, not assumed. `id` is generated here, not left
+  // to a DB default, because Prisma's `@default(cuid())` is applied client-side, not by the column itself.
+  if (deps.beforeLateFeeInsert) await deps.beforeLateFeeInsert(obligation.id);
+  const newId = crypto.randomUUID();
+  const inserted = await tx.$queryRaw<{ id: string }[]>`
+    INSERT INTO "DuesLateFee" ("id", "organizationId", "obligationId", "assessableFrom")
+    VALUES (${newId}, ${organizationId}, ${obligation.id}, ${toDbDate(assessable)})
+    ON CONFLICT ("obligationId") DO NOTHING
+    RETURNING "id"
+  `;
+  if (inserted.length > 0) {
+    const feeId = inserted[0].id;
     await tx.auditLog.create({
       data: {
-        actorId, organizationId, academyId: obligation.academyId, action: "duesLateFee.assess", entityType: "DuesLateFee", entityId: fee.id,
+        actorId, organizationId, academyId: obligation.academyId, action: "duesLateFee.assess", entityType: "DuesLateFee", entityId: feeId,
         before: Prisma.DbNull, after: { obligationId: obligation.id, assessableFrom: ymd(assessable), amount: minorToDecimal(owedMinor), currency: obligation.currency },
       },
     });
-    return { ok: true, feeId: fee.id, owed: true, created: true };
-  } catch (error) {
-    // Under the caller's held student lock this create-if-not-exists window shouldn't lose a race — DuesLateFee_obligationId_key is a
-    // backstop for "somehow it still did." Identify it specifically (never assume every P2002 here means this): re-read the row a
-    // concurrent call just won the race to create, and return it exactly as if this call had found it existing in the first place.
-    // Any other error — including a P2002 on a different constraint — is genuinely unexpected and must not be absorbed here.
-    if (isUniqueViolationOn(error, "DuesLateFee")) {
-      const wonByOther = await tx.duesLateFee.findFirst({ where: { organizationId, obligationId: obligation.id }, select: { id: true, removedAt: true } });
-      if (wonByOther) return { ok: true, feeId: wonByOther.id, owed: wonByOther.removedAt === null, created: false };
-    }
-    throw error;
+    return { ok: true, feeId, owed: true, created: true };
   }
+  // Lost the race: no row was inserted, nothing threw, the transaction is fully usable. A plain read finds the winner's row.
+  const wonByOther = await tx.duesLateFee.findFirst({ where: { organizationId, obligationId: obligation.id }, select: { id: true, removedAt: true } });
+  if (!wonByOther) {
+    throw new Error(`DuesLateFee insert conflicted for obligation ${obligation.id} but no row was found immediately after — impossible under ON CONFLICT DO NOTHING`);
+  }
+  return { ok: true, feeId: wonByOther.id, owed: wonByOther.removedAt === null, created: false };
 }
 
 export type RecordDuesPaymentError =
@@ -335,14 +345,18 @@ export async function recordDuesPayment(
       return { ok: true, paymentId: payment.id, settlementIds, feeIds, totalMinor: tenderMinor };
     });
   } catch (error) {
-    // P2002 is not one thing: DuesSettlement's partial unique index (the one-active-settlement-per-obligation backstop behind the
-    // student lock — a replay, not a crash) is the expected one here. A DuesLateFee collision is already handled inside
-    // assessLateFeeInTx itself and should never reach this catch — if it somehow still does, that is a real anomaly this lock
-    // discipline was supposed to prevent, reported as `conflict` (the same code createMonthlyObligationInTx uses for its own
-    // "moved branches while we waited" case), not mislabeled as a settlement replay. Anything else is genuinely unexpected and must
-    // be re-thrown, never silently absorbed into either label.
-    if (isUniqueViolationOn(error, "DuesSettlement")) return refuse("alreadySettled");
-    if (isUniqueViolationOn(error, "DuesLateFee")) return refuse("conflict");
+    // P2002 is not one thing: identify the CONSTRAINT, not the table (a table can have more than one unique index — this schema's
+    // own DuesLateFee does). DuesSettlement's partial unique index (the one-active-settlement-per-obligation backstop behind the
+    // student lock — a replay, not a crash) is the expected one here.
+    if (isUniqueViolationOnConstraint(error, "DuesSettlement_one_active_per_obligation_key")) return refuse("alreadySettled");
+    // DuesLateFee_obligationId_key is kept here as a documented, unreachable backstop, not live code: assessLateFeeInTx no longer
+    // performs an unprotected insert that could violate it (it uses `INSERT ... ON CONFLICT DO NOTHING`, which cannot throw for
+    // this constraint), so this branch has no path to it today. Left in deliberately, matching this codebase's existing precedent
+    // of a documented defensive check with no live path (eligibility.ts's branch-scope check, 5.4) — if a future change to
+    // assessLateFeeInTx ever reintroduces an unprotected insert, this is what stops it from being misreported as `alreadySettled`.
+    if (isUniqueViolationOnConstraint(error, "DuesLateFee_obligationId_key")) return refuse("conflict");
+    // Anything else — including a PK collision or the composite DuesLateFee_organizationId_id_obligationId_key — is genuinely
+    // unexpected and must be re-thrown, never silently absorbed into either label above.
     throw error;
   }
 }

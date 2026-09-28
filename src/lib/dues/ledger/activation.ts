@@ -20,9 +20,16 @@ export interface LedgerActivation {
 /** The only production implementation until the activation stage exists: no organization is active. */
 export const inactiveLedgerActivation: LedgerActivation = { isActive: async () => false };
 
-/** Injected dependencies. Both are optional: production uses the closed default activation and the real clock. */
+/** Injected dependencies. All are optional: production uses the closed default activation, the real clock, and no test hooks. */
 export interface LedgerDeps {
   activation?: LedgerActivation;
   /** The clock. Tests fix it; production leaves it out. */
   now?: () => Date;
+  /**
+   * Test-only synchronization point, called by `assessLateFeeInTx` (record-payment.ts) right before its `DuesLateFee` insert —
+   * never referenced by production code, never given a value outside a test. Lets a test deliberately pause one caller there to
+   * force a genuine, deterministic two-way race on the insert (proving the `ON CONFLICT DO NOTHING` design stays correct under
+   * real contention), instead of hoping `Promise.all` happens to collide at the SQL level.
+   */
+  beforeLateFeeInsert?: (obligationId: string) => Promise<void>;
 }
