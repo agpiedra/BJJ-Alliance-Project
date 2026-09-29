@@ -77,17 +77,19 @@ class PrepaymentRefusedError extends Error {
 const sameYearMonth = (a: YearMonth, b: YearMonth): boolean => a.year === b.year && a.month === b.month;
 
 /** The last calendar month this schema's dues tables can hold (`isValidCoverageMonth`'s own upper bound) — never invented,
- * reused as the outer ceiling a search must never be asked to exceed regardless of how far out a horizon computes. */
-const SCHEMA_MAX_MONTH: YearMonth = { year: 2100, month: 12 };
+ * reused as the outer ceiling a search must never be asked to exceed regardless of how far out a horizon computes. Exported
+ * for reuse by other writers that need the same real ceiling (e.g. `purchase-package.ts`), not a per-writer constant. */
+export const SCHEMA_MAX_MONTH: YearMonth = { year: 2100, month: 12 };
 
 /**
  * The smallest `YearMonth` in `[floor, bound]` with no `DuesObligation` row (any type) and no `DuesCoverage` row for this
  * student — reusing the exact two tables `createMonthlyObligationInTx`'s own duplicate check already reads, not a new
- * tracking mechanism. `floor` is always `currentMonth + 1` here (§3): this function is never asked about the current month
- * or earlier. `null` means every month through `bound` is already covered — the caller's horizon is fully consumed, not a
- * corrupt-data condition, so this never throws.
+ * tracking mechanism. `floor` is `currentMonth + 1` for this writer (§3: never asked about the current month or earlier),
+ * but the search itself is floor-agnostic — `purchase-package.ts` reuses it with `floor = currentMonth` (a package may
+ * legitimately start immediately). `null` means every month through `bound` is already covered — the caller's horizon is
+ * fully consumed, not a corrupt-data condition, so this never throws. Exported for that reuse, not a new mechanism.
  */
-async function firstUncoveredFrom(tx: Tx, organizationId: string, studentId: string, floor: YearMonth, bound: YearMonth): Promise<YearMonth | null> {
+export async function firstUncoveredFrom(tx: Tx, organizationId: string, studentId: string, floor: YearMonth, bound: YearMonth): Promise<YearMonth | null> {
   const obligationMonths = await tx.duesObligation.findMany({ where: { organizationId, studentId }, select: { coverageYear: true, coverageMonth: true } });
   const coverageMonths = await tx.duesCoverage.findMany({ where: { organizationId, studentId }, select: { year: true, month: true } });
   const covered = new Set<string>();

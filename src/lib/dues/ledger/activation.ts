@@ -70,4 +70,18 @@ export interface LedgerDeps {
    * "just work" without ever exercising it.
    */
   afterPrepaymentObligationsWrittenForTest?: () => Promise<void>;
+  /**
+   * Test-only synchronization point, called by `purchasePackage` (purchase-package.ts) immediately after `purchaseInstant` is
+   * captured (right after the branch/student locks succeed) — never referenced by production code, never given a value
+   * outside a test. Mirrors `afterPrepaymentInstantCapturedForTest`'s role for this writer.
+   */
+  afterPackagePurchaseInstantCapturedForTest?: () => Promise<void>;
+  /**
+   * Test-only synchronization point, called by `purchasePackage` (purchase-package.ts) after the package's own
+   * `DuesObligation`, every `DuesCoverage` row and its audit entry are written, but before it resolves any current-debt
+   * settlement — never referenced by production code, never given a value outside a test. Lets a test force a failure there
+   * to prove the package obligation and every coverage row roll back together, or hold the branch/student locks open for a
+   * genuine-overlap proof against a concurrent writer.
+   */
+  afterPackageObligationWrittenForTest?: () => Promise<void>;
 }
