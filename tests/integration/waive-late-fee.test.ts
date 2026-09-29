@@ -108,16 +108,23 @@ async function ledgerCounts(organizationId: string) {
   };
 }
 
-/** A dedicated, test-controlled transaction that takes the student lock and holds it until `release()`. */
+/**
+ * A dedicated, test-controlled transaction that takes the student lock and holds it until `release()`. `startedPromise`
+ * resolves with the holder's OWN backend pid (via `pg_backend_pid()`, captured right after the lock is acquired) so a test
+ * can later prove a SPECIFIC waiter is blocked BY IT — not by an unrelated parallel test's hold on a different row. Every
+ * test here uses a freshly created, unique student, so anything genuinely blocked by THIS holder's pid can only be a writer
+ * THIS test itself started, never a coincidence from another integration test file running concurrently.
+ */
 function holdStudentLock(studentId: string) {
-  let started!: () => void;
-  const startedPromise = new Promise<void>((r) => (started = r));
+  let started!: (pid: number) => void;
+  const startedPromise = new Promise<number>((r) => (started = r));
   let release!: () => void;
   const gate = new Promise<void>((r) => (release = r));
   const held = prisma.$transaction(
     async (tx) => {
       await tx.$queryRawUnsafe(`SELECT "id" FROM "Student" WHERE "id" = '${studentId}' FOR UPDATE`);
-      started();
+      const [{ pid }] = await tx.$queryRawUnsafe<{ pid: number }[]>(`SELECT pg_backend_pid() AS pid`);
+      started(pid);
       await gate;
     },
     { timeout: 60_000 },
@@ -125,16 +132,47 @@ function holdStudentLock(studentId: string) {
   return { startedPromise, release, held };
 }
 
-async function waitUntilBlockedOnLock(matches: string[], timeoutMs = 5000): Promise<boolean> {
-  return waitUntilNBlockedOnLock(matches, 1, timeoutMs);
+async function waitUntilBlockedByHolder(holderPid: number, timeoutMs = 5000): Promise<boolean> {
+  return waitUntilNBlockedByHolder(holderPid, 1, timeoutMs);
 }
 
-/** Polls until at least `n` distinct backends are simultaneously waiting on a lock with query text matching every string in `matches`. */
-async function waitUntilNBlockedOnLock(matches: string[], n: number, timeoutMs = 5000): Promise<boolean> {
+/**
+ * Polls until at least `n` distinct backends are blocked, directly or transitively, BY `holderPid` specifically — walking the
+ * actual blocking CHAIN Postgres reports (`pg_blocking_pids`), not a single direct-match test.
+ *
+ * Verified empirically against this exact Postgres version, not assumed: for row-level `SELECT ... FOR UPDATE` contention on
+ * one row, `pg_blocking_pids` reports each waiter as blocked ONLY by the one process immediately ahead of it in the queue —
+ * holder ← waiter1 ← waiter2 — never by the original holder for every waiter down the chain. A second queued waiter's own
+ * `pg_blocking_pids` therefore never contains `holderPid` directly, even though it is genuinely, ultimately blocked by it.
+ * (Confirmed with a standalone two-waiter probe: waiter1 reported `blockedBy: [holderPid]`, waiter2 reported
+ * `blockedBy: [waiter1Pid]` — a naive direct-match check can never reach n=2, no matter how long it polls.) This walks that
+ * chain in application code instead, so it still correctly identifies only THIS test's own writers — every test here uses a
+ * freshly created, unique student, so a path back to THIS holder's specific pid can only run through a writer this test
+ * itself started, never an unrelated parallel test's session on a different row.
+ */
+async function waitUntilNBlockedByHolder(holderPid: number, n: number, timeoutMs = 5000): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const rows = await prisma.$queryRawUnsafe<{ query: string }[]>(`SELECT query FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query IS NOT NULL`);
-    if (rows.filter((row) => matches.every((m) => row.query.includes(m))).length >= n) return true;
+    const rows = await prisma.$queryRaw<{ pid: number; blockedby: number[] }[]>`SELECT pid, pg_blocking_pids(pid) AS blockedby FROM pg_stat_activity WHERE wait_event_type = 'Lock'`;
+    const chain = new Map(rows.map((r) => [r.pid, r.blockedby]));
+    let reachingHolder = 0;
+    for (const pid of chain.keys()) {
+      let current = pid;
+      const seen = new Set<number>();
+      while (!seen.has(current)) {
+        seen.add(current);
+        const blockers = chain.get(current);
+        if (!blockers) break;
+        if (blockers.includes(holderPid)) {
+          reachingHolder++;
+          break;
+        }
+        const nextHop = blockers.find((b) => chain.has(b));
+        if (nextHop === undefined) break;
+        current = nextHop;
+      }
+    }
+    if (reachingHolder >= n) return true;
     await new Promise((r) => setTimeout(r, 25));
   }
   return false;
@@ -423,12 +461,18 @@ describe("waiveLateFee: unauthorized, cross-tenant, out-of-branch, malformed, st
 });
 
 /**
- * Genuine overlapping-transaction proof, not sequential: a bystander holds the student lock; the FIRST real writer queued
- * behind it is proven blocked (`waitUntilBlockedOnLock`); the SECOND real writer is then also queued and both are proven
- * simultaneously blocked (`waitUntilNBlockedOnLock(..., 2)`) before the bystander ever releases. PostgreSQL grants a row's
- * FOR UPDATE lock to waiters in the order they queued, so releasing the bystander deterministically lets whichever writer
- * queued FIRST run to completion before the second is ever granted the lock — a real race arbitrated by the database, not a
- * scripted sequential await.
+ * Genuine overlapping-transaction proof, not sequential: a bystander holds the student lock and captures its own backend pid
+ * (`holdStudentLock`'s `startedPromise`); the FIRST real writer queued behind it is proven blocked, directly or transitively,
+ * BY THAT SPECIFIC PID (`waitUntilBlockedByHolder(holderPid)`, walking Postgres's own `pg_blocking_pids` chain — see that
+ * helper's own comment for why a chain walk, not a single direct match, is required); the SECOND real writer is then also
+ * queued and both are proven simultaneously on a path back to that SAME holder pid (`waitUntilNBlockedByHolder(holderPid,
+ * 2)`) before the bystander ever releases. This identifies the two specific writers THIS test itself started, not merely "two
+ * backends somewhere are waiting on a lock with similar-looking query text" — a count unrelated parallel integration test
+ * files' own concurrent `lockStudent` calls could otherwise satisfy under real parallel test execution, since every test here
+ * uses a freshly created, unique student and a path back to this exact pid can only run through this test's own writers.
+ * PostgreSQL grants a row's FOR UPDATE lock to waiters in the order they queued, so releasing the bystander deterministically
+ * lets whichever writer queued FIRST run to completion before the second is ever granted the lock — a real race arbitrated by
+ * the database, not a scripted sequential await.
  */
 describe("waiveLateFee: genuine overlapping transactions with a live recordDuesPayment attempt", () => {
   it("waiver wins (queued first): the payment queued second validates against the waived, tuition-only total", async () => {
@@ -439,30 +483,37 @@ describe("waiveLateFee: genuine overlapping transactions with a live recordDuesP
     const before = await currentFee(feeId);
 
     const { startedPromise, release, held } = holdStudentLock(s.id);
-    await startedPromise;
+    const holderPid = await startedPromise;
 
-    let waiveDone = false;
-    const waiving = waive({ lateFeeId: feeId, expectedRevision: feeRevision(before) }).then((r) => ((waiveDone = true), r));
-    expect(await waitUntilBlockedOnLock(['FROM "Student"', "FOR UPDATE"]), "the waiver must genuinely block on the bystander's held lock").toBe(true);
-    expect(waiveDone).toBe(false);
+    let waiving: ReturnType<typeof waive> | undefined;
+    let paying: ReturnType<typeof pay> | undefined;
+    try {
+      let waiveDone = false;
+      waiving = waive({ lateFeeId: feeId, expectedRevision: feeRevision(before) }).then((r) => ((waiveDone = true), r));
+      expect(await waitUntilBlockedByHolder(holderPid), "the waiver must genuinely block on the bystander's held lock").toBe(true);
+      expect(waiveDone).toBe(false);
 
-    let payDone = false;
-    // Tuition-only: this total is correct ONLY once the waiver has actually committed — a stale, pre-waiver read would still
-    // owe the fee, making this total short and refusing (notASelectableTotal). Success here proves the payment observed the
-    // waiver's committed effect, not a snapshot taken before it queued.
-    const paying = pay(s.id, [obligationId], "100.00", { year: 2030, month: 11, day: 25 }).then((r) => ((payDone = true), r));
-    expect(await waitUntilNBlockedOnLock(['FROM "Student"', "FOR UPDATE"], 2), "both the waiver and the payment must be simultaneously blocked on the bystander's lock").toBe(true);
-    expect(payDone).toBe(false);
+      let payDone = false;
+      // Tuition-only: this total is correct ONLY once the waiver has actually committed — a stale, pre-waiver read would still
+      // owe the fee, making this total short and refusing (notASelectableTotal). Success here proves the payment observed the
+      // waiver's committed effect, not a snapshot taken before it queued.
+      paying = pay(s.id, [obligationId], "100.00", { year: 2030, month: 11, day: 25 }).then((r) => ((payDone = true), r));
+      expect(await waitUntilNBlockedByHolder(holderPid, 2), "both the waiver and the payment must be simultaneously blocked on the bystander's lock").toBe(true);
+      expect(payDone).toBe(false);
 
-    release();
-    await held;
-    const waived = await waiving;
-    expect(waived).toEqual({ ok: true, feeId });
-    const paid = await paying;
-    expect(paid.settlementIds).toHaveLength(1);
-    const settlement = await prisma.duesSettlement.findUniqueOrThrow({ where: { id: paid.settlementIds[0] } });
-    expect(settlement.lateFeeId).toBeNull();
-  });
+      release();
+      await held;
+      const waived = await waiving;
+      expect(waived).toEqual({ ok: true, feeId });
+      const paid = await paying;
+      expect(paid.settlementIds).toHaveLength(1);
+      const settlement = await prisma.duesSettlement.findUniqueOrThrow({ where: { id: paid.settlementIds[0] } });
+      expect(settlement.lateFeeId).toBeNull();
+    } finally {
+      release(); // idempotent
+      await Promise.allSettled(([held, waiving, paying] as (Promise<unknown> | undefined)[]).filter((p) => p !== undefined));
+    }
+  }, 20_000);
 
   it("payment wins (queued first): the waiver queued second observes the fee is now paid and refuses alreadyPaid", async () => {
     const s = await newStudent("paymentwins");
@@ -472,30 +523,37 @@ describe("waiveLateFee: genuine overlapping transactions with a live recordDuesP
     const before = await currentFee(feeId);
 
     const { startedPromise, release, held } = holdStudentLock(s.id);
-    await startedPromise;
+    const holderPid = await startedPromise;
 
-    let payDone = false;
-    // Tuition + fee: correct only while the fee is still active — this is the real historical state at the moment this
-    // payment is queued, since it queues BEFORE the waiver.
-    const paying = pay(s.id, [obligationId], "120.00", { year: 2030, month: 11, day: 25 }).then((r) => ((payDone = true), r));
-    expect(await waitUntilBlockedOnLock(['FROM "Student"', "FOR UPDATE"]), "the payment must genuinely block on the bystander's held lock").toBe(true);
-    expect(payDone).toBe(false);
+    let waiving: ReturnType<typeof waive> | undefined;
+    let paying: ReturnType<typeof pay> | undefined;
+    try {
+      let payDone = false;
+      // Tuition + fee: correct only while the fee is still active — this is the real historical state at the moment this
+      // payment is queued, since it queues BEFORE the waiver.
+      paying = pay(s.id, [obligationId], "120.00", { year: 2030, month: 11, day: 25 }).then((r) => ((payDone = true), r));
+      expect(await waitUntilBlockedByHolder(holderPid), "the payment must genuinely block on the bystander's held lock").toBe(true);
+      expect(payDone).toBe(false);
 
-    let waiveDone = false;
-    const waiving = waive({ lateFeeId: feeId, expectedRevision: feeRevision(before) }).then((r) => ((waiveDone = true), r));
-    expect(await waitUntilNBlockedOnLock(['FROM "Student"', "FOR UPDATE"], 2), "both the payment and the waiver must be simultaneously blocked on the bystander's lock").toBe(true);
-    expect(waiveDone).toBe(false);
+      let waiveDone = false;
+      waiving = waive({ lateFeeId: feeId, expectedRevision: feeRevision(before) }).then((r) => ((waiveDone = true), r));
+      expect(await waitUntilNBlockedByHolder(holderPid, 2), "both the payment and the waiver must be simultaneously blocked on the bystander's lock").toBe(true);
+      expect(waiveDone).toBe(false);
 
-    release();
-    await held;
-    const paid = await paying;
-    expect(paid.settlementIds).toHaveLength(1);
-    const settlement = await prisma.duesSettlement.findUniqueOrThrow({ where: { id: paid.settlementIds[0] } });
-    expect(settlement.lateFeeId).toBe(feeId);
+      release();
+      await held;
+      const paid = await paying;
+      expect(paid.settlementIds).toHaveLength(1);
+      const settlement = await prisma.duesSettlement.findUniqueOrThrow({ where: { id: paid.settlementIds[0] } });
+      expect(settlement.lateFeeId).toBe(feeId);
 
-    const waived = await waiving;
-    expect(waived).toEqual({ ok: false, error: "alreadyPaid" });
-    const feeAfter = await currentFee(feeId);
-    expect(feeAfter.removedAt).toBeNull(); // refused, not silently waived
-  });
+      const waived = await waiving;
+      expect(waived).toEqual({ ok: false, error: "alreadyPaid" });
+      const feeAfter = await currentFee(feeId);
+      expect(feeAfter.removedAt).toBeNull(); // refused, not silently waived
+    } finally {
+      release(); // idempotent
+      await Promise.allSettled(([held, waiving, paying] as (Promise<unknown> | undefined)[]).filter((p) => p !== undefined));
+    }
+  }, 20_000);
 });
