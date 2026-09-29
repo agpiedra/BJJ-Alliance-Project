@@ -95,4 +95,12 @@ export interface LedgerDeps {
    * this transaction holds the student lock. Proves the restored cross-check actually fires and rolls back everything.
    */
   beforeSettlementFeeCheckForTest?: (tx: Tx, obligationId: string) => Promise<void>;
+  /**
+   * Test-only synchronization point, called by `enterExchangeRateQuote` (exchange-rate.ts) right after the new quote row
+   * and its own audit entry are written, but before the transaction commits — never referenced by production code, never
+   * given a value outside a test. Lets a test force a failure there to prove the row rolls back together with the audit
+   * entry, and lets a test pause the transaction there (still holding the advisory lock) for a genuine-overlap proof
+   * against a concurrent quote-write attempt.
+   */
+  afterExchangeRateQuoteWrittenForTest?: () => Promise<void>;
 }
