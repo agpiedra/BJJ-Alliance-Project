@@ -5,6 +5,7 @@ import { makeAccountingOrg } from "../helpers/accounting-org";
 import type { TenantContext } from "../../src/lib/tenant/types";
 import type { YearMonth } from "../../src/lib/dues/calendar";
 import { createMonthlyObligation } from "../../src/lib/dues/ledger/create-monthly-obligation";
+import { recordDuesPayment } from "../../src/lib/dues/ledger/record-payment";
 import { reversePayment } from "../../src/lib/dues/ledger/reverse-payment";
 import { purchasePackage } from "../../src/lib/dues/ledger/purchase-package";
 import type { LedgerActivation } from "../../src/lib/dues/ledger/activation";
@@ -246,6 +247,13 @@ describe("purchasePackage: explicit coverage-gap validation, floored at the CURR
     const s = await newStudent("reserved");
     const ordinary = await createMonthlyObligation({ context: context(), studentId: s.id, coverage: { year: 2030, month: 12 }, planTermsId: monthlyTerms.id, policyVersionId: policyBase.id }, deps());
     if (!ordinary.ok) throw new Error(ordinary.error);
+    // Settled on time (Dec 1, before its own Dec 20 due date) so December's coverage is reserved but is no longer OPEN
+    // debt — this test is about coverage reservation, not the separate debtNotFullySettled requirement.
+    const settleDec = await recordDuesPayment(
+      { context: context(), studentId: s.id, receivedOn: { year: 2030, month: 12, day: 1 }, tender: { currency: "USD", amount: "100.00" }, method: "EFECTIVO", obligationIds: [ordinary.obligationId], maxBackdateDays: 90 },
+      deps(),
+    );
+    if (!settleDec.ok) throw new Error(settleDec.error);
     // December is already covered by an ordinary MONTHLY obligation — a package cannot start there or skip past it silently.
     const before = await ledgerCounts(a.org.id);
     const startingOnReserved = await purchasePackage(
@@ -367,6 +375,79 @@ describe("purchasePackage: full settlement — a debt-only tender is refused and
     expect(r.ok).toBe(false);
     expect(await ledgerCounts(a.org.id)).toEqual(before);
     expect(await prisma.duesSettlement.count({ where: { obligationId: sep.obligationId, reversedAt: null } })).toBe(0);
+    // The offered total must be the ONE full-purchase amount (debt + package = 120 + 270 = 390.00), never the debt-only
+    // prefix that was just refused — advertising that back would only lead to a second, identical refusal.
+    if (!r.ok) expect(r.selectableTotals).toEqual(["390.00"]);
+  });
+});
+
+describe("purchasePackage: ALL outstanding MONTHLY debt must be named and settled with the package, not just whatever the caller chose", () => {
+  it("an older unpaid MONTHLY obligation exists; naming no existing-debt ids at all refuses debtNotFullySettled, zero writes", async () => {
+    const s = await newStudent("debtunnamed");
+    const aug = await createMonthlyObligation({ context: context(), studentId: s.id, coverage: { year: 2030, month: 8 }, planTermsId: monthlyTerms.id, policyVersionId: policyBase.id }, deps());
+    if (!aug.ok) throw new Error(aug.error);
+    const before = await ledgerCounts(a.org.id);
+    const r = await purchase({ studentId: s.id, tender: { currency: "USD", amount: "270.00" } }); // no existingObligationIds named
+    expect(r).toEqual({ ok: false, error: "debtNotFullySettled" });
+    expect(await ledgerCounts(a.org.id)).toEqual(before);
+  });
+
+  it("two older unpaid MONTHLY obligations exist; naming only the first (a valid oldest-first prefix of count 1) still refuses debtNotFullySettled, zero writes", async () => {
+    const s = await newStudent("debtpartial");
+    const aug = await createMonthlyObligation({ context: context(), studentId: s.id, coverage: { year: 2030, month: 8 }, planTermsId: monthlyTerms.id, policyVersionId: policyBase.id }, deps());
+    if (!aug.ok) throw new Error(aug.error);
+    const sep = await createMonthlyObligation({ context: context(), studentId: s.id, coverage: { year: 2030, month: 9 }, planTermsId: monthlyTerms.id, policyVersionId: policyBase.id }, deps());
+    if (!sep.ok) throw new Error(sep.error);
+    const before = await ledgerCounts(a.org.id);
+    // August alone (100 + 20 fee) + package 270 = 390.00 — a technically-fitting total, still refused since September is left unaddressed.
+    const r = await purchase({ studentId: s.id, existingObligationIds: [aug.obligationId], tender: { currency: "USD", amount: "390.00" } });
+    expect(r).toEqual({ ok: false, error: "debtNotFullySettled" });
+    expect(await ledgerCounts(a.org.id)).toEqual(before);
+  });
+
+  it("control: naming and fully settling both older obligations plus the package in one receipt succeeds atomically, one exact total", async () => {
+    const s = await newStudent("debtfull");
+    const aug = await createMonthlyObligation({ context: context(), studentId: s.id, coverage: { year: 2030, month: 8 }, planTermsId: monthlyTerms.id, policyVersionId: policyBase.id }, deps());
+    if (!aug.ok) throw new Error(aug.error);
+    const sep = await createMonthlyObligation({ context: context(), studentId: s.id, coverage: { year: 2030, month: 9 }, planTermsId: monthlyTerms.id, policyVersionId: policyBase.id }, deps());
+    if (!sep.ok) throw new Error(sep.error);
+    // Both August (grace Sep 5) and September (grace Oct 5) are well past grace by Dec 1: (100+20) * 2 = 240, plus package 270 = 510.00.
+    const r = await purchase({ studentId: s.id, existingObligationIds: [aug.obligationId, sep.obligationId], tender: { currency: "USD", amount: "510.00" } });
+    expect(r).toMatchObject({ ok: true, totalMinor: 51000 });
+    if (!r.ok) return;
+    expect(await prisma.duesSettlement.count({ where: { paymentId: r.paymentId, reversedAt: null } })).toBe(3);
+  });
+});
+
+describe("purchasePackage: the 60-per-receipt selection limit accounts for the package's own slot", () => {
+  it("60 existing-debt ids plus the package (61 total) refuses invalid, before any DB read", async () => {
+    const s = await newStudent("toomany");
+    const fakeIds = Array.from({ length: 60 }, (_, i) => `fake-${i}`);
+    const before = await ledgerCounts(a.org.id);
+    const r = await purchase({ studentId: s.id, existingObligationIds: fakeIds, tender: { currency: "USD", amount: "270.00" } });
+    expect(r).toEqual({ ok: false, error: "invalid" });
+    expect(await ledgerCounts(a.org.id)).toEqual(before);
+  });
+
+  it("exactly 59 existing-debt ids plus the package (60 total) succeeds", async () => {
+    const s = await newStudent("exactly59");
+    // 59 consecutive months, far in the past and unrelated to any other fixture's coverage months.
+    const span: YearMonth[] = Array.from({ length: 59 }, (_, i) => ({ year: 2010 + Math.floor(i / 12), month: (i % 12) + 1 }));
+    await prisma.duesObligation.createMany({
+      data: span.map((m) => ({
+        organizationId: a.org.id, studentId: s.id, academyId: a.academy.id, type: "MONTHLY" as const, origin: "STAFF" as const,
+        coverageYear: m.year, coverageMonth: m.month, monthsCovered: 1, amount: "100.00", currency: "USD" as const, lateFeeAmount: "0.00",
+        dueOn: new Date(Date.UTC(m.year, m.month - 1, 1)), graceDeadline: new Date(Date.UTC(m.year, m.month - 1, 20)),
+        planTermsId: monthlyTerms.id, policyVersionId: policyBase.id, createdById: a.admin.id,
+      })),
+    });
+    const debtRows = await prisma.duesObligation.findMany({ where: { organizationId: a.org.id, studentId: s.id }, select: { id: true } });
+    expect(debtRows).toHaveLength(59); // exactly this student's whole open MONTHLY set — required by the debtNotFullySettled check
+    // 59 * 100.00 (lateFeeAmount 0.00, so no fee regardless of how late) + package 270.00 = 6170.00.
+    const r = await purchase({ studentId: s.id, existingObligationIds: debtRows.map((d) => d.id), tender: { currency: "USD", amount: "6170.00" } });
+    expect(r).toMatchObject({ ok: true, totalMinor: 617000 });
+    if (!r.ok) return;
+    expect(await prisma.duesSettlement.count({ where: { paymentId: r.paymentId, reversedAt: null } })).toBe(60);
   });
 });
 

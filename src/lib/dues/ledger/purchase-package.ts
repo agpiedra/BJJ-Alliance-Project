@@ -7,12 +7,11 @@ import { settleReceipt, type SettlementItem } from "@/lib/dues/settlement";
 import { inactiveLedgerActivation, type LedgerDeps } from "@/lib/dues/ledger/activation";
 import { inTenantScope, isRealDate, latestEffective, lockBranchShared, lockStudent, lockTermsShared, minusDays, todayIn } from "@/lib/dues/ledger/common";
 import { isValidCoverageMonth } from "@/lib/dues/ledger/create-monthly-obligation";
-import { MAX_MINOR_UNITS, columnToMinor, decimalToMinor } from "@/lib/dues/ledger/minor-units";
+import { MAX_MINOR_UNITS, columnToMinor, decimalToMinor, minorToDecimal } from "@/lib/dues/ledger/minor-units";
 import { firstUncoveredFrom, SCHEMA_MAX_MONTH } from "@/lib/dues/ledger/prepay-monthly";
 import {
   classifyRecordPaymentError,
   resolveMonthlyDebtItemsInTx,
-  selectablePrefixTotals,
   writeSettlementInTx,
   type RecordDuesPaymentError,
   type SettlementLineItem,
@@ -60,6 +59,14 @@ import { CURRENCIES } from "@/lib/payments/format-money";
  * written through the SAME shared write core (`writeSettlementInTx`) `recordDuesPaymentInTx` itself now uses — one
  * `DuesPayment`, never two separate payments for the two portions.
  *
+ * ALL OUTSTANDING MONTHLY DEBT MUST BE SETTLED WITH THE PACKAGE, NOT JUST WHATEVER THE CALLER NAMED: unlike an ordinary
+ * payment (where settling only some of the oldest debt is legitimate — you can pay this month without paying next month
+ * too), committing to FUTURE package coverage while older debt sits untouched is exactly backwards. `resolveMonthlyDebtItemsInTx`
+ * only validates that the caller's NAMED ids form a valid oldest-first prefix of whatever count was named — an empty or
+ * partial selection trivially passes that check. This writer additionally requires the named ids to be the STUDENT'S
+ * ENTIRE open `MONTHLY` set (`debtNotFullySettled` otherwise) — the same length-equality technique already used below to
+ * prove the package itself was actually settled, applied here to prove nothing older was left behind.
+ *
  * REVERSAL: already refused by `reverse-payment.ts`'s existing `unsupportedObligationType` check (`type !== "MONTHLY"`) —
  * a `PACKAGE` obligation is never `MONTHLY`, so no change to that writer was needed for this phase.
  *
@@ -75,6 +82,7 @@ export type PurchasePackageError =
   | "prepaymentUnavailable"
   | "prepaymentLimitExceeded"
   | "coverageGap"
+  | "debtNotFullySettled"
   | RecordDuesPaymentError;
 
 export type PurchasePackageResult =
@@ -86,7 +94,11 @@ const refuse = (
   extra: { selectableTotals?: string[]; alreadySettledIds?: string[] } = {},
 ): Extract<PurchasePackageResult, { ok: false }> => ({ ok: false, error, ...extra });
 
+// The package itself always occupies one slot in the combined receipt alongside any named debt — capping named debt at
+// MAX_SELECTED - 1 (not the full MAX_SELECTED) is what keeps debt-plus-package from ever exceeding the same 60-per-receipt
+// ceiling recordDuesPaymentInTx's own MAX_SELECTED already enforces for an ordinary, all-MONTHLY receipt.
 const MAX_SELECTED = 60;
+const MAX_EXISTING_DEBT = MAX_SELECTED - 1;
 const MAX_BACKDATE_DAYS = 3660;
 const MAX_NOTES = 500;
 
@@ -131,7 +143,7 @@ export async function purchasePackage(
   if (
     existingObligationIds !== undefined &&
     (!Array.isArray(existingObligationIds) ||
-      existingObligationIds.length > MAX_SELECTED ||
+      existingObligationIds.length > MAX_EXISTING_DEBT ||
       existingObligationIds.some((id) => typeof id !== "string" || id === "") ||
       new Set(existingObligationIds).size !== existingObligationIds.length)
   ) {
@@ -275,22 +287,38 @@ export async function purchasePackage(
       const debtResult = await resolveMonthlyDebtItemsInTx(tx, { organizationId, studentId: student.id, obligationIds: existingObligationIds ?? [], receivedOn });
       if (!debtResult.ok) throw new PackagePurchaseRefusedError(refuse(debtResult.error, { alreadySettledIds: debtResult.alreadySettledIds }));
 
-      const packageItem: SettlementLineItem = { obligationId: obligation.id, currency: terms.currency, amountMinor: columnToMinor(terms.priceAmount), feeEligible: false };
+      // ALL outstanding MONTHLY debt must be named and settled together with the package, not just whatever subset the
+      // caller chose — committing to future package coverage while older debt sits untouched is exactly what this check
+      // exists to prevent. chosenItems is already validated as a prefix of its own count (resolveMonthlyDebtItemsInTx);
+      // equal length to the FULL open set is what proves that prefix is everything, not merely a valid partial one.
+      if (debtResult.chosenItems.length !== debtResult.allOpenItems.length) {
+        throw new PackagePurchaseRefusedError(refuse("debtNotFullySettled"));
+      }
+
+      const packageItem: SettlementLineItem = { obligationId: obligation.id, currency: terms.currency, amountMinor: columnToMinor(terms.priceAmount), feeEligible: false, expectedOwed: false };
       const allItems: SettlementLineItem[] = [...debtResult.chosenItems, packageItem];
       const settlementItems: SettlementItem[] = allItems.map((i) => ({ id: i.obligationId, currency: i.currency, amountMinor: i.amountMinor }));
+      const fullTotalMinor = settlementItems.reduce((sum, i) => sum + i.amountMinor, 0);
 
       if (settlementItems.length > 0 && settlementItems[0].amountMinor > MAX_MINOR_UNITS) throw new PackagePurchaseRefusedError(refuse("amountUnsupported"));
+      // The oldest item alone can be in range while the FULL required total (debt + package) still is not — checked
+      // explicitly, since the column that will hold it (DuesPayment.tenderAmount) is what actually bounds it.
+      if (fullTotalMinor > MAX_MINOR_UNITS) throw new PackagePurchaseRefusedError(refuse("amountUnsupported"));
 
       const settled = settleReceipt(settlementItems, tenderMinor, tender.currency);
       if (!settled.ok) {
-        const error = settled.reason === "CURRENCY_MISMATCH" ? "currencyMismatch" : "notASelectableTotal";
-        throw new PackagePurchaseRefusedError(refuse(error, { selectableTotals: selectablePrefixTotals(settlementItems) }));
+        // Never offer a debt-only (or any other short) prefix as a "selectable" total here — every one of those excludes
+        // the package and would be refused again by the check below if it were ever submitted. Offer only the ONE total
+        // that actually settles everything required (debt + package); currencyMismatch offers nothing, matching
+        // settleReceipt's own contract that its totals are always empty for a currency mismatch.
+        if (settled.reason === "CURRENCY_MISMATCH") throw new PackagePurchaseRefusedError(refuse("currencyMismatch"));
+        throw new PackagePurchaseRefusedError(refuse("notASelectableTotal", { selectableTotals: [minorToDecimal(fullTotalMinor)] }));
       }
       // settleReceipt accepts any valid k-prefix — a receipt matching only the debt portion is a LEGITIMATE success that
       // excludes the package. Bare ok:true is not proof the whole purchase succeeded: require every item, package
       // included, to actually be in settledIds, or refuse the whole thing and roll back everything written so far.
       if (settled.settledIds.length !== allItems.length) {
-        throw new PackagePurchaseRefusedError(refuse("totalMismatch", { selectableTotals: selectablePrefixTotals(settlementItems) }));
+        throw new PackagePurchaseRefusedError(refuse("totalMismatch", { selectableTotals: [minorToDecimal(fullTotalMinor)] }));
       }
 
       const written = await writeSettlementInTx(tx, { context, student, receivedOn, tender, method, notes, settledItems: allItems }, frozenDeps);

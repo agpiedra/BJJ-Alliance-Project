@@ -168,9 +168,12 @@ const ymd = (d: CalendarDate) => `${d.year}-${String(d.month).padStart(2, "0")}-
 /**
  * Package-purchase brief §5: one thing this writer's shared settlement core settles, already priced and ordered by its
  * caller. `feeEligible` is true only for a `MONTHLY` item that should go through `assessLateFeeInTx`; a package item is
- * never fee-eligible (packages structurally cannot carry a late fee — `DuesObligation_shape_by_type`).
+ * never fee-eligible (packages structurally cannot carry a late fee — `DuesObligation_shape_by_type`). `expectedOwed` is
+ * only meaningful when `feeEligible` is true: the fee-owed state validation already computed for this item, checked
+ * against `assessLateFeeInTx`'s own fresh read at write time (`writeSettlementInTx`) — restored from the original,
+ * pre-extraction code, which asserted the two can never disagree under the same lock rather than assuming it.
  */
-export type SettlementLineItem = { obligationId: string; currency: Currency; amountMinor: number; feeEligible: boolean };
+export type SettlementLineItem = { obligationId: string; currency: Currency; amountMinor: number; feeEligible: boolean; expectedOwed: boolean };
 
 /**
  * The running totals, oldest first, this writer could actually offer for a refusal message: at most `MAX_SELECTED` obligations, and only
@@ -268,20 +271,24 @@ export async function resolveMonthlyDebtItemsInTx(
   if (firstK.length !== chosen.length || !firstK.every((id) => chosenIds.has(id))) return { ok: false, error: "notOldestFirst" };
 
   // Fee state of the chosen obligations. An active fee already assessed cannot be removed by an earlier received date here.
+  // `feeOwed` is carried forward into each item's `expectedOwed` — restored from the original, pre-extraction code, which
+  // cross-checked this against `assessLateFeeInTx`'s own fresh read at write time rather than trusting it silently.
   const termsById = new Map(openTerms.map((t) => [t.id, t]));
+  const feeOwed = new Map<string, boolean>();
   for (const o of chosen) {
     const t = termsById.get(o.id)!;
     const late = lateFeeApplies(receivedOn, t.graceDeadline);
     const feeRow = o.lateFees[0] ?? null;
     const removed = feeRow?.removedAt != null;
     if (!late && feeRow && !removed) return { ok: false, error: "feeAlreadyAssessed" };
+    feeOwed.set(o.id, late && t.lateFeeMinor > 0);
   }
 
   const allOpenItems = outstandingItems(openTerms, receivedOn);
   const settlementOrder = chosen.slice().sort((x, y) => firstK.indexOf(x.id) - firstK.indexOf(y.id));
   const chosenItems: SettlementLineItem[] = settlementOrder.map((o) => {
     const t = termsById.get(o.id)!;
-    return { obligationId: o.id, currency: t.currency, amountMinor: amountDueMinor(t, receivedOn), feeEligible: true };
+    return { obligationId: o.id, currency: t.currency, amountMinor: amountDueMinor(t, receivedOn), feeEligible: true, expectedOwed: feeOwed.get(o.id) ?? false };
   });
   return { ok: true, chosenItems, allOpenItems };
 }
@@ -314,10 +321,21 @@ export async function writeSettlementInTx(
   const lateFeeFor = new Map<string, string | null>();
   for (const item of settledItems) {
     if (item.feeEligible) {
+      // Test-only: lets a test mutate fee/settlement state for this exact obligation, inside this same transaction, right
+      // before the fresh read below — the only way to construct a genuine disagreement for the assertion that follows,
+      // since nothing else can run concurrently while this transaction holds the student lock. Never referenced in production.
+      if (deps.beforeSettlementFeeCheckForTest) await deps.beforeSettlementFeeCheckForTest(tx, item.obligationId);
       // assessLateFeeInTx re-reads obligation/settlement/fee state itself, fresh, under this same lock — it does not trust
       // whatever validation already read. asOf: receivedOn — lateness is judged by the RECEIVED date of THIS settlement.
       const assessed = await assessLateFeeInTx(tx, { context, obligationId: item.obligationId, asOf: receivedOn, actorId: context.actorUserId }, deps);
       if (!assessed.ok) throw new Error(`assessLateFeeInTx unexpectedly refused (${assessed.error}) for obligation ${item.obligationId} inside an already-validated payment`);
+      // Under this held lock, re-reading the same data validation already read cannot disagree — but if it somehow ever
+      // does, abort the whole transaction rather than commit a settlement whose lateFeeId doesn't match what was actually
+      // decided. Restored: the pre-extraction code asserted this; the split into resolveMonthlyDebtItemsInTx/writeSettlementInTx
+      // must not silently drop it.
+      if (item.expectedOwed !== assessed.owed) {
+        throw new Error(`assessLateFeeInTx's fresh read disagreed with the caller's own validated fee state for obligation ${item.obligationId}`);
+      }
       if (assessed.created && assessed.feeId) feeIds.push(assessed.feeId);
       // lateFeeId references an ACTIVE fee only — never a waived/voided one.
       lateFeeFor.set(item.obligationId, assessed.owed ? assessed.feeId : null);

@@ -1,3 +1,5 @@
+import type { Tx } from "@/lib/dues/ledger/common";
+
 /**
  * The seam that keeps the first ledger writers (PR 4a) closed to live billing until the approved activation stage.
  *
@@ -84,4 +86,13 @@ export interface LedgerDeps {
    * genuine-overlap proof against a concurrent writer.
    */
   afterPackageObligationWrittenForTest?: () => Promise<void>;
+  /**
+   * Test-only synchronization point, called by `writeSettlementInTx` (record-payment.ts) right before it calls
+   * `assessLateFeeInTx` for each fee-eligible item — never referenced by production code, never given a value outside a
+   * test. Receives the open transaction itself so a test can mutate fee/settlement state for that exact obligation,
+   * inside the SAME transaction, right before the fresh read — the only way to construct a genuine disagreement with
+   * what validation already computed (`SettlementLineItem.expectedOwed`), since nothing else can run concurrently while
+   * this transaction holds the student lock. Proves the restored cross-check actually fires and rolls back everything.
+   */
+  beforeSettlementFeeCheckForTest?: (tx: Tx, obligationId: string) => Promise<void>;
 }
