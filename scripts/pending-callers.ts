@@ -195,6 +195,17 @@ const PENDING_CALLERS: PendingCaller[] = [
     reason:
       "Reverses a payment and all its active settlements together, in one transaction, under the student lock, trusting nothing re-read before it. Two approved policy decisions: reversing a settlement with a valid, never-voided fee makes both the tuition and the fee owed again (no new logic — the fee row is untouched, so it's already correct); reversing a settlement whose obligation has a VOIDED fee is refused outright (voidedFeeBlocksReversal, a temporary restriction on the obligation's current fee state, not a claim the payment being reversed caused that void — no provenance field added). Refuses type !== MONTHLY (unsupportedObligationType) as a runtime scope boundary — MONTHLY does not distinguish an ordinary obligation from a future prepayment purchase, so supporting prepayment/package settlements later means revisiting this writer before either is exposed. Owner-only (context.organizationRole === 'ADMIN', checked here); refunds, fee restoration and cancellation remain out of scope.",
   },
+  // Late-fee-waiver brief: an owner forgives a genuinely, correctly assessed fee anyway (policy, unlike VOID's factual
+  // correction). No production caller exists on purpose — not a route, not a server action, no scheduler entry, no UI. Lives
+  // inside src/lib/dues/ledger/ (it composes lockStudent/inTenantScope/versionRevision directly), so it needs no entry in the
+  // ledger's own no-caller guard.
+  {
+    symbol: "waiveLateFee",
+    file: "src/lib/dues/ledger/waive-late-fee.ts",
+    dueBy: "activation / scheduler rollout stage, and a UI for owners to use it",
+    reason:
+      "Marks a fee WAIVED under the student lock, trusting nothing re-read before it — touches exactly one DuesLateFee row and its audit entry, no settlement/obligation/coverage write, ever (every reader already keys off removedAt alone, never removalKind, so a waived fee is excluded from amountDueMinor and never re-assessed for free). Refuses an already-paid fee outright (alreadyPaid: an active, unreversed DuesSettlement points at it) rather than silently crediting, refunding or rewriting history — a reversed settlement is history, not payment, and does not block a waiver. Refuses an already-removed fee (alreadyRemoved) without touching its existing removalKind/removalReason. Owner-only (context.organizationRole === 'ADMIN', checked here); does not extend reversePayment's VOIDED-only reversal restriction to WAIVED (deliberately unchanged — a waiver's premise isn't tied to any payment's timing or existence).",
+  },
 ];
 
 function main() {
