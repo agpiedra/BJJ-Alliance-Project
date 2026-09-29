@@ -44,6 +44,19 @@ export async function lockPolicyShared(tx: Tx, organizationId: string, id: strin
   return rows.length === 1;
 }
 
+/**
+ * A `StudentPlanAssignment` row, `FOR SHARE` (its `planId` is trusted only after this returns). Mirrors `lockTermsShared`/
+ * `lockPolicyShared` exactly. `correctAssignment` (assignment-actions.ts) locks the same row `FOR UPDATE` and only for a row
+ * whose effective month is still future — precisely the rows a prepayment purchase resolves and relies on. Without this lock,
+ * the student lock alone does not serialize a purchase against a concurrent correction of the specific assignment it read,
+ * since the two never contend for the same row. False when the row is not in the organization.
+ */
+export async function lockAssignmentShared(tx: Tx, organizationId: string, id: string): Promise<boolean> {
+  const rows = await tx.$queryRaw<{ id: string }[]>`
+    SELECT "id" FROM "StudentPlanAssignment" WHERE "id" = ${id} AND "organizationId" = ${organizationId} FOR SHARE`;
+  return rows.length === 1;
+}
+
 /** Whether year, month and day name a real calendar date in the years the schema supports (2000 to 2100). */
 export function isRealDate(date: CalendarDate): boolean {
   if (![date.year, date.month, date.day].every(Number.isInteger) || date.year < 2000 || date.year > 2100) return false;

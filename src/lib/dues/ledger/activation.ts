@@ -54,4 +54,20 @@ export interface LedgerDeps {
    * rather than assuming Prisma's transaction semantics "just work" without ever exercising it.
    */
   afterWaiveMarkersForTest?: () => Promise<void>;
+  /**
+   * Test-only synchronization point, called by `prepayMonthlyObligations` (prepay-monthly.ts) immediately after `purchaseInstant`
+   * is captured (right after the branch/student locks succeed, before any gap/limit check or per-month write) — never referenced
+   * by production code, never given a value outside a test. Lets a test pause the purchase there, either to prove a later step
+   * reuses this same captured instant even if wall-clock time moves on while paused, or to hold the branch/student locks open for
+   * a genuine-overlap proof against a concurrent writer.
+   */
+  afterPrepaymentInstantCapturedForTest?: () => Promise<void>;
+  /**
+   * Test-only synchronization point, called by `prepayMonthlyObligations` (prepay-monthly.ts) after every requested month's
+   * obligation has been written (with its provenance audit entry) but before it composes the final settlement — never
+   * referenced by production code, never given a value outside a test. Lets a test force a failure there to prove every
+   * provisional obligation, coverage and audit row rolls back together, rather than assuming Prisma's transaction semantics
+   * "just work" without ever exercising it.
+   */
+  afterPrepaymentObligationsWrittenForTest?: () => Promise<void>;
 }
