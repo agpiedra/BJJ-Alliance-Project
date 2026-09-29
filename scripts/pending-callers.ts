@@ -101,6 +101,14 @@ const KNOWN_LIMITATIONS: KnownLimitation[] = [
     reason:
       "Gated on NODE_ENV!==\"production\" AND E2E_AUTH_BYPASS_SECRET both required (no default value), localhost-only, constant-time secret comparison, and it mints sessions only for an existing user via the exact same activeOrganizationId-resolution function real login uses (src/lib/auth/sign-in-jwt-callback.ts) — proven structurally identical to a real login session by tests/integration/e2e-auth-bypass-equals-real-login.test.ts, not just \"both work.\" None of that changes the shape of the risk: it is a code path whose entire job is minting authenticated sessions without a password, shipped in the same codebase that will eventually run in production. Before launch: confirm the env-var gate is genuinely unreachable in the deployed environment (not just unset by convention), and consider whether it should be deleted outright once it's no longer needed for screenshot verification rather than left in place indefinitely.",
   },
+  {
+    description:
+      "reversePayment permanently refuses reversal of the ENTIRE payment if any of its settlements covers a PREPAYMENT-origin obligation — including once that obligation's coverage month has passed and it looks, in every other respect, like an ordinary settled obligation. There is no partial-reversal mechanism, so a payment that combined ordinary current debt with even one prepaid future month becomes entirely unreversible through this writer, including the ordinary-debt portion.",
+    foundIn: "src/lib/dues/ledger/reverse-payment.ts (prepaymentBlocksReversal); src/lib/dues/ledger/prepay-monthly.ts (origin: 'PREPAYMENT')",
+    dueBy: "Readiness/activation review — must be reconsidered before any organization goes live with both prepayment and reversal exposed",
+    reason:
+      "Approved as a temporary, conservative restriction (monthly-prepayment brief §8): type: 'MONTHLY' alone cannot distinguish a prepayment purchase from an ordinary obligation, so origin is what the check is keyed on. Deliberately does not decide cancellation, refund or coverage-release policy for a prepayment — reversal is refused outright instead of attempting any of those, until a real policy for them exists. Candidate fix: a dedicated prepayment-cancellation writer that decides what happens to the reserved coverage and any refund, then narrows or replaces this blanket reversal refusal.",
+  },
 ];
 
 const PENDING_CALLERS: PendingCaller[] = [
@@ -193,7 +201,18 @@ const PENDING_CALLERS: PendingCaller[] = [
     file: "src/lib/dues/ledger/reverse-payment.ts",
     dueBy: "activation / scheduler rollout stage, and a UI for owners to use it",
     reason:
-      "Reverses a payment and all its active settlements together, in one transaction, under the student lock, trusting nothing re-read before it. Two approved policy decisions: reversing a settlement with a valid, never-voided fee makes both the tuition and the fee owed again (no new logic — the fee row is untouched, so it's already correct); reversing a settlement whose obligation has a VOIDED fee is refused outright (voidedFeeBlocksReversal, a temporary restriction on the obligation's current fee state, not a claim the payment being reversed caused that void — no provenance field added). Refuses type !== MONTHLY (unsupportedObligationType) as a runtime scope boundary — MONTHLY does not distinguish an ordinary obligation from a future prepayment purchase, so supporting prepayment/package settlements later means revisiting this writer before either is exposed. Owner-only (context.organizationRole === 'ADMIN', checked here); refunds, fee restoration and cancellation remain out of scope.",
+      "Reverses a payment and all its active settlements together, in one transaction, under the student lock, trusting nothing re-read before it. Two approved policy decisions: reversing a settlement with a valid, never-voided fee makes both the tuition and the fee owed again (no new logic — the fee row is untouched, so it's already correct); reversing a settlement whose obligation has a VOIDED fee is refused outright (voidedFeeBlocksReversal, a temporary restriction on the obligation's current fee state, not a claim the payment being reversed caused that void — no provenance field added). Refuses type !== MONTHLY (unsupportedObligationType) as a runtime scope boundary. Monthly-prepayment brief: now ALSO refuses (prepaymentBlocksReversal) the WHOLE payment if any settlement covers a PREPAYMENT-origin obligation — PERMANENTLY (origin never changes back), a readiness-review item (see KNOWN_LIMITATIONS below) that must be reconsidered before activation, since it makes an entire mixed payment (ordinary debt included) unreversible once it touches even one prepaid month. Owner-only (context.organizationRole === 'ADMIN', checked here); refunds, fee restoration and cancellation remain out of scope.",
+  },
+  // Monthly-prepayment brief: an owner pays ahead for consecutive future months, atomically created and settled together with
+  // any named current debt. No production caller exists on purpose — not a route, not a server action, no scheduler entry, no
+  // UI. Lives inside src/lib/dues/ledger/ (it composes writeMonthlyObligationInTx/recordDuesPaymentInTx/lockStudent directly),
+  // so it needs no entry in the ledger's own no-caller guard.
+  {
+    symbol: "prepayMonthlyObligations",
+    file: "src/lib/dues/ledger/prepay-monthly.ts",
+    dueBy: "activation / scheduler rollout stage, and a UI for owners to use it",
+    reason:
+      "Creates and settles N future MONTHLY obligations (origin: 'PREPAYMENT') plus any named current debt, atomically, under the student lock, reusing writeMonthlyObligationInTx (create-monthly-obligation.ts's internal core, extracted for this brief) and recordDuesPaymentInTx unmodified. maxPrepaidMonths is a standing calendar horizon from the branch's current month (not per-purchase), resolved from the policy effective at recording time, never from a backdated receivedOn. Owner-only (context.organizationRole === 'ADMIN', checked here; D5 for ordinary recordDuesPayment stays exactly as pending as before). READINESS-REVIEW ITEM, required before activation: reversePayment now refuses PERMANENTLY, for the WHOLE payment, any reversal touching a PREPAYMENT-origin obligation (see reversePayment's own entry above and KNOWN_LIMITATIONS below) — a temporary restriction with no cancellation/coverage-release policy behind it yet.",
   },
   // Late-fee-waiver brief: an owner forgives a genuinely, correctly assessed fee anyway (policy, unlike VOID's factual
   // correction). No production caller exists on purpose — not a route, not a server action, no scheduler entry, no UI. Lives

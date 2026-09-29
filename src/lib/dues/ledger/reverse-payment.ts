@@ -23,6 +23,16 @@ import { inTenantScope, lockStudent } from "@/lib/dues/ledger/common";
  *    "the void it caused," and none is added here; restoring, cancelling, or otherwise deciding what happens to a voided fee is
  *    explicitly out of scope until that policy is decided.
  *
+ * MONTHLY-PREPAYMENT BRIEF §8, APPROVED, A READINESS-REVIEW ITEM: if any obligation behind the settlements being reversed has
+ * `origin: "PREPAYMENT"`, this refuses the WHOLE reversal (`prepaymentBlocksReversal`), PERMANENTLY — `origin` never changes
+ * back, so this restriction never lifts once the obligation's coverage month becomes current or past, even though it then looks,
+ * in every other respect, like an ordinary settled obligation. A `MONTHLY` `type` alone cannot distinguish a prepayment purchase
+ * from an ordinary obligation (prepayment would plausibly also use `type: MONTHLY`, just a not-yet-current `coverageMonth`), so
+ * `origin` is what this check is keyed on instead. Because reversal is whole-payment, not partial, a payment that combined
+ * ordinary current debt with even one prepaid future month becomes entirely unreversible through this writer — including the
+ * ordinary-debt portion. This is deliberate and conservative, pending a real prepayment-reversal/cancellation policy this writer
+ * does not design, and is tracked as a standing limitation for the readiness/activation review (`scripts/pending-callers.ts`).
+ *
  * SUPPORTED SCOPE: `type: "MONTHLY"` obligations only, refused otherwise (`unsupportedObligationType`) — a defensive boundary
  * checked at runtime, not proof that nothing else can exist. `DuesSettlement`'s own foreign key carries no type restriction, and
  * `type: "MONTHLY"` does NOT distinguish an ordinary obligation from a future prepayment purchase (prepayment would plausibly
@@ -43,13 +53,14 @@ export type ReversePaymentError =
   | "alreadyReversed"
   | "inconsistentState"
   | "unsupportedObligationType"
-  | "voidedFeeBlocksReversal";
+  | "voidedFeeBlocksReversal"
+  | "prepaymentBlocksReversal";
 
 export type ReversePaymentResult = { ok: true; paymentId: string; settlementIds: string[] } | { ok: false; error: ReversePaymentError };
 
 const refuse = (error: ReversePaymentError): ReversePaymentResult => ({ ok: false, error });
 
-type SettlementState = { id: string; reversedAt: Date | null; obligation: { type: string; lateFees: { removalKind: string | null }[] } };
+type SettlementState = { id: string; reversedAt: Date | null; obligation: { type: string; origin: string; lateFees: { removalKind: string | null }[] } };
 
 export async function reversePayment(
   args: { context: TenantContext; paymentId: string; reversalReason: string },
@@ -74,7 +85,7 @@ export async function reversePayment(
       select: {
         id: true,
         reversedAt: true,
-        obligation: { select: { type: true, lateFees: { select: { removalKind: true } } } },
+        obligation: { select: { type: true, origin: true, lateFees: { select: { removalKind: true } } } },
       },
     },
   } as const;
@@ -100,6 +111,7 @@ export async function reversePayment(
 
     if (settlements.some((s) => s.obligation.type !== "MONTHLY")) return refuse("unsupportedObligationType");
     if (settlements.some((s) => s.obligation.lateFees.some((f) => f.removalKind === "VOIDED"))) return refuse("voidedFeeBlocksReversal");
+    if (settlements.some((s) => s.obligation.origin === "PREPAYMENT")) return refuse("prepaymentBlocksReversal");
 
     const reversedAt = (deps.now ?? (() => new Date()))();
     const reason = reversalReason.trim();
