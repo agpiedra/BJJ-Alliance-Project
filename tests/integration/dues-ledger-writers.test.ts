@@ -735,6 +735,50 @@ describe("recordDuesPayment: validate first, then write", () => {
 });
 
 /**
+ * Package-purchase brief's own review restored an assertion the recordDuesPaymentInTx/writeSettlementInTx extraction had
+ * silently dropped: the original, pre-extraction code computed `feeOwed` per chosen obligation during validation, then
+ * cross-checked it against `assessLateFeeInTx`'s own fresh read at write time, throwing (forcing full rollback) if they
+ * ever disagreed — "should be impossible under the same lock, but never trust that without checking." Proven here with a
+ * GENUINE disagreement, not a mocked return value: a test-only hook (`beforeSettlementFeeCheckForTest`) mutates real
+ * DuesLateFee state for the target obligation, inside the SAME transaction, immediately before assessLateFeeInTx's own
+ * read — the only way to construct a real divergence, since nothing else can run concurrently while the transaction
+ * holds the student lock. `purchasePackage`'s own MONTHLY debt items go through this identical shared write path
+ * (writeSettlementInTx); proving it here, once, on its original home, covers both callers.
+ */
+describe("recordDuesPayment: the validated fee state is cross-checked against assessLateFeeInTx's own fresh read", () => {
+  it("a genuine disagreement (forced via the test-only hook) rolls back everything — no fee row, no payment, no settlement, no audit entry survives", async () => {
+    const ana = await newStudent(a, a.academy.id, "crosscheck");
+    const [sep] = await threeMonths(ana.id);
+    const before = await counts(a.org.id);
+
+    await expect(
+      recordDuesPayment(
+        {
+          context: context(a), studentId: ana.id, receivedOn: { year: 2030, month: 10, day: 5 }, tender: { currency: "USD", amount: "100.00" },
+          method: "EFECTIVO", obligationIds: [sep], maxBackdateDays: 5,
+        },
+        {
+          ...deps(OCT_5),
+          beforeSettlementFeeCheckForTest: async (tx, obligationId) => {
+            if (obligationId !== sep) return;
+            // Settling ON TIME (Oct 5, the inclusive grace deadline) computed expectedOwed: false during validation.
+            // Inserting an ACTIVE fee row directly, right before assessLateFeeInTx's own fresh read, makes it find this
+            // row and report owed: true — a genuine disagreement with what validation already computed.
+            await tx.$executeRawUnsafe(
+              `INSERT INTO "DuesLateFee" ("id", "organizationId", "obligationId", "assessableFrom") VALUES ($1, $2, $3, $4)`,
+              `forced-${sep}`, a.org.id, obligationId, new Date("2030-10-06T00:00:00Z"),
+            );
+          },
+        },
+      ),
+    ).rejects.toThrow("disagreed");
+
+    expect(await counts(a.org.id)).toEqual(before);
+    expect(await prisma.duesLateFee.findFirst({ where: { obligationId: sep } })).toBeNull();
+  });
+});
+
+/**
  * A payment's total is a sum of obligation amounts, but the sum, and even a single obligation's tuition plus its own late fee, is not
  * bounded by the CHECK constraints that bound each column alone: two obligations each within Decimal(10,2)'s range can sum past it,
  * and a fee added to near-maximum tuition can too. `minorToDecimal` refuses (by design) to format such a value, so any code path that

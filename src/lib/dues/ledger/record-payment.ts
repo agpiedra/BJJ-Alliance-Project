@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import type { TenantContext } from "@/lib/tenant/types";
 import { compareDates, type CalendarDate } from "@/lib/dues/calendar";
 import { parseMoney } from "@/lib/dues/config-input";
-import { feeAssessableFrom, lateFeeApplies, lateFeeToAssessMinor, orderOldestFirst, outstandingItems, settleReceipt, type ObligationTerms } from "@/lib/dues/settlement";
+import { amountDueMinor, feeAssessableFrom, lateFeeApplies, lateFeeToAssessMinor, orderOldestFirst, outstandingItems, settleReceipt, type ObligationTerms, type SettlementItem } from "@/lib/dues/settlement";
 import { inactiveLedgerActivation, type LedgerDeps } from "@/lib/dues/ledger/activation";
 import { fromDbDate, inTenantScope, isRealDate, lockStudent, minusDays, todayIn, toDbDate, type Tx } from "@/lib/dues/ledger/common";
 import { MAX_MINOR_UNITS, columnToMinor, decimalToMinor, minorToDecimal } from "@/lib/dues/ledger/minor-units";
@@ -166,11 +166,21 @@ const refuse = (error: RecordDuesPaymentError, extra: { selectableTotals?: strin
 const ymd = (d: CalendarDate) => `${d.year}-${String(d.month).padStart(2, "0")}-${String(d.day).padStart(2, "0")}`;
 
 /**
+ * Package-purchase brief §5: one thing this writer's shared settlement core settles, already priced and ordered by its
+ * caller. `feeEligible` is true only for a `MONTHLY` item that should go through `assessLateFeeInTx`; a package item is
+ * never fee-eligible (packages structurally cannot carry a late fee — `DuesObligation_shape_by_type`). `expectedOwed` is
+ * only meaningful when `feeEligible` is true: the fee-owed state validation already computed for this item, checked
+ * against `assessLateFeeInTx`'s own fresh read at write time (`writeSettlementInTx`) — restored from the original,
+ * pre-extraction code, which asserted the two can never disagree under the same lock rather than assuming it.
+ */
+export type SettlementLineItem = { obligationId: string; currency: Currency; amountMinor: number; feeEligible: boolean; expectedOwed: boolean };
+
+/**
  * The running totals, oldest first, this writer could actually offer for a refusal message: at most `MAX_SELECTED` obligations, and only
  * while the cumulative amount still fits `Decimal(10,2)` (`MAX_MINOR_UNITS`). Stops at the first count or amount it cannot represent — a
  * later, larger total is simply never offered; it never withholds an earlier, still-payable prefix.
  */
-function selectablePrefixTotals(items: readonly { amountMinor: number }[]): string[] {
+export function selectablePrefixTotals(items: readonly { amountMinor: number }[]): string[] {
   const totals: string[] = [];
   let running = 0;
   for (let i = 0; i < items.length && i < MAX_SELECTED; i++) {
@@ -204,6 +214,163 @@ function validatePaymentInput(input: {
   if (!Number.isInteger(input.maxBackdateDays) || input.maxBackdateDays < 0 || input.maxBackdateDays > MAX_BACKDATE_DAYS) return "invalid";
   if (input.notes !== undefined && (typeof input.notes !== "string" || input.notes.length > MAX_NOTES)) return "invalid";
   return null;
+}
+
+/**
+ * Package-purchase brief §5: `recordDuesPaymentInTx`'s own "load every open `MONTHLY` obligation, validate the caller's
+ * chosen ids are exactly the oldest-first prefix, refuse a re-chargeable `feeAlreadyAssessed` case" logic, extracted so the
+ * package writer can validate ITS OWN named current-debt ids the identical way — not a second, drifting copy of this
+ * validation. Returns two things: `chosenItems` (only the caller's own ids, in settlement order, each already priced) for a
+ * caller building its own combined item list (the package writer appends its package item after these); `allOpenItems`
+ * (every open `MONTHLY` obligation, oldest first) for a caller that offers `settleReceipt` totals against the FULL picture,
+ * not just what was chosen (`recordDuesPaymentInTx`'s own, unchanged behavior).
+ */
+export type ResolveMonthlyDebtResult =
+  | { ok: true; chosenItems: SettlementLineItem[]; allOpenItems: SettlementItem[] }
+  | { ok: false; error: "notFound" | "alreadySettled" | "notOldestFirst" | "feeAlreadyAssessed"; alreadySettledIds?: string[] };
+
+export async function resolveMonthlyDebtItemsInTx(
+  tx: Tx,
+  args: { organizationId: string; studentId: string; obligationIds: string[]; receivedOn: CalendarDate },
+): Promise<ResolveMonthlyDebtResult> {
+  const { organizationId, studentId, obligationIds, receivedOn } = args;
+  const all = await tx.duesObligation.findMany({
+    where: { organizationId, studentId, type: "MONTHLY" },
+    include: { lateFees: true, settlements: { where: { reversedAt: null }, select: { id: true } } },
+  });
+  const byId = new Map(all.map((o) => [o.id, o]));
+  const selected = obligationIds.map((id) => byId.get(id));
+  // an unknown id, another student's, another organization's, or a non-monthly one: all look the same, and nothing is revealed
+  if (selected.some((o) => o === undefined)) return { ok: false, error: "notFound" };
+  const chosen = selected as NonNullable<(typeof selected)[number]>[];
+
+  // A replay (a lost response resent) finds its own obligations already settled: refused, never re-applied to later months.
+  const settledIds = chosen.filter((o) => o.settlements.length > 0).map((o) => o.id);
+  if (settledIds.length > 0) return { ok: false, error: "alreadySettled", alreadySettledIds: settledIds };
+
+  const open = all.filter((o) => o.settlements.length === 0);
+  const asTerms = (o: (typeof all)[number]): ObligationTerms => {
+    if (o.graceDeadline === null) throw new Error(`Monthly obligation ${o.id} has no grace deadline`);
+    const removed = o.lateFees[0]?.removedAt != null;
+    return {
+      id: o.id,
+      coverage: { year: o.coverageYear, month: o.coverageMonth },
+      currency: o.currency,
+      tuitionMinor: columnToMinor(o.amount),
+      // a waived or voided fee is not owed: preserved as it is, never re-charged
+      lateFeeMinor: removed || o.lateFeeAmount === null ? 0 : columnToMinor(o.lateFeeAmount),
+      graceDeadline: fromDbDate(o.graceDeadline),
+    };
+  };
+  const openTerms = open.map(asTerms);
+
+  // Oldest first, and the chosen ids must be exactly the first k outstanding: nothing older may be skipped.
+  const ordered = orderOldestFirst(openTerms.map((t) => ({ id: t.id, coverage: t.coverage })));
+  const firstK = ordered.slice(0, chosen.length).map((t) => t.id);
+  const chosenIds = new Set(chosen.map((o) => o.id));
+  if (firstK.length !== chosen.length || !firstK.every((id) => chosenIds.has(id))) return { ok: false, error: "notOldestFirst" };
+
+  // Fee state of the chosen obligations. An active fee already assessed cannot be removed by an earlier received date here.
+  // `feeOwed` is carried forward into each item's `expectedOwed` — restored from the original, pre-extraction code, which
+  // cross-checked this against `assessLateFeeInTx`'s own fresh read at write time rather than trusting it silently.
+  const termsById = new Map(openTerms.map((t) => [t.id, t]));
+  const feeOwed = new Map<string, boolean>();
+  for (const o of chosen) {
+    const t = termsById.get(o.id)!;
+    const late = lateFeeApplies(receivedOn, t.graceDeadline);
+    const feeRow = o.lateFees[0] ?? null;
+    const removed = feeRow?.removedAt != null;
+    if (!late && feeRow && !removed) return { ok: false, error: "feeAlreadyAssessed" };
+    feeOwed.set(o.id, late && t.lateFeeMinor > 0);
+  }
+
+  const allOpenItems = outstandingItems(openTerms, receivedOn);
+  const settlementOrder = chosen.slice().sort((x, y) => firstK.indexOf(x.id) - firstK.indexOf(y.id));
+  const chosenItems: SettlementLineItem[] = settlementOrder.map((o) => {
+    const t = termsById.get(o.id)!;
+    return { obligationId: o.id, currency: t.currency, amountMinor: amountDueMinor(t, receivedOn), feeEligible: true, expectedOwed: feeOwed.get(o.id) ?? false };
+  });
+  return { ok: true, chosenItems, allOpenItems };
+}
+
+/**
+ * Package-purchase brief §5: `recordDuesPaymentInTx`'s own final write ("every check passed: write, atomically") — assess a
+ * fee per fee-eligible item, create the payment, one settlement per item, and the audit row — extracted so the package
+ * writer can settle its OWN combined list (current debt, plus exactly one package item, never fee-eligible) through the
+ * identical write path, rather than a second, duplicated one. Assumes every validation has already passed: it does not
+ * re-run `settleReceipt` or any oldest-first/currency/total check itself — the caller decides `settledItems`, already
+ * ordered, already exactly what is being settled.
+ */
+export async function writeSettlementInTx(
+  tx: Tx,
+  args: {
+    context: TenantContext;
+    student: { id: string; homeAcademyId: string };
+    receivedOn: CalendarDate;
+    tender: { currency: Currency; amount: string };
+    method: PaymentMethod;
+    notes?: string;
+    settledItems: SettlementLineItem[];
+  },
+  deps: LedgerDeps = {},
+): Promise<{ paymentId: string; settlementIds: string[]; feeIds: string[] }> {
+  const { context, student, receivedOn, tender, method, notes, settledItems } = args;
+  const organizationId = context.organizationId;
+
+  const feeIds: string[] = [];
+  const lateFeeFor = new Map<string, string | null>();
+  for (const item of settledItems) {
+    if (item.feeEligible) {
+      // Test-only: lets a test mutate fee/settlement state for this exact obligation, inside this same transaction, right
+      // before the fresh read below — the only way to construct a genuine disagreement for the assertion that follows,
+      // since nothing else can run concurrently while this transaction holds the student lock. Never referenced in production.
+      if (deps.beforeSettlementFeeCheckForTest) await deps.beforeSettlementFeeCheckForTest(tx, item.obligationId);
+      // assessLateFeeInTx re-reads obligation/settlement/fee state itself, fresh, under this same lock — it does not trust
+      // whatever validation already read. asOf: receivedOn — lateness is judged by the RECEIVED date of THIS settlement.
+      const assessed = await assessLateFeeInTx(tx, { context, obligationId: item.obligationId, asOf: receivedOn, actorId: context.actorUserId }, deps);
+      if (!assessed.ok) throw new Error(`assessLateFeeInTx unexpectedly refused (${assessed.error}) for obligation ${item.obligationId} inside an already-validated payment`);
+      // Under this held lock, re-reading the same data validation already read cannot disagree — but if it somehow ever
+      // does, abort the whole transaction rather than commit a settlement whose lateFeeId doesn't match what was actually
+      // decided. Restored: the pre-extraction code asserted this; the split into resolveMonthlyDebtItemsInTx/writeSettlementInTx
+      // must not silently drop it.
+      if (item.expectedOwed !== assessed.owed) {
+        throw new Error(`assessLateFeeInTx's fresh read disagreed with the caller's own validated fee state for obligation ${item.obligationId}`);
+      }
+      if (assessed.created && assessed.feeId) feeIds.push(assessed.feeId);
+      // lateFeeId references an ACTIVE fee only — never a waived/voided one.
+      lateFeeFor.set(item.obligationId, assessed.owed ? assessed.feeId : null);
+    } else {
+      lateFeeFor.set(item.obligationId, null);
+    }
+  }
+
+  const parsedAmount = parseMoney(tender.amount, { allowZero: false });
+  if (!parsedAmount.ok) throw new Error(`writeSettlementInTx received an unparseable tender amount after the caller's own validation: ${tender.amount}`);
+
+  const payment = await tx.duesPayment.create({
+    data: {
+      organizationId, studentId: student.id, academyId: student.homeAcademyId, receivedOn: toDbDate(receivedOn), tenderCurrency: tender.currency,
+      tenderAmount: parsedAmount.value, method, recordedById: context.actorUserId, notes: notes && notes.trim() !== "" ? notes.trim() : null,
+    },
+  });
+  const settlementIds: string[] = [];
+  for (const item of settledItems) {
+    const settlement = await tx.duesSettlement.create({
+      data: { organizationId, studentId: student.id, paymentId: payment.id, obligationId: item.obligationId, lateFeeId: lateFeeFor.get(item.obligationId) ?? null },
+    });
+    settlementIds.push(settlement.id);
+  }
+  await tx.auditLog.create({
+    data: {
+      actorId: context.actorUserId, organizationId, academyId: student.homeAcademyId, action: "duesPayment.record", entityType: "DuesPayment", entityId: payment.id,
+      before: Prisma.DbNull,
+      after: {
+        studentId: student.id, receivedOn: ymd(receivedOn), tenderCurrency: tender.currency, tenderAmount: parsedAmount.value, method,
+        obligations: settledItems.map((item) => ({ obligationId: item.obligationId, lateFeeId: lateFeeFor.get(item.obligationId) ?? null })),
+      },
+    },
+  });
+  return { paymentId: payment.id, settlementIds, feeIds };
 }
 
 /**
@@ -256,117 +423,30 @@ export async function recordDuesPaymentInTx(
   if (compareDates(receivedOn, minusDays(today, maxBackdateDays)) < 0) return refuse("tooOld");
 
   // ---- load, then validate. NOTHING is written until every check below has passed. ----
-  const all = await tx.duesObligation.findMany({
-        where: { organizationId, studentId: student.id, type: "MONTHLY" },
-        include: { lateFees: true, settlements: { where: { reversedAt: null }, select: { id: true } } },
-      });
-      const byId = new Map(all.map((o) => [o.id, o]));
-      const selected = obligationIds.map((id) => byId.get(id));
-      // an unknown id, another student's, another organization's, or a non-monthly one: all look the same, and nothing is revealed
-      if (selected.some((o) => o === undefined)) return refuse("notFound");
-      const chosen = selected as NonNullable<(typeof selected)[number]>[];
+  const debtResult = await resolveMonthlyDebtItemsInTx(tx, { organizationId, studentId: student.id, obligationIds, receivedOn });
+  if (!debtResult.ok) return refuse(debtResult.error, { alreadySettledIds: debtResult.alreadySettledIds });
+  const { chosenItems, allOpenItems } = debtResult;
+  const chosenIds = new Set(chosenItems.map((i) => i.obligationId));
 
-      // A replay (a lost response resent) finds its own obligations already settled: refused, never re-applied to later months.
-      const settledIds = chosen.filter((o) => o.settlements.length > 0).map((o) => o.id);
-      if (settledIds.length > 0) return refuse("alreadySettled", { alreadySettledIds: settledIds });
+  // The oldest outstanding obligation's own amount due can itself exceed what a payment column can hold (tuition plus its own
+  // applicable fee, each individually in range, summed). Oldest-first admits no way to settle anything while it stands, so this is
+  // refused explicitly here — before the totals below are even built — never split, waived or clamped.
+  if (allOpenItems.length > 0 && allOpenItems[0].amountMinor > MAX_MINOR_UNITS) return refuse("amountUnsupported");
 
-      const open = all.filter((o) => o.settlements.length === 0);
-      const asTerms = (o: (typeof all)[number]): ObligationTerms => {
-        if (o.graceDeadline === null) throw new Error(`Monthly obligation ${o.id} has no grace deadline`);
-        const removed = o.lateFees[0]?.removedAt != null;
-        return {
-          id: o.id,
-          coverage: { year: o.coverageYear, month: o.coverageMonth },
-          currency: o.currency,
-          tuitionMinor: columnToMinor(o.amount),
-          // a waived or voided fee is not owed: preserved as it is, never re-charged
-          lateFeeMinor: removed || o.lateFeeAmount === null ? 0 : columnToMinor(o.lateFeeAmount),
-          graceDeadline: fromDbDate(o.graceDeadline),
-        };
-      };
-      const openTerms = open.map(asTerms);
+  // The exact total: the tender must equal the running total of the first k obligations at their amount due on the received date,
+  // in one currency (PR 1's validator), AND that k must be the number of obligations the caller chose. Offered against every open
+  // obligation (not just the chosen ones), so a caller who under-selects still gets useful selectableTotals.
+  const result = settleReceipt(allOpenItems, tenderMinor, tender.currency);
+  if (!result.ok) {
+    return result.reason === "CURRENCY_MISMATCH" ? refuse("currencyMismatch") : refuse("notASelectableTotal", { selectableTotals: selectablePrefixTotals(allOpenItems) });
+  }
+  if (result.settledIds.length !== chosenItems.length || !result.settledIds.every((id) => chosenIds.has(id))) {
+    return refuse("totalMismatch", { selectableTotals: selectablePrefixTotals(allOpenItems) });
+  }
 
-      // Oldest first, and the chosen ids must be exactly the first k outstanding: nothing older may be skipped.
-      const ordered = orderOldestFirst(openTerms.map((t) => ({ id: t.id, coverage: t.coverage })));
-      const firstK = ordered.slice(0, chosen.length).map((t) => t.id);
-      const chosenIds = new Set(chosen.map((o) => o.id));
-      if (firstK.length !== chosen.length || !firstK.every((id) => chosenIds.has(id))) return refuse("notOldestFirst");
-
-      // Fee state of the chosen obligations. An active fee already assessed cannot be removed by an earlier received date here.
-      const termsById = new Map(openTerms.map((t) => [t.id, t]));
-      const feeOwed = new Map<string, boolean>();
-      for (const o of chosen) {
-        const t = termsById.get(o.id)!;
-        const late = lateFeeApplies(receivedOn, t.graceDeadline);
-        const feeRow = o.lateFees[0] ?? null;
-        const removed = feeRow?.removedAt != null;
-        if (!late && feeRow && !removed) return refuse("feeAlreadyAssessed");
-        feeOwed.set(o.id, late && t.lateFeeMinor > 0);
-      }
-
-      // The exact total: the tender must equal the running total of the first k obligations at their amount due on the received date,
-      // in one currency (PR 1's validator), AND that k must be the number of obligations the caller chose.
-      const items = outstandingItems(openTerms, receivedOn);
-
-      // The oldest outstanding obligation's own amount due can itself exceed what a payment column can hold (tuition plus its own
-      // applicable fee, each individually in range, summed). Oldest-first admits no way to settle anything while it stands, so this is
-      // refused explicitly here — before the totals below are even built — never split, waived or clamped.
-      if (items.length > 0 && items[0].amountMinor > MAX_MINOR_UNITS) return refuse("amountUnsupported");
-
-      const result = settleReceipt(items, tenderMinor, tender.currency);
-      if (!result.ok) {
-        return result.reason === "CURRENCY_MISMATCH" ? refuse("currencyMismatch") : refuse("notASelectableTotal", { selectableTotals: selectablePrefixTotals(items) });
-      }
-      if (result.settledIds.length !== chosen.length || !result.settledIds.every((id) => chosenIds.has(id))) {
-        return refuse("totalMismatch", { selectableTotals: selectablePrefixTotals(items) });
-      }
-
-      // ---- every check passed: write, atomically ----
-      const settlementOrder = chosen.slice().sort((x, y) => firstK.indexOf(x.id) - firstK.indexOf(y.id));
-      const feeIds: string[] = [];
-      const lateFeeFor = new Map<string, string | null>();
-      for (const o of settlementOrder) {
-        // assessLateFeeInTx re-reads obligation/settlement/fee state itself, fresh, under this same lock — it does not trust the
-        // `feeOwed`/`o.lateFees` snapshot validation already computed above. `asOf: receivedOn`: lateness is judged by the RECEIVED
-        // date of THIS settlement, not by whatever the real clock reads while this transaction happens to run.
-        const assessed = await assessLateFeeInTx(tx, { context, obligationId: o.id, asOf: receivedOn, actorId: context.actorUserId }, deps);
-        // Under this held lock, re-reading the same data validation already read cannot disagree — but if it somehow ever does, abort
-        // the whole transaction rather than commit a settlement whose lateFeeId doesn't match what was actually decided.
-        if (!assessed.ok) throw new Error(`assessLateFeeInTx unexpectedly refused (${assessed.error}) for obligation ${o.id} inside an already-validated payment`);
-        const expectedOwed = feeOwed.get(o.id) ?? false;
-        if (expectedOwed !== assessed.owed) {
-          throw new Error(`assessLateFeeInTx's fresh read disagreed with recordDuesPayment's own validated fee state for obligation ${o.id}`);
-        }
-        if (assessed.created && assessed.feeId) feeIds.push(assessed.feeId);
-        // lateFeeId references an ACTIVE fee only — never a waived/voided one, even if assessLateFeeInTx found that row (its
-        // `feeId` answers "does a fee row exist," not "is it owed"; `owed` is the one this decision actually turns on).
-        lateFeeFor.set(o.id, assessed.owed ? assessed.feeId : null);
-      }
-
-      const payment = await tx.duesPayment.create({
-        data: {
-          organizationId, studentId: student.id, academyId: student.homeAcademyId, receivedOn: toDbDate(receivedOn), tenderCurrency: tender.currency,
-          tenderAmount: parsedAmount.value, method, recordedById: context.actorUserId, notes: notes && notes.trim() !== "" ? notes.trim() : null,
-        },
-      });
-      const settlementIds: string[] = [];
-      for (const o of settlementOrder) {
-        const settlement = await tx.duesSettlement.create({
-          data: { organizationId, studentId: student.id, paymentId: payment.id, obligationId: o.id, lateFeeId: lateFeeFor.get(o.id) ?? null },
-        });
-        settlementIds.push(settlement.id);
-      }
-      await tx.auditLog.create({
-        data: {
-          actorId: context.actorUserId, organizationId, academyId: student.homeAcademyId, action: "duesPayment.record", entityType: "DuesPayment", entityId: payment.id,
-          before: Prisma.DbNull,
-          after: {
-            studentId: student.id, receivedOn: ymd(receivedOn), tenderCurrency: tender.currency, tenderAmount: parsedAmount.value, method,
-            obligations: settlementOrder.map((o) => ({ obligationId: o.id, lateFeeId: lateFeeFor.get(o.id) ?? null })),
-          },
-        },
-      });
-      return { ok: true, paymentId: payment.id, settlementIds, feeIds, totalMinor: tenderMinor };
+  // ---- every check passed: write, atomically ----
+  const written = await writeSettlementInTx(tx, { context, student, receivedOn, tender, method, notes, settledItems: chosenItems }, deps);
+  return { ok: true, paymentId: written.paymentId, settlementIds: written.settlementIds, feeIds: written.feeIds, totalMinor: tenderMinor };
 }
 
 /**

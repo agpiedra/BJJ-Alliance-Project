@@ -1,3 +1,5 @@
+import type { Tx } from "@/lib/dues/ledger/common";
+
 /**
  * The seam that keeps the first ledger writers (PR 4a) closed to live billing until the approved activation stage.
  *
@@ -70,4 +72,27 @@ export interface LedgerDeps {
    * "just work" without ever exercising it.
    */
   afterPrepaymentObligationsWrittenForTest?: () => Promise<void>;
+  /**
+   * Test-only synchronization point, called by `purchasePackage` (purchase-package.ts) immediately after `purchaseInstant` is
+   * captured (right after the branch/student locks succeed) — never referenced by production code, never given a value
+   * outside a test. Mirrors `afterPrepaymentInstantCapturedForTest`'s role for this writer.
+   */
+  afterPackagePurchaseInstantCapturedForTest?: () => Promise<void>;
+  /**
+   * Test-only synchronization point, called by `purchasePackage` (purchase-package.ts) after the package's own
+   * `DuesObligation`, every `DuesCoverage` row and its audit entry are written, but before it resolves any current-debt
+   * settlement — never referenced by production code, never given a value outside a test. Lets a test force a failure there
+   * to prove the package obligation and every coverage row roll back together, or hold the branch/student locks open for a
+   * genuine-overlap proof against a concurrent writer.
+   */
+  afterPackageObligationWrittenForTest?: () => Promise<void>;
+  /**
+   * Test-only synchronization point, called by `writeSettlementInTx` (record-payment.ts) right before it calls
+   * `assessLateFeeInTx` for each fee-eligible item — never referenced by production code, never given a value outside a
+   * test. Receives the open transaction itself so a test can mutate fee/settlement state for that exact obligation,
+   * inside the SAME transaction, right before the fresh read — the only way to construct a genuine disagreement with
+   * what validation already computed (`SettlementLineItem.expectedOwed`), since nothing else can run concurrently while
+   * this transaction holds the student lock. Proves the restored cross-check actually fires and rolls back everything.
+   */
+  beforeSettlementFeeCheckForTest?: (tx: Tx, obligationId: string) => Promise<void>;
 }

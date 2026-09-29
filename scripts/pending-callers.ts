@@ -225,6 +225,17 @@ const PENDING_CALLERS: PendingCaller[] = [
     reason:
       "Marks a fee WAIVED under the student lock, trusting nothing re-read before it — touches exactly one DuesLateFee row and its audit entry, no settlement/obligation/coverage write, ever (every reader already keys off removedAt alone, never removalKind, so a waived fee is excluded from amountDueMinor and never re-assessed for free). Refuses an already-paid fee outright (alreadyPaid: an active, unreversed DuesSettlement points at it) rather than silently crediting, refunding or rewriting history — a reversed settlement is history, not payment, and does not block a waiver. Refuses an already-removed fee (alreadyRemoved) without touching its existing removalKind/removalReason. Owner-only (context.organizationRole === 'ADMIN', checked here); does not extend reversePayment's VOIDED-only reversal restriction to WAIVED (deliberately unchanged — a waiver's premise isn't tied to any payment's timing or existence).",
   },
+  // Package-purchase brief: an owner buys one multi-month package, atomically created and settled together with any named
+  // current debt. No production caller exists on purpose — not a route, not a server action, no scheduler entry, no UI.
+  // Lives inside src/lib/dues/ledger/ (it composes resolveMonthlyDebtItemsInTx/writeSettlementInTx/firstUncoveredFrom
+  // directly), so it needs no entry in the ledger's own no-caller guard.
+  {
+    symbol: "purchasePackage",
+    file: "src/lib/dues/ledger/purchase-package.ts",
+    dueBy: "activation / scheduler rollout stage, and a UI for owners to use it",
+    reason:
+      "Creates one type: 'PACKAGE' DuesObligation and every one of its monthsCovered DuesCoverage rows, then settles it (plus any named current MONTHLY debt) in the same receipt, atomically, under the student lock. Reuses recordDuesPaymentInTx's own settlement core (resolveMonthlyDebtItemsInTx, writeSettlementInTx — both extracted from record-payment.ts for this brief, recordDuesPaymentInTx's own MONTHLY-only public contract and validation left unchanged) rather than a second, duplicated settlement path. The prepayment horizon (maxPrepaidMonths) also bounds a package's final covered month, resolved from the policy effective at recording time; the requested terms/version must still be the currently-effective one or the purchase is refused (staleTerms) rather than silently repriced; the requested start month must be exactly the true first-uncovered month, floored at the CURRENT branch-local month (a package may start immediately, unlike prepayment's currentMonth + 1 floor) and never substituted on retry. Because settleReceipt accepts a shorter prefix, a receipt matching only the current-debt portion is explicitly detected and refused (rolling back the package obligation and every coverage row) rather than treated as a partial success. Owner-only (context.organizationRole === 'ADMIN', checked here; D5 for ordinary recordDuesPayment stays exactly as pending as before). Reversal is already refused by reverse-payment.ts's existing type !== 'MONTHLY' check — no change to that writer was needed.",
+  },
 ];
 
 function main() {
