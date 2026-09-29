@@ -47,4 +47,11 @@ export interface LedgerDeps {
    * back together, rather than assuming Prisma's transaction semantics "just work" without ever exercising it.
    */
   afterReversalMarkersForTest?: () => Promise<void>;
+  /**
+   * Test-only synchronization point, called by `waiveLateFee` (waive-late-fee.ts) right after the fee's removal marker and its
+   * own audit row are written, but before the transaction commits — never referenced by production code, never given a value
+   * outside a test. Lets a test force a failure at that point to prove the marker rolls back together with the audit row,
+   * rather than assuming Prisma's transaction semantics "just work" without ever exercising it.
+   */
+  afterWaiveMarkersForTest?: () => Promise<void>;
 }
