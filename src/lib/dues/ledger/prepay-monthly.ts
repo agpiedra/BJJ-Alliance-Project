@@ -1,7 +1,7 @@
 import { Prisma, type Currency, type PaymentMethod } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import type { TenantContext } from "@/lib/tenant/types";
-import { compareYearMonth, type CalendarDate, type YearMonth } from "@/lib/dues/calendar";
+import { addMonths, compareYearMonth, type CalendarDate, type YearMonth } from "@/lib/dues/calendar";
 import { currentMonthIn, versionRevision } from "@/lib/dues/config-input";
 import { inactiveLedgerActivation, type LedgerDeps } from "@/lib/dues/ledger/activation";
 import { inTenantScope, isRealDate, latestEffective, lockAssignmentShared, lockBranchShared, lockStudent, type Tx } from "@/lib/dues/ledger/common";
@@ -74,37 +74,31 @@ class PrepaymentRefusedError extends Error {
   }
 }
 
-const nextYearMonth = (m: YearMonth): YearMonth => (m.month === 12 ? { year: m.year + 1, month: 1 } : { year: m.year, month: m.month + 1 });
 const sameYearMonth = (a: YearMonth, b: YearMonth): boolean => a.year === b.year && a.month === b.month;
 
+/** The last calendar month this schema's dues tables can hold (`isValidCoverageMonth`'s own upper bound) — never invented,
+ * reused as the outer ceiling a search must never be asked to exceed regardless of how far out a horizon computes. */
+const SCHEMA_MAX_MONTH: YearMonth = { year: 2100, month: 12 };
+
 /**
- * The smallest `YearMonth >= floor` with no `DuesObligation` row (any type) and no `DuesCoverage` row for this student —
- * reusing the exact two tables `createMonthlyObligationInTx`'s own duplicate check already reads, not a new tracking
- * mechanism. `floor` is always `currentMonth + 1` here (§3): this function is never asked about the current month or earlier.
+ * The smallest `YearMonth` in `[floor, bound]` with no `DuesObligation` row (any type) and no `DuesCoverage` row for this
+ * student — reusing the exact two tables `createMonthlyObligationInTx`'s own duplicate check already reads, not a new
+ * tracking mechanism. `floor` is always `currentMonth + 1` here (§3): this function is never asked about the current month
+ * or earlier. `null` means every month through `bound` is already covered — the caller's horizon is fully consumed, not a
+ * corrupt-data condition, so this never throws.
  */
-async function firstUncoveredFrom(tx: Tx, organizationId: string, studentId: string, floor: YearMonth): Promise<YearMonth> {
+async function firstUncoveredFrom(tx: Tx, organizationId: string, studentId: string, floor: YearMonth, bound: YearMonth): Promise<YearMonth | null> {
   const obligationMonths = await tx.duesObligation.findMany({ where: { organizationId, studentId }, select: { coverageYear: true, coverageMonth: true } });
   const coverageMonths = await tx.duesCoverage.findMany({ where: { organizationId, studentId }, select: { year: true, month: true } });
   const covered = new Set<string>();
   for (const o of obligationMonths) covered.add(`${o.coverageYear}-${o.coverageMonth}`);
   for (const c of coverageMonths) covered.add(`${c.year}-${c.month}`);
-  // A generous bound, not a business rule: nothing this ledger supports lets a student hold coverage more than a few years
-  // ahead of the floor (maxPrepaidMonths is a small per-branch setting) — this just guards against an unbounded loop if data
-  // is ever corrupt.
-  const HORIZON_MONTHS = 240;
   let cursor = floor;
-  for (let i = 0; i < HORIZON_MONTHS; i++) {
+  while (compareYearMonth(cursor, bound) <= 0) {
     if (!covered.has(`${cursor.year}-${cursor.month}`)) return cursor;
-    cursor = nextYearMonth(cursor);
+    cursor = addMonths(cursor, 1);
   }
-  throw new Error(`No uncovered month found within ${HORIZON_MONTHS} months of ${floor.year}-${floor.month} for student ${studentId} — data likely corrupt`);
-}
-
-/** How many distinct calendar months strictly after `currentMonth` already have a `DuesCoverage` row for this student — the
- * standing horizon §1's limit check counts against. */
-async function countCoveredAfter(tx: Tx, organizationId: string, studentId: string, currentMonth: YearMonth): Promise<number> {
-  const rows = await tx.duesCoverage.findMany({ where: { organizationId, studentId }, select: { year: true, month: true } });
-  return rows.filter((r) => compareYearMonth({ year: r.year, month: r.month }, currentMonth) > 0).length;
+  return null;
 }
 
 export async function prepayMonthlyObligations(
@@ -131,6 +125,11 @@ export async function prepayMonthlyObligations(
   // `correctLateFeeAndSettle`/`reversePayment`/`waiveLateFee` already apply to their own role requirement.
   if (context.organizationRole !== "ADMIN") return refuse("notFound");
 
+  // Verified, not a style nit: an `undefined` studentId reaching the lookup below does not throw — Prisma drops an
+  // `undefined` field from `where` entirely, so `findFirst({ where: { id: undefined, organizationId } })` silently matches
+  // an ARBITRARY student in the organization instead of refusing. Checked here, before any DB read, the same discipline
+  // `correctLateFeeAndSettle`/`reversePayment`/`waiveLateFee` already apply to their own id-shaped argument.
+  if (typeof studentId !== "string" || studentId === "") return refuse("invalid");
   if (!Array.isArray(requestedMonths) || requestedMonths.length === 0 || !requestedMonths.every(isValidCoverageMonth)) return refuse("invalid");
   if (
     existingObligationIds !== undefined &&
@@ -146,7 +145,7 @@ export async function prepayMonthlyObligations(
 
   const sorted = [...requestedMonths].sort((a, b) => compareYearMonth(a, b));
   for (let i = 1; i < sorted.length; i++) {
-    if (!sameYearMonth(nextYearMonth(sorted[i - 1]), sorted[i])) return refuse("coverageGap");
+    if (!sameYearMonth(addMonths(sorted[i - 1], 1), sorted[i])) return refuse("coverageGap");
   }
 
   try {
@@ -166,21 +165,36 @@ export async function prepayMonthlyObligations(
       // agrees, not database snapshot isolation (which has no bearing on repeated application-level clock reads at all).
       const frozenDeps: LedgerDeps = { ...deps, now: () => purchaseInstant };
 
-      // §3/§4: the gap check, floored at currentMonth + 1 — this writer never looks at the current month or earlier.
-      const floor = nextYearMonth(currentMonth);
-      const firstUncovered = await firstUncoveredFrom(tx, organizationId, student.id, floor);
-      if (!sameYearMonth(sorted[0], firstUncovered)) return refuse("coverageGap");
-
       // §1: the standing-horizon limit, resolved from the policy effective at recording time (purchaseInstant), never from
-      // receivedOn — a backdated receipt cannot select an older, more permissive limit.
+      // receivedOn — a backdated receipt cannot select an older, more permissive limit. Resolved BEFORE the gap check below,
+      // since the gap search needs the horizon as its own bound.
       const policyHistory = await tx.duesPolicyVersion.findMany({
         where: { organizationId, academyId: student.homeAcademyId },
         select: { id: true, effectiveYear: true, effectiveMonth: true, maxPrepaidMonths: true },
       });
       const effectivePolicy = latestEffective(policyHistory, currentMonth);
       if (!effectivePolicy || effectivePolicy.maxPrepaidMonths === null) return refuse("prepaymentUnavailable");
-      const alreadyCoveredAhead = await countCoveredAfter(tx, organizationId, student.id, currentMonth);
-      if (alreadyCoveredAhead + sorted.length > effectivePolicy.maxPrepaidMonths) return refuse("prepaymentLimitExceeded");
+      const horizonEnd = addMonths(currentMonth, effectivePolicy.maxPrepaidMonths);
+
+      // A direct positional bound: each requested month must be strictly after currentMonth and no later than horizonEnd.
+      // NOT equivalent to counting existing coverage — a month already covered from an earlier, since-superseded (higher)
+      // limit sits outside today's horizon and must never count against a new, otherwise-in-bounds request; a cumulative
+      // count can wrongly refuse a request that is itself entirely within bounds, or wrongly admit one that isn't, depending
+      // on unrelated coverage elsewhere. The `<= currentMonth` half is defensive (the floor below should already make it
+      // unreachable once the gap check also passes), checked explicitly rather than assumed.
+      for (const month of sorted) {
+        if (compareYearMonth(month, currentMonth) <= 0 || compareYearMonth(month, horizonEnd) > 0) return refuse("prepaymentLimitExceeded");
+      }
+
+      // §3/§4: the gap check, floored at currentMonth + 1 — this writer never looks at the current month or earlier — and
+      // bounded by the same horizon (or the schema's own supported range if that is smaller), so the search never looks
+      // further than anything could ever be purchasable anyway. `null` means the horizon is already fully consumed by
+      // existing coverage — a limit refusal, not a gap (there is no "wrong starting point" to name).
+      const floor = addMonths(currentMonth, 1);
+      const searchBound = compareYearMonth(horizonEnd, SCHEMA_MAX_MONTH) < 0 ? horizonEnd : SCHEMA_MAX_MONTH;
+      const firstUncovered = await firstUncoveredFrom(tx, organizationId, student.id, floor, searchBound);
+      if (firstUncovered === null) return refuse("prepaymentLimitExceeded");
+      if (!sameYearMonth(sorted[0], firstUncovered)) return refuse("coverageGap");
 
       // §5: per requested month, oldest first (already sorted above).
       const obligationIds: string[] = [];

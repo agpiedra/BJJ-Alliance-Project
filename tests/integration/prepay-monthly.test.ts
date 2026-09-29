@@ -7,7 +7,7 @@ import type { YearMonth } from "../../src/lib/dues/calendar";
 import { createMonthlyObligation } from "../../src/lib/dues/ledger/create-monthly-obligation";
 import { recordDuesPayment } from "../../src/lib/dues/ledger/record-payment";
 import { reversePayment } from "../../src/lib/dues/ledger/reverse-payment";
-import { prepayMonthlyObligations } from "../../src/lib/dues/ledger/prepay-monthly";
+import { prepayMonthlyObligations, type PrepayMonthlyObligationsResult } from "../../src/lib/dues/ledger/prepay-monthly";
 import type { LedgerActivation } from "../../src/lib/dues/ledger/activation";
 import { versionRevision } from "../../src/lib/dues/config-input";
 
@@ -206,6 +206,26 @@ describe("prepayMonthlyObligations: the gate — activation, owner-only, tenant/
     }
     expect(await prepay({ studentId: s.id, requestedMonths: months(2031, 1, 1), receivedOn: { year: 2030, month: 2, day: 30 }, tender: { currency: "USD", amount: "100.00" } })).toEqual({ ok: false, error: "invalid" });
   });
+
+  it("a malformed studentId is refused (invalid), before any DB read, with an otherwise-fully-valid request", async () => {
+    // A real, eligible student exists (assigned, would otherwise succeed) so nothing else about this request could be what
+    // trips the refusal — only studentId itself varies across the invalid cases below.
+    const real = await newStudent("studentidfixture");
+    await assign(real.id, planA.id);
+    const validArgs = { requestedMonths: months(2031, 1, 1), receivedOn: { year: 2030 as const, month: 12 as const, day: 1 as const }, tender: { currency: "USD" as const, amount: "100.00" } };
+
+    const before = await ledgerCounts(a.org.id);
+    const cases: unknown[] = [undefined, null, 12345, ""];
+    for (const bad of cases) {
+      const r = await prepay({ ...validArgs, studentId: bad as never });
+      expect(r, `studentId=${JSON.stringify(bad)}`).toEqual({ ok: false, error: "invalid" });
+      expect(await ledgerCounts(a.org.id), `studentId=${JSON.stringify(bad)}`).toEqual(before);
+    }
+
+    // Confirm the fixture really was otherwise-valid: the SAME args with the real student's id succeed.
+    const ok = await prepay({ ...validArgs, studentId: real.id });
+    expect(ok).toMatchObject({ ok: true });
+  });
 });
 
 describe("prepayMonthlyObligations: explicit coverage-gap validation", () => {
@@ -382,6 +402,134 @@ describe("prepayMonthlyObligations: the standing-horizon limit (§1, approved po
       deps(),
     );
     expect(r).toEqual({ ok: false, error: "prepaymentLimitExceeded" });
+  });
+});
+
+/**
+ * The limit is a DIRECT POSITIONAL bound on each requested month's own calendar distance from currentMonth — NOT a
+ * cumulative count of however much coverage already exists. A cumulative count is a real, distinct bug: a month already
+ * covered from an earlier, since-superseded (more permissive) limit sits outside today's horizon and must never count
+ * against a new, otherwise-in-bounds request; conversely a gapped coverage history could make a cumulative count wrongly
+ * ADMIT a request that reaches too far. These tests prove the positional check and the existing gap/consecutive check are
+ * independent — each fires only for its own reason, never the other's.
+ */
+describe("prepayMonthlyObligations: the limit is positional, not cumulative — the grandfathered-month counterexample", () => {
+  let academy: { id: string };
+  let plan: { id: string };
+  const SEPT_2030 = at("2030-09-15T12:00:00");
+
+  beforeAll(async () => {
+    academy = await prisma.academy.create({ data: { organizationId: a.org.id, name: `Positional ${suffix}`, slug: `positional-${suffix}`, kioskTokenHash: `positional-${suffix}` } });
+    plan = await prisma.paymentPlan.create({ data: { organizationId: a.org.id, academyId: academy.id, name: `Positional plan ${suffix}` } });
+    await prisma.paymentPlanTerms.create({ data: { organizationId: a.org.id, planId: plan.id, effectiveYear: 2027, effectiveMonth: 1, priceAmount: "100.00", currency: "USD", monthsCovered: 1, createdById: a.admin.id } });
+    await prisma.duesPolicyVersion.create({ data: { organizationId: a.org.id, academyId: academy.id, effectiveYear: 2027, effectiveMonth: 1, dueDay: 20, graceDay: 5, lateFeeAmount: "20.00", lateFeeCurrency: "USD", maxPrepaidMonths: 3, createdById: a.admin.id } });
+  }, 30_000);
+
+  it("a grandfathered January (covered while an earlier 'now' made it the horizon) does not count against a September request for Oct/Nov/Dec", async () => {
+    const s = await newStudent("grandfathered", academy.id);
+    await assign(s.id, plan.id);
+    // Constructed exactly as the counterexample requires: a real prepayment made while "now" was December 2030 (so January
+    // 2031 was legitimately that call's own first purchasable month, gap-check and all) — leaving October through December
+    // 2030 completely uncovered. Nothing about this call is a bypass; it is the real writer, called with a different instant.
+    const grandfather = await prepayMonthlyObligations(
+      { context: context(), studentId: s.id, requestedMonths: [{ year: 2031, month: 1 }], receivedOn: { year: 2030, month: 12, day: 1 }, tender: { currency: "USD", amount: "100.00" }, method: "EFECTIVO", maxBackdateDays: 90 },
+      deps({ now: at("2030-12-01T12:00:00") }),
+    );
+    expect(grandfather).toMatchObject({ ok: true });
+
+    // Now "today" is September (this test's own current month), limit 3 (horizon through December). October, November and
+    // December are each individually within that horizon and gapless from the true firstUncovered (October) — the buggy
+    // cumulative count would see January (1 month "already covered ahead of September") and wrongly refuse 1 + 3 > 3.
+    const janBefore = await prisma.duesObligation.findFirstOrThrow({ where: { organizationId: a.org.id, studentId: s.id, coverageYear: 2031, coverageMonth: 1 } });
+    const r = await prepayMonthlyObligations(
+      { context: context(), studentId: s.id, requestedMonths: months(2030, 10, 3), receivedOn: { year: 2030, month: 9, day: 15 }, tender: { currency: "USD", amount: "300.00" }, method: "EFECTIVO", maxBackdateDays: 90 },
+      deps({ now: SEPT_2030 }),
+    );
+    expect(r).toMatchObject({ ok: true });
+    if (!r.ok) return;
+    expect(r.obligationIds).toHaveLength(3);
+
+    // January's grandfathered coverage is completely untouched.
+    expect(await prisma.duesObligation.findFirstOrThrow({ where: { organizationId: a.org.id, studentId: s.id, coverageYear: 2031, coverageMonth: 1 } })).toEqual(janBefore);
+  });
+
+  it("a month exactly at the horizon boundary succeeds; one month beyond it refuses prepaymentLimitExceeded", async () => {
+    const atBoundary = await newStudent("boundary-at", academy.id);
+    await assign(atBoundary.id, plan.id);
+    const ok = await prepayMonthlyObligations(
+      { context: context(), studentId: atBoundary.id, requestedMonths: months(2030, 10, 3), receivedOn: { year: 2030, month: 9, day: 15 }, tender: { currency: "USD", amount: "300.00" }, method: "EFECTIVO", maxBackdateDays: 90 },
+      deps({ now: SEPT_2030 }),
+    );
+    expect(ok).toMatchObject({ ok: true }); // Oct, Nov, Dec — Dec is exactly currentMonth + 3, the horizon itself
+
+    const beyond = await newStudent("boundary-beyond", academy.id);
+    await assign(beyond.id, plan.id);
+    const before = await ledgerCounts(a.org.id);
+    const refused = await prepayMonthlyObligations(
+      { context: context(), studentId: beyond.id, requestedMonths: months(2030, 10, 4), receivedOn: { year: 2030, month: 9, day: 15 }, tender: { currency: "USD", amount: "400.00" }, method: "EFECTIVO", maxBackdateDays: 90 },
+      deps({ now: SEPT_2030 }),
+    );
+    expect(refused).toEqual({ ok: false, error: "prepaymentLimitExceeded" }); // Oct, Nov, Dec, Jan — Jan is one past the horizon
+    expect(await ledgerCounts(a.org.id)).toEqual(before);
+  });
+
+  it("the horizon and the gap check are independent: a gap inside the horizon still refuses coverageGap, not the horizon", async () => {
+    const generousAcademy = await prisma.academy.create({ data: { organizationId: a.org.id, name: `Generous ${suffix}`, slug: `generous-${suffix}`, kioskTokenHash: `generous-${suffix}` } });
+    const generousPlan = await prisma.paymentPlan.create({ data: { organizationId: a.org.id, academyId: generousAcademy.id, name: `Generous plan ${suffix}` } });
+    await prisma.paymentPlanTerms.create({ data: { organizationId: a.org.id, planId: generousPlan.id, effectiveYear: 2027, effectiveMonth: 1, priceAmount: "100.00", currency: "USD", monthsCovered: 1, createdById: a.admin.id } });
+    await prisma.duesPolicyVersion.create({ data: { organizationId: a.org.id, academyId: generousAcademy.id, effectiveYear: 2027, effectiveMonth: 1, dueDay: 20, graceDay: 5, lateFeeAmount: "20.00", lateFeeCurrency: "USD", maxPrepaidMonths: 5, createdById: a.admin.id } });
+    const s = await newStudent("gapinhorizon", generousAcademy.id);
+    await assign(s.id, generousPlan.id);
+    // Oct and Dec are both well within a 5-month horizon from September (through February) — a cumulative/positional bug
+    // that only checked distance could never explain a refusal here except via the gap check itself.
+    const r = await prepayMonthlyObligations(
+      { context: context(), studentId: s.id, requestedMonths: [{ year: 2030, month: 10 }, { year: 2030, month: 12 }], receivedOn: { year: 2030, month: 9, day: 15 }, tender: { currency: "USD", amount: "200.00" }, method: "EFECTIVO", maxBackdateDays: 90 },
+      deps({ now: SEPT_2030 }),
+    );
+    expect(r).toEqual({ ok: false, error: "coverageGap" });
+  });
+
+  it("the horizon and the gap check are independent: a gapless run from firstUncovered still refuses prepaymentLimitExceeded once it reaches past a tight horizon", async () => {
+    const tightAcademy = await prisma.academy.create({ data: { organizationId: a.org.id, name: `Tight ${suffix}`, slug: `tight-${suffix}`, kioskTokenHash: `tight-${suffix}` } });
+    const tightPlan = await prisma.paymentPlan.create({ data: { organizationId: a.org.id, academyId: tightAcademy.id, name: `Tight plan ${suffix}` } });
+    await prisma.paymentPlanTerms.create({ data: { organizationId: a.org.id, planId: tightPlan.id, effectiveYear: 2027, effectiveMonth: 1, priceAmount: "100.00", currency: "USD", monthsCovered: 1, createdById: a.admin.id } });
+    await prisma.duesPolicyVersion.create({ data: { organizationId: a.org.id, academyId: tightAcademy.id, effectiveYear: 2027, effectiveMonth: 1, dueDay: 20, graceDay: 5, lateFeeAmount: "20.00", lateFeeCurrency: "USD", maxPrepaidMonths: 2, createdById: a.admin.id } });
+    const s = await newStudent("tighthorizon", tightAcademy.id);
+    await assign(s.id, tightPlan.id);
+    // Oct, Nov, Dec: gapless, starts exactly at firstUncovered (Oct) — the gap check alone would accept this. The horizon
+    // (September + 2 = November) is what must refuse it, on December specifically.
+    const r = await prepayMonthlyObligations(
+      { context: context(), studentId: s.id, requestedMonths: months(2030, 10, 3), receivedOn: { year: 2030, month: 9, day: 15 }, tender: { currency: "USD", amount: "300.00" }, method: "EFECTIVO", maxBackdateDays: 90 },
+      deps({ now: SEPT_2030 }),
+    );
+    expect(r).toEqual({ ok: false, error: "prepaymentLimitExceeded" });
+  });
+
+  it("a fully-consumed horizon (nothing purchasable remains) refuses cleanly with a typed result, never a thrown exception", async () => {
+    const fullAcademy = await prisma.academy.create({ data: { organizationId: a.org.id, name: `Full ${suffix}`, slug: `full-${suffix}`, kioskTokenHash: `full-${suffix}` } });
+    const fullPlan = await prisma.paymentPlan.create({ data: { organizationId: a.org.id, academyId: fullAcademy.id, name: `Full plan ${suffix}` } });
+    await prisma.paymentPlanTerms.create({ data: { organizationId: a.org.id, planId: fullPlan.id, effectiveYear: 2027, effectiveMonth: 1, priceAmount: "100.00", currency: "USD", monthsCovered: 1, createdById: a.admin.id } });
+    await prisma.duesPolicyVersion.create({ data: { organizationId: a.org.id, academyId: fullAcademy.id, effectiveYear: 2027, effectiveMonth: 1, dueDay: 20, graceDay: 5, lateFeeAmount: "20.00", lateFeeCurrency: "USD", maxPrepaidMonths: 1, createdById: a.admin.id } });
+    const s = await newStudent("fullhorizon", fullAcademy.id);
+    await assign(s.id, fullPlan.id);
+    const first = await prepayMonthlyObligations(
+      { context: context(), studentId: s.id, requestedMonths: [{ year: 2030, month: 10 }], receivedOn: { year: 2030, month: 9, day: 15 }, tender: { currency: "USD", amount: "100.00" }, method: "EFECTIVO", maxBackdateDays: 90 },
+      deps({ now: SEPT_2030 }),
+    );
+    expect(first).toMatchObject({ ok: true }); // the entire 1-month horizon is now consumed
+
+    let threw: unknown;
+    let second: PrepayMonthlyObligationsResult | undefined;
+    try {
+      second = await prepayMonthlyObligations(
+        { context: context(), studentId: s.id, requestedMonths: [{ year: 2030, month: 10 }], receivedOn: { year: 2030, month: 9, day: 16 }, tender: { currency: "USD", amount: "100.00" }, method: "EFECTIVO", maxBackdateDays: 90 },
+        deps({ now: SEPT_2030 }),
+      );
+    } catch (e) {
+      threw = e;
+    }
+    expect(threw, "must return a typed refusal, never throw").toBeUndefined();
+    expect(second).toEqual({ ok: false, error: "prepaymentLimitExceeded" });
   });
 });
 
