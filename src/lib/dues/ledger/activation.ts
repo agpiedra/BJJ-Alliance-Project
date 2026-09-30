@@ -103,4 +103,13 @@ export interface LedgerDeps {
    * against a concurrent quote-write attempt.
    */
   afterExchangeRateQuoteWrittenForTest?: () => Promise<void>;
+  /**
+   * Test-only synchronization point, called by `recordDuesPayment` (record-payment.ts) and `purchasePackage`
+   * (purchase-package.ts) immediately after each acquires `lockExchangeRateNamespaceShared` — its own literal first
+   * statement — and by nothing else, never referenced by production code, never given a value outside a test. Lets a
+   * test pause a real settlement there, still holding the SHARED lock, for a genuine-overlap proof: either against
+   * another real settlement (proving two shared holders never contend with each other) or against a concurrent
+   * `enterExchangeRateQuote` correction (proving the shared hold genuinely blocks that EXCLUSIVE request).
+   */
+  afterExchangeRateLockForTest?: () => Promise<void>;
 }

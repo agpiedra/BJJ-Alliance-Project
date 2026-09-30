@@ -7,7 +7,7 @@ import { amountDueMinor, feeAssessableFrom, lateFeeApplies, lateFeeToAssessMinor
 import { inactiveLedgerActivation, type LedgerDeps } from "@/lib/dues/ledger/activation";
 import { fromDbDate, inTenantScope, isRealDate, lockStudent, minusDays, todayIn, toDbDate, type Tx } from "@/lib/dues/ledger/common";
 import { resolveCrossCurrency, type RateEvidence } from "@/lib/dues/ledger/cross-currency-settlement";
-import { lockExchangeRateNamespace } from "@/lib/dues/ledger/exchange-rate";
+import { lockExchangeRateNamespaceShared } from "@/lib/dues/ledger/exchange-rate";
 import { MAX_MINOR_UNITS, columnToMinor, decimalToMinor, minorToDecimal } from "@/lib/dues/ledger/minor-units";
 import { isUniqueViolationOnConstraint } from "@/lib/dues/ledger/unique-violation";
 import { CURRENCIES } from "@/lib/payments/format-money";
@@ -549,10 +549,14 @@ export async function recordDuesPayment(
 
   try {
     return await prisma.$transaction(async (tx) => {
-      // The literal first statement — see lockExchangeRateNamespace's own doc comment for why (every true outermost
-      // transaction this ledger opens takes it unconditionally, before any row lock; recordDuesPaymentInTx itself never does,
-      // since it also runs as an INNER call composed by correctLateFeeAndSettle/prepayMonthlyObligations, which take it themselves).
-      await lockExchangeRateNamespace(tx, organizationId);
+      // The literal first statement, SHARED — see lockExchangeRateNamespaceShared's own doc comment for why (every true
+      // outermost transaction this ledger opens takes it unconditionally, before any row lock; recordDuesPaymentInTx itself
+      // never does, since it also runs as an INNER call composed by correctLateFeeAndSettle/prepayMonthlyObligations, which
+      // take it themselves). Shared, not exclusive: this settlement only ever READS a quote, never writes one — many
+      // settlements (same student, different students, same or different currency) hold this simultaneously with no
+      // contention among themselves; only a concurrent rate correction (exclusive) genuinely waits, and is waited on.
+      await lockExchangeRateNamespaceShared(tx, organizationId);
+      if (deps.afterExchangeRateLockForTest) await deps.afterExchangeRateLockForTest();
       return recordDuesPaymentInTx(tx, { context, student, receivedOn, tender, method, obligationIds, notes, maxBackdateDays }, deps);
     });
   } catch (error) {

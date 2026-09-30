@@ -6,7 +6,7 @@ import { versionRevision } from "@/lib/dues/config-input";
 import { lateFeeApplies } from "@/lib/dues/settlement";
 import { inactiveLedgerActivation, type LedgerDeps } from "@/lib/dues/ledger/activation";
 import { fromDbDate, inTenantScope, isRealDate, lockStudent, type Tx } from "@/lib/dues/ledger/common";
-import { lockExchangeRateNamespace } from "@/lib/dues/ledger/exchange-rate";
+import { lockExchangeRateNamespaceShared } from "@/lib/dues/ledger/exchange-rate";
 import { classifyRecordPaymentError, recordDuesPaymentInTx, type RecordDuesPaymentError, type RecordDuesPaymentResult } from "@/lib/dues/ledger/record-payment";
 
 /**
@@ -149,10 +149,11 @@ export async function correctLateFeeAndSettle(
 
   try {
     return await prisma.$transaction(async (tx): Promise<CorrectLateFeeResult> => {
-      // The literal first statement — before even the unlocked pre-read below. See lockExchangeRateNamespace's own doc
-      // comment: every true outermost transaction this ledger opens takes it unconditionally, before any row lock, since
-      // this correction composes recordDuesPaymentInTx (an INNER call that never takes this lock itself).
-      await lockExchangeRateNamespace(tx, organizationId);
+      // The literal first statement, SHARED — before even the unlocked pre-read below. See
+      // lockExchangeRateNamespaceShared's own doc comment: every true outermost transaction this ledger opens takes it
+      // unconditionally, before any row lock, since this correction composes recordDuesPaymentInTx (an INNER call that
+      // never takes this lock itself). Shared, not exclusive: this settlement only ever READS a quote, never writes one.
+      await lockExchangeRateNamespaceShared(tx, organizationId);
 
       const fee = await tx.duesLateFee.findFirst({
         where: { id: lateFeeId, organizationId },

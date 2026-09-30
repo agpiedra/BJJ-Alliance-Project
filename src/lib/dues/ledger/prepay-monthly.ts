@@ -6,7 +6,7 @@ import { currentMonthIn, versionRevision } from "@/lib/dues/config-input";
 import { inactiveLedgerActivation, type LedgerDeps } from "@/lib/dues/ledger/activation";
 import { inTenantScope, isRealDate, latestEffective, lockAssignmentShared, lockBranchShared, lockStudent, type Tx } from "@/lib/dues/ledger/common";
 import { isValidCoverageMonth, writeMonthlyObligationInTx, type CreateMonthlyObligationError } from "@/lib/dues/ledger/create-monthly-obligation";
-import { lockExchangeRateNamespace } from "@/lib/dues/ledger/exchange-rate";
+import { lockExchangeRateNamespaceShared } from "@/lib/dues/ledger/exchange-rate";
 import { classifyRecordPaymentError, recordDuesPaymentInTx, type RecordDuesPaymentError } from "@/lib/dues/ledger/record-payment";
 
 /**
@@ -153,10 +153,11 @@ export async function prepayMonthlyObligations(
 
   try {
     return await prisma.$transaction(async (tx): Promise<PrepayMonthlyObligationsResult> => {
-      // The literal first statement, before the branch lock. See lockExchangeRateNamespace's own doc comment: every true
-      // outermost transaction this ledger opens takes it unconditionally, before any row lock, since this writer composes
-      // recordDuesPaymentInTx (an INNER call that never takes this lock itself).
-      await lockExchangeRateNamespace(tx, organizationId);
+      // The literal first statement, SHARED, before the branch lock. See lockExchangeRateNamespaceShared's own doc
+      // comment: every true outermost transaction this ledger opens takes it unconditionally, before any row lock, since
+      // this writer composes recordDuesPaymentInTx (an INNER call that never takes this lock itself). Shared, not
+      // exclusive: this settlement only ever READS a quote, never writes one — many settlements hold this simultaneously.
+      await lockExchangeRateNamespaceShared(tx, organizationId);
 
       const branch = await lockBranchShared(tx, organizationId, student.homeAcademyId);
       if (!branch) return refuse("notFound");

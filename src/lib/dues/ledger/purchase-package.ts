@@ -8,7 +8,7 @@ import { inactiveLedgerActivation, type LedgerDeps } from "@/lib/dues/ledger/act
 import { inTenantScope, isRealDate, latestEffective, lockBranchShared, lockStudent, lockTermsShared, minusDays, todayIn } from "@/lib/dues/ledger/common";
 import { resolveCrossCurrency, type RateEvidence } from "@/lib/dues/ledger/cross-currency-settlement";
 import { isValidCoverageMonth } from "@/lib/dues/ledger/create-monthly-obligation";
-import { lockExchangeRateNamespace } from "@/lib/dues/ledger/exchange-rate";
+import { lockExchangeRateNamespaceShared } from "@/lib/dues/ledger/exchange-rate";
 import { MAX_MINOR_UNITS, columnToMinor, decimalToMinor, minorToDecimal } from "@/lib/dues/ledger/minor-units";
 import { firstUncoveredFrom, SCHEMA_MAX_MONTH } from "@/lib/dues/ledger/prepay-monthly";
 import {
@@ -169,11 +169,13 @@ export async function purchasePackage(
 
   try {
     return await prisma.$transaction(async (tx): Promise<PurchasePackageResult> => {
-      // The literal first statement, before the branch lock. See lockExchangeRateNamespace's own doc comment: every true
-      // outermost transaction this ledger opens takes it unconditionally, before any row lock. This writer never composes
-      // recordDuesPaymentInTx (a package obligation fails that function's own type:"MONTHLY" filter), but it does its own
-      // cross-currency resolution below, which needs the identical ordering guarantee.
-      await lockExchangeRateNamespace(tx, organizationId);
+      // The literal first statement, SHARED, before the branch lock. See lockExchangeRateNamespaceShared's own doc
+      // comment: every true outermost transaction this ledger opens takes it unconditionally, before any row lock. This
+      // writer never composes recordDuesPaymentInTx (a package obligation fails that function's own type:"MONTHLY"
+      // filter), but it does its own cross-currency resolution below, which needs the identical ordering guarantee.
+      // Shared, not exclusive: this settlement only ever READS a quote, never writes one.
+      await lockExchangeRateNamespaceShared(tx, organizationId);
+      if (deps.afterExchangeRateLockForTest) await deps.afterExchangeRateLockForTest();
 
       const branch = await lockBranchShared(tx, organizationId, student.homeAcademyId);
       if (!branch) return refuse("notFound");

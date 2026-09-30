@@ -14,10 +14,21 @@ import type { LedgerActivation } from "../../src/lib/dues/ledger/activation";
  * arithmetic and quote resolver (`exchange-rate.ts`/`exchange-rate-arithmetic.ts`, already proved on their own terms) —
  * this suite proves the WIRING: both conversion directions, the missing-rate refusal, the earlier-quote fallback and its
  * distinct `quoteDate`, immutable evidence across a later correction, the oversized-candidate-must-not-block-an-earlier-
- * prefix fix, package refusals offering only the one full total, and genuine quote-correction-versus-settlement
- * concurrency on the shared advisory lock. Same-currency behavior for all four writers is proved unmodified by their own,
- * untouched existing suites (`dues-ledger-writers.test.ts`, `correct-late-fee.test.ts`, `prepay-monthly.test.ts`,
- * `purchase-package.test.ts`) — nothing here duplicates that coverage.
+ * prefix fix, and package refusals offering only the one full total. Same-currency behavior for all four writers is
+ * proved unmodified by their own, untouched existing suites (`dues-ledger-writers.test.ts`, `correct-late-fee.test.ts`,
+ * `prepay-monthly.test.ts`, `purchase-package.test.ts`) — nothing here duplicates that coverage.
+ *
+ * CONCURRENCY (the shared/exclusive reader-writer split — `lockExchangeRateNamespaceShared`/`...Exclusive`,
+ * `exchange-rate.ts`): four genuine, PID/lock-scoped proofs, none sequential —
+ *   1. Two DIFFERENT students' settlements (one same-currency, one cross-currency) genuinely overlap: the SHARED lock
+ *      never contends with itself. `purchase-package.test.ts`'s own same-STUDENT concurrency test separately still
+ *      proves the student row itself keeps serializing two settlements for the SAME student, unaffected by this split.
+ *   2. A quote correction (EXCLUSIVE) genuinely waits on an open settlement's SHARED hold, then proceeds once released.
+ *   3. A settlement (SHARED) genuinely waits on an open correction's EXCLUSIVE hold, then proceeds using the
+ *      just-committed revision (asserted on the resulting `DuesPayment`, not merely "it succeeded").
+ * Lock-state assertions read `pg_locks` directly (`mode`/`granted`), never `pg_stat_activity`'s query text —
+ * `pg_advisory_xact_lock` is a literal prefix of `pg_advisory_xact_lock_shared`, so a substring match cannot reliably
+ * tell the two lock MODES apart the way `pg_locks.mode` (`"ShareLock"` vs `"ExclusiveLock"`) does unambiguously.
  */
 const prisma = getTestPrismaClient();
 type Fixture = Awaited<ReturnType<typeof makeAccountingOrg>>;
@@ -82,34 +93,26 @@ async function ledgerCounts(organizationId: string) {
   };
 }
 
-/** Identical to the established pattern (`dues-ledger-writers.test.ts`/`purchase-package.test.ts`). */
-async function waitUntilBlockedOnLock(matches: string[], timeoutMs = 5000): Promise<boolean> {
+/**
+ * Rows for THIS feature's own reserved advisory-lock key, queried directly from `pg_locks` rather than
+ * `pg_stat_activity`'s query text — `pg_advisory_xact_lock` is a literal PREFIX of `pg_advisory_xact_lock_shared`, so a
+ * text-match on query content cannot reliably tell the two lock MODES this suite needs to distinguish apart.
+ * `pg_locks.mode` ("ShareLock" vs "ExclusiveLock") is what Postgres itself is tracking and cannot be ambiguous this way.
+ * `classid = 1` is `EXCHANGE_RATE_LOCK_NAMESPACE` (the reserved key1); `objsubid = 2` is Postgres's own marker for the
+ * two-integer advisory-lock form specifically (vs. `1` for the single-bigint form every other lock in this codebase
+ * uses) — together they can only ever match this one feature's own lock, never coincide with anything else.
+ */
+async function exchangeRateLockRows(): Promise<{ mode: string; granted: boolean }[]> {
+  return prisma.$queryRawUnsafe<{ mode: string; granted: boolean }[]>(`SELECT mode, granted FROM pg_locks WHERE locktype = 'advisory' AND classid = 1 AND objsubid = 2`);
+}
+
+async function waitUntilExchangeRateLock(predicate: (rows: { mode: string; granted: boolean }[]) => boolean, timeoutMs = 5000): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const rows = await prisma.$queryRawUnsafe<{ query: string }[]>(`SELECT query FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query IS NOT NULL`);
-    if (rows.some((row) => matches.every((m) => row.query.includes(m)))) return true;
+    if (predicate(await exchangeRateLockRows())) return true;
     await new Promise((r) => setTimeout(r, 25));
   }
   return false;
-}
-
-/** A bystander holding the EXACT exchange-rate advisory lock a real quote correction (`enterExchangeRateQuote`) would hold
- * — mirrors `exchange-rate-quote.test.ts`'s own `holdAdvisoryLock` verbatim, simulating "a correction is in flight"
- * without needing a second real Prisma client connection of its own. */
-function holdAdvisoryLock(organizationId: string) {
-  let release!: () => void;
-  const gate = new Promise<void>((r) => (release = r));
-  let started!: () => void;
-  const startedPromise = new Promise<void>((r) => (started = r));
-  const held = prisma.$transaction(
-    async (tx) => {
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(1, hashtext(${organizationId}))`;
-      started();
-      await gate;
-    },
-    { timeout: 60_000 },
-  );
-  return { startedPromise, release, held };
 }
 
 beforeAll(async () => {
@@ -318,33 +321,139 @@ describe("purchasePackage: cross-currency settlement, and refusals offer only th
 });
 
 /**
- * Genuine overlapping-transaction proof (not sequential — see `exchange-rate-quote.test.ts`'s own comment on why a
- * bystander holding the REAL lock, not a scripted await, is required). The bystander holds the exact advisory lock
- * (`pg_advisory_xact_lock(1, hashtext(organizationId))`) a real quote correction would hold; a plain settlement attempt
- * for the SAME organization must genuinely queue behind it — proving `recordDuesPayment` takes `lockExchangeRateNamespace`
- * as its own literal first statement, unconditionally, even for a same-currency payment that never itself needs a rate.
+ * Currency-conversion brief PR 2 correction: the shared/exclusive split's WHOLE point is that settlements never contend
+ * with each other on this lock — only against a genuine rate correction. Proved here with a REAL second settlement (not
+ * a bystander): student A's settlement is paused mid-transaction, still holding the SHARED lock, while student B's
+ * settlement — for a DIFFERENT student, same organization — is started and run to completion. `await payingB` resolving
+ * (Prisma's `$transaction` only resolves after COMMIT) strictly BEFORE `releaseA()` is called is the proof that B never
+ * waited on A's held lock at all: under the old, unconditionally-EXCLUSIVE design, this exact sequence would hang until
+ * A released, and this test's own explicit timeout would fail it.
  */
-describe("recordDuesPayment: genuinely blocks on a concurrent quote correction's advisory lock", () => {
-  it("a settlement attempt queues behind a bystander holding the organization's exchange-rate advisory lock, then proceeds once released", async () => {
-    const s = await newStudent("lockrace");
-    const sep = await oneMonth(s.id, 9, usdTerms.id, usdPolicy.id);
-    const { startedPromise, release, held } = holdAdvisoryLock(a.org.id);
+describe("two different students' settlements genuinely overlap: the shared lock never contends with itself", () => {
+  it("student B's settlement (cross-currency) completes and commits while student A's settlement (same-currency) is still open", async () => {
+    const quote = await enterRate({ value: "500.00" });
+    if (!quote.ok) throw new Error("fixture: rate entry failed");
+
+    const studentA = await newStudent("overlapA");
+    const sepA = await oneMonth(studentA.id, 9, usdTerms.id, usdPolicy.id);
+    const studentB = await newStudent("overlapB");
+    const sepB = await oneMonth(studentB.id, 9, usdTerms.id, usdPolicy.id);
+
+    let releaseA!: () => void;
+    const gateA = new Promise<void>((r) => (releaseA = r));
+    let pausedAResolve!: () => void;
+    const pausedA = new Promise<void>((r) => (pausedAResolve = r));
+    const payingA = recordDuesPayment(
+      { context: context(), studentId: studentA.id, receivedOn: { year: 2030, month: 10, day: 5 }, tender: { currency: "USD", amount: "100.00" }, method: "EFECTIVO", obligationIds: [sepA], maxBackdateDays: 5 },
+      deps({ now: OCT_5, afterExchangeRateLockForTest: async () => { pausedAResolve(); await gateA; } }),
+    );
+
     try {
-      await startedPromise;
-      let done = false;
-      const paying = recordDuesPayment(
-        { context: context(), studentId: s.id, receivedOn: { year: 2030, month: 10, day: 5 }, tender: { currency: "USD", amount: "100.00" }, method: "EFECTIVO", obligationIds: [sep], maxBackdateDays: 5 },
+      await pausedA; // A holds the SHARED lock; its transaction is still open, gated on releaseA()
+
+      // B is same organization, DIFFERENT student, cross-currency (the other of the two settlements this pair covers) —
+      // run to completion BEFORE releaseA() is ever called.
+      const payingB = recordDuesPayment(
+        { context: context(), studentId: studentB.id, receivedOn: { year: 2030, month: 10, day: 5 }, tender: { currency: "CRC", amount: "50000.00" }, method: "EFECTIVO", obligationIds: [sepB], maxBackdateDays: 5 },
         deps({ now: OCT_5 }),
-      ).then((r) => ((done = true), r));
-      const blocked = await waitUntilBlockedOnLock(["pg_advisory_xact_lock"]);
-      expect(blocked, "the settlement must genuinely block on the bystander's held exchange-rate advisory lock").toBe(true);
-      expect(done).toBe(false);
-      release();
-      await held;
-      expect(await paying).toMatchObject({ ok: true });
+      );
+      const resultB = await payingB;
+      expect(resultB, "B must complete and commit without ever waiting on A's still-open shared hold").toMatchObject({ ok: true });
+
+      releaseA();
+      expect(await payingA).toMatchObject({ ok: true });
     } finally {
-      release();
-      await Promise.allSettled([held]);
+      releaseA();
+      await Promise.allSettled([payingA]);
+    }
+  }, 20_000);
+});
+
+describe("enterExchangeRateQuote: genuinely waits while a settlement holds the shared lock, then proceeds once it releases", () => {
+  it("a real correction attempt blocks (EXCLUSIVE, ungranted) on a concurrently open settlement's SHARED hold, then proceeds", async () => {
+    const quoteDate = freshQuoteDate();
+    const first = await enterExchangeRateQuote({ context: context(), quoteDate, value: "500.00", expectedCurrentRevision: 0 }, deps());
+    if (!first.ok) throw new Error("fixture: rate entry failed");
+
+    const s = await newStudent("waitforshared");
+    const sep = await oneMonth(s.id, 9, usdTerms.id, usdPolicy.id);
+
+    let releaseSettlement!: () => void;
+    const gate = new Promise<void>((r) => (releaseSettlement = r));
+    let pausedResolve!: () => void;
+    const paused = new Promise<void>((r) => (pausedResolve = r));
+    const paying = recordDuesPayment(
+      { context: context(), studentId: s.id, receivedOn: { year: 2030, month: 10, day: 5 }, tender: { currency: "USD", amount: "100.00" }, method: "EFECTIVO", obligationIds: [sep], maxBackdateDays: 5 },
+      deps({ now: OCT_5, afterExchangeRateLockForTest: async () => { pausedResolve(); await gate; } }),
+    );
+
+    let correcting: ReturnType<typeof enterExchangeRateQuote> | undefined;
+    try {
+      await paused; // the settlement holds the SHARED lock; its transaction is still open
+
+      let correctionDone = false;
+      correcting = enterExchangeRateQuote({ context: context(), quoteDate, value: "510.00", expectedCurrentRevision: 1 }, deps()).then((r) => ((correctionDone = true), r));
+      const blocked = await waitUntilExchangeRateLock((rows) => rows.some((r) => r.mode === "ExclusiveLock" && !r.granted));
+      expect(blocked, "the correction must genuinely be waiting (EXCLUSIVE, ungranted) while the settlement holds the SHARED lock").toBe(true);
+      expect(correctionDone).toBe(false);
+
+      releaseSettlement();
+      expect(await paying).toMatchObject({ ok: true });
+      expect(await correcting).toMatchObject({ ok: true, revision: 2 });
+    } finally {
+      releaseSettlement();
+      await Promise.allSettled([paying, correcting].filter((p): p is NonNullable<typeof p> => p !== undefined));
+    }
+  }, 20_000);
+});
+
+describe("recordDuesPayment: genuinely waits while a quote correction holds the exclusive lock, then uses the committed revision", () => {
+  it("a real settlement blocks (SHARED, ungranted) on a concurrently open correction's EXCLUSIVE hold, then proceeds using the JUST-COMMITTED revision", async () => {
+    const quoteDate = freshQuoteDate();
+    const first = await enterExchangeRateQuote({ context: context(), quoteDate, value: "500.00", expectedCurrentRevision: 0 }, deps());
+    if (!first.ok) throw new Error("fixture: rate entry failed");
+
+    const s = await newStudent("waitforexclusive");
+    const sep = await oneMonth(s.id, 9, usdTerms.id, usdPolicy.id);
+
+    let releaseCorrection!: () => void;
+    const gate = new Promise<void>((r) => (releaseCorrection = r));
+    let pausedResolve!: () => void;
+    const paused = new Promise<void>((r) => (pausedResolve = r));
+    // afterExchangeRateQuoteWrittenForTest (PR 1's own existing hook): fires after the new revision-2 row and its audit
+    // entry are written, but BEFORE commit — the correction is still holding the EXCLUSIVE lock at that point.
+    const correcting = enterExchangeRateQuote(
+      { context: context(), quoteDate, value: "510.00", expectedCurrentRevision: 1 },
+      deps({ afterExchangeRateQuoteWrittenForTest: async () => { pausedResolve(); await gate; } }),
+    );
+
+    let paying: ReturnType<typeof recordDuesPayment> | undefined;
+    try {
+      await paused; // the correction holds the EXCLUSIVE lock; revision 2 is written but not yet committed
+
+      let payingDone = false;
+      // Tendered to match revision 2's rate (100.00 USD * 510.00 = 51,000.00 CRC) — NOT revision 1's (500.00 -> 50,000.00),
+      // so a settlement that wrongly used the stale pre-correction rate would refuse instead of silently "succeeding".
+      paying = recordDuesPayment(
+        { context: context(), studentId: s.id, receivedOn: { year: 2030, month: 10, day: 5 }, tender: { currency: "CRC", amount: "51000.00" }, method: "EFECTIVO", obligationIds: [sep], maxBackdateDays: 5 },
+        deps({ now: OCT_5 }),
+      ).then((r) => ((payingDone = true), r));
+      const blocked = await waitUntilExchangeRateLock((rows) => rows.some((r) => r.mode === "ShareLock" && !r.granted));
+      expect(blocked, "the settlement must genuinely be waiting (SHARED, ungranted) while the correction holds the EXCLUSIVE lock").toBe(true);
+      expect(payingDone).toBe(false);
+
+      releaseCorrection();
+      expect(await correcting).toMatchObject({ ok: true, revision: 2 });
+
+      const payingResult = await paying;
+      expect(payingResult).toMatchObject({ ok: true });
+      if (!payingResult.ok) return;
+      const payment = await prisma.duesPayment.findUniqueOrThrow({ where: { id: payingResult.paymentId } });
+      expect(payment.appliedRateRevision).toBe(2);
+      expect(Number(payment.appliedRateValue)).toBe(510);
+    } finally {
+      releaseCorrection();
+      await Promise.allSettled([correcting, paying].filter((p): p is NonNullable<typeof p> => p !== undefined));
     }
   }, 20_000);
 });

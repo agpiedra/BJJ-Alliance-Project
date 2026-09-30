@@ -29,8 +29,9 @@ export type CrossCurrencyResolution = { ok: true; candidates: CrossCurrencyCandi
  * rather than letting it abort the whole comparison). `rateUnavailable` when no quote resolves — zero writes; the caller decides
  * what "zero writes" means for its own transaction (nothing has been written yet at either of this PR's two call sites).
  *
- * CALLER MUST ALREADY HOLD `lockExchangeRateNamespace` as its own outermost transaction's first statement — this function takes
- * no lock itself, mirroring `resolveEffectiveQuote`'s own contract exactly.
+ * CALLER MUST ALREADY HOLD `lockExchangeRateNamespaceShared` (never the exclusive mode — this only ever reads a quote) as
+ * its own outermost transaction's first statement — this function takes no lock itself, mirroring `resolveEffectiveQuote`'s
+ * own contract exactly.
  */
 export async function resolveCrossCurrency(
   tx: Tx,
