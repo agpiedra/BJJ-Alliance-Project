@@ -6,6 +6,7 @@ import type { TenantContext } from "../../src/lib/tenant/types";
 import { enterExchangeRateQuote, resolveEffectiveQuote } from "../../src/lib/dues/ledger/exchange-rate";
 import type { LedgerActivation } from "../../src/lib/dues/ledger/activation";
 import { prisma as appPrisma } from "../../src/lib/prisma";
+import { getScopedDb } from "../../src/lib/tenant/scoped-client";
 
 /**
  * Currency-conversion brief, PR 1: `enterExchangeRateQuote`/`resolveEffectiveQuote` proved against the REAL test
@@ -238,6 +239,59 @@ describe("enterExchangeRateQuote: tenant isolation", () => {
     const bResolved = await resolve(b.org.id, d);
     expect(bResolved?.revision).toBe(1);
     expect(bResolved?.value).toBe("512");
+  });
+});
+
+/**
+ * ExchangeRateQuote is organization-owned financial configuration, subject to the exact same tenant-isolation rule
+ * every other Dues* model already follows — registered in both `tenant-guard.ts`'s and `scoped-client.ts`'s
+ * `TENANT_SCOPED_MODELS` sets (see `tests/unit/tenant-guard.test.ts` for the runtime-guard-side regression). This
+ * describe block proves the OTHER half: `getScopedDb`'s own wrapper actually enforces org scope for this model, and
+ * its self-referencing `supersedesId` composite FK genuinely refuses a cross-organization link at the database level.
+ */
+describe("ExchangeRateQuote: tenant-scoped client registration", () => {
+  it("getScopedDb exposes only the calling organization's own quotes — another organization's context sees nothing", async () => {
+    const entered = await enter({ quoteDate: freshDate(), expectedCurrentRevision: 0, value: "505.37" });
+    if (!entered.ok) throw new Error("fixture: org a entry failed");
+
+    const bContext: TenantContext = { kind: "tenant", actorUserId: b.admin.id, organizationId: b.org.id, organizationRole: "ADMIN", academyIds: "ALL", selfStudentId: null, linkedStudentId: null };
+    const dbB = getScopedDb(bContext);
+    expect(await dbB.exchangeRateQuote.findMany({ where: { id: entered.quoteId } })).toEqual([]);
+    expect(await dbB.exchangeRateQuote.findFirst({ where: { id: entered.quoteId } })).toBeNull();
+    expect(await dbB.exchangeRateQuote.findUnique({ where: { id: entered.quoteId } })).toBeNull();
+    await expect(dbB.exchangeRateQuote.findUniqueOrThrow({ where: { id: entered.quoteId } })).rejects.toThrow();
+
+    // Sanity: the owning organization's own scoped client DOES see it — proves the emptiness above is tenant
+    // isolation, not a broken query shape that would hide the row from everyone.
+    const dbA = getScopedDb(context());
+    const ownFound = await dbA.exchangeRateQuote.findUnique({ where: { id: entered.quoteId } });
+    expect(ownFound?.id).toBe(entered.quoteId);
+  });
+
+  it("a cross-organization supersedesId is rejected by the composite foreign key (P2003-shaped), never a silent cross-tenant link", async () => {
+    const bContext: TenantContext = { kind: "tenant", actorUserId: b.admin.id, organizationId: b.org.id, organizationRole: "ADMIN", academyIds: "ALL", selfStudentId: null, linkedStudentId: null };
+    const bQuote = await enterExchangeRateQuote({ context: bContext, quoteDate: freshDate(), value: "512.00", expectedCurrentRevision: 0 }, deps());
+    if (!bQuote.ok) throw new Error("fixture: org b entry failed");
+
+    // Raw insert bypassing enterExchangeRateQuote's own trusted supersedesId lookup, on a never-before-used date (so
+    // revision 1 is genuinely free) — the ONLY thing that can fail here is the composite FK on (organizationId,
+    // supersedesId) -> (organizationId, id), since bQuote's row belongs to org b, not org a.
+    const freshQuoteDate = freshDate();
+    await expect(
+      prisma.exchangeRateQuote.create({
+        data: {
+          organizationId: a.org.id,
+          provider: "BCR",
+          pair: "USD/CRC",
+          side: "SELL",
+          quoteDate: new Date(Date.UTC(freshQuoteDate.year, freshQuoteDate.month - 1, freshQuoteDate.day)),
+          revision: 1,
+          value: "505.37",
+          enteredById: a.admin.id,
+          supersedesId: bQuote.quoteId,
+        },
+      }),
+    ).rejects.toThrow();
   });
 });
 

@@ -73,4 +73,14 @@ describe("tenantGuardExtension", () => {
   it("never throws for a platform-level model outside TENANT_SCOPED_MODELS — Organization/User/etc. pass through untouched", async () => {
     await expect(invokeGuard("Organization", "findMany", {})).resolves.toBeDefined();
   });
+
+  it("REQUIRED REGRESSION (ExchangeRateQuote): is registered in TENANT_SCOPED_MODELS, and throws on an unscoped query with no organizationId anywhere", async () => {
+    expect(TENANT_SCOPED_MODELS.has("ExchangeRateQuote")).toBe(true);
+    await expect(
+      invokeGuard("ExchangeRateQuote", "findMany", {
+        where: { provider: "BCR" },
+        orderBy: { quoteDate: "desc" },
+      }),
+    ).rejects.toThrow(UnscopedTenantQueryError);
+  });
 });
