@@ -545,8 +545,10 @@ describe("recordDuesPayment: validate first, then write", () => {
     expect(await pay(ana.id, [sep], "100.00", { now: OCT_5, day: 30, month: 2 })).toMatchObject({ ok: false, error: "invalid" }); // February 30
     expect(await pay(ana.id, [sep], "100.00", { now: OCT_5, day: 5, month: 13 })).toMatchObject({ ok: false, error: "invalid" });
     expect(await pay(ana.id, [sep], "100.00", { now: OCT_5, day: 5 }, { tender: { currency: "EUR", amount: "100.00" } })).toMatchObject({ ok: false, error: "invalid" });
-    // CRC receipt against USD obligations: no conversion exists
-    expect(await pay(ana.id, [sep], "52000.00", { now: OCT_5, day: 5 }, { tender: { currency: "CRC", amount: "52000.00" } })).toMatchObject({ ok: false, error: "currencyMismatch" });
+    // CRC receipt against USD obligations: currency-conversion brief PR 2 — this org has never entered an exchange rate
+    // quote, so the conversion this writer now attempts resolves no rate at all, refusing rateUnavailable (zero writes),
+    // not the old currencyMismatch (reserved, since PR 2, for MIXED-currency items — see dues-currency-settlement.test.ts).
+    expect(await pay(ana.id, [sep], "52000.00", { now: OCT_5, day: 5 }, { tender: { currency: "CRC", amount: "52000.00" } })).toMatchObject({ ok: false, error: "rateUnavailable" });
   });
 
   it("the received date cannot be in the future or older than the injected backdating window", async () => {

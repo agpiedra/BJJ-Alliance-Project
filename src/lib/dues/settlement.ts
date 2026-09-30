@@ -2,8 +2,10 @@ import type { Currency } from "@/generated/prisma/client";
 import { compareDates, compareYearMonth, nextDay, type CalendarDate, type YearMonth } from "@/lib/dues/calendar";
 
 /**
- * Pure fee and settlement arithmetic for student dues. Amounts are integer MINOR units (USD cents) in the obligation's own currency;
- * nothing here converts between currencies, so a receipt in another currency is refused (conversion and its rounding are not decided).
+ * Pure fee and settlement arithmetic for student dues. Amounts are integer MINOR units (USD cents) in the obligation's own currency.
+ * Nothing here performs a currency conversion itself — `settleReceipt`'s own `crossCurrency` parameter accepts already-converted
+ * candidate totals from a caller (currency-conversion brief PR 2: `exchange-rate-arithmetic.ts`'s exact BigInt arithmetic), so this
+ * module never imports or duplicates that logic; omit it and cross-currency behavior is exactly what it always was (`CURRENCY_MISMATCH`).
  *
  * Guarantees are those of pure functions: same inputs, same output, nothing read or written. That a fee ROW can exist only once per
  * obligation, or that two people cannot settle the same obligation, are storage guarantees for later PRs.
@@ -84,34 +86,72 @@ export function outstandingItems(open: readonly ObligationTerms[], receivedOn: C
   return orderOldestFirst(open).map((o) => ({ id: o.id, currency: o.currency, amountMinor: amountDueMinor(o, receivedOn) }));
 }
 
-/** `selectableTotalsMinor` is in the items' currency, and is always empty on `CURRENCY_MISMATCH`. */
-export type SettlementResult =
-  | { ok: true; settledIds: string[]; totalMinor: number }
-  | { ok: false; reason: "NOT_A_SELECTABLE_TOTAL" | "CURRENCY_MISMATCH"; selectableTotalsMinor: number[] };
-
-/**
- * Whole-obligation settlement over items in payment order (outstanding oldest first, then any future periods). A receipt must equal the
- * running total of the first k items for some k of at least 1: several months can be settled together, but nothing is ever split, so a
- * partial amount, an amount between totals and an amount beyond the last total are all refused, with the totals that would be accepted.
- */
-export function settleReceipt(items: readonly SettlementItem[], receiptMinor: number, receiptCurrency: Currency): SettlementResult {
-  if (!Number.isInteger(receiptMinor) || receiptMinor < 0) throw new RangeError(`The receipt must be a whole number of minor units, got ${receiptMinor}`);
-  items.forEach((item) => assertPositiveMinor(item.amountMinor, `Amount of ${item.id}`));
-
+/** Running totals of `items`' own amounts, oldest first as given — the exact prefix sums `settleReceipt` matches a receipt against.
+ * Exported so a cross-currency caller can convert these SAME candidates (via `exchange-rate-arithmetic.ts`'s
+ * `detectAmbiguousRoundedTotals`) before building `settleReceipt`'s own `crossCurrency` argument — one computation, not two. */
+export function runningTotalsMinor(items: readonly { amountMinor: number }[]): number[] {
   const totals: number[] = [];
   items.reduce((running, item) => {
     totals.push(running + item.amountMinor);
     return running + item.amountMinor;
   }, 0);
+  return totals;
+}
 
-  // Mixed currencies, or a receipt in a currency other than the items': refused with NO totals. The totals are in the items' currency,
-  // so offering them for a receipt in another one would read as amounts in the wrong unit.
+/** `selectableTotalsMinor` is in the items' currency for a same-currency refusal, and in the RECEIPT's currency for a cross-currency
+ * one (`AMBIGUOUS_TOTAL`/cross-currency `NOT_A_SELECTABLE_TOTAL`) — always empty on `CURRENCY_MISMATCH`. */
+export type SettlementResult =
+  | { ok: true; settledIds: string[]; totalMinor: number }
+  | { ok: false; reason: "NOT_A_SELECTABLE_TOTAL" | "CURRENCY_MISMATCH" | "AMBIGUOUS_TOTAL"; selectableTotalsMinor: number[] };
+
+/**
+ * One converted candidate: `sourceMinor` is one of `items`' own prefix totals (its own currency), `requiredMinor` is what a receipt in
+ * the OTHER currency would need to equal to settle exactly that prefix. Structurally identical to (and meant to be fed directly from)
+ * `exchange-rate-arithmetic.ts`'s own `SelectableTotal` — no import here, so this module stays free of any currency-conversion dependency.
+ */
+export type CrossCurrencyCandidate = { sourceMinor: number; requiredMinor: number };
+
+/**
+ * The caller's own pre-converted candidates (currency-conversion brief PR 2, §3) — built from `runningTotalsMinor(items)` via
+ * `exchange-rate-arithmetic.ts`'s `convertUsdToCrcMinor`/`convertCrcToUsdMinor` and `detectAmbiguousRoundedTotals`, never computed here.
+ * `ambiguousRequiredMinors` are required totals produced by MORE than one distinct candidate (two distinct exact prefixes that round
+ * to the same figure) — a receipt matching one is refused (`AMBIGUOUS_TOTAL`), since which prefix it was meant to settle is genuinely
+ * unknowable from the number alone.
+ */
+export type CrossCurrencyCandidates = { totals: readonly CrossCurrencyCandidate[]; ambiguousRequiredMinors: readonly number[] };
+
+/**
+ * Whole-obligation settlement over items in payment order (outstanding oldest first, then any future periods). A receipt must equal the
+ * running total of the first k items for some k of at least 1: several months can be settled together, but nothing is ever split, so a
+ * partial amount, an amount between totals and an amount beyond the last total are all refused, with the totals that would be accepted.
+ *
+ * `crossCurrency`, when given, is tried ONLY when the items share one currency that differs from `receiptCurrency` — mixed-currency
+ * items are always `CURRENCY_MISMATCH`, exactly as before, since there is no single source currency to convert from. Omitting it (every
+ * existing caller before PR 2) reproduces the prior behavior byte-for-byte: any currency mismatch is `CURRENCY_MISMATCH`.
+ */
+export function settleReceipt(
+  items: readonly SettlementItem[],
+  receiptMinor: number,
+  receiptCurrency: Currency,
+  crossCurrency?: CrossCurrencyCandidates,
+): SettlementResult {
+  if (!Number.isInteger(receiptMinor) || receiptMinor < 0) throw new RangeError(`The receipt must be a whole number of minor units, got ${receiptMinor}`);
+  items.forEach((item) => assertPositiveMinor(item.amountMinor, `Amount of ${item.id}`));
+
+  const totals = runningTotalsMinor(items);
   const currencies = new Set(items.map((item) => item.currency));
-  if (currencies.size > 1 || (currencies.size === 1 && !currencies.has(receiptCurrency))) {
-    return { ok: false, reason: "CURRENCY_MISMATCH", selectableTotalsMinor: [] };
+  if (currencies.size > 1) return { ok: false, reason: "CURRENCY_MISMATCH", selectableTotalsMinor: [] };
+
+  if (currencies.size === 0 || currencies.has(receiptCurrency)) {
+    const k = totals.indexOf(receiptMinor);
+    if (k === -1) return { ok: false, reason: "NOT_A_SELECTABLE_TOTAL", selectableTotalsMinor: totals };
+    return { ok: true, settledIds: items.slice(0, k + 1).map((item) => item.id), totalMinor: receiptMinor };
   }
 
-  const k = totals.indexOf(receiptMinor);
-  if (k === -1) return { ok: false, reason: "NOT_A_SELECTABLE_TOTAL", selectableTotalsMinor: totals };
+  if (!crossCurrency) return { ok: false, reason: "CURRENCY_MISMATCH", selectableTotalsMinor: [] };
+  if (crossCurrency.ambiguousRequiredMinors.includes(receiptMinor)) return { ok: false, reason: "AMBIGUOUS_TOTAL", selectableTotalsMinor: [] };
+  const match = crossCurrency.totals.find((t) => t.requiredMinor === receiptMinor);
+  if (!match) return { ok: false, reason: "NOT_A_SELECTABLE_TOTAL", selectableTotalsMinor: crossCurrency.totals.map((t) => t.requiredMinor) };
+  const k = totals.indexOf(match.sourceMinor);
   return { ok: true, settledIds: items.slice(0, k + 1).map((item) => item.id), totalMinor: receiptMinor };
 }

@@ -43,16 +43,62 @@ const SIDE = "SELL" as const;
 export const EXCHANGE_RATE_LOCK_NAMESPACE = 1;
 
 /**
- * Serializes every quote write (first entry or correction) for one organization's exchange rates — see this module's own
- * `EXCHANGE_RATE_LOCK_NAMESPACE` doc comment for why the two-integer form, and what it does and doesn't guarantee. Must be
- * the FIRST statement inside a caller's transaction, before any ledger row lock (`lockBranchShared`/`lockStudent`/etc.) —
- * a lock taken any later does not establish the ordering PR 2's settlement integration depends on. This function itself
- * never takes any other lock and never opens its own transaction.
+ * Currency-conversion brief, PR 2 correction: a genuine reader/writer split on this same reserved key, after PR 2's first
+ * cut (a single, always-EXCLUSIVE lock on this key) turned out to serialize every settlement for an organization against
+ * every other settlement, not just against a genuine rate correction — a real scalability regression discovered by
+ * re-reading a test's own comment rather than reasoning through what "acquired unconditionally, before any row lock" a
+ * shared/inner mode of a lock actually does under concurrent settlements. Postgres's advisory locks support this split
+ * NATIVELY, on the identical `(key1, key2)` pair: `pg_advisory_xact_lock_shared` (many holders, none of which conflict
+ * with each other) versus `pg_advisory_xact_lock` (one holder, conflicts with every shared AND every exclusive holder).
+ *
+ *   - EXCLUSIVE (`lockExchangeRateNamespaceExclusive`, below): held by `enterExchangeRateQuote` alone (a rate's first
+ *     entry or correction — an occasional, owner-initiated administrative action, never a per-payment hot path).
+ *   - SHARED (`lockExchangeRateNamespaceShared`, below): held by all four settlement writers (`recordDuesPayment`,
+ *     `correctLateFeeAndSettle`, `prepayMonthlyObligations`, `purchasePackage`). Many settlements — same student,
+ *     different students, same organization or different ones, same currency or cross-currency — hold the shared lock
+ *     simultaneously with NO contention among themselves; only a concurrent EXCLUSIVE request (a correction) genuinely
+ *     waits for every currently-open shared holder to release, and no new shared holder can be granted while an
+ *     exclusive holder has the lock. This is the actual fix: it closes the real race (a settlement using a rate value a
+ *     correction is simultaneously replacing) without re-serializing ordinary payment traffic against itself.
+ *
+ * BOTH remain the literal FIRST statement inside a caller's transaction, before any ledger row lock
+ * (`lockBranchShared`/`lockStudent`/etc.) — only the MODE changed from PR 2's first cut, never the position in the
+ * sequence or the reserved key. Neither function takes any other lock or opens its own transaction.
+ *
+ * THE REMAINING TRADE-OFF, STATED PLAINLY, NOT MINIMIZED: a quote entry or correction (the EXCLUSIVE holder) can still
+ * temporarily block EVERY open settlement for that organization from even acquiring the SHARED lock — including
+ * same-currency ones, since this lock is taken unconditionally regardless of whether conversion is ever needed by that
+ * particular settlement. This is a real cost, just a far smaller and far rarer one than the regression it replaces: an
+ * owner entering or correcting a rate is an occasional administrative action, not something that happens per payment.
  */
-export async function lockExchangeRateNamespace(tx: Tx, organizationId: string): Promise<void> {
-  // $executeRaw, not $queryRaw: pg_advisory_xact_lock returns void, which this Prisma driver adapter cannot deserialize
-  // as a query result column (matches kiosk/rate-limit.ts's own single-bigint call, the one existing site with nothing
-  // else to select alongside the lock).
+export async function lockExchangeRateNamespaceShared(tx: Tx, organizationId: string): Promise<void> {
+  // $executeRaw, not $queryRaw: pg_advisory_xact_lock_shared returns void, which this Prisma driver adapter cannot
+  // deserialize as a query result column (matches kiosk/rate-limit.ts's own single-bigint call, the one existing site
+  // with nothing else to select alongside the lock).
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock_shared(${EXCHANGE_RATE_LOCK_NAMESPACE}, hashtext(${organizationId}))`;
+}
+
+// TRANSACTION-TIMEOUT BEHAVIOR, observed directly, not assumed (no caller anywhere sets `timeout`/`maxWait`, so
+// Prisma's own defaults govern every transaction in this ledger: `timeout: 5000`ms, `maxWait: 2000`ms — verified
+// against this exact Prisma version, not read from documentation alone). If a transaction blocks on either lock
+// function above longer than its own 5-second budget, Postgres does NOT get told to cancel the wait: the blocking
+// query genuinely sits until the lock is actually granted, however long that takes. Only once the response finally
+// arrives does Prisma's client notice its own deadline already passed and refuse to use it, rejecting with
+// PrismaClientKnownRequestError (code "P2028", "...cannot be executed on an expired transaction...") — never a typed
+// { ok: false, error: ... } refusal from any writer in this file, since no classifier here recognizes P2028 (only
+// specific unique-constraint violations are). A caller of any of the four settlement writers, or of
+// enterExchangeRateQuote, must be ready for this to REJECT, not just resolve to a refusal object. Confirmed clean on
+// the way out: Prisma properly ends the underlying database transaction when this happens, and the lock it held is
+// genuinely released — no orphaned pg_locks row, no stuck session, verified by a subsequent unrelated attempt
+// proceeding immediately afterward. No retry logic exists for this anywhere in this ledger, and none is added here.
+// In the observed configuration, the blocked request continues occupying a database connection until the lock wait
+// ends, even after Prisma's transaction deadline has elapsed; sustained contention can therefore reduce available
+// pool capacity. (Transaction-mode pooling was not tested here — this observation is against the direct connection
+// this test suite and this codebase's own pool both use, nothing more is claimed.)
+
+/** See `lockExchangeRateNamespaceShared`'s own doc comment for the full reader/writer design. Held only by
+ * `enterExchangeRateQuote` — a rate's first entry or correction — never by a settlement writer. */
+export async function lockExchangeRateNamespaceExclusive(tx: Tx, organizationId: string): Promise<void> {
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(${EXCHANGE_RATE_LOCK_NAMESPACE}, hashtext(${organizationId}))`;
 }
 
@@ -120,8 +166,9 @@ export async function enterExchangeRateQuote(
   const trimmedNote = sourceNote && sourceNote.trim() !== "" ? sourceNote.trim() : null;
 
   return await prisma.$transaction(async (tx): Promise<EnterExchangeRateQuoteResult> => {
-    // The literal first statement — see lockExchangeRateNamespace's own doc comment for why.
-    await lockExchangeRateNamespace(tx, organizationId);
+    // The literal first statement, EXCLUSIVE — see lockExchangeRateNamespaceShared's own doc comment for the full
+    // reader/writer design and why this write path is the one caller that must never use the shared mode.
+    await lockExchangeRateNamespaceExclusive(tx, organizationId);
 
     const current = await highestRevision(tx, organizationId, quoteDateDb);
     if (current !== expectedCurrentRevision) return refuse("stale");
@@ -178,10 +225,20 @@ export type ResolvedQuote = { id: string; quoteDate: CalendarDate; revision: num
  * the most recent EARLIER date's own highest revision — never a later date, never any date's non-highest revision. `null`
  * if neither exists (the caller's own territory: refuse, or an awaiting-rate receipt, per whichever phase built this call).
  *
- * Takes NO lock itself. The brief's own §4.2 traces every real caller and requires the ADVISORY lock
- * (`lockExchangeRateNamespace`) to be the first statement of whichever transaction calls this — acquired by the caller,
- * before its own row locks, not by this function and not anywhere inside it. Calling this without that lock already held
- * reads a value that a concurrent correction could immediately invalidate.
+ * Takes NO lock itself. The brief's own §4.2 traces every real caller and requires the SHARED advisory lock
+ * (`lockExchangeRateNamespaceShared` — never the exclusive mode, which only a rate write itself takes) to be the first
+ * statement of whichever transaction calls this — acquired by the caller, before its own row locks, not by this
+ * function and not anywhere inside it. Calling this without that lock already held reads a value that a concurrent
+ * correction could immediately invalidate.
+ *
+ * ASSUMES READ COMMITTED (Postgres's own default, and this codebase's actual behavior — no caller anywhere sets
+ * `isolationLevel`, verified). Confirmed by direct experiment (currency-conversion brief §4.4): under READ COMMITTED,
+ * a settlement that wakes from a blocked SHARED-lock wait genuinely sees a correction that committed while it waited —
+ * this function's own "closes the race" guarantee depends on that. Forcing the caller's transaction to REPEATABLE READ
+ * instead reproduces staleness directly: the settlement's snapshot is fixed before the wait even resolves, so this
+ * function silently returns the PRE-correction revision even though the correction has already committed by the time
+ * this runs. If any caller's transaction is ever changed to REPEATABLE READ or SERIALIZABLE, this guarantee breaks
+ * silently — re-verify against a real concurrent correction before doing so, don't assume READ COMMITTED forever.
  */
 export async function resolveEffectiveQuote(tx: Tx, args: { organizationId: string; receivedOn: CalendarDate }): Promise<ResolvedQuote | null> {
   const { organizationId, receivedOn } = args;

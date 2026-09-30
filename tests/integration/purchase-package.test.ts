@@ -514,6 +514,10 @@ describe("purchasePackage: genuine concurrency — the student lock", () => {
       let secondDone = false;
       // The first purchase covers Dec 2030 - Feb 2031; the true next first-uncovered month is March 2031.
       const second = purchase({ studentId: s.id, requestedStartMonth: { year: 2031, month: 3 }, tender: { currency: "USD", amount: "270.00" } }).then((r) => ((secondDone = true), r));
+      // Currency-conversion brief PR 2 (corrected): lockExchangeRateNamespaceShared is this writer's own literal first
+      // statement, but SHARED holders never contend with each other — the first purchase's held shared lock does not
+      // block the second's own attempt to acquire it too. The second purchase instead blocks exactly where it always
+      // did, on the student row FOR UPDATE, still held by the first purchase's still-open transaction.
       const blocked = await waitUntilBlockedOnLock(['FROM "Student"', "FOR UPDATE"]);
       expect(blocked, "the second purchase must genuinely block on the first's still-held student lock").toBe(true);
       expect(secondDone).toBe(false);

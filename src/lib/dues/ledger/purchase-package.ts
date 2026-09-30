@@ -3,10 +3,12 @@ import { prisma } from "@/lib/prisma";
 import type { TenantContext } from "@/lib/tenant/types";
 import { addMonths, compareDates, compareYearMonth, type CalendarDate, type YearMonth } from "@/lib/dues/calendar";
 import { currentMonthIn, parseMoney } from "@/lib/dues/config-input";
-import { settleReceipt, type SettlementItem } from "@/lib/dues/settlement";
+import { settleReceipt, type CrossCurrencyCandidates, type SettlementItem } from "@/lib/dues/settlement";
 import { inactiveLedgerActivation, type LedgerDeps } from "@/lib/dues/ledger/activation";
 import { inTenantScope, isRealDate, latestEffective, lockBranchShared, lockStudent, lockTermsShared, minusDays, todayIn } from "@/lib/dues/ledger/common";
+import { resolveCrossCurrency, type RateEvidence } from "@/lib/dues/ledger/cross-currency-settlement";
 import { isValidCoverageMonth } from "@/lib/dues/ledger/create-monthly-obligation";
+import { lockExchangeRateNamespaceShared } from "@/lib/dues/ledger/exchange-rate";
 import { MAX_MINOR_UNITS, columnToMinor, decimalToMinor, minorToDecimal } from "@/lib/dues/ledger/minor-units";
 import { firstUncoveredFrom, SCHEMA_MAX_MONTH } from "@/lib/dues/ledger/prepay-monthly";
 import {
@@ -167,6 +169,14 @@ export async function purchasePackage(
 
   try {
     return await prisma.$transaction(async (tx): Promise<PurchasePackageResult> => {
+      // The literal first statement, SHARED, before the branch lock. See lockExchangeRateNamespaceShared's own doc
+      // comment: every true outermost transaction this ledger opens takes it unconditionally, before any row lock. This
+      // writer never composes recordDuesPaymentInTx (a package obligation fails that function's own type:"MONTHLY"
+      // filter), but it does its own cross-currency resolution below, which needs the identical ordering guarantee.
+      // Shared, not exclusive: this settlement only ever READS a quote, never writes one.
+      await lockExchangeRateNamespaceShared(tx, organizationId);
+      if (deps.afterExchangeRateLockForTest) await deps.afterExchangeRateLockForTest();
+
       const branch = await lockBranchShared(tx, organizationId, student.homeAcademyId);
       if (!branch) return refuse("notFound");
       const locked = await lockStudent(tx, organizationId, student.id);
@@ -305,23 +315,47 @@ export async function purchasePackage(
       // explicitly, since the column that will hold it (DuesPayment.tenderAmount) is what actually bounds it.
       if (fullTotalMinor > MAX_MINOR_UNITS) throw new PackagePurchaseRefusedError(refuse("amountUnsupported"));
 
-      const settled = settleReceipt(settlementItems, tenderMinor, tender.currency);
+      // Currency-conversion brief PR 2 (§3): tried only when every settled item shares ONE currency that differs from the
+      // tender's (mixed-currency items — debt from a differently-priced branch alongside the package — stay CURRENCY_MISMATCH
+      // unconditionally, identical to record-payment.ts's own rule). Same-currency purchases are entirely unaffected.
+      const itemCurrencies = new Set(settlementItems.map((i) => i.currency));
+      let crossCurrency: CrossCurrencyCandidates | undefined;
+      let rateEvidence: RateEvidence | undefined;
+      let fullTotalRequiredMinor = fullTotalMinor;
+      if (itemCurrencies.size === 1 && !itemCurrencies.has(tender.currency)) {
+        const resolved = await resolveCrossCurrency(tx, {
+          organizationId, items: settlementItems, itemCurrency: [...itemCurrencies][0], receiptCurrency: tender.currency, receivedOn,
+        });
+        if (!resolved.ok) throw new PackagePurchaseRefusedError(refuse("rateUnavailable"));
+        crossCurrency = resolved.candidates;
+        rateEvidence = resolved.evidence;
+        // The full (debt + package) total, converted — if it overflows what the tender-currency column can hold, there is no
+        // amount that could ever settle this purchase in that currency; the same "genuine gap, reported honestly" reasoning
+        // amountUnsupported already applies above to the item currency's own totals.
+        const full = crossCurrency.totals.find((t) => t.sourceMinor === fullTotalMinor);
+        if (!full) throw new PackagePurchaseRefusedError(refuse("amountUnsupported"));
+        fullTotalRequiredMinor = full.requiredMinor;
+      }
+      // Never offer a debt-only (or any other short) prefix as a "selectable" total here — every one of those excludes the
+      // package and would be refused again by the check below if it were ever submitted. Offer only the ONE total that
+      // actually settles everything required (debt + package), in the TENDER's currency; currencyMismatch offers nothing,
+      // matching settleReceipt's own contract that its totals are always empty for a currency mismatch.
+      const fullTotalOffer = [minorToDecimal(fullTotalRequiredMinor)];
+
+      const settled = settleReceipt(settlementItems, tenderMinor, tender.currency, crossCurrency);
       if (!settled.ok) {
-        // Never offer a debt-only (or any other short) prefix as a "selectable" total here — every one of those excludes
-        // the package and would be refused again by the check below if it were ever submitted. Offer only the ONE total
-        // that actually settles everything required (debt + package); currencyMismatch offers nothing, matching
-        // settleReceipt's own contract that its totals are always empty for a currency mismatch.
         if (settled.reason === "CURRENCY_MISMATCH") throw new PackagePurchaseRefusedError(refuse("currencyMismatch"));
-        throw new PackagePurchaseRefusedError(refuse("notASelectableTotal", { selectableTotals: [minorToDecimal(fullTotalMinor)] }));
+        if (settled.reason === "AMBIGUOUS_TOTAL") throw new PackagePurchaseRefusedError(refuse("ambiguousTotal"));
+        throw new PackagePurchaseRefusedError(refuse("notASelectableTotal", { selectableTotals: fullTotalOffer }));
       }
       // settleReceipt accepts any valid k-prefix — a receipt matching only the debt portion is a LEGITIMATE success that
       // excludes the package. Bare ok:true is not proof the whole purchase succeeded: require every item, package
       // included, to actually be in settledIds, or refuse the whole thing and roll back everything written so far.
       if (settled.settledIds.length !== allItems.length) {
-        throw new PackagePurchaseRefusedError(refuse("totalMismatch", { selectableTotals: [minorToDecimal(fullTotalMinor)] }));
+        throw new PackagePurchaseRefusedError(refuse("totalMismatch", { selectableTotals: fullTotalOffer }));
       }
 
-      const written = await writeSettlementInTx(tx, { context, student, receivedOn, tender, method, notes, settledItems: allItems }, frozenDeps);
+      const written = await writeSettlementInTx(tx, { context, student, receivedOn, tender, method, notes, settledItems: allItems, rateEvidence }, frozenDeps);
       return { ok: true, obligationId: obligation.id, paymentId: written.paymentId, settlementIds: written.settlementIds, totalMinor: tenderMinor };
     });
   } catch (error) {

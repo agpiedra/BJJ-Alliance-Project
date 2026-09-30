@@ -214,3 +214,47 @@ describe("settlement is oldest-first and whole-obligation only", () => {
     expect(OCT.graceDeadline).toEqual(d(2026, 11, 5));
   });
 });
+
+/**
+ * Currency-conversion brief PR 2: `settleReceipt`'s own `crossCurrency` parameter, pure and DB-free — the caller (a ledger
+ * writer) is responsible for resolving a quote and building these candidates via `exchange-rate-arithmetic.ts`'s
+ * `detectAmbiguousRoundedTotals`; this module only matches against them. Omitting the parameter (every call above this
+ * block) is already proven byte-identical to before PR 2 existed.
+ */
+describe("settleReceipt: the crossCurrency parameter (pure matching, no conversion performed here)", () => {
+  const items = outstandingItems([OCT, NOV], d(2026, 12, 6)); // totals: [12000, 24000] USD minor
+
+  it("omitted crossCurrency: a mismatched receipt currency is CURRENCY_MISMATCH exactly as before, regardless of any prior behavior", () => {
+    expect(settleReceipt(items, 5000000, "CRC")).toEqual({ ok: false, reason: "CURRENCY_MISMATCH", selectableTotalsMinor: [] });
+  });
+
+  it("a receipt matching one converted candidate settles exactly that prefix", () => {
+    const crossCurrency = { totals: [{ sourceMinor: 12000, requiredMinor: 6060000 }, { sourceMinor: 24000, requiredMinor: 12120000 }], ambiguousRequiredMinors: [] };
+    expect(settleReceipt(items, 6060000, "CRC", crossCurrency)).toEqual({ ok: true, settledIds: ["oct"], totalMinor: 6060000 });
+    expect(settleReceipt(items, 12120000, "CRC", crossCurrency)).toEqual({ ok: true, settledIds: ["oct", "nov"], totalMinor: 12120000 });
+  });
+
+  it("a receipt matching no converted candidate refuses NOT_A_SELECTABLE_TOTAL, offering the converted (receipt-currency) totals, never the source-currency ones", () => {
+    const crossCurrency = { totals: [{ sourceMinor: 12000, requiredMinor: 6060000 }, { sourceMinor: 24000, requiredMinor: 12120000 }], ambiguousRequiredMinors: [] };
+    const r = settleReceipt(items, 9000000, "CRC", crossCurrency);
+    expect(r).toEqual({ ok: false, reason: "NOT_A_SELECTABLE_TOTAL", selectableTotalsMinor: [6060000, 12120000] });
+  });
+
+  it("a receipt matching a required total produced by more than one distinct prefix refuses AMBIGUOUS_TOTAL, offering NO totals", () => {
+    // Two distinct exact USD prefixes (12000 and 24000) both rounded, by the caller, to the identical CRC figure — genuinely
+    // unknowable which one a matching tender was meant to settle.
+    const crossCurrency = { totals: [{ sourceMinor: 12000, requiredMinor: 6000000 }, { sourceMinor: 24000, requiredMinor: 6000000 }], ambiguousRequiredMinors: [6000000] };
+    expect(settleReceipt(items, 6000000, "CRC", crossCurrency)).toEqual({ ok: false, reason: "AMBIGUOUS_TOTAL", selectableTotalsMinor: [] });
+  });
+
+  it("mixed-currency items stay CURRENCY_MISMATCH even when crossCurrency is given: there is no single source currency to convert from", () => {
+    const mixed = [...items, { id: "crc-item", currency: "CRC" as const, amountMinor: 500000 }];
+    const crossCurrency = { totals: [{ sourceMinor: 12000, requiredMinor: 6060000 }], ambiguousRequiredMinors: [] };
+    expect(settleReceipt(mixed, 6060000, "CRC", crossCurrency)).toEqual({ ok: false, reason: "CURRENCY_MISMATCH", selectableTotalsMinor: [] });
+  });
+
+  it("same-currency matching is entirely unaffected by a crossCurrency argument being present (it is only consulted on a currency mismatch)", () => {
+    const crossCurrency = { totals: [{ sourceMinor: 999, requiredMinor: 111 }], ambiguousRequiredMinors: [111] };
+    expect(settleReceipt(items, 12000, "USD", crossCurrency)).toEqual({ ok: true, settledIds: ["oct"], totalMinor: 12000 });
+  });
+});
