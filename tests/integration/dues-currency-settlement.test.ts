@@ -100,19 +100,33 @@ async function ledgerCounts(organizationId: string) {
  * `pg_locks.mode` ("ShareLock" vs "ExclusiveLock") is what Postgres itself is tracking and cannot be ambiguous this way.
  * `classid = 1` is `EXCHANGE_RATE_LOCK_NAMESPACE` (the reserved key1); `objsubid = 2` is Postgres's own marker for the
  * two-integer advisory-lock form specifically (vs. `1` for the single-bigint form every other lock in this codebase
- * uses) — together they can only ever match this one feature's own lock, never coincide with anything else.
+ * uses) — together they can only ever match this one feature's own lock, never coincide with anything else. `objid` is
+ * the second key (`hashtext(organizationId)`) — included so a test can confirm which ORGANIZATION a given row belongs
+ * to, not just that some row for this feature exists (a plain classid/objsubid filter alone cannot tell two
+ * organizations' rows apart, and would pass even if the underlying lock accidentally weren't organization-scoped).
  */
-async function exchangeRateLockRows(): Promise<{ mode: string; granted: boolean }[]> {
-  return prisma.$queryRawUnsafe<{ mode: string; granted: boolean }[]>(`SELECT mode, granted FROM pg_locks WHERE locktype = 'advisory' AND classid = 1 AND objsubid = 2`);
+async function exchangeRateLockRows(): Promise<{ mode: string; granted: boolean; objid: number }[]> {
+  // objid::int4, not bare objid: pg_locks.objid is an `oid` (unsigned), which node-postgres returns as a string, and
+  // which stores hashtext()'s signed int4 result by raw bit pattern — a negative hashtext() value round-trips through
+  // oid as a large positive number. Casting back to int4 reinterprets those same bits with hashtext()'s own signedness,
+  // so this column is directly comparable (by value AND by type) to a fresh `SELECT hashtext($1)` result.
+  return prisma.$queryRawUnsafe<{ mode: string; granted: boolean; objid: number }[]>(`SELECT mode, granted, objid::int4 AS objid FROM pg_locks WHERE locktype = 'advisory' AND classid = 1 AND objsubid = 2`);
 }
 
-async function waitUntilExchangeRateLock(predicate: (rows: { mode: string; granted: boolean }[]) => boolean, timeoutMs = 5000): Promise<boolean> {
+async function waitUntilExchangeRateLock(predicate: (rows: { mode: string; granted: boolean; objid: number }[]) => boolean, timeoutMs = 5000): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (predicate(await exchangeRateLockRows())) return true;
     await new Promise((r) => setTimeout(r, 25));
   }
   return false;
+}
+
+/** Postgres's own `hashtext(organizationId)` value — the lock's second key. Queried directly, never assumed distinct
+ * for any two organization ids (a 32-bit hash can coincidentally collide). */
+async function hashtextOf(value: string): Promise<number> {
+  const rows = await prisma.$queryRaw<{ h: number }[]>`SELECT hashtext(${value}) AS h`;
+  return rows[0].h;
 }
 
 beforeAll(async () => {
@@ -454,6 +468,118 @@ describe("recordDuesPayment: genuinely waits while a quote correction holds the 
     } finally {
       releaseCorrection();
       await Promise.allSettled([correcting, paying].filter((p): p is NonNullable<typeof p> => p !== undefined));
+    }
+  }, 20_000);
+});
+
+/**
+ * Scoped-lock correction: `exchangeRateLockRows()` above filters by `classid`/`objsubid` only — it does not, by
+ * itself, prove any row belongs to the RIGHT organization. Every other test in this file shares one fixture
+ * organization (`a.org.id`), so nothing above would fail even if this lock accidentally weren't organization-scoped at
+ * all. This block is the actual proof: a genuinely different organization's settlement, run concurrently, never
+ * contends with `a`'s held lock, and `pg_locks.objid` shows the two as the distinct values they are.
+ */
+describe("two different organizations' settlements never contend on this shared key1 namespace", () => {
+  let orgB: Fixture;
+  let orgBTerms: { id: string };
+  let orgBPolicy: { id: string };
+  let orgBStudentId: string;
+  let orgBObligationId: string;
+
+  beforeAll(async () => {
+    orgB = await makeAccountingOrg("CUMULATIVE", "currency-b");
+    const plan = await prisma.paymentPlan.create({ data: { organizationId: orgB.org.id, academyId: orgB.academy.id, name: `Currency org-B plan ${suffix}` } });
+    orgBTerms = await prisma.paymentPlanTerms.create({
+      data: { organizationId: orgB.org.id, planId: plan.id, effectiveYear: 2027, effectiveMonth: 1, priceAmount: "100.00", currency: "USD", monthsCovered: 1, createdById: orgB.admin.id },
+    });
+    orgBPolicy = await prisma.duesPolicyVersion.create({
+      data: { organizationId: orgB.org.id, academyId: orgB.academy.id, effectiveYear: 2027, effectiveMonth: 1, dueDay: 20, graceDay: 5, lateFeeAmount: "20.00", lateFeeCurrency: "USD", createdById: orgB.admin.id },
+    });
+    const student = await prisma.student.create({
+      data: {
+        organizationId: orgB.org.id, homeAcademyId: orgB.academy.id, firstName: "Currency", lastName: "OrgB", phone: "00000000",
+        email: `currency-orgb-${suffix}@example.com`, currentRankId: await orgB.rankId("WHITE"), codeHash: `currency-orgb-${suffix}`, status: "ACTIVE",
+      },
+    });
+    orgBStudentId = student.id;
+    const obligation = await createMonthlyObligation(
+      { context: { kind: "tenant", actorUserId: orgB.admin.id, organizationId: orgB.org.id, organizationRole: "ADMIN", academyIds: "ALL", selfStudentId: null, linkedStudentId: null }, studentId: student.id, coverage: { year: 2030, month: 9 }, planTermsId: orgBTerms.id, policyVersionId: orgBPolicy.id },
+      deps(),
+    );
+    if (!obligation.ok) throw new Error(`fixture: org B obligation failed: ${obligation.error}`);
+    orgBObligationId = obligation.obligationId;
+  }, 30_000);
+
+  afterAll(async () => {
+    if (!orgB) return;
+    await prisma.$transaction(
+      async (tx) => {
+        await tx.$executeRawUnsafe("SET LOCAL session_replication_role = replica");
+        for (const table of ["DuesSettlement", "DuesPayment", "DuesLateFee", "DuesCoverage", "DuesObligation"]) {
+          await tx.$executeRawUnsafe(`DELETE FROM "${table}" WHERE "organizationId" = $1`, orgB.org.id);
+        }
+      },
+      { timeout: 30_000 },
+    );
+    await prisma.auditLog.deleteMany({ where: { organizationId: orgB.org.id } });
+    await prisma.paymentPlanTerms.deleteMany({ where: { organizationId: orgB.org.id } });
+    await prisma.duesPolicyVersion.deleteMany({ where: { organizationId: orgB.org.id } });
+    await prisma.paymentPlan.deleteMany({ where: { organizationId: orgB.org.id } });
+    await orgB.drop();
+  }, 30_000);
+
+  it("hashtext(organizationId) is confirmed distinct for the two fixture organizations used here (not assumed)", async () => {
+    const [hashA, hashB] = await Promise.all([hashtextOf(a.org.id), hashtextOf(orgB.org.id)]);
+    expect(hashA).not.toBe(hashB);
+  });
+
+  it("organization B's settlement is never blocked by organization A's held lock; pg_locks shows two distinct, both-GRANTED objid rows", async () => {
+    const [hashA, hashB] = await Promise.all([hashtextOf(a.org.id), hashtextOf(orgB.org.id)]);
+
+    const sA = await newStudent("foreignorgA");
+    const sepA = await oneMonth(sA.id, 9, usdTerms.id, usdPolicy.id);
+
+    let releaseA!: () => void;
+    const gateA = new Promise<void>((r) => (releaseA = r));
+    let pausedAResolve!: () => void;
+    const pausedA = new Promise<void>((r) => (pausedAResolve = r));
+    const payingA = recordDuesPayment(
+      { context: context(), studentId: sA.id, receivedOn: { year: 2030, month: 10, day: 5 }, tender: { currency: "USD", amount: "100.00" }, method: "EFECTIVO", obligationIds: [sepA], maxBackdateDays: 5 },
+      deps({ now: OCT_5, afterExchangeRateLockForTest: async () => { pausedAResolve(); await gateA; } }),
+    );
+
+    let releaseB!: () => void;
+    const gateB = new Promise<void>((r) => (releaseB = r));
+    let pausedBResolve!: () => void;
+    const pausedB = new Promise<void>((r) => (pausedBResolve = r));
+    let payingB: ReturnType<typeof recordDuesPayment> | undefined;
+
+    try {
+      await pausedA; // org A's settlement holds the SHARED lock (objid = hashA); still open
+
+      const bContext: TenantContext = { kind: "tenant", actorUserId: orgB.admin.id, organizationId: orgB.org.id, organizationRole: "ADMIN", academyIds: "ALL", selfStudentId: null, linkedStudentId: null };
+      payingB = recordDuesPayment(
+        { context: bContext, studentId: orgBStudentId, receivedOn: { year: 2030, month: 10, day: 5 }, tender: { currency: "USD", amount: "100.00" }, method: "EFECTIVO", obligationIds: [orgBObligationId], maxBackdateDays: 5 },
+        deps({ now: OCT_5, afterExchangeRateLockForTest: async () => { pausedBResolve(); await gateB; } }),
+      );
+
+      // Both paused, both still holding their own SHARED lock simultaneously — the actual negative-control snapshot.
+      await pausedB;
+      const rows = await exchangeRateLockRows();
+      const rowA = rows.find((r) => r.objid === hashA);
+      const rowB = rows.find((r) => r.objid === hashB);
+      expect(rowA, "organization A's row must exist, GRANTED, mode ShareLock").toMatchObject({ granted: true, mode: "ShareLock" });
+      expect(rowB, "organization B's row must exist, GRANTED, mode ShareLock — never queued behind A's").toMatchObject({ granted: true, mode: "ShareLock" });
+      expect(rowA!.objid).not.toBe(rowB!.objid);
+
+      releaseB();
+      releaseA();
+      expect(await payingB).toMatchObject({ ok: true });
+      expect(await payingA).toMatchObject({ ok: true });
+    } finally {
+      releaseA();
+      releaseB();
+      await Promise.allSettled([payingA, payingB].filter((p): p is NonNullable<typeof p> => p !== undefined));
     }
   }, 20_000);
 });

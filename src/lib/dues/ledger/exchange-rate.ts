@@ -78,6 +78,20 @@ export async function lockExchangeRateNamespaceShared(tx: Tx, organizationId: st
   await tx.$executeRaw`SELECT pg_advisory_xact_lock_shared(${EXCHANGE_RATE_LOCK_NAMESPACE}, hashtext(${organizationId}))`;
 }
 
+// TRANSACTION-TIMEOUT BEHAVIOR, observed directly, not assumed (no caller anywhere sets `timeout`/`maxWait`, so
+// Prisma's own defaults govern every transaction in this ledger: `timeout: 5000`ms, `maxWait: 2000`ms — verified
+// against this exact Prisma version, not read from documentation alone). If a transaction blocks on either lock
+// function above longer than its own 5-second budget, Postgres does NOT get told to cancel the wait: the blocking
+// query genuinely sits until the lock is actually granted, however long that takes. Only once the response finally
+// arrives does Prisma's client notice its own deadline already passed and refuse to use it, rejecting with
+// PrismaClientKnownRequestError (code "P2028", "...cannot be executed on an expired transaction...") — never a typed
+// { ok: false, error: ... } refusal from any writer in this file, since no classifier here recognizes P2028 (only
+// specific unique-constraint violations are). A caller of any of the four settlement writers, or of
+// enterExchangeRateQuote, must be ready for this to REJECT, not just resolve to a refusal object. Confirmed clean on
+// the way out: Prisma properly ends the underlying database transaction when this happens, and the lock it held is
+// genuinely released — no orphaned pg_locks row, no stuck session, verified by a subsequent unrelated attempt
+// proceeding immediately afterward. No retry logic exists for this anywhere in this ledger, and none is added here.
+
 /** See `lockExchangeRateNamespaceShared`'s own doc comment for the full reader/writer design. Held only by
  * `enterExchangeRateQuote` — a rate's first entry or correction — never by a settlement writer. */
 export async function lockExchangeRateNamespaceExclusive(tx: Tx, organizationId: string): Promise<void> {
@@ -212,6 +226,15 @@ export type ResolvedQuote = { id: string; quoteDate: CalendarDate; revision: num
  * statement of whichever transaction calls this — acquired by the caller, before its own row locks, not by this
  * function and not anywhere inside it. Calling this without that lock already held reads a value that a concurrent
  * correction could immediately invalidate.
+ *
+ * ASSUMES READ COMMITTED (Postgres's own default, and this codebase's actual behavior — no caller anywhere sets
+ * `isolationLevel`, verified). Confirmed by direct experiment (currency-conversion brief §4.4): under READ COMMITTED,
+ * a settlement that wakes from a blocked SHARED-lock wait genuinely sees a correction that committed while it waited —
+ * this function's own "closes the race" guarantee depends on that. Forcing the caller's transaction to REPEATABLE READ
+ * instead reproduces staleness directly: the settlement's snapshot is fixed before the wait even resolves, so this
+ * function silently returns the PRE-correction revision even though the correction has already committed by the time
+ * this runs. If any caller's transaction is ever changed to REPEATABLE READ or SERIALIZABLE, this guarantee breaks
+ * silently — re-verify against a real concurrent correction before doing so, don't assume READ COMMITTED forever.
  */
 export async function resolveEffectiveQuote(tx: Tx, args: { organizationId: string; receivedOn: CalendarDate }): Promise<ResolvedQuote | null> {
   const { organizationId, receivedOn } = args;
