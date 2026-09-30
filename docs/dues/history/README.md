@@ -1,0 +1,5 @@
+# Dues/payment-schedules brief history
+
+These 13 files are the original, owner-approved briefs that drove PRs #65 through #79 (the student-dues ledger and its currency-conversion extension), copied here verbatim from the working folder they were written in (outside this repo) as the durable historical record of the design process — including the corrections each one went through before its own PR was implemented. They are **not** kept up to date and must never be read as a description of current behavior: a later brief in the sequence corrects an earlier one in places, and the merged code itself sometimes differs in small ways from even the final version of the brief that proposed it (documented in `../../DUES_PAYMENT_SCHEDULES.md` wherever found).
+
+**`../../DUES_PAYMENT_SCHEDULES.md` is the current, reconciled source of truth** for what this feature actually does today, what remains a historical proposal only, what is still an unresolved decision, and what is a known limitation. Read that document first; come here only for the reasoning trail behind a specific decision.
