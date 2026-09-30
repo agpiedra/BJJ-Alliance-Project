@@ -6,7 +6,7 @@ import type { TenantContext } from "../../src/lib/tenant/types";
 import { createMonthlyObligation } from "../../src/lib/dues/ledger/create-monthly-obligation";
 import { recordDuesPayment } from "../../src/lib/dues/ledger/record-payment";
 import { purchasePackage } from "../../src/lib/dues/ledger/purchase-package";
-import { enterExchangeRateQuote } from "../../src/lib/dues/ledger/exchange-rate";
+import { enterExchangeRateQuote, EXCHANGE_RATE_LOCK_NAMESPACE } from "../../src/lib/dues/ledger/exchange-rate";
 import type { LedgerActivation } from "../../src/lib/dues/ledger/activation";
 
 /**
@@ -19,16 +19,27 @@ import type { LedgerActivation } from "../../src/lib/dues/ledger/activation";
  * `prepay-monthly.test.ts`, `purchase-package.test.ts`) — nothing here duplicates that coverage.
  *
  * CONCURRENCY (the shared/exclusive reader-writer split — `lockExchangeRateNamespaceShared`/`...Exclusive`,
- * `exchange-rate.ts`): four genuine, PID/lock-scoped proofs, none sequential —
+ * `exchange-rate.ts`): genuine, PID/lock-scoped proofs, none sequential —
  *   1. Two DIFFERENT students' settlements (one same-currency, one cross-currency) genuinely overlap: the SHARED lock
  *      never contends with itself. `purchase-package.test.ts`'s own same-STUDENT concurrency test separately still
  *      proves the student row itself keeps serializing two settlements for the SAME student, unaffected by this split.
- *   2. A quote correction (EXCLUSIVE) genuinely waits on an open settlement's SHARED hold, then proceeds once released.
+ *   2. A quote correction (EXCLUSIVE) genuinely waits on an open settlement's SHARED hold, then proceeds once released
+ *      — proved both by `pg_locks` (mode/granted) AND by `pg_blocking_pids()` naming the specific holder PID.
  *   3. A settlement (SHARED) genuinely waits on an open correction's EXCLUSIVE hold, then proceeds using the
- *      just-committed revision (asserted on the resulting `DuesPayment`, not merely "it succeeded").
- * Lock-state assertions read `pg_locks` directly (`mode`/`granted`), never `pg_stat_activity`'s query text —
+ *      just-committed revision (asserted on the resulting `DuesPayment`, not merely "it succeeded") — same
+ *      `pg_blocking_pids()` proof as (2).
+ *   4. Two DIFFERENT organizations never contend on this shared key1 namespace: (a) organization B's settlement
+ *      completes, bounded, while organization A holds its own EXCLUSIVE lock (the only mode where key equality would
+ *      matter); (b) organization B's own internal contention is invisible to a query scoped to organization A's key.
+ *      Both are mutation-checked (see each test's own history) — a prior "two SHARED holders coexist" version of this
+ *      proof was inadequate, since shared locks never conflict regardless of whether their keys actually differ.
+ *   5. `exchangeRateLockRowsForKey` (the one function every lock query above builds on) correctly finds a genuinely
+ *      NEGATIVE key2 (`-12345`) via `objid::int4` — the two fixture organizations' hashes alone don't prove this,
+ *      since both could coincidentally be positive.
+ * Lock-state assertions read `pg_locks` directly (`mode`/`granted`/`pid`), fully scoped (`locktype`, `database`,
+ * `classid` as a bound parameter, `objid::int4` to an exact key2, `objsubid`), never `pg_stat_activity`'s query text —
  * `pg_advisory_xact_lock` is a literal prefix of `pg_advisory_xact_lock_shared`, so a substring match cannot reliably
- * tell the two lock MODES apart the way `pg_locks.mode` (`"ShareLock"` vs `"ExclusiveLock"`) does unambiguously.
+ * tell the two lock MODES apart the way `pg_locks.mode` does unambiguously.
  */
 const prisma = getTestPrismaClient();
 type Fixture = Awaited<ReturnType<typeof makeAccountingOrg>>;
@@ -93,33 +104,42 @@ async function ledgerCounts(organizationId: string) {
   };
 }
 
+type LockRow = { mode: string; granted: boolean; pid: number };
+
 /**
- * Rows for THIS feature's own reserved advisory-lock key, queried directly from `pg_locks` rather than
+ * Rows for THIS feature's own reserved advisory-lock key1 (`EXCHANGE_RATE_LOCK_NAMESPACE`, passed as a bound
+ * parameter, never a hardcoded literal) and an EXACT `key2`, queried directly from `pg_locks` rather than
  * `pg_stat_activity`'s query text — `pg_advisory_xact_lock` is a literal PREFIX of `pg_advisory_xact_lock_shared`, so a
  * text-match on query content cannot reliably tell the two lock MODES this suite needs to distinguish apart.
  * `pg_locks.mode` ("ShareLock" vs "ExclusiveLock") is what Postgres itself is tracking and cannot be ambiguous this way.
- * `classid = 1` is `EXCHANGE_RATE_LOCK_NAMESPACE` (the reserved key1); `objsubid = 2` is Postgres's own marker for the
- * two-integer advisory-lock form specifically (vs. `1` for the single-bigint form every other lock in this codebase
- * uses) — together they can only ever match this one feature's own lock, never coincide with anything else. `objid` is
- * the second key (`hashtext(organizationId)`) — included so a test can confirm which ORGANIZATION a given row belongs
- * to, not just that some row for this feature exists (a plain classid/objsubid filter alone cannot tell two
- * organizations' rows apart, and would pass even if the underlying lock accidentally weren't organization-scoped).
+ *
+ * Filters completely: `locktype = 'advisory'`, `database` (advisory locks are per-database; scoping to the current one
+ * is not optional), `classid` (key1), `objid::int4 = key2` (see the cast note below), `objsubid = 2` (Postgres's own
+ * marker for the two-integer advisory-lock form specifically, vs. `1` for the single-bigint form every other lock in
+ * this codebase uses). Together these can only ever match this one feature's own lock for this exact key2, never
+ * coincide with anything else and never silently widen to another organization's row.
+ *
+ * This is the ONE place the query is written — `exchangeRateLockRowsForOrg`/`waitUntilExchangeRateLockForOrg` below
+ * build on this exact function (never a second copy of the SQL), and the deterministic negative-key proof
+ * (`exchangeRateLockRowsForKey(-12345)`, its own describe block) calls it directly too, so that proof exercises the
+ * identical code path the organization-scoped tests actually run.
+ *
+ * `objid::int4`, not bare `objid`: `pg_locks.objid` is an `oid` (unsigned), which node-postgres returns as a string,
+ * and which stores `hashtext()`'s signed int4 result by raw bit pattern — a negative `hashtext()` value round-trips
+ * through `oid` as a large positive number. Casting back to int4 reinterprets those same bits with `hashtext()`'s own
+ * signedness, so this column is directly comparable (by value AND by type) to a fresh `SELECT hashtext($1)` result —
+ * proved for a genuinely negative key2 by the deterministic test below, not assumed from the two fixture hashes alone.
  */
-async function exchangeRateLockRows(): Promise<{ mode: string; granted: boolean; objid: number }[]> {
-  // objid::int4, not bare objid: pg_locks.objid is an `oid` (unsigned), which node-postgres returns as a string, and
-  // which stores hashtext()'s signed int4 result by raw bit pattern — a negative hashtext() value round-trips through
-  // oid as a large positive number. Casting back to int4 reinterprets those same bits with hashtext()'s own signedness,
-  // so this column is directly comparable (by value AND by type) to a fresh `SELECT hashtext($1)` result.
-  return prisma.$queryRawUnsafe<{ mode: string; granted: boolean; objid: number }[]>(`SELECT mode, granted, objid::int4 AS objid FROM pg_locks WHERE locktype = 'advisory' AND classid = 1 AND objsubid = 2`);
-}
-
-async function waitUntilExchangeRateLock(predicate: (rows: { mode: string; granted: boolean; objid: number }[]) => boolean, timeoutMs = 5000): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (predicate(await exchangeRateLockRows())) return true;
-    await new Promise((r) => setTimeout(r, 25));
-  }
-  return false;
+async function exchangeRateLockRowsForKey(key2: number): Promise<LockRow[]> {
+  return prisma.$queryRaw<LockRow[]>`
+    SELECT mode, granted, pid
+    FROM pg_locks
+    WHERE locktype = 'advisory'
+      AND database = (SELECT oid FROM pg_database WHERE datname = current_database())
+      AND classid = ${EXCHANGE_RATE_LOCK_NAMESPACE}
+      AND objid::int4 = ${key2}
+      AND objsubid = 2
+  `;
 }
 
 /** Postgres's own `hashtext(organizationId)` value — the lock's second key. Queried directly, never assumed distinct
@@ -127,6 +147,43 @@ async function waitUntilExchangeRateLock(predicate: (rows: { mode: string; grant
 async function hashtextOf(value: string): Promise<number> {
   const rows = await prisma.$queryRaw<{ h: number }[]>`SELECT hashtext(${value}) AS h`;
   return rows[0].h;
+}
+
+/** `exchangeRateLockRowsForKey`, scoped by organization id instead of a raw key2 — computes `hashtext(organizationId)`
+ * once and calls the same key-level function every other helper here builds on. A caller cannot accidentally omit
+ * organization scoping: there is no "unscoped" variant of this function to reach for by mistake. */
+async function exchangeRateLockRowsForOrg(organizationId: string): Promise<LockRow[]> {
+  return exchangeRateLockRowsForKey(await hashtextOf(organizationId));
+}
+
+async function waitUntilExchangeRateLockForOrg(organizationId: string, predicate: (rows: LockRow[]) => boolean, timeoutMs = 5000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate(await exchangeRateLockRowsForOrg(organizationId))) return true;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  return false;
+}
+
+/** `holderPid` genuinely blocks `waiterPid`, per Postgres's own `pg_blocking_pids()` — not inferred from timing or
+ * from `pg_locks` rows alone (two rows existing, one granted and one not, does not by itself prove ONE is blocking the
+ * OTHER specifically; `pg_blocking_pids` is Postgres's own authoritative answer to exactly that question). */
+async function isBlockedBy(waiterPid: number, holderPid: number): Promise<boolean> {
+  const rows = await prisma.$queryRaw<{ blocked: boolean }[]>`SELECT ${holderPid} = ANY(pg_blocking_pids(${waiterPid})) AS blocked`;
+  return rows[0].blocked;
+}
+
+/** Races `promise` against a bounded timeout — used where "eventually resolves" is not good enough evidence (a hung
+ * promise and a genuine mutation-induced block must both fail an assertion within a bounded interval, never rely on
+ * vitest's own test-level timeout as the proof). */
+async function raceWithTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<{ kind: "resolved"; value: T } | { kind: "timedOut" }> {
+  let timer!: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<{ kind: "timedOut" }>((resolve) => {
+    timer = setTimeout(() => resolve({ kind: "timedOut" }), timeoutMs);
+  });
+  const result = await Promise.race([promise.then((value): { kind: "resolved"; value: T } => ({ kind: "resolved", value })), timeout]);
+  clearTimeout(timer);
+  return result;
 }
 
 beforeAll(async () => {
@@ -407,9 +464,18 @@ describe("enterExchangeRateQuote: genuinely waits while a settlement holds the s
 
       let correctionDone = false;
       correcting = enterExchangeRateQuote({ context: context(), quoteDate, value: "510.00", expectedCurrentRevision: 1 }, deps()).then((r) => ((correctionDone = true), r));
-      const blocked = await waitUntilExchangeRateLock((rows) => rows.some((r) => r.mode === "ExclusiveLock" && !r.granted));
-      expect(blocked, "the correction must genuinely be waiting (EXCLUSIVE, ungranted) while the settlement holds the SHARED lock").toBe(true);
+      const blocked = await waitUntilExchangeRateLockForOrg(a.org.id, (rows) => rows.some((r) => r.mode === "ExclusiveLock" && !r.granted));
+      expect(blocked, "the correction must genuinely be waiting (EXCLUSIVE, ungranted) while the settlement holds the SHARED lock, on organization a's own key").toBe(true);
       expect(correctionDone).toBe(false);
+
+      // pg_locks alone (one granted row, one ungranted row) does not by itself prove ONE is blocking the OTHER
+      // specifically — pg_blocking_pids() is Postgres's own authoritative answer to exactly that question.
+      const rows = await exchangeRateLockRowsForOrg(a.org.id);
+      const holderPid = rows.find((r) => r.mode === "ShareLock" && r.granted)?.pid;
+      const waiterPid = rows.find((r) => r.mode === "ExclusiveLock" && !r.granted)?.pid;
+      expect(holderPid, "the settlement's granted SHARE row must exist").not.toBeUndefined();
+      expect(waiterPid, "the correction's ungranted EXCLUSIVE row must exist").not.toBeUndefined();
+      expect(await isBlockedBy(waiterPid!, holderPid!), "the correction must be blocked specifically by the settlement's held lock (pg_blocking_pids)").toBe(true);
 
       releaseSettlement();
       expect(await paying).toMatchObject({ ok: true });
@@ -452,9 +518,16 @@ describe("recordDuesPayment: genuinely waits while a quote correction holds the 
         { context: context(), studentId: s.id, receivedOn: { year: 2030, month: 10, day: 5 }, tender: { currency: "CRC", amount: "51000.00" }, method: "EFECTIVO", obligationIds: [sep], maxBackdateDays: 5 },
         deps({ now: OCT_5 }),
       ).then((r) => ((payingDone = true), r));
-      const blocked = await waitUntilExchangeRateLock((rows) => rows.some((r) => r.mode === "ShareLock" && !r.granted));
-      expect(blocked, "the settlement must genuinely be waiting (SHARED, ungranted) while the correction holds the EXCLUSIVE lock").toBe(true);
+      const blocked = await waitUntilExchangeRateLockForOrg(a.org.id, (rows) => rows.some((r) => r.mode === "ShareLock" && !r.granted));
+      expect(blocked, "the settlement must genuinely be waiting (SHARED, ungranted) while the correction holds the EXCLUSIVE lock, on organization a's own key").toBe(true);
       expect(payingDone).toBe(false);
+
+      const rows = await exchangeRateLockRowsForOrg(a.org.id);
+      const holderPid = rows.find((r) => r.mode === "ExclusiveLock" && r.granted)?.pid;
+      const waiterPid = rows.find((r) => r.mode === "ShareLock" && !r.granted)?.pid;
+      expect(holderPid, "the correction's granted EXCLUSIVE row must exist").not.toBeUndefined();
+      expect(waiterPid, "the settlement's ungranted SHARE row must exist").not.toBeUndefined();
+      expect(await isBlockedBy(waiterPid!, holderPid!), "the settlement must be blocked specifically by the correction's held lock (pg_blocking_pids)").toBe(true);
 
       releaseCorrection();
       expect(await correcting).toMatchObject({ ok: true, revision: 2 });
@@ -473,11 +546,15 @@ describe("recordDuesPayment: genuinely waits while a quote correction holds the 
 });
 
 /**
- * Scoped-lock correction: `exchangeRateLockRows()` above filters by `classid`/`objsubid` only — it does not, by
- * itself, prove any row belongs to the RIGHT organization. Every other test in this file shares one fixture
- * organization (`a.org.id`), so nothing above would fail even if this lock accidentally weren't organization-scoped at
- * all. This block is the actual proof: a genuinely different organization's settlement, run concurrently, never
- * contends with `a`'s held lock, and `pg_locks.objid` shows the two as the distinct values they are.
+ * Scoped-lock correction, 2nd round: the FIRST correction (adding `objid` and a "two SHARED holders coexist" test)
+ * was itself inadequate — two shared holders never conflict REGARDLESS of whether their keys actually differ, so that
+ * test proved nothing about scoping at all. The two tests below are the actual proof, each depending on the EXCLUSIVE
+ * mode specifically (the only mode where key equality vs. inequality has any observable effect): (a) a genuinely
+ * different organization's settlement completes, bounded, while THIS organization holds its own EXCLUSIVE lock — if
+ * the two organizations' keys ever collapsed to the same value, B would block behind A instead; (b) organization B's
+ * own internal contention (a bystander holding B's EXCLUSIVE lock against B's own settlement) is invisible to a query
+ * scoped to organization A's key — proving the scoping query itself discriminates, not just that two unrelated
+ * settlements happened to finish.
  */
 describe("two different organizations' settlements never contend on this shared key1 namespace", () => {
   let orgB: Fixture;
@@ -533,53 +610,136 @@ describe("two different organizations' settlements never contend on this shared 
     expect(hashA).not.toBe(hashB);
   });
 
-  it("organization B's settlement is never blocked by organization A's held lock; pg_locks shows two distinct, both-GRANTED objid rows", async () => {
+  it("(a) organization B's settlement completes, bounded, while organization A holds its own EXCLUSIVE lock via a real correction", async () => {
     const [hashA, hashB] = await Promise.all([hashtextOf(a.org.id), hashtextOf(orgB.org.id)]);
+    expect(hashA, "fixture precondition: the two organizations' keys must genuinely differ for this test to mean anything").not.toBe(hashB);
 
-    const sA = await newStudent("foreignorgA");
-    const sepA = await oneMonth(sA.id, 9, usdTerms.id, usdPolicy.id);
+    const aQuoteDate = freshQuoteDate();
+    const firstA = await enterExchangeRateQuote({ context: context(), quoteDate: aQuoteDate, value: "500.00", expectedCurrentRevision: 0 }, deps());
+    if (!firstA.ok) throw new Error("fixture: org A rate entry failed");
 
     let releaseA!: () => void;
     const gateA = new Promise<void>((r) => (releaseA = r));
     let pausedAResolve!: () => void;
     const pausedA = new Promise<void>((r) => (pausedAResolve = r));
-    const payingA = recordDuesPayment(
-      { context: context(), studentId: sA.id, receivedOn: { year: 2030, month: 10, day: 5 }, tender: { currency: "USD", amount: "100.00" }, method: "EFECTIVO", obligationIds: [sepA], maxBackdateDays: 5 },
-      deps({ now: OCT_5, afterExchangeRateLockForTest: async () => { pausedAResolve(); await gateA; } }),
+    // Organization A holds its own EXCLUSIVE lock via a REAL correction (afterExchangeRateQuoteWrittenForTest: PR 1's
+    // own existing hook, fires after the new row is written but before commit — the exclusive hold is genuinely live).
+    const correctingA = enterExchangeRateQuote(
+      { context: context(), quoteDate: aQuoteDate, value: "510.00", expectedCurrentRevision: 1 },
+      deps({ afterExchangeRateQuoteWrittenForTest: async () => { pausedAResolve(); await gateA; } }),
     );
 
-    let releaseB!: () => void;
-    const gateB = new Promise<void>((r) => (releaseB = r));
-    let pausedBResolve!: () => void;
-    const pausedB = new Promise<void>((r) => (pausedBResolve = r));
-    let payingB: ReturnType<typeof recordDuesPayment> | undefined;
-
     try {
-      await pausedA; // org A's settlement holds the SHARED lock (objid = hashA); still open
+      await pausedA; // organization A holds the EXCLUSIVE lock (key2 = hashA); still open
 
       const bContext: TenantContext = { kind: "tenant", actorUserId: orgB.admin.id, organizationId: orgB.org.id, organizationRole: "ADMIN", academyIds: "ALL", selfStudentId: null, linkedStudentId: null };
-      payingB = recordDuesPayment(
+      const payingB = recordDuesPayment(
         { context: bContext, studentId: orgBStudentId, receivedOn: { year: 2030, month: 10, day: 5 }, tender: { currency: "USD", amount: "100.00" }, method: "EFECTIVO", obligationIds: [orgBObligationId], maxBackdateDays: 5 },
-        deps({ now: OCT_5, afterExchangeRateLockForTest: async () => { pausedBResolve(); await gateB; } }),
+        deps({ now: OCT_5 }),
       );
 
-      // Both paused, both still holding their own SHARED lock simultaneously — the actual negative-control snapshot.
-      await pausedB;
-      const rows = await exchangeRateLockRows();
-      const rowA = rows.find((r) => r.objid === hashA);
-      const rowB = rows.find((r) => r.objid === hashB);
-      expect(rowA, "organization A's row must exist, GRANTED, mode ShareLock").toMatchObject({ granted: true, mode: "ShareLock" });
-      expect(rowB, "organization B's row must exist, GRANTED, mode ShareLock — never queued behind A's").toMatchObject({ granted: true, mode: "ShareLock" });
-      expect(rowA!.objid).not.toBe(rowB!.objid);
+      // Bounded, not a bare `await` — a hang here (e.g. under the mutation check below) must fail with a specific
+      // assertion, never rely on vitest's own test-level timeout as the proof.
+      const outcome = await raceWithTimeout(payingB, 4000);
+      expect(outcome.kind, "organization B's settlement must complete within 4s while organization A's correction is still open — it must never contend on A's key").toBe("resolved");
+      if (outcome.kind === "resolved") expect(outcome.value).toMatchObject({ ok: true });
 
-      releaseB();
       releaseA();
-      expect(await payingB).toMatchObject({ ok: true });
-      expect(await payingA).toMatchObject({ ok: true });
+      expect(await correctingA).toMatchObject({ ok: true, revision: 2 });
     } finally {
       releaseA();
-      releaseB();
-      await Promise.allSettled([payingA, payingB].filter((p): p is NonNullable<typeof p> => p !== undefined));
+      await Promise.allSettled([correctingA]);
     }
   }, 20_000);
+
+  it("(b) organization B's own internal contention is invisible to a query scoped to organization A's key", async () => {
+    const [hashA, hashB] = await Promise.all([hashtextOf(a.org.id), hashtextOf(orgB.org.id)]);
+    expect(hashA).not.toBe(hashB);
+
+    // A fresh student/obligation for org B — test (a) already settled orgBObligationId, and re-paying it here would
+    // refuse alreadySettled (a genuine, unrelated business rule), not prove or disprove anything about lock scoping.
+    const bContextForFixture: TenantContext = { kind: "tenant", actorUserId: orgB.admin.id, organizationId: orgB.org.id, organizationRole: "ADMIN", academyIds: "ALL", selfStudentId: null, linkedStudentId: null };
+    const bStudent = await prisma.student.create({
+      data: {
+        organizationId: orgB.org.id, homeAcademyId: orgB.academy.id, firstName: "Currency", lastName: "OrgBFresh", phone: "00000000",
+        email: `currency-orgb-fresh-${suffix}@example.com`, currentRankId: await orgB.rankId("WHITE"), codeHash: `currency-orgb-fresh-${suffix}`, status: "ACTIVE",
+      },
+    });
+    const bObligation = await createMonthlyObligation(
+      { context: bContextForFixture, studentId: bStudent.id, coverage: { year: 2030, month: 9 }, planTermsId: orgBTerms.id, policyVersionId: orgBPolicy.id },
+      deps(),
+    );
+    if (!bObligation.ok) throw new Error(`fixture: org B fresh obligation failed: ${bObligation.error}`);
+
+    // A bystander holds organization B's own EXCLUSIVE lock directly (mirrors a real correction's hold without
+    // needing one) — organization B's own settlement then genuinely blocks behind it.
+    let releaseBystander!: () => void;
+    const gate = new Promise<void>((r) => (releaseBystander = r));
+    let bystanderStarted!: () => void;
+    const bystanderStartedPromise = new Promise<void>((r) => (bystanderStarted = r));
+    const bystander = prisma.$transaction(
+      async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(${EXCHANGE_RATE_LOCK_NAMESPACE}, ${hashB})`;
+        bystanderStarted();
+        await gate;
+      },
+      { timeout: 30_000 },
+    );
+
+    let payingB: ReturnType<typeof recordDuesPayment> | undefined;
+    try {
+      await bystanderStartedPromise;
+
+      payingB = recordDuesPayment(
+        { context: bContextForFixture, studentId: bStudent.id, receivedOn: { year: 2030, month: 10, day: 5 }, tender: { currency: "USD", amount: "100.00" }, method: "EFECTIVO", obligationIds: [bObligation.obligationId], maxBackdateDays: 5 },
+        deps({ now: OCT_5 }),
+      );
+
+      // Prove B's own request is genuinely waiting (scoped to B's own key) BEFORE checking A's predicate at all.
+      const blockedOnB = await waitUntilExchangeRateLockForOrg(orgB.org.id, (rows) => rows.some((r) => r.mode === "ShareLock" && !r.granted));
+      expect(blockedOnB, "organization B's own settlement must genuinely be waiting on B's own key").toBe(true);
+
+      // The scoped predicate for organization A must find NOTHING — all the contention above is entirely on B's key.
+      const blockedOnA = await waitUntilExchangeRateLockForOrg(a.org.id, (rows) => rows.some((r) => !r.granted), 500);
+      expect(blockedOnA, "a query scoped to organization A's key must see none of organization B's internal contention").toBe(false);
+
+      releaseBystander();
+      expect(await payingB).toMatchObject({ ok: true });
+    } finally {
+      releaseBystander();
+      await Promise.allSettled([bystander, payingB].filter((p): p is NonNullable<typeof p> => p !== undefined));
+    }
+  }, 20_000);
+});
+
+/**
+ * Currency-conversion brief PR 2 correction: distinct fixture-organization hashes (above) don't by themselves prove
+ * the `oid` -> `int4` cast handles a NEGATIVE key2 correctly — both fixture hashes could coincidentally be positive.
+ * This test picks a key2 known to be negative and proves `exchangeRateLockRowsForKey` — the exact function every
+ * organization-scoped helper in this file builds on, not a separate copy of the SQL — finds it.
+ */
+describe("exchangeRateLockRowsForKey: the oid -> int4 cast preserves a negative key2 exactly", () => {
+  it("a raw transaction holding key2 = -12345 is found by objid::int4 = -12345, not silently misread", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let started!: () => void;
+    const startedPromise = new Promise<void>((r) => (started = r));
+    const held = prisma.$transaction(
+      async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock_shared(${EXCHANGE_RATE_LOCK_NAMESPACE}, -12345)`;
+        started();
+        await gate;
+      },
+      { timeout: 30_000 },
+    );
+    try {
+      await startedPromise;
+      const rows = await exchangeRateLockRowsForKey(-12345);
+      expect(rows.length, "exactly one holder of key2 = -12345 should be found").toBeGreaterThan(0);
+      expect(rows.some((r) => r.mode === "ShareLock" && r.granted), "the -12345 row must be found, granted, ShareLock").toBe(true);
+    } finally {
+      release();
+      await Promise.allSettled([held]);
+    }
+  });
 });

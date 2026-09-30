@@ -91,6 +91,10 @@ export async function lockExchangeRateNamespaceShared(tx: Tx, organizationId: st
 // the way out: Prisma properly ends the underlying database transaction when this happens, and the lock it held is
 // genuinely released — no orphaned pg_locks row, no stuck session, verified by a subsequent unrelated attempt
 // proceeding immediately afterward. No retry logic exists for this anywhere in this ledger, and none is added here.
+// In the observed configuration, the blocked request continues occupying a database connection until the lock wait
+// ends, even after Prisma's transaction deadline has elapsed; sustained contention can therefore reduce available
+// pool capacity. (Transaction-mode pooling was not tested here — this observation is against the direct connection
+// this test suite and this codebase's own pool both use, nothing more is claimed.)
 
 /** See `lockExchangeRateNamespaceShared`'s own doc comment for the full reader/writer design. Held only by
  * `enterExchangeRateQuote` — a rate's first entry or correction — never by a settlement writer. */
