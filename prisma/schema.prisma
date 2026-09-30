@@ -280,6 +280,7 @@ model Organization {
   paymentPeriods      PaymentPeriod[]
   duesPolicyVersions     DuesPolicyVersion[]
   paymentPlanTerms       PaymentPlanTerms[]
+  exchangeRateQuotes     ExchangeRateQuote[]
   studentPlanAssignments StudentPlanAssignment[]
   studentStatusChanges   StudentStatusChange[]
   duesObligations        DuesObligation[]
@@ -527,6 +528,7 @@ model User {
   paymentPeriodsRecorded  PaymentPeriod[]
   duesPolicyVersionsCreated      DuesPolicyVersion[]
   paymentPlanTermsCreated        PaymentPlanTerms[]
+  exchangeRateQuotesEntered      ExchangeRateQuote[]
   studentPlanAssignmentsCreated  StudentPlanAssignment[]
   studentStatusChangesActed      StudentStatusChange[]
   duesObligationsCreated         DuesObligation[]
@@ -1157,6 +1159,55 @@ model DuesPolicyVersion {
   /// Target of DuesObligation's tenant-safe foreign key (PR 2B).
   @@unique([organizationId, id])
   @@index([organizationId])
+}
+
+enum ExchangeRateProvider {
+  BCR
+}
+
+enum ExchangeRateSide {
+  SELL
+}
+
+/// Currency-conversion brief §2, §4, §5: an owner-entered BCR sell rate for one calendar date, append-only — a correction is a
+/// NEW row (a higher `revision` for the same logical key), never an edit. `revision` is allocated under an advisory lock
+/// (see exchange-rate.ts), never a timestamp: `enteredAt` is audit metadata only and is never read to decide which row is
+/// authoritative for a date. "Authoritative for date D" is always the highest `revision` among rows sharing
+/// (organizationId, provider, pair, side, quoteDate) — resolved by exchange-rate.ts's own `resolveEffectiveQuote`, never by
+/// comparing timestamps. `supersedesId` is an informational audit-trail pointer only (which row this one corrects) — it is
+/// never consulted to determine authority, only `revision` is.
+model ExchangeRateQuote {
+  id             String               @id @default(cuid())
+  organizationId String
+  provider       ExchangeRateProvider
+  /// Only "USD/CRC" today (CHECK below) — this schema has exactly two currencies, so no other pair exists yet.
+  pair           String
+  side           ExchangeRateSide
+  /// The date this quote is FOR (the received date it governs), not when it was typed in.
+  quoteDate      DateTime             @db.Date
+  /// Allocated under the advisory lock in exchange-rate.ts as MAX(revision for this logical key) + 1 — see that file's own
+  /// doc comment for why a timestamp cannot be used here (the exact StudentStatusChange.sequence lesson, applied to rates).
+  revision       Int
+  /// The CRC-per-USD rate, exact as the owner typed it.
+  value          Decimal              @db.Decimal(12, 6)
+  enteredById    String
+  /// Audit metadata only — never read to decide authority (see this model's own doc comment).
+  enteredAt      DateTime             @default(now())
+  sourceNote     String?
+  /// Informational only: which revision this one corrects, for an audit trail beyond what the revision number alone shows.
+  supersedesId   String?
+
+  organization Organization       @relation(fields: [organizationId], references: [id])
+  enteredBy    User               @relation(fields: [enteredById], references: [id], onDelete: Restrict)
+  supersedes   ExchangeRateQuote? @relation("ExchangeRateQuoteSupersedes", fields: [organizationId, supersedesId], references: [organizationId, id], onDelete: Restrict)
+  supersededBy ExchangeRateQuote[] @relation("ExchangeRateQuoteSupersedes")
+
+  /// Target of `supersedesId`'s tenant-safe composite FK, the same convention every other org-scoped model in this schema uses.
+  @@unique([organizationId, id])
+  /// The database backstop for revision identity — the same "application check + DB constraint" doubling every other
+  /// invariant in this ledger already has (DuesObligation_student_month_monthly_key, DuesCoverage's per-month uniqueness).
+  @@unique([organizationId, provider, pair, side, quoteDate, revision])
+  @@index([organizationId, provider, pair, side, quoteDate])
 }
 
 /// The price and length of a PaymentPlan from one month onward: a plan covering 1 month is the ordinary monthly plan, more is a

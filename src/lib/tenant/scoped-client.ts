@@ -44,6 +44,8 @@ export const TENANT_SCOPED_MODELS = new Set([
   "DuesLateFee",
   "DuesPayment",
   "DuesSettlement",
+  // Currency-conversion brief (PR 1): tenant-scoped from day one, before any settlement caller exists.
+  "ExchangeRateQuote",
   "KioskAttempt",
   "QueuedCheckIn",
   "StaffAssignment",
@@ -169,6 +171,7 @@ export type ScopedDb = Pick<
   | "duesPolicyVersion"
   | "paymentPlanTerms"
   | "studentPlanAssignment"
+  | "exchangeRateQuote"
   | "kioskAttempt"
   | "queuedCheckIn"
   | "staffAssignment"
