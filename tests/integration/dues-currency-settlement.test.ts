@@ -629,11 +629,12 @@ describe("two different organizations' settlements never contend on this shared 
       deps({ afterExchangeRateQuoteWrittenForTest: async () => { pausedAResolve(); await gateA; } }),
     );
 
+    let payingB: ReturnType<typeof recordDuesPayment> | undefined;
     try {
       await pausedA; // organization A holds the EXCLUSIVE lock (key2 = hashA); still open
 
       const bContext: TenantContext = { kind: "tenant", actorUserId: orgB.admin.id, organizationId: orgB.org.id, organizationRole: "ADMIN", academyIds: "ALL", selfStudentId: null, linkedStudentId: null };
-      const payingB = recordDuesPayment(
+      payingB = recordDuesPayment(
         { context: bContext, studentId: orgBStudentId, receivedOn: { year: 2030, month: 10, day: 5 }, tender: { currency: "USD", amount: "100.00" }, method: "EFECTIVO", obligationIds: [orgBObligationId], maxBackdateDays: 5 },
         deps({ now: OCT_5 }),
       );
@@ -648,7 +649,7 @@ describe("two different organizations' settlements never contend on this shared 
       expect(await correctingA).toMatchObject({ ok: true, revision: 2 });
     } finally {
       releaseA();
-      await Promise.allSettled([correctingA]);
+      await Promise.allSettled([correctingA, payingB].filter((p): p is NonNullable<typeof p> => p !== undefined));
     }
   }, 20_000);
 
