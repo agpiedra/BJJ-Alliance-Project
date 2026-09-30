@@ -1201,6 +1201,8 @@ model ExchangeRateQuote {
   enteredBy    User               @relation(fields: [enteredById], references: [id], onDelete: Restrict)
   supersedes   ExchangeRateQuote? @relation("ExchangeRateQuoteSupersedes", fields: [organizationId, supersedesId], references: [organizationId, id], onDelete: Restrict)
   supersededBy ExchangeRateQuote[] @relation("ExchangeRateQuoteSupersedes")
+  /// PR 2: every DuesPayment whose cross-currency settlement was resolved against this exact quote — its own immutable evidence.
+  duesPayments DuesPayment[]
 
   /// Target of `supersedesId`'s tenant-safe composite FK, the same convention every other org-scoped model in this schema uses.
   @@unique([organizationId, id])
@@ -1439,7 +1441,7 @@ model DuesLateFee {
 }
 
 /// Money received. Never edited or deleted; the only permitted update sets the reversal marker once (reversedAt, reversedById and a
-/// non-blank reversalReason together). No exchange-rate or receipt-status columns (decision D1 pending).
+/// non-blank reversalReason together).
 model DuesPayment {
   id             String        @id @default(cuid())
   organizationId String
@@ -1456,12 +1458,23 @@ model DuesPayment {
   reversedAt     DateTime?
   reversedById   String?
   reversalReason String?
+  /// Currency-conversion brief, PR 2: cross-currency evidence, all null for a same-currency payment. Snapshotted from the
+  /// resolved ExchangeRateQuote at settlement time — NEVER re-read live afterwards, so a later correction of the quote
+  /// (a new, higher revision) never changes what an already-recorded payment says it used.
+  appliedRateId        String?
+  appliedRateValue     Decimal?  @db.Decimal(12, 6)
+  appliedRateQuoteDate DateTime? @db.Date
+  appliedRateRevision  Int?
+  /// The rounding rule actually applied ("HALF_UP_TO_CENT" or "HALF_UP_TO_COLON") — see exchange-rate-arithmetic.ts. Null
+  /// for a same-currency payment, exactly like the four fields above.
+  appliedRoundingRule  String?
 
   student      Student          @relation(fields: [organizationId, studentId], references: [organizationId, id])
   academy      Academy          @relation(fields: [organizationId, academyId], references: [organizationId, id])
   recordedBy   User             @relation("DuesPaymentRecordedBy", fields: [recordedById], references: [id])
   reversedBy   User?            @relation("DuesPaymentReversedBy", fields: [reversedById], references: [id], onDelete: Restrict)
   organization Organization     @relation(fields: [organizationId], references: [id])
+  appliedRate  ExchangeRateQuote? @relation(fields: [organizationId, appliedRateId], references: [organizationId, id], onDelete: Restrict)
   settlements  DuesSettlement[]
 
   @@unique([organizationId, id, studentId])

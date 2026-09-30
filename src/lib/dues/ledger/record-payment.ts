@@ -3,9 +3,11 @@ import { prisma } from "@/lib/prisma";
 import type { TenantContext } from "@/lib/tenant/types";
 import { compareDates, type CalendarDate } from "@/lib/dues/calendar";
 import { parseMoney } from "@/lib/dues/config-input";
-import { amountDueMinor, feeAssessableFrom, lateFeeApplies, lateFeeToAssessMinor, orderOldestFirst, outstandingItems, settleReceipt, type ObligationTerms, type SettlementItem } from "@/lib/dues/settlement";
+import { amountDueMinor, feeAssessableFrom, lateFeeApplies, lateFeeToAssessMinor, orderOldestFirst, outstandingItems, settleReceipt, type CrossCurrencyCandidates, type ObligationTerms, type SettlementItem } from "@/lib/dues/settlement";
 import { inactiveLedgerActivation, type LedgerDeps } from "@/lib/dues/ledger/activation";
 import { fromDbDate, inTenantScope, isRealDate, lockStudent, minusDays, todayIn, toDbDate, type Tx } from "@/lib/dues/ledger/common";
+import { resolveCrossCurrency, type RateEvidence } from "@/lib/dues/ledger/cross-currency-settlement";
+import { lockExchangeRateNamespace } from "@/lib/dues/ledger/exchange-rate";
 import { MAX_MINOR_UNITS, columnToMinor, decimalToMinor, minorToDecimal } from "@/lib/dues/ledger/minor-units";
 import { isUniqueViolationOnConstraint } from "@/lib/dues/ledger/unique-violation";
 import { CURRENCIES } from "@/lib/payments/format-money";
@@ -152,7 +154,12 @@ export type RecordDuesPaymentError =
   | "totalMismatch"
   | "feeAlreadyAssessed"
   | "amountUnsupported"
-  | "conflict";
+  | "conflict"
+  // Currency-conversion brief PR 2: the receipt's currency differs from the obligations' own, and either no exchange rate
+  // quote resolves for receivedOn (rateUnavailable, zero writes), or the matched total is produced by more than one
+  // distinct prefix under rounding (ambiguousTotal) — genuinely unknowable which prefix a matching tender was meant to settle.
+  | "rateUnavailable"
+  | "ambiguousTotal";
 
 export type RecordDuesPaymentResult =
   | { ok: true; paymentId: string; settlementIds: string[]; feeIds: string[]; totalMinor: number }
@@ -189,6 +196,14 @@ export function selectablePrefixTotals(items: readonly { amountMinor: number }[]
     totals.push(minorToDecimal(running));
   }
   return totals;
+}
+
+/** The cross-currency analog of `selectablePrefixTotals`: `candidates` are already converted, already in oldest-first prefix
+ * order (`resolveCrossCurrency`'s own `runningTotalsMinor`-derived candidates), already excluded of anything out of
+ * `MAX_MINOR_UNITS` range (`detectAmbiguousRoundedTotals`) — this only caps the COUNT offered, matching `selectablePrefixTotals`'s
+ * own `MAX_SELECTED` ceiling, and formats each in the RECEIPT's currency (approved policy: refusal totals in tender currency). */
+function selectableCrossCurrencyTotals(candidates: readonly { requiredMinor: number }[]): string[] {
+  return candidates.slice(0, MAX_SELECTED).map((c) => minorToDecimal(c.requiredMinor));
 }
 
 /**
@@ -311,10 +326,14 @@ export async function writeSettlementInTx(
     method: PaymentMethod;
     notes?: string;
     settledItems: SettlementLineItem[];
+    /** Currency-conversion brief PR 2: set only when this settlement's tender currency differs from the items' own — the
+     * exact quote resolveCrossCurrency already resolved, snapshotted onto DuesPayment. Undefined for same-currency (every
+     * column stays null, unchanged from before PR 2). */
+    rateEvidence?: RateEvidence;
   },
   deps: LedgerDeps = {},
 ): Promise<{ paymentId: string; settlementIds: string[]; feeIds: string[] }> {
-  const { context, student, receivedOn, tender, method, notes, settledItems } = args;
+  const { context, student, receivedOn, tender, method, notes, settledItems, rateEvidence } = args;
   const organizationId = context.organizationId;
 
   const feeIds: string[] = [];
@@ -351,6 +370,11 @@ export async function writeSettlementInTx(
     data: {
       organizationId, studentId: student.id, academyId: student.homeAcademyId, receivedOn: toDbDate(receivedOn), tenderCurrency: tender.currency,
       tenderAmount: parsedAmount.value, method, recordedById: context.actorUserId, notes: notes && notes.trim() !== "" ? notes.trim() : null,
+      appliedRateId: rateEvidence?.appliedRateId ?? null,
+      appliedRateValue: rateEvidence?.appliedRateValue ?? null,
+      appliedRateQuoteDate: rateEvidence ? toDbDate(rateEvidence.appliedRateQuoteDate) : null,
+      appliedRateRevision: rateEvidence?.appliedRateRevision ?? null,
+      appliedRoundingRule: rateEvidence?.appliedRoundingRule ?? null,
     },
   });
   const settlementIds: string[] = [];
@@ -433,19 +457,38 @@ export async function recordDuesPaymentInTx(
   // refused explicitly here — before the totals below are even built — never split, waived or clamped.
   if (allOpenItems.length > 0 && allOpenItems[0].amountMinor > MAX_MINOR_UNITS) return refuse("amountUnsupported");
 
+  // Currency-conversion brief PR 2 (§3): tried only when every open item shares ONE currency that differs from the tender's —
+  // mixed-currency items stay CURRENCY_MISMATCH unconditionally, exactly as before, since there is no single source currency
+  // to convert from. Same-currency behavior is entirely unaffected: crossCurrency stays undefined and settleReceipt behaves
+  // byte-identically to before this PR.
+  const openCurrencies = new Set(allOpenItems.map((i) => i.currency));
+  let crossCurrency: CrossCurrencyCandidates | undefined;
+  let rateEvidence: RateEvidence | undefined;
+  if (openCurrencies.size === 1 && !openCurrencies.has(tender.currency)) {
+    const resolved = await resolveCrossCurrency(tx, {
+      organizationId, items: allOpenItems, itemCurrency: [...openCurrencies][0], receiptCurrency: tender.currency, receivedOn,
+    });
+    if (!resolved.ok) return refuse("rateUnavailable");
+    crossCurrency = resolved.candidates;
+    rateEvidence = resolved.evidence;
+  }
+  const crossCurrencyTotals = () => (crossCurrency ? selectableCrossCurrencyTotals(crossCurrency.totals) : selectablePrefixTotals(allOpenItems));
+
   // The exact total: the tender must equal the running total of the first k obligations at their amount due on the received date,
-  // in one currency (PR 1's validator), AND that k must be the number of obligations the caller chose. Offered against every open
+  // in one currency (PR 1's validator) or, since PR 2, converted via the resolved quote above. Offered against every open
   // obligation (not just the chosen ones), so a caller who under-selects still gets useful selectableTotals.
-  const result = settleReceipt(allOpenItems, tenderMinor, tender.currency);
+  const result = settleReceipt(allOpenItems, tenderMinor, tender.currency, crossCurrency);
   if (!result.ok) {
-    return result.reason === "CURRENCY_MISMATCH" ? refuse("currencyMismatch") : refuse("notASelectableTotal", { selectableTotals: selectablePrefixTotals(allOpenItems) });
+    if (result.reason === "CURRENCY_MISMATCH") return refuse("currencyMismatch");
+    if (result.reason === "AMBIGUOUS_TOTAL") return refuse("ambiguousTotal");
+    return refuse("notASelectableTotal", { selectableTotals: crossCurrencyTotals() });
   }
   if (result.settledIds.length !== chosenItems.length || !result.settledIds.every((id) => chosenIds.has(id))) {
-    return refuse("totalMismatch", { selectableTotals: selectablePrefixTotals(allOpenItems) });
+    return refuse("totalMismatch", { selectableTotals: crossCurrencyTotals() });
   }
 
   // ---- every check passed: write, atomically ----
-  const written = await writeSettlementInTx(tx, { context, student, receivedOn, tender, method, notes, settledItems: chosenItems }, deps);
+  const written = await writeSettlementInTx(tx, { context, student, receivedOn, tender, method, notes, settledItems: chosenItems, rateEvidence }, deps);
   return { ok: true, paymentId: written.paymentId, settlementIds: written.settlementIds, feeIds: written.feeIds, totalMinor: tenderMinor };
 }
 
@@ -505,7 +548,13 @@ export async function recordDuesPayment(
   if (!student || !inTenantScope(context, student.homeAcademyId)) return refuse("notFound");
 
   try {
-    return await prisma.$transaction((tx) => recordDuesPaymentInTx(tx, { context, student, receivedOn, tender, method, obligationIds, notes, maxBackdateDays }, deps));
+    return await prisma.$transaction(async (tx) => {
+      // The literal first statement — see lockExchangeRateNamespace's own doc comment for why (every true outermost
+      // transaction this ledger opens takes it unconditionally, before any row lock; recordDuesPaymentInTx itself never does,
+      // since it also runs as an INNER call composed by correctLateFeeAndSettle/prepayMonthlyObligations, which take it themselves).
+      await lockExchangeRateNamespace(tx, organizationId);
+      return recordDuesPaymentInTx(tx, { context, student, receivedOn, tender, method, obligationIds, notes, maxBackdateDays }, deps);
+    });
   } catch (error) {
     const classified = classifyRecordPaymentError(error);
     if (classified) return classified;

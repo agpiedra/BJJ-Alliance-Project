@@ -5,7 +5,8 @@ import type { CalendarDate } from "@/lib/dues/calendar";
 import { versionRevision } from "@/lib/dues/config-input";
 import { lateFeeApplies } from "@/lib/dues/settlement";
 import { inactiveLedgerActivation, type LedgerDeps } from "@/lib/dues/ledger/activation";
-import { fromDbDate, inTenantScope, isRealDate, lockStudent } from "@/lib/dues/ledger/common";
+import { fromDbDate, inTenantScope, isRealDate, lockStudent, type Tx } from "@/lib/dues/ledger/common";
+import { lockExchangeRateNamespace } from "@/lib/dues/ledger/exchange-rate";
 import { classifyRecordPaymentError, recordDuesPaymentInTx, type RecordDuesPaymentError, type RecordDuesPaymentResult } from "@/lib/dues/ledger/record-payment";
 
 /**
@@ -52,6 +53,67 @@ class SettlementRefusedError extends Error {
   }
 }
 
+export type VoidLateFeeError = "notFound" | "alreadyRemoved" | "stale" | "notOnTime";
+
+export type VoidLateFeeResult =
+  | { ok: true; feeId: string; obligationId: string; studentId: string; academyId: string }
+  | { ok: false; error: VoidLateFeeError };
+
+/**
+ * The provisional-void core `correctLateFeeAndSettle` composes below, extracted narrowly for later reuse (a pending-receipt
+ * resolution writer, not built or consumed in this PR — nothing else calls this yet). Trusts nothing from its caller except
+ * `feeId`/`expectedRevision`/`removalReason`/`receivedOn`: re-reads the fee's own row, its obligation, tenant scope and its
+ * CURRENT removal state fresh, under whatever lock the caller already holds (the caller's own `lockStudent`, taken on the
+ * obligation's studentId BEFORE calling this — the same "core never locks, caller already holds it" discipline every other
+ * `*InTx` extraction in this ledger follows). Takes no lock itself and never opens a transaction.
+ */
+export async function voidLateFeeInTx(
+  tx: Tx,
+  args: { context: TenantContext; feeId: string; expectedRevision: string; removalReason: string; receivedOn: CalendarDate },
+  deps: LedgerDeps = {},
+): Promise<VoidLateFeeResult> {
+  const { context, feeId, expectedRevision, removalReason, receivedOn } = args;
+  const organizationId = context.organizationId;
+
+  // Re-read the fee's own row under the caller's held lock — the authoritative state `expectedRevision` and the removal
+  // check below are judged against, never whatever a caller's own earlier, possibly-stale lookup found.
+  const fee = await tx.duesLateFee.findFirst({
+    where: { id: feeId, organizationId },
+    select: { id: true, removedAt: true, removalKind: true, obligation: { select: { id: true, studentId: true, academyId: true, graceDeadline: true } } },
+  });
+  if (!fee) return { ok: false, error: "notFound" };
+  if (!inTenantScope(context, fee.obligation.academyId)) return { ok: false, error: "notFound" };
+  if (fee.obligation.graceDeadline === null) return { ok: false, error: "notFound" };
+  if (fee.removedAt !== null) return { ok: false, error: "alreadyRemoved" };
+  if (lateFeeRevision(fee) !== expectedRevision) return { ok: false, error: "stale" };
+
+  // Timeliness GIVEN THE CLAIM, not proof of the claim (see this file's own doc comment) — the one gate that stands between
+  // "the owner said so" and actually voiding anything.
+  const graceDeadline = fromDbDate(fee.obligation.graceDeadline);
+  if (lateFeeApplies(receivedOn, graceDeadline)) return { ok: false, error: "notOnTime" };
+
+  const removedAt = (deps.now ?? (() => new Date()))();
+  await tx.duesLateFee.update({
+    where: { id: fee.id, organizationId },
+    data: { removedAt, removalKind: "VOIDED", removedById: context.actorUserId, removalReason: removalReason.trim() },
+  });
+  await tx.auditLog.create({
+    data: {
+      actorId: context.actorUserId,
+      organizationId,
+      academyId: fee.obligation.academyId,
+      action: "duesLateFee.void",
+      entityType: "DuesLateFee",
+      entityId: fee.id,
+      before: { removedAt: null, removalKind: null },
+      after: { removedAt: removedAt.toISOString(), removalKind: "VOIDED", removedById: context.actorUserId, removalReason: removalReason.trim() },
+    },
+  });
+  if (deps.afterVoidForTest) await deps.afterVoidForTest();
+
+  return { ok: true, feeId: fee.id, obligationId: fee.obligation.id, studentId: fee.obligation.studentId, academyId: fee.obligation.academyId };
+}
+
 export async function correctLateFeeAndSettle(
   args: {
     context: TenantContext;
@@ -87,6 +149,11 @@ export async function correctLateFeeAndSettle(
 
   try {
     return await prisma.$transaction(async (tx): Promise<CorrectLateFeeResult> => {
+      // The literal first statement — before even the unlocked pre-read below. See lockExchangeRateNamespace's own doc
+      // comment: every true outermost transaction this ledger opens takes it unconditionally, before any row lock, since
+      // this correction composes recordDuesPaymentInTx (an INNER call that never takes this lock itself).
+      await lockExchangeRateNamespace(tx, organizationId);
+
       const fee = await tx.duesLateFee.findFirst({
         where: { id: lateFeeId, organizationId },
         select: {
@@ -105,37 +172,10 @@ export async function correctLateFeeAndSettle(
       const locked = await lockStudent(tx, organizationId, fee.obligation.studentId);
       if (!locked || locked.homeAcademyId !== fee.obligation.academyId) return refuse("notFound");
 
-      // Re-read the fee's own row under the lock (the pre-lock read above could be stale) — this is the authoritative state
-      // `expectedRevision` and the removal check below are judged against.
-      const current = await tx.duesLateFee.findFirst({ where: { id: lateFeeId, organizationId }, select: { removedAt: true, removalKind: true } });
-      if (!current) return refuse("notFound");
-      if (current.removedAt !== null) return refuse("alreadyRemoved");
-      if (lateFeeRevision(current) !== expectedRevision) return refuse("stale");
-
-      // Timeliness GIVEN THE CLAIM, not proof of the claim (see this file's own doc comment) — the one gate that stands between
-      // "the owner said so" and actually voiding anything.
-      const graceDeadline = fromDbDate(fee.obligation.graceDeadline);
-      if (lateFeeApplies(receivedOn, graceDeadline)) return refuse("notOnTime");
-
-      const removedAt = (deps.now ?? (() => new Date()))();
-      await tx.duesLateFee.update({
-        where: { id: fee.id, organizationId },
-        data: { removedAt, removalKind: "VOIDED", removedById: context.actorUserId, removalReason: removalReason.trim() },
-      });
-      await tx.auditLog.create({
-        data: {
-          actorId: context.actorUserId,
-          organizationId,
-          academyId: fee.obligation.academyId,
-          action: "duesLateFee.void",
-          entityType: "DuesLateFee",
-          entityId: fee.id,
-          before: { removedAt: null, removalKind: null },
-          after: { removedAt: removedAt.toISOString(), removalKind: "VOIDED", removedById: context.actorUserId, removalReason: removalReason.trim() },
-        },
-      });
-
-      if (deps.afterVoidForTest) await deps.afterVoidForTest();
+      // voidLateFeeInTx re-reads the fee's own row fresh under this lock (the pre-lock read above could be stale) — it is
+      // the sole authority for `expectedRevision`, the removal state and the timeliness-given-the-claim check.
+      const voided = await voidLateFeeInTx(tx, { context, feeId: lateFeeId, expectedRevision, removalReason, receivedOn }, deps);
+      if (!voided.ok) return refuse(voided.error);
 
       // Same transaction, no nesting: recordDuesPaymentInTx re-validates everything from scratch (oldest-first, exact total,
       // backdating, activation, scope) and trusts nothing carried over from the void above.
@@ -143,11 +183,11 @@ export async function correctLateFeeAndSettle(
         tx,
         {
           context,
-          student: { id: fee.obligation.studentId, homeAcademyId: fee.obligation.academyId },
+          student: { id: voided.studentId, homeAcademyId: voided.academyId },
           receivedOn,
           tender,
           method,
-          obligationIds: [fee.obligation.id],
+          obligationIds: [voided.obligationId],
           notes,
           maxBackdateDays,
         },
@@ -155,7 +195,7 @@ export async function correctLateFeeAndSettle(
       );
       if (!settled.ok) throw new SettlementRefusedError(settled);
 
-      return { ok: true, feeId: fee.id, paymentId: settled.paymentId, settlementIds: settled.settlementIds, totalMinor: settled.totalMinor };
+      return { ok: true, feeId: voided.feeId, paymentId: settled.paymentId, settlementIds: settled.settlementIds, totalMinor: settled.totalMinor };
     });
   } catch (error) {
     if (error instanceof SettlementRefusedError) return error.result; // AFTER rollback, never before

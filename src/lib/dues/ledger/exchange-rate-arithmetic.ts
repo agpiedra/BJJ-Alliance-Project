@@ -80,6 +80,13 @@ export type SelectableTotal = { sourceMinor: number; requiredMinor: number };
  * genuine ambiguity introduced by rounding alone (two distinct exact totals can round to the same figure) that a caller
  * must refuse rather than guess which candidate a matching tender was meant to settle. Same-currency comparisons never
  * call this at all, so same-currency behavior is completely untouched by its existence.
+ *
+ * BUG FIXED HERE (PR 2 review): a candidate whose converted total overflows `MAX_MINOR_UNITS` (typically the largest/
+ * latest prefix) used to make `convertUsdToCrcMinor`/`convertCrcToUsdMinor` throw via a bare `.map()`, aborting the
+ * WHOLE comparison — silently blocking a match against an earlier, smaller, perfectly in-range candidate. Exactly the
+ * bug `record-payment.ts`'s own `amountUnsupported` check (checking only the oldest item) already exists to prevent
+ * for same-currency payments; cross-currency payments need the identical protection. An out-of-range candidate is now
+ * simply excluded from the result set — never lets one candidate's overflow prevent a match against any other.
  */
 export function detectAmbiguousRoundedTotals(
   candidates: readonly number[],
@@ -87,7 +94,15 @@ export function detectAmbiguousRoundedTotals(
   direction: "toCrc" | "toUsd",
 ): { totals: SelectableTotal[]; ambiguousRequiredMinors: number[] } {
   const convert = direction === "toCrc" ? convertUsdToCrcMinor : convertCrcToUsdMinor;
-  const totals = candidates.map((sourceMinor) => ({ sourceMinor, requiredMinor: convert(sourceMinor, rateDecimalString) }));
+  const totals: SelectableTotal[] = [];
+  for (const sourceMinor of candidates) {
+    try {
+      totals.push({ sourceMinor, requiredMinor: convert(sourceMinor, rateDecimalString) });
+    } catch (error) {
+      if (!(error instanceof RangeError)) throw error;
+      // Out of range: excluded, not fatal — a later/larger candidate's overflow must never block an earlier match.
+    }
+  }
   const counts = new Map<number, number>();
   for (const t of totals) counts.set(t.requiredMinor, (counts.get(t.requiredMinor) ?? 0) + 1);
   const ambiguousRequiredMinors = [...counts.entries()].filter(([, count]) => count > 1).map(([requiredMinor]) => requiredMinor);

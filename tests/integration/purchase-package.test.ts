@@ -514,8 +514,12 @@ describe("purchasePackage: genuine concurrency — the student lock", () => {
       let secondDone = false;
       // The first purchase covers Dec 2030 - Feb 2031; the true next first-uncovered month is March 2031.
       const second = purchase({ studentId: s.id, requestedStartMonth: { year: 2031, month: 3 }, tender: { currency: "USD", amount: "270.00" } }).then((r) => ((secondDone = true), r));
-      const blocked = await waitUntilBlockedOnLock(['FROM "Student"', "FOR UPDATE"]);
-      expect(blocked, "the second purchase must genuinely block on the first's still-held student lock").toBe(true);
+      // Currency-conversion brief PR 2: lockExchangeRateNamespace is now this writer's own literal FIRST statement (before
+      // even the branch lock), and the first purchase still holds it (advisory locks release only at commit/rollback). The
+      // second purchase therefore genuinely blocks THERE first — never reaching its own student-row statement at all — a
+      // real, intended broadening from per-student to per-organization serialization while any ledger transaction is open.
+      const blocked = await waitUntilBlockedOnLock(["pg_advisory_xact_lock"]);
+      expect(blocked, "the second purchase must genuinely block on the first's still-held exchange-rate advisory lock").toBe(true);
       expect(secondDone).toBe(false);
 
       gateRelease();
