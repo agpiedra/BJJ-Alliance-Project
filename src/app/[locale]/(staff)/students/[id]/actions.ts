@@ -12,6 +12,7 @@ import { Prisma, StudentStatus } from "@/generated/prisma/client";
 import type { ActionState } from "@/lib/action-state";
 import { lockStudent } from "@/lib/students/lock";
 import { appendStatusChange, todayInAsDbDate } from "@/lib/students/status-history";
+import { resumeChargeInTx } from "@/lib/dues/ledger/resume-charge";
 
 /**
  * `currentBelt` / `currentStripes` are deliberately ABSENT from this schema
@@ -83,6 +84,18 @@ class StudentWriteMissError extends Error {
   constructor() {
     super("STUDENT_WRITE_MISS");
     this.name = "StudentWriteMissError";
+  }
+}
+
+/** Tags a genuine refusal from `resumeChargeInTx`'s gated path (a configuration gap, or a lost race) so it can be
+ * thrown — forcing this transaction to roll back. A configuration-gap refusal has written nothing to roll back; a
+ * lost-race `"conflict"` refusal can follow a real write `resumeChargeInTx` already made earlier in the same call
+ * (see that function's own doc comment) — rollback of that write depends entirely on this throw, not on
+ * `resumeChargeInTx` itself having written nothing. Converted back to a specific `ActionState` error afterward. */
+class ResumeChargeRefusedError extends Error {
+  constructor(public readonly reason: string) {
+    super(`resume charge refused: ${reason}`);
+    this.name = "ResumeChargeRefusedError";
   }
 }
 
@@ -605,11 +618,14 @@ export async function pauseStudent(
  * ADMIN/DIRECTOR only. The reverse of `pauseStudent`: an INACTIVE student becomes ACTIVE again, effective today.
  *
  * Whether — and how — resuming bills the coverage month it happens in is the approved rule documented in the
- * eligibility-prerequisites brief, section 3.4. This action does NOT implement that rule: it writes only the status column, its
- * `StudentStatusChange` row and its audit row, atomically, exactly like every other action in this file. It never imports or
- * calls anything under `src/lib/dues/ledger/` — that composition was proposed and explicitly reverted (3.4 explains why: it
- * would not share this transaction and would reverse `createMonthlyObligation`'s own lock order). The obligation-creation rule
- * is left for the later payment-write integration PR to build as its own, separately-designed, shared transaction.
+ * eligibility-prerequisites brief, section 3.4, and implemented by `resumeChargeInTx` (resume-charge.ts), composed
+ * below. This action's own exported signature carries no activation dependency and no date override of any kind —
+ * production always calls `resumeChargeInTx` with the default `deps` ({}), under which billing is unconditionally
+ * inactive and that function's own first check returns immediately, before taking any lock. Only a test, importing
+ * `resumeChargeInTx` directly, ever injects `deps.activation`/`deps.now` to exercise the gated financial path — this
+ * action itself has no way to do so, by construction, not merely by convention. When billing is inactive, this
+ * action's own behavior is byte-identical to before: it writes only the status column, its `StudentStatusChange` row
+ * and its audit row, atomically.
  */
 export async function resumeStudent(
   organizationId: string,
@@ -640,6 +656,17 @@ export async function resumeStudent(
 
   try {
     await prisma.$transaction(async (tx) => {
+      const charged = await resumeChargeInTx(tx, { context, student: { id: student.id, homeAcademyId: student.homeAcademyId } }, {});
+      if (charged.ok) return; // the gated path already wrote status/history/audit/obligation together
+
+      if (charged.error !== "notActive") {
+        // A genuine refusal on the gated path (a configuration gap, or a lost race) — the whole attempt refuses.
+        // A configuration gap has written nothing; a lost-race "conflict" can follow a real write made earlier in
+        // this same call, and this throw is what rolls that write back (see ResumeChargeRefusedError's own comment).
+        throw new ResumeChargeRefusedError(charged.error);
+      }
+
+      // Billing inactive (the only path reachable in production today) — unchanged from before this PR.
       const locked = await lockStudent(tx, student.organizationId, student.id);
       if (!locked) throw new StudentWriteMissError();
 
@@ -677,6 +704,9 @@ export async function resumeStudent(
   } catch (error) {
     if (error instanceof StudentWriteMissError) {
       return { error: "notInactive" };
+    }
+    if (error instanceof ResumeChargeRefusedError) {
+      return { error: `resumeCharge:${error.reason}` };
     }
     throw error;
   }

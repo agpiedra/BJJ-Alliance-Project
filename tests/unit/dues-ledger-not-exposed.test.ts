@@ -6,17 +6,23 @@ import { productionSourceFiles, stripComments } from "../helpers/source-files";
  * The first ledger writers (PR 4a) must stay unreachable from live billing until the approved activation stage. Structural checks
  * (the runtime gate is tested in tests/integration/dues-ledger-writers.test.ts):
  *
- *  1. Nothing outside `src/lib/dues/ledger/` imports them, EXCEPT the two authorized callers listed in `AUTHORIZED_CALLERS` below
- *     (monthly-generation brief §5.2, late-fee-assessment brief §7): no other page, route, server action, cron, script or library.
- *     The only other importers are tests. This test names those files explicitly rather than allowing a broad pattern — a third
- *     file starting to import from the ledger still fails it, exactly as before this PR.
+ *  1. Nothing outside `src/lib/dues/ledger/` imports them, EXCEPT the authorized callers listed in `AUTHORIZED_CALLERS` below
+ *     (monthly-generation brief §5.2, late-fee-assessment brief §7, the resume-charge integration plan's own §3): no other
+ *     page, route, server action, cron, script or library. The only other importers are tests. This test names those files
+ *     explicitly rather than allowing a broad pattern — a fourth file starting to import from the ledger still fails it.
+ *     `resumeStudent`'s own action file composes `resumeChargeInTx` (resume-charge.ts) — its public, exported signature is
+ *     unchanged by this; only its internal transaction body now calls into the ledger.
  *  2. They are plain library functions: no `"use server"` (which would make an exported function an invocable endpoint), no route, no
  *     client component.
  *  3. They are registered in `scripts/pending-callers.ts`, the repo's list of code built ahead of its caller.
  */
 const LEDGER_DIR = "src/lib/dues/ledger/";
 const IMPORTS_LEDGER = /(?:from\s+|import\s*\(\s*|require\s*\(\s*)["'][^"']*dues\/ledger(?:\/[^"']*)?["']/;
-const AUTHORIZED_CALLERS = ["src/lib/dues/monthly-generation.ts", "src/lib/dues/late-fee-assessment.ts"];
+const AUTHORIZED_CALLERS = [
+  "src/lib/dues/monthly-generation.ts",
+  "src/lib/dues/late-fee-assessment.ts",
+  "src/app/[locale]/(staff)/students/[id]/actions.ts",
+];
 
 describe("the ledger writers are not reachable from production code", () => {
   const files = productionSourceFiles();

@@ -1,10 +1,10 @@
 import { Prisma, type DuesObligationOrigin } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import type { TenantContext } from "@/lib/tenant/types";
-import { assertYearMonth, compareYearMonth, dueDateFor, graceDeadlineFor, type YearMonth } from "@/lib/dues/calendar";
+import { assertYearMonth, compareDates, compareYearMonth, dueDateFor, graceDeadlineFor, type CalendarDate, type YearMonth } from "@/lib/dues/calendar";
 import { currentMonthIn } from "@/lib/dues/config-input";
 import { inactiveLedgerActivation, type LedgerDeps } from "@/lib/dues/ledger/activation";
-import { inTenantScope, latestEffective, lockBranchShared, lockPolicyShared, lockStudent, lockTermsShared, toDbDate, type Tx } from "@/lib/dues/ledger/common";
+import { inTenantScope, isRealDate, latestEffective, lockBranchShared, lockPolicyShared, lockStudent, lockTermsShared, toDbDate, type Tx } from "@/lib/dues/ledger/common";
 
 export type CreateMonthlyObligationError =
   | "notActive"
@@ -47,14 +47,43 @@ export function isValidCoverageMonth(coverage: YearMonth): boolean {
  */
 export async function writeMonthlyObligationInTx(
   tx: Tx,
-  args: { context: TenantContext; student: { id: string; homeAcademyId: string }; coverage: YearMonth; planTermsId: string; policyVersionId: string; origin: DuesObligationOrigin },
+  args: {
+    context: TenantContext;
+    student: { id: string; homeAcademyId: string };
+    coverage: YearMonth;
+    planTermsId: string;
+    policyVersionId: string;
+    origin: DuesObligationOrigin;
+    /**
+     * Resume-charge integration: when present, raises `dueOn` to `max(dueDateFor(coverage, policy.dueDay), minimumDueOn)`
+     * — the approved resume rule (`dueOn := max(normal due date, resume date)`), never a plain override. Absent for every
+     * other caller (`createMonthlyObligationInTx`, `prepayMonthlyObligations`, the awaiting-rate `PREPAYMENT` branch),
+     * whose behavior is unchanged. Never accepted from request data — the only caller that ever supplies it is the resume
+     * composition, passing the one resume instant it captured under lock. Must fall within `coverage`'s own calendar
+     * month: a resume date is, by construction, always inside the month it resolves to, so a value outside it is a
+     * programming error in the caller, refused `invalid`, never silently clamped or widened. `graceDeadline` is
+     * untouched by this parameter — it is never recomputed as a duration from any date.
+     */
+    minimumDueOn?: CalendarDate;
+  },
   deps: LedgerDeps = {},
 ): Promise<CreateMonthlyObligationResult> {
-  const { context, student, coverage, planTermsId, policyVersionId, origin } = args;
+  const { context, student, coverage, planTermsId, policyVersionId, origin, minimumDueOn } = args;
   const organizationId = context.organizationId;
   const activation = deps.activation ?? inactiveLedgerActivation;
   if (!(await activation.isActive(organizationId))) return refuse("notActive");
   if (!isValidCoverageMonth(coverage)) return refuse("invalid");
+  // minimumDueOn (resume-charge integration): validated here, early, alongside this function's other format/shape
+  // checks — before any database lookup, not at the point the due date is actually computed. `undefined` (every
+  // existing caller) is valid and applies no floor; a SUPPLIED but malformed value (not a real calendar date, or a
+  // real date outside coverage's own month) refuses `invalid` — never silently treated as if it had been omitted.
+  if (minimumDueOn !== undefined) {
+    // The `!minimumDueOn ||` guard matches this ledger's own established pattern (record-payment.ts/correct-late-fee.ts:
+    // `if (!x || !isRealDate(x)) return refuse("invalid")`) — isRealDate itself dereferences its argument's fields, so
+    // a literal `null` (a malformed value reaching this far, not merely omitted) must be caught before calling it.
+    if (!minimumDueOn || !isRealDate(minimumDueOn)) return refuse("invalid");
+    if (minimumDueOn.year !== coverage.year || minimumDueOn.month !== coverage.month) return refuse("invalid");
+  }
   if (!inTenantScope(context, student.homeAcademyId)) return refuse("notFound");
 
   // A duplicate returns the existing obligation and changes nothing: no snapshot edit, no coverage row, no audit row.
@@ -87,7 +116,8 @@ export async function writeMonthlyObligationInTx(
   if (!plan || plan.academyId !== student.homeAcademyId || policy.academyId !== student.homeAcademyId || terms.monthsCovered !== 1) return refuse("inapplicable");
   if (terms.currency !== policy.lateFeeCurrency) return refuse("currencyMismatch");
 
-  const due = dueDateFor(coverage, policy.dueDay);
+  const computedDue = dueDateFor(coverage, policy.dueDay);
+  const due = minimumDueOn && compareDates(minimumDueOn, computedDue) > 0 ? minimumDueOn : computedDue;
   const grace = graceDeadlineFor(coverage, policy.graceDay);
   const amount = terms.priceAmount.toFixed(2);
   const lateFeeAmount = policy.lateFeeAmount.toFixed(2);

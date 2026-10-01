@@ -268,6 +268,19 @@ const PENDING_CALLERS: PendingCaller[] = [
     reason:
       "Replaces PR 2's plain rateUnavailable refusal, for recordDuesPayment/prepayMonthlyObligations/purchasePackage only (correctLateFeeAndSettle is explicitly excluded — its own missing-rate refusal and rollback are unchanged), with a captured AwaitingRateReceipt row carrying a full resolved-evidence snapshot of what the attempt would have settled. Returned as an ok:false, error:\"captured\" result — structurally a refusal, not a new success shape — so every existing caller's own ok:true/ok:false narrowing needed zero changes. resolveAwaitingRateReceipt (owner-only) takes ONLY a receiptId: it calls settleObligationsInTx directly for ORDINARY/PREPAYMENT and writeSettlementInTx directly for PACKAGE, never recordDuesPaymentInTx/purchasePackage, which is the entire mechanism for the approved backdating-aging exception (a receipt's own already-validated receivedOn is never re-checked against the live clock at resolution). cancelAwaitingRateReceipt (owner-only, required reason) never touches any ledger row — only the receipt's own status.",
   },
+  // Enrollment/resume integration plan, resume scope only (signup stays unbuilt, blocked on D13/D14/D9). Unlike every
+  // other entry here, this one DOES have a real, already-exposed caller (resumeStudent, an active "use server" action)
+  // — it is listed anyway because that caller's own gated branch is unreachable in production: LedgerActivation's only
+  // production implementation is unconditionally false, so resumeChargeInTx's first statement returns immediately,
+  // before taking any lock, for every organization today. Only a test, importing resumeChargeInTx directly and
+  // injecting deps.activation, ever exercises the obligation-creation path.
+  {
+    symbol: "resumeChargeInTx",
+    file: "src/lib/dues/ledger/resume-charge.ts (caller: src/app/[locale]/(staff)/students/[id]/actions.ts, resumeStudent)",
+    dueBy: "activation rollout stage",
+    reason:
+      "Implements the approved resume-charge rule (eligibility-prerequisites brief §3.4): resuming bills the calendar month containing the resume date, dueOn = max(normal due date, resume date) via writeMonthlyObligationInTx's new minimumDueOn parameter, graceDeadline unchanged. An existing MONTHLY or package coverage for that month lets resume proceed without a new charge; a genuine configuration gap (no resolvable assignment/terms/policy) refuses the WHOLE resume attempt — status, history and audit all stay unchanged — an explicit, approved reversal of an earlier draft's 'proceed unbilled' recommendation. Signup/enrollment (approveStudent, create-student-action.ts) is explicitly out of scope for this entry; neither imports this ledger yet.",
+  },
 ];
 
 function main() {
