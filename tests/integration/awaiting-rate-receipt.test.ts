@@ -53,11 +53,11 @@ function context(over: Partial<TenantContext> = {}): TenantContext {
 }
 
 let studentCounter = 0;
-async function newStudent(label: string) {
+async function newStudent(label: string, academyId = a.academy.id) {
   const n = ++studentCounter;
   return prisma.student.create({
     data: {
-      organizationId: a.org.id, homeAcademyId: a.academy.id, firstName: "Receipt", lastName: `${label}${n}`, phone: "00000000",
+      organizationId: a.org.id, homeAcademyId: academyId, firstName: "Receipt", lastName: `${label}${n}`, phone: "00000000",
       email: `receipt-${label}-${n}-${suffix}@example.com`, currentRankId: await a.rankId("WHITE"), codeHash: `receipt-${label}-${n}-${suffix}`, status: "ACTIVE",
     },
   });
@@ -764,7 +764,7 @@ describe("PACKAGE: capture, fee-void-first fix, and resolution", () => {
   // --- Second review round, finding 3: PACKAGE resolution's coverage/time validation was incomplete, and checked one
   // span (the snapshotted one) while writing another (the freshly re-resolved terms' own `monthsCovered`).
 
-  it("forbidden drift: resolving once the current month has advanced past the package's own covered span refuses noLongerFuture", async () => {
+  it("forbidden drift: resolving once the current month has advanced past the package's own covered span refuses staleSelection", async () => {
     const d = freshDate();
     const s = await newStudent("packagetimedrift");
     const captured = await purchasePackage(
@@ -777,12 +777,45 @@ describe("PACKAGE: capture, fee-void-first fix, and resolution", () => {
     if (captured.ok || captured.error !== "captured") throw new Error("fixture: expected capture");
     const rate = await enterRate(d);
     if (!rate.ok) throw new Error("fixture: rate entry failed");
-    // The package covers d.month .. d.month + 2; resolving once the current month is past that entirely.
+    // The package covers d.month .. d.month + 2; resolving once the current month is past that entirely. Third review
+    // round: this now goes through the shared `validatePackageSpanInTx` (the same function `purchasePackage` itself
+    // calls), whose every failure mode resolution maps uniformly to `staleSelection` — not `noLongerFuture`, which this
+    // branch now reserves for the horizon/unavailable-policy cases `validatePackageSpanInTx` itself cannot distinguish
+    // from a plain "this selection is no longer valid" outcome.
     const resolved = await resolveAwaitingRateReceipt(
       { context: context(), receiptId: captured.receiptId! },
       deps({ now: nowAt({ year: d.year, month: d.month + 3, day: 15 }) }),
     );
-    expect(resolved).toMatchObject({ ok: false, error: "noLongerFuture" });
+    expect(resolved).toMatchObject({ ok: false, error: "staleSelection" });
+  });
+
+  // Third review round: the horizon-only check above (finalMonth hasn't passed) is a genuinely DIFFERENT case from this
+  // one (startMonth hasn't passed while finalMonth is still technically future) — neither makes the other redundant.
+  it("forbidden drift: the package's own START month slipping into the past (while its final month is still technically future) refuses staleSelection, never shifts the span", async () => {
+    const d = freshDate();
+    const s = await newStudent("packagestartdrift");
+    const captured = await purchasePackage(
+      {
+        context: context(), studentId: s.id, planTermsId: packageTerms.id, requestedStartMonth: { year: d.year, month: d.month },
+        receivedOn: d, tender: { currency: "CRC", amount: "135000.00" }, method: "EFECTIVO", maxBackdateDays: 5,
+      },
+      deps({ now: nowAt(d) }),
+    );
+    if (captured.ok || captured.error !== "captured") throw new Error("fixture: expected capture");
+    const rate = await enterRate(d);
+    if (!rate.ok) throw new Error("fixture: rate entry failed");
+    const before = await ledgerCounts(a.org.id);
+    // The package covers d.month..d.month+2 (startMonth = d.month). Resolving one month later: currentMonth = d.month+1,
+    // so startMonth has already gone by, even though finalMonth (d.month+2) is still > currentMonth — the EXACT case a
+    // last-month-only check would wrongly pass.
+    const resolved = await resolveAwaitingRateReceipt(
+      { context: context(), receiptId: captured.receiptId! },
+      deps({ now: nowAt({ year: d.year, month: d.month + 1, day: 15 }) }),
+    );
+    expect(resolved).toMatchObject({ ok: false, error: "staleSelection" });
+    expect(await ledgerCounts(a.org.id)).toEqual(before);
+    const receipt = await prisma.awaitingRateReceipt.findUniqueOrThrow({ where: { id: captured.receiptId } });
+    expect(receipt.status).toBe("PENDING");
   });
 
   it("forbidden drift: a month in the captured span becomes covered by something else while PENDING, refuses staleSelection", async () => {
@@ -825,6 +858,41 @@ describe("PACKAGE: capture, fee-void-first fix, and resolution", () => {
           kind: "PACKAGE", planTermsId: packageTerms.id, priceAmount: "270.00",
           startMonth: { year: d.year, month: d.month },
           coverageMonths: [{ year: d.year, month: d.month }], // length 1, but packageTerms.monthsCovered is 3
+          existingObligationIds: [],
+        },
+      },
+    });
+    const rate = await enterRate(d);
+    if (!rate.ok) throw new Error("fixture: rate entry failed");
+    const before = await ledgerCounts(a.org.id);
+    let threw: unknown;
+    let resolved: Awaited<ReturnType<typeof resolveAwaitingRateReceipt>> | undefined;
+    try {
+      resolved = await resolveAwaitingRateReceipt({ context: context(), receiptId: receipt.id }, deps({ now: nowAt(d) }));
+    } catch (error) {
+      threw = error;
+    }
+    expect(threw, "must return a typed refusal, never throw").toBeUndefined();
+    expect(resolved).toMatchObject({ ok: false, error: "staleTerms" });
+    expect(await ledgerCounts(a.org.id)).toEqual(before);
+    const stored = await prisma.awaitingRateReceipt.findUniqueOrThrow({ where: { id: receipt.id } });
+    expect(stored.status).toBe("PENDING");
+  });
+
+  it("a non-consecutive span (same length as its own terms, but with a gap) refuses cleanly, never throws", async () => {
+    const d = freshDate();
+    const s = await newStudent("packagenonconsecutivespan");
+    const receipt = await prisma.awaitingRateReceipt.create({
+      data: {
+        organizationId: a.org.id, studentId: s.id, academyId: a.academy.id, kind: "PACKAGE",
+        receivedOn: new Date(Date.UTC(d.year, d.month - 1, d.day)), tenderCurrency: "CRC", tenderAmount: "135000.00",
+        method: "EFECTIVO", capturedAt: nowAt(d)(), capturedById: a.admin.id,
+        snapshot: {
+          kind: "PACKAGE", planTermsId: packageTerms.id, priceAmount: "270.00",
+          startMonth: { year: d.year, month: d.month },
+          // Same LENGTH (3) as packageTerms.monthsCovered, but skips d.month + 2 in favor of d.month + 3 — not the
+          // consecutive span a legitimate capture would ever produce.
+          coverageMonths: [{ year: d.year, month: d.month }, { year: d.year, month: d.month + 1 }, { year: d.year, month: d.month + 3 }],
           existingObligationIds: [],
         },
       },
@@ -989,6 +1057,116 @@ describe("PREPAYMENT: capture and resolution (mechanism shared with ORDINARY)", 
     const resolved = await resolveAwaitingRateReceipt({ context: context(), receiptId: captured.receiptId! }, deps({ now: nowAt(d) }));
     expect(resolved).toMatchObject({ ok: false, error: "staleTerms" });
     expect(await ledgerCounts(a.org.id)).toEqual(before);
+  });
+
+  // Third review round, finding 2: the per-month drift check compared `policyNow.id` only, never the policy row's own
+  // `dueDay`/`graceDay`/`lateFeeAmount`/`lateFeeCurrency`/`maxPrepaidMonths` — a future-effective policy row can be
+  // corrected in place exactly like a terms row can. Each test below gets its OWN dedicated academy/plan/terms/policy
+  // (never the shared `a.academy`/`usdPolicy`) — `dues_config_referenced` forbids correcting a policy row that any
+  // obligation already references, and a shared, already-referenced policy would make the in-place correction itself
+  // impossible; a new policy version on the SHARED academy would also stale-out every other test relying on `usdPolicy`
+  // remaining current, the same pollution class fixed for package terms in the prior round.
+  it("an in-place correction to the policy's own dueDay/graceDay/lateFeeAmount refuses drift, with zero committed financial changes", async () => {
+    const d = freshDate();
+    const academy = await prisma.academy.create({ data: { organizationId: a.org.id, name: `Receipt policydrift academy ${suffix}`, slug: `receipt-policydrift-${suffix}`, kioskTokenHash: `receipt-policydrift-${suffix}` } });
+    const plan = await prisma.paymentPlan.create({ data: { organizationId: a.org.id, academyId: academy.id, name: `Receipt policydrift plan ${suffix}` } });
+    await prisma.paymentPlanTerms.create({
+      data: { organizationId: a.org.id, planId: plan.id, effectiveYear: 2027, effectiveMonth: 1, priceAmount: "100.00", currency: "USD", monthsCovered: 1, createdById: a.admin.id },
+    });
+    const policy = await prisma.duesPolicyVersion.create({
+      data: { organizationId: a.org.id, academyId: academy.id, effectiveYear: 2027, effectiveMonth: 1, dueDay: 20, graceDay: 5, lateFeeAmount: "20.00", lateFeeCurrency: "USD", maxPrepaidMonths: 12, createdById: a.admin.id },
+    });
+    const s = await newStudent("policydrift", academy.id);
+    await prisma.studentPlanAssignment.create({ data: { organizationId: a.org.id, studentId: s.id, planId: plan.id, effectiveYear: 2027, effectiveMonth: 1, createdById: a.admin.id } });
+    const captured = await prepayMonthlyObligations(
+      {
+        context: context(), studentId: s.id, requestedMonths: [{ year: d.year, month: d.month + 1 }],
+        receivedOn: d, tender: { currency: "CRC", amount: "50000.00" }, method: "EFECTIVO", maxBackdateDays: 5,
+      },
+      deps({ now: nowAt(d) }),
+    );
+    if (captured.ok || captured.error !== "captured") throw new Error("fixture: expected capture");
+    // In-place correction: SAME policy id, DIFFERENT dueDay/graceDay/lateFeeAmount — nothing references this policy yet
+    // (capture creates no obligation), so the correction itself is allowed.
+    await prisma.duesPolicyVersion.update({ where: { id: policy.id }, data: { dueDay: 25, graceDay: 10, lateFeeAmount: "30.00" } });
+    const rate = await enterRate(d);
+    if (!rate.ok) throw new Error("fixture: rate entry failed");
+    const before = await ledgerCounts(a.org.id);
+    const resolved = await resolveAwaitingRateReceipt({ context: context(), receiptId: captured.receiptId! }, deps({ now: nowAt(d) }));
+    expect(resolved).toMatchObject({ ok: false, error: "staleTerms" });
+    expect(await ledgerCounts(a.org.id), "every ledger table, queried directly, not just a rollback claim").toEqual(before);
+    const receipt = await prisma.awaitingRateReceipt.findUniqueOrThrow({ where: { id: captured.receiptId } });
+    expect(receipt.status).toBe("PENDING");
+  });
+
+  it("a pending receipt's selected month falling outside a horizon LOWERED after capture refuses, proving no grandfathering for an unresolved receipt", async () => {
+    const d = freshDate();
+    const academy = await prisma.academy.create({ data: { organizationId: a.org.id, name: `Receipt horizonlower academy ${suffix}`, slug: `receipt-horizonlower-${suffix}`, kioskTokenHash: `receipt-horizonlower-${suffix}` } });
+    const plan = await prisma.paymentPlan.create({ data: { organizationId: a.org.id, academyId: academy.id, name: `Receipt horizonlower plan ${suffix}` } });
+    await prisma.paymentPlanTerms.create({
+      data: { organizationId: a.org.id, planId: plan.id, effectiveYear: 2027, effectiveMonth: 1, priceAmount: "100.00", currency: "USD", monthsCovered: 1, createdById: a.admin.id },
+    });
+    const policy = await prisma.duesPolicyVersion.create({
+      data: { organizationId: a.org.id, academyId: academy.id, effectiveYear: 2027, effectiveMonth: 1, dueDay: 20, graceDay: 5, lateFeeAmount: "20.00", lateFeeCurrency: "USD", maxPrepaidMonths: 12, createdById: a.admin.id },
+    });
+    const s = await newStudent("horizonlower", academy.id);
+    await prisma.studentPlanAssignment.create({ data: { organizationId: a.org.id, studentId: s.id, planId: plan.id, effectiveYear: 2027, effectiveMonth: 1, createdById: a.admin.id } });
+    const captured = await prepayMonthlyObligations(
+      {
+        context: context(), studentId: s.id, requestedMonths: [{ year: d.year, month: d.month + 1 }, { year: d.year, month: d.month + 2 }],
+        receivedOn: d, tender: { currency: "CRC", amount: "100000.00" }, method: "EFECTIVO", maxBackdateDays: 5,
+      },
+      deps({ now: nowAt(d) }),
+    );
+    if (captured.ok || captured.error !== "captured") throw new Error("fixture: expected capture");
+    // The owner lowers the horizon to its minimum (1 — `maxPrepaidMonths` must be positive) while this receipt sits
+    // PENDING: the new horizon end is d.month + 1, one month short of the already-selected d.month + 2 — it has
+    // purchased nothing yet, so it gets no grandfathering (unlike a completed purchase that already created a real
+    // obligation).
+    await prisma.duesPolicyVersion.update({ where: { id: policy.id }, data: { maxPrepaidMonths: 1 } });
+    const rate = await enterRate(d);
+    if (!rate.ok) throw new Error("fixture: rate entry failed");
+    const before = await ledgerCounts(a.org.id);
+    const resolved = await resolveAwaitingRateReceipt({ context: context(), receiptId: captured.receiptId! }, deps({ now: nowAt(d) }));
+    expect(resolved).toMatchObject({ ok: false, error: "noLongerFuture" });
+    expect(await ledgerCounts(a.org.id)).toEqual(before);
+    const receipt = await prisma.awaitingRateReceipt.findUniqueOrThrow({ where: { id: captured.receiptId } });
+    expect(receipt.status).toBe("PENDING");
+  });
+
+  it("the received-date aging exception removes only tooOld — an aged receipt with genuine policy drift still refuses for that unrelated reason", async () => {
+    const d = freshDate();
+    const academy = await prisma.academy.create({ data: { organizationId: a.org.id, name: `Receipt agedpolicydrift academy ${suffix}`, slug: `receipt-agedpolicydrift-${suffix}`, kioskTokenHash: `receipt-agedpolicydrift-${suffix}` } });
+    const plan = await prisma.paymentPlan.create({ data: { organizationId: a.org.id, academyId: academy.id, name: `Receipt agedpolicydrift plan ${suffix}` } });
+    await prisma.paymentPlanTerms.create({
+      data: { organizationId: a.org.id, planId: plan.id, effectiveYear: 2027, effectiveMonth: 1, priceAmount: "100.00", currency: "USD", monthsCovered: 1, createdById: a.admin.id },
+    });
+    const policy = await prisma.duesPolicyVersion.create({
+      data: { organizationId: a.org.id, academyId: academy.id, effectiveYear: 2027, effectiveMonth: 1, dueDay: 20, graceDay: 5, lateFeeAmount: "20.00", lateFeeCurrency: "USD", maxPrepaidMonths: 12, createdById: a.admin.id },
+    });
+    const s = await newStudent("agedpolicydrift", academy.id);
+    await prisma.studentPlanAssignment.create({ data: { organizationId: a.org.id, studentId: s.id, planId: plan.id, effectiveYear: 2027, effectiveMonth: 1, createdById: a.admin.id } });
+    const captured = await prepayMonthlyObligations(
+      {
+        context: context(), studentId: s.id, requestedMonths: [{ year: d.year, month: d.month + 1 }],
+        receivedOn: d, tender: { currency: "CRC", amount: "50000.00" }, method: "EFECTIVO", maxBackdateDays: 5,
+      },
+      deps({ now: nowAt(d) }),
+    );
+    if (captured.ok || captured.error !== "captured") throw new Error("fixture: expected capture");
+    await prisma.duesPolicyVersion.update({ where: { id: policy.id }, data: { lateFeeAmount: "30.00" } });
+    const rate = await enterRate(d);
+    if (!rate.ok) throw new Error("fixture: rate entry failed");
+    // Resolution runs well past the ordinary new-entry window (10 days after receivedOn, against a 5-day maxBackdateDays
+    // — a fresh entry would be refused tooOld here) — but resolution has no tooOld check of its own at all, so aging is
+    // irrelevant either way. Deliberately still BEFORE the requested coverage month itself (d.month + 1), so neither of
+    // the new floor/ceiling horizon checks fire for an unrelated reason — isolating this to the policy fingerprint check
+    // alone. The genuine drift must still refuse — not silently succeed because "enough time passed".
+    const resolved = await resolveAwaitingRateReceipt(
+      { context: context(), receiptId: captured.receiptId! },
+      deps({ now: nowAt({ year: d.year, month: d.month, day: d.day + 10 }) }),
+    );
+    expect(resolved).toMatchObject({ ok: false, error: "staleTerms" });
   });
 });
 

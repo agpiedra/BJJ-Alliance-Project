@@ -2,7 +2,7 @@ import { Prisma, PaymentMethod, type Currency } from "@/generated/prisma/client"
 import { prisma } from "@/lib/prisma";
 import type { TenantContext } from "@/lib/tenant/types";
 import { addMonths, compareDates, compareYearMonth, type CalendarDate, type YearMonth } from "@/lib/dues/calendar";
-import { currentMonthIn, parseMoney, versionRevision } from "@/lib/dues/config-input";
+import { currentMonthIn, parseMoney, policyRevisionOf, versionRevision } from "@/lib/dues/config-input";
 import { captureAwaitingRateReceiptInTx } from "@/lib/dues/ledger/awaiting-rate-receipt";
 import { inactiveLedgerActivation, type LedgerDeps } from "@/lib/dues/ledger/activation";
 import { inTenantScope, isRealDate, latestEffective, lockAssignmentShared, lockBranchShared, lockStudent, minusDays, todayIn, type Tx } from "@/lib/dues/ledger/common";
@@ -246,6 +246,7 @@ export async function prepayMonthlyObligations(
         month: YearMonth;
         planTermsId: string;
         policyVersionId: string;
+        policyRevision: string;
         priceAmount: string;
         currency: Currency;
         assignmentId: string;
@@ -275,11 +276,16 @@ export async function prepayMonthlyObligations(
         const policyCandidate = latestEffective(policyHistory, month);
         if (!termsCandidate || !policyCandidate) throw new PrepaymentRefusedError(refuse("inapplicable"));
         const termsRow = await tx.paymentPlanTerms.findFirstOrThrow({ where: { id: termsCandidate.id, organizationId }, select: { priceAmount: true, currency: true } });
+        const policyRow = await tx.duesPolicyVersion.findFirstOrThrow({
+          where: { id: policyCandidate.id, organizationId },
+          select: { dueDay: true, graceDay: true, lateFeeAmount: true, lateFeeCurrency: true },
+        });
 
         resolvedMonths.push({
           month,
           planTermsId: termsCandidate.id,
           policyVersionId: policyCandidate.id,
+          policyRevision: policyRevisionOf({ ...policyRow, lateFeeAmount: policyRow.lateFeeAmount.toFixed(2) }),
           priceAmount: termsRow.priceAmount.toFixed(2),
           currency: termsRow.currency,
           assignmentId: assignment.id,
@@ -329,6 +335,7 @@ export async function prepayMonthlyObligations(
                 coverage: m.month,
                 planTermsId: m.planTermsId,
                 policyVersionId: m.policyVersionId,
+                policyRevision: m.policyRevision,
                 priceAmount: m.priceAmount,
                 assignmentId: m.assignmentId,
                 assignmentRevision: versionRevision({ planId: m.assignmentPlanId }),

@@ -3,7 +3,7 @@ import { Prisma, PaymentMethod, type Currency } from "@/generated/prisma/client"
 import { prisma } from "@/lib/prisma";
 import type { TenantContext } from "@/lib/tenant/types";
 import { addMonths, compareYearMonth, type CalendarDate } from "@/lib/dues/calendar";
-import { currentMonthIn, versionRevision } from "@/lib/dues/config-input";
+import { currentMonthIn, policyRevisionOf, versionRevision } from "@/lib/dues/config-input";
 import { lateFeeApplies, settleReceipt, type CrossCurrencyCandidates, type SettlementItem } from "@/lib/dues/settlement";
 import { inactiveLedgerActivation, type LedgerDeps } from "@/lib/dues/ledger/activation";
 import { fromDbDate, inTenantScope, latestEffective, lockAssignmentShared, lockBranchShared, lockStudent, toDbDate, type Tx } from "@/lib/dues/ledger/common";
@@ -20,7 +20,7 @@ import {
   type RecordDuesPaymentError,
   type SettlementLineItem,
 } from "@/lib/dues/ledger/record-payment";
-import { checkPackageCoverageAvailableInTx, resolvePackageTermsInTx, writePackageObligationInTx } from "@/lib/dues/ledger/purchase-package";
+import { checkPackageCoverageAvailableInTx, resolvePackageTermsInTx, validatePackageSpanInTx, writePackageObligationInTx } from "@/lib/dues/ledger/purchase-package";
 
 /**
  * Currency-conversion brief PR 3 (plan §2, §6, §7, §8): an awaiting-rate receipt is captured when a settlement attempt
@@ -47,6 +47,12 @@ const prepaymentMonthSchema = z.object({
   coverage: yearMonthSchema,
   planTermsId: z.string().min(1),
   policyVersionId: z.string().min(1),
+  /** Second review round: a fingerprint of the policy row's OWN per-month billing values (`dueDay`/`graceDay`/
+   * `lateFeeAmount`/`lateFeeCurrency`; see `policyRevisionOf`'s own doc comment for why `maxPrepaidMonths` is
+   * deliberately excluded) at capture time — `versionRevision`'s existing, field-generic mechanism, already used for
+   * `assignmentRevision` below. An id match alone does not prove these are unchanged: a future-effective
+   * `DuesPolicyVersion` row can be corrected in place (same id, new values), the same way a terms row can. */
+  policyRevision: z.string().min(1),
   priceAmount: z.string().min(1),
   assignmentId: z.string().min(1),
   assignmentRevision: z.string().min(1),
@@ -272,11 +278,26 @@ export async function resolveAwaitingRateReceipt(
       } else if (snapshot.kind === "PREPAYMENT") {
         if (branchTimezone === null) throw new Error("unreachable: PREPAYMENT always locks the branch above");
         const currentMonth = currentMonthIn(branchTimezone, (deps.now ?? (() => new Date()))());
+        // Second review round: nothing previously re-checked the prepayment HORIZON (`maxPrepaidMonths`) against the
+        // LIVE policy at resolution time — if an owner lowers it while a receipt sits PENDING, a pending receipt has
+        // purchased nothing yet and gets no grandfathering (that's reserved for a completed purchase that already
+        // created a real obligation). Resolved ONCE, against `currentMonth`, exactly like `prepayMonthlyObligations`'s
+        // own capture-time horizon — never per-month (the horizon is branch-wide, not per-coverage-month).
+        const horizonPolicyHistory = await tx.duesPolicyVersion.findMany({
+          where: { organizationId, academyId: student.homeAcademyId },
+          select: { effectiveYear: true, effectiveMonth: true, maxPrepaidMonths: true },
+        });
+        const horizonEffectivePolicy = latestEffective(horizonPolicyHistory, currentMonth);
+        if (!horizonEffectivePolicy || horizonEffectivePolicy.maxPrepaidMonths === null) throw new ResolutionRefusedError(refuseResolve("noLongerFuture"));
+        const horizonEnd = addMonths(currentMonth, horizonEffectivePolicy.maxPrepaidMonths);
         const obligationIds: string[] = [];
         for (const m of snapshot.months) {
           // Forbidden drift (plan §10): the current month itself advancing far enough that an originally-future month is
           // no longer future — refused, never silently reinterpreted.
           if (compareYearMonth(m.coverage, currentMonth) <= 0) throw new ResolutionRefusedError(refuseResolve("noLongerFuture"));
+          // Forbidden drift (second review round): the month must also still be within the LIVE horizon — a lowered
+          // limit applies in full to a receipt that hasn't purchased anything yet.
+          if (compareYearMonth(m.coverage, horizonEnd) > 0) throw new ResolutionRefusedError(refuseResolve("noLongerFuture"));
           // Forbidden drift: the month must still be genuinely uncovered — something else may have settled it while
           // this receipt sat PENDING.
           const existingObligation = await tx.duesObligation.findFirst({ where: { organizationId, studentId: student.id, coverageYear: m.coverage.year, coverageMonth: m.coverage.month }, select: { id: true } });
@@ -312,6 +333,17 @@ export async function resolveAwaitingRateReceipt(
           // everything else here.
           const termsRowNow = await tx.paymentPlanTerms.findFirstOrThrow({ where: { id: termsNow.id, organizationId }, select: { priceAmount: true } });
           if (termsRowNow.priceAmount.toFixed(2) !== m.priceAmount) throw new ResolutionRefusedError(refuseResolve("staleTerms"));
+          // Same class of bug, now for policy: an id match alone does not prove `dueDay`/`graceDay`/`lateFeeAmount`/
+          // `lateFeeCurrency`/`maxPrepaidMonths` are unchanged — a future-effective policy row can be corrected in place
+          // exactly like a terms row can. Re-fetch the live values and compare the identical fingerprint captured at
+          // purchase time (`policyRevisionOf`, shared with `prepayMonthlyObligations`'s own capture).
+          const policyRowNow = await tx.duesPolicyVersion.findFirstOrThrow({
+            where: { id: policyNow.id, organizationId },
+            select: { dueDay: true, graceDay: true, lateFeeAmount: true, lateFeeCurrency: true },
+          });
+          if (policyRevisionOf({ ...policyRowNow, lateFeeAmount: policyRowNow.lateFeeAmount.toFixed(2) }) !== m.policyRevision) {
+            throw new ResolutionRefusedError(refuseResolve("staleTerms"));
+          }
 
           const written = await writeMonthlyObligationInTx(tx, { context, student, coverage: m.coverage, planTermsId: m.planTermsId, policyVersionId: m.policyVersionId, origin: "PREPAYMENT" }, deps);
           if (!written.ok) throw new ResolutionRefusedError(refuseResolve(written.error === "notActive" ? "notActive" : "invalid"));
@@ -351,22 +383,24 @@ export async function resolveAwaitingRateReceipt(
         if (termsResolved.terms.priceAmount.toFixed(2) !== snapshot.priceAmount) throw new ResolutionRefusedError(refuseResolve("staleTerms"));
         // The terms' own duration can change between capture and resolution — the span `checkPackageCoverageAvailableInTx`
         // validates and the span `writePackageObligationInTx` actually creates must be the IDENTICAL, already-validated
-        // value (never "check one span, write another"). A length mismatch is itself drift.
-        if (termsResolved.terms.monthsCovered !== snapshot.coverageMonths.length) throw new ResolutionRefusedError(refuseResolve("staleTerms"));
+        // value (never "check one span, write another"). Defense-in-depth against a corrupted stored snapshot (plan
+        // §6.1): verify `coverageMonths` is genuinely the CONSECUTIVE span `[startMonth, ..., startMonth+n-1]`, not just
+        // that its length happens to match — a legitimately-captured receipt never fails this, but a malformed one (a
+        // length match with a gap, or any entry out of sequence) must refuse cleanly, never throw uncaught.
+        const expectedSpan = Array.from({ length: termsResolved.terms.monthsCovered }, (_, i) => addMonths(snapshot.startMonth, i));
+        const spanMatches =
+          expectedSpan.length === snapshot.coverageMonths.length &&
+          expectedSpan.every((m, i) => m.year === snapshot.coverageMonths[i].year && m.month === snapshot.coverageMonths[i].month);
+        if (!spanMatches) throw new ResolutionRefusedError(refuseResolve("staleTerms"));
 
-        // Forbidden drift (the package analog of PREPAYMENT's `noLongerFuture`): re-run the IDENTICAL current-month/horizon
-        // rule `purchasePackage` enforces at capture time, against the LIVE current month — never silently reinterpreted.
-        const policyHistory = await tx.duesPolicyVersion.findMany({
-          where: { organizationId, academyId: student.homeAcademyId },
-          select: { effectiveYear: true, effectiveMonth: true, maxPrepaidMonths: true },
-        });
-        const effectivePolicy = latestEffective(policyHistory, currentMonth);
-        if (!effectivePolicy || effectivePolicy.maxPrepaidMonths === null) throw new ResolutionRefusedError(refuseResolve("noLongerFuture"));
-        const horizonEnd = addMonths(currentMonth, effectivePolicy.maxPrepaidMonths);
-        const finalMonth = addMonths(snapshot.startMonth, termsResolved.terms.monthsCovered - 1);
-        if (compareYearMonth(finalMonth, currentMonth) <= 0 || compareYearMonth(finalMonth, horizonEnd) > 0) {
-          throw new ResolutionRefusedError(refuseResolve("noLongerFuture"));
-        }
+        // Forbidden drift (second review round): the horizon check alone only verifies the span's FINAL month hasn't
+        // passed — it never verifies the START month hasn't itself slipped into the past (a September-November package
+        // captured in September, resolved in October: finalMonth=November is still > currentMonth=October, so a
+        // last-month-only check would wrongly pass even though September has already gone by). Reuses
+        // `purchasePackage`'s own complete start/horizon validation, evaluated against the LIVE current month — never a
+        // narrower, hand-rolled subset of it.
+        const spanValid = await validatePackageSpanInTx(tx, { organizationId, academyId: student.homeAcademyId, studentId: student.id, startMonth: snapshot.startMonth, monthsCovered: termsResolved.terms.monthsCovered, currentMonth });
+        if (!spanValid.ok) throw new ResolutionRefusedError(refuseResolve("staleSelection"));
 
         const coverageAvailable = await checkPackageCoverageAvailableInTx(tx, { organizationId, studentId: student.id, startMonth: snapshot.startMonth, monthsCovered: termsResolved.terms.monthsCovered });
         if (!coverageAvailable.ok) throw new ResolutionRefusedError(refuseResolve("staleSelection"));
