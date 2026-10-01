@@ -100,7 +100,10 @@ async function ledgerCounts(organizationId: string) {
     coverage: await prisma.duesCoverage.count({ where: { organizationId } }),
     payments: await prisma.duesPayment.count({ where: { organizationId } }),
     settlements: await prisma.duesSettlement.count({ where: { organizationId } }),
-    audits: await prisma.auditLog.count({ where: { organizationId, action: { startsWith: "dues" } } }),
+    // Currency-conversion brief PR 3: captured separately from `audits` below (its own action name doesn't start with
+    // "dues") so a capture-only test can assert every OTHER ledger table stayed at zero while this one incremented.
+    receipts: await prisma.awaitingRateReceipt.count({ where: { organizationId } }),
+    audits: await prisma.auditLog.count({ where: { organizationId, OR: [{ action: { startsWith: "dues" } }, { action: { startsWith: "awaitingRateReceipt" } }] } }),
   };
 }
 
@@ -222,9 +225,11 @@ afterAll(async () => {
     await prisma.$transaction(
       async (tx) => {
         await tx.$executeRawUnsafe("SET LOCAL session_replication_role = replica");
-        // DuesPayment now carries a composite FK to ExchangeRateQuote (this PR) — settlement tables must be cleared
-        // BEFORE the quotes they reference, the reverse of no other ordering constraint in this ledger.
-        for (const table of ["DuesSettlement", "DuesPayment", "DuesLateFee", "DuesCoverage", "DuesObligation", "ExchangeRateQuote"]) {
+        // DuesPayment now carries composite FKs to both ExchangeRateQuote and AwaitingRateReceipt (currency-conversion
+        // PR 3) — settlement tables must be cleared BEFORE the rows they reference, the reverse of no other ordering
+        // constraint in this ledger. session_replication_role = replica disables trigger-based FK enforcement for this
+        // transaction, so the exact order among these DELETEs doesn't matter either way.
+        for (const table of ["DuesSettlement", "DuesPayment", "DuesLateFee", "DuesCoverage", "DuesObligation", "ExchangeRateQuote", "AwaitingRateReceipt"]) {
           await tx.$executeRawUnsafe(`DELETE FROM "${table}" WHERE "organizationId" = $1`, a.org.id);
         }
       },
@@ -243,7 +248,10 @@ afterAll(async () => {
 // Runs FIRST, deliberately, before any quote is ever entered for this organization — the only point at which "no quote
 // resolves at all" (as opposed to "an earlier one falls back") is genuinely true for org `a`.
 describe("recordDuesPayment: rateUnavailable, before this organization has ever entered a quote", () => {
-  it("a receipt in the other currency refuses rateUnavailable, with zero writes, when no quote resolves at all", async () => {
+  // Currency-conversion brief PR 3: this is now the capture trigger (plan §2), not a plain refusal — updated from this
+  // test's own PR 2 version, which asserted a bare rateUnavailable refusal with zero writes. Capture is NOT zero
+  // writes: it writes exactly the receipt and its own audit row, nothing else in the ledger.
+  it("a receipt in the other currency captures an awaiting-rate receipt, changing only that row and its own audit entry, when no quote resolves at all", async () => {
     const s = await newStudent("norate");
     const sep = await oneMonth(s.id, 9, usdTerms.id, usdPolicy.id);
     const before = await ledgerCounts(a.org.id);
@@ -251,8 +259,19 @@ describe("recordDuesPayment: rateUnavailable, before this organization has ever 
       { context: context(), studentId: s.id, receivedOn: { year: 2030, month: 10, day: 5 }, tender: { currency: "CRC", amount: "50000.00" }, method: "EFECTIVO", obligationIds: [sep], maxBackdateDays: 5 },
       deps({ now: OCT_5 }),
     );
-    expect(r).toEqual({ ok: false, error: "rateUnavailable" });
-    expect(await ledgerCounts(a.org.id)).toEqual(before);
+    expect(r).toMatchObject({ ok: false, error: "captured" });
+    if (r.ok || r.error !== "captured") return;
+    const after = await ledgerCounts(a.org.id);
+    expect(after).toEqual({ ...before, receipts: before.receipts + 1, audits: before.audits + 1 });
+
+    const receipt = await prisma.awaitingRateReceipt.findUniqueOrThrow({ where: { id: r.receiptId } });
+    expect(receipt.organizationId).toBe(a.org.id);
+    expect(receipt.studentId).toBe(s.id);
+    expect(receipt.kind).toBe("ORDINARY");
+    expect(receipt.status).toBe("PENDING");
+    expect(receipt.tenderCurrency).toBe("CRC");
+    expect(receipt.tenderAmount.toFixed(2)).toBe("50000.00");
+    expect(receipt.snapshot).toEqual({ kind: "ORDINARY", obligationIds: [sep] });
   });
 });
 
@@ -592,7 +611,7 @@ describe("two different organizations' settlements never contend on this shared 
     await prisma.$transaction(
       async (tx) => {
         await tx.$executeRawUnsafe("SET LOCAL session_replication_role = replica");
-        for (const table of ["DuesSettlement", "DuesPayment", "DuesLateFee", "DuesCoverage", "DuesObligation"]) {
+        for (const table of ["DuesSettlement", "DuesPayment", "DuesLateFee", "DuesCoverage", "DuesObligation", "AwaitingRateReceipt"]) {
           await tx.$executeRawUnsafe(`DELETE FROM "${table}" WHERE "organizationId" = $1`, orgB.org.id);
         }
       },

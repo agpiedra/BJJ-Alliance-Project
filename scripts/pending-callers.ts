@@ -257,6 +257,17 @@ const PENDING_CALLERS: PendingCaller[] = [
     reason:
       "Every one of this ledger's four settlement-writing entry points now takes lockExchangeRateNamespace as its own literal first statement, unconditionally, before any row lock — never inside recordDuesPaymentInTx/resolveMonthlyDebtItemsInTx/writeSettlementInTx themselves, since those also run as INNER calls composed by correctLateFeeAndSettle/prepayMonthlyObligations after their own row locks are already held. When the tender's currency differs from the items' own (this schema's only other currency), resolveCrossCurrency (cross-currency-settlement.ts, the one place both recordDuesPaymentInTx and purchasePackage build settleReceipt's own crossCurrency candidates) resolves the quote effective for receivedOn and converts via PR 1's exact arithmetic; no resolvable quote refuses rateUnavailable with zero writes (PR 3's own scope, not this one). A converted total produced by more than one distinct prefix (rounding collision) refuses ambiguousTotal rather than guessing. On success, DuesPayment snapshots the resolved quote's id/value/quoteDate/revision and the rounding rule applied — read once, never re-joined live, so a later correcting revision never changes an already-recorded payment's evidence. voidLateFeeInTx (correct-late-fee.ts) was also extracted from correctLateFeeAndSettle's own provisional-void logic for PR 3's later pending-receipt resolution to reuse — nothing consumes it yet.",
   },
+  // Currency-conversion brief, PR 3 of 3 (awaiting-rate receipt capture, resolution, cancellation). No production caller
+  // exists on purpose — not a route, not a server action, no scheduler entry, no UI; every writer stays closed by the
+  // same LedgerActivation default. Lives inside src/lib/dues/ledger/, so it needs no entry in the ledger's own
+  // no-caller guard.
+  {
+    symbol: "captureAwaitingRateReceiptInTx / resolveAwaitingRateReceipt / cancelAwaitingRateReceipt",
+    file: "src/lib/dues/ledger/awaiting-rate-receipt.ts (capture call sites: record-payment.ts, prepay-monthly.ts, purchase-package.ts)",
+    dueBy: "activation / scheduler rollout stage, and a UI for owners to use it",
+    reason:
+      "Replaces PR 2's plain rateUnavailable refusal, for recordDuesPayment/prepayMonthlyObligations/purchasePackage only (correctLateFeeAndSettle is explicitly excluded — its own missing-rate refusal and rollback are unchanged), with a captured AwaitingRateReceipt row carrying a full resolved-evidence snapshot of what the attempt would have settled. Returned as an ok:false, error:\"captured\" result — structurally a refusal, not a new success shape — so every existing caller's own ok:true/ok:false narrowing needed zero changes. resolveAwaitingRateReceipt (owner-only) takes ONLY a receiptId: it calls settleObligationsInTx directly for ORDINARY/PREPAYMENT and writeSettlementInTx directly for PACKAGE, never recordDuesPaymentInTx/purchasePackage, which is the entire mechanism for the approved backdating-aging exception (a receipt's own already-validated receivedOn is never re-checked against the live clock at resolution). cancelAwaitingRateReceipt (owner-only, required reason) never touches any ledger row — only the receipt's own status.",
+  },
 ];
 
 function main() {

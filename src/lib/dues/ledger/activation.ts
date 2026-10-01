@@ -112,4 +112,26 @@ export interface LedgerDeps {
    * `enterExchangeRateQuote` correction (proving the shared hold genuinely blocks that EXCLUSIVE request).
    */
   afterExchangeRateLockForTest?: () => Promise<void>;
+  /**
+   * Test-only synchronization point, called by `resolveAwaitingRateReceipt` (awaiting-rate-receipt.ts) immediately after
+   * the student row lock succeeds — never referenced by production code, never given a value outside a test. Receives
+   * the open transaction itself so a test can capture this transaction's own backend pid (`pg_backend_pid()`) for a
+   * `pg_blocking_pids`-verified genuine-overlap proof against a second concurrent resolution or cancellation attempt for
+   * the same receipt — not inferred from `Promise.all` timing alone.
+   */
+  afterResolveStudentLockForTest?: (tx: Tx) => Promise<void>;
+  /**
+   * Test-only synchronization point, called by `cancelAwaitingRateReceipt` (awaiting-rate-receipt.ts) immediately after
+   * the student row lock succeeds — never referenced by production code, never given a value outside a test. Mirrors
+   * `afterResolveStudentLockForTest`'s role for cancellation.
+   */
+  afterCancelStudentLockForTest?: (tx: Tx) => Promise<void>;
+  /**
+   * Test-only synchronization point, called by `resolveAwaitingRateReceipt`'s PREPAYMENT branch (awaiting-rate-receipt.ts)
+   * immediately after `lockAssignmentShared` succeeds for one month's assignment row — never referenced by production
+   * code, never given a value outside a test. Receives the open transaction itself so a test can capture this
+   * transaction's own backend pid, for a `pg_blocking_pids`-verified genuine-overlap proof against a concurrent
+   * `correctAssignment` call on the SAME assignment row.
+   */
+  afterResolveAssignmentLockForTest?: (tx: Tx, assignmentId: string) => Promise<void>;
 }

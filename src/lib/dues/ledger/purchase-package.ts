@@ -5,7 +5,7 @@ import { addMonths, compareDates, compareYearMonth, type CalendarDate, type Year
 import { currentMonthIn, parseMoney } from "@/lib/dues/config-input";
 import { settleReceipt, type CrossCurrencyCandidates, type SettlementItem } from "@/lib/dues/settlement";
 import { inactiveLedgerActivation, type LedgerDeps } from "@/lib/dues/ledger/activation";
-import { inTenantScope, isRealDate, latestEffective, lockBranchShared, lockStudent, lockTermsShared, minusDays, todayIn } from "@/lib/dues/ledger/common";
+import { inTenantScope, isRealDate, latestEffective, lockBranchShared, lockStudent, lockTermsShared, minusDays, todayIn, type Tx } from "@/lib/dues/ledger/common";
 import { resolveCrossCurrency, type RateEvidence } from "@/lib/dues/ledger/cross-currency-settlement";
 import { isValidCoverageMonth } from "@/lib/dues/ledger/create-monthly-obligation";
 import { lockExchangeRateNamespaceShared } from "@/lib/dues/ledger/exchange-rate";
@@ -18,6 +18,7 @@ import {
   type RecordDuesPaymentError,
   type SettlementLineItem,
 } from "@/lib/dues/ledger/record-payment";
+import { captureAwaitingRateReceiptInTx } from "@/lib/dues/ledger/awaiting-rate-receipt";
 import { CURRENCIES } from "@/lib/payments/format-money";
 
 /**
@@ -89,7 +90,7 @@ export type PurchasePackageError =
 
 export type PurchasePackageResult =
   | { ok: true; obligationId: string; paymentId: string; settlementIds: string[]; totalMinor: number }
-  | { ok: false; error: PurchasePackageError; selectableTotals?: string[]; alreadySettledIds?: string[] };
+  | { ok: false; error: PurchasePackageError; selectableTotals?: string[]; alreadySettledIds?: string[]; receiptId?: string };
 
 const refuse = (
   error: PurchasePackageError,
@@ -111,6 +112,161 @@ class PackagePurchaseRefusedError extends Error {
   constructor(public readonly result: PurchasePackageResult & { ok: false }) {
     super(`package purchase refused mid-transaction: ${result.error}`);
   }
+}
+
+export type ResolvePackageTermsResult =
+  | { ok: true; terms: { id: string; planId: string; monthsCovered: number; priceAmount: { toFixed(digits?: number): string; decimalPlaces(): number }; currency: Currency } }
+  | { ok: false; error: "notFound" | "inapplicable" | "staleTerms" };
+
+/**
+ * Currency-conversion brief PR 3 (plan §3.3/§5): `purchasePackage`'s own terms resolution — locked before its value is
+ * trusted, a genuine package row (`monthsCovered >= 2`), belonging to the given branch, and the version CURRENTLY
+ * effective for `currentMonth` (approved policy 2: a superseded name is refused, never silently repriced) — extracted so
+ * the awaiting-rate resolution writer can re-run the IDENTICAL check against a snapshotted `planTermsId`, rather than a
+ * second, drifting copy of this validation.
+ */
+export async function resolvePackageTermsInTx(
+  tx: Tx,
+  args: { organizationId: string; planTermsId: string; academyId: string; currentMonth: YearMonth },
+): Promise<ResolvePackageTermsResult> {
+  const { organizationId, planTermsId, academyId, currentMonth } = args;
+  const termsRef = await tx.paymentPlanTerms.findFirst({ where: { id: planTermsId, organizationId }, select: { id: true, planId: true } });
+  if (!termsRef) return { ok: false, error: "notFound" };
+  if (!(await lockTermsShared(tx, organizationId, termsRef.id))) return { ok: false, error: "notFound" };
+  const terms = await tx.paymentPlanTerms.findFirstOrThrow({ where: { id: termsRef.id, organizationId } });
+  if (terms.monthsCovered < 2) return { ok: false, error: "inapplicable" };
+  const plan = await tx.paymentPlan.findFirst({ where: { id: terms.planId, organizationId }, select: { academyId: true } });
+  if (!plan || plan.academyId !== academyId) return { ok: false, error: "inapplicable" };
+  const termsHistory = await tx.paymentPlanTerms.findMany({ where: { organizationId, planId: terms.planId }, select: { id: true, effectiveYear: true, effectiveMonth: true } });
+  if (latestEffective(termsHistory, currentMonth)?.id !== terms.id) return { ok: false, error: "staleTerms" };
+  return { ok: true, terms };
+}
+
+export type ValidatePackageSpanError = "prepaymentUnavailable" | "prepaymentLimitExceeded" | "coverageGap";
+export type ValidatePackageSpanResult = { ok: true } | { ok: false; error: ValidatePackageSpanError };
+
+/**
+ * Currency-conversion brief PR 3, second review round: `purchasePackage`'s own horizon/start-month validation (approved
+ * policies 1 and 3) — extracted so the awaiting-rate resolution writer can re-run the IDENTICAL check against a
+ * snapshotted span, evaluated against the LIVE `currentMonth` at resolution time rather than the original capture-time
+ * month. The horizon alone (checking only that the span's FINAL month hasn't passed) is not sufficient: a package whose
+ * START month has itself slipped into the past while its final month is still nominally future must also refuse, never
+ * create retroactive coverage and never silently re-derive a different start month. `firstUncoveredFrom`'s own floor is
+ * exactly what makes this check "live" — passing the resolution-time `currentMonth` here (not the snapshot's own month)
+ * is what the fix actually is.
+ */
+export async function validatePackageSpanInTx(
+  tx: Tx,
+  args: { organizationId: string; academyId: string; studentId: string; startMonth: YearMonth; monthsCovered: number; currentMonth: YearMonth },
+): Promise<ValidatePackageSpanResult> {
+  const { organizationId, academyId, studentId, startMonth, monthsCovered, currentMonth } = args;
+  // Approved policy 1: the prepayment horizon also bounds a package's final covered month, resolved from the policy
+  // effective at `currentMonth` — never from `receivedOn`.
+  const policyHistory = await tx.duesPolicyVersion.findMany({
+    where: { organizationId, academyId },
+    select: { effectiveYear: true, effectiveMonth: true, maxPrepaidMonths: true },
+  });
+  const effectivePolicy = latestEffective(policyHistory, currentMonth);
+  if (!effectivePolicy || effectivePolicy.maxPrepaidMonths === null) return { ok: false, error: "prepaymentUnavailable" };
+  const horizonEnd = addMonths(currentMonth, effectivePolicy.maxPrepaidMonths);
+  const finalMonth = addMonths(startMonth, monthsCovered - 1);
+  if (compareYearMonth(finalMonth, currentMonth) <= 0 || compareYearMonth(finalMonth, horizonEnd) > 0) return { ok: false, error: "prepaymentLimitExceeded" };
+
+  // Approved policy 3: the start must be exactly the first uncovered month, floored at `currentMonth` (a package may
+  // start immediately, unlike prepayment's `currentMonth + 1` floor) — never silently re-derived to whatever the first
+  // uncovered month happens to be NOW if that differs from what was originally selected.
+  const searchBound = compareYearMonth(horizonEnd, SCHEMA_MAX_MONTH) < 0 ? horizonEnd : SCHEMA_MAX_MONTH;
+  const firstUncovered = await firstUncoveredFrom(tx, organizationId, studentId, currentMonth, searchBound);
+  if (firstUncovered === null) return { ok: false, error: "prepaymentLimitExceeded" };
+  if (compareYearMonth(startMonth, firstUncovered) !== 0) return { ok: false, error: "coverageGap" };
+  return { ok: true };
+}
+
+/**
+ * Currency-conversion brief PR 3 (plan §3.3/§5): `purchasePackage`'s own per-month existing-obligation/coverage collision
+ * check (approved policy 4) — extracted so the awaiting-rate resolution writer can re-run it against a snapshotted span,
+ * refusing cleanly (never silently substituting a different month) if something else consumed one of those months while
+ * the receipt sat `PENDING`.
+ */
+export async function checkPackageCoverageAvailableInTx(
+  tx: Tx,
+  args: { organizationId: string; studentId: string; startMonth: YearMonth; monthsCovered: number },
+): Promise<{ ok: true } | { ok: false }> {
+  const { organizationId, studentId, startMonth, monthsCovered } = args;
+  for (let i = 0; i < monthsCovered; i++) {
+    const month = addMonths(startMonth, i);
+    const existingObligation = await tx.duesObligation.findFirst({
+      where: { organizationId, studentId, coverageYear: month.year, coverageMonth: month.month },
+      select: { id: true },
+    });
+    const existingCoverage = await tx.duesCoverage.findFirst({ where: { organizationId, studentId, year: month.year, month: month.month }, select: { id: true } });
+    if (existingObligation || existingCoverage) return { ok: false };
+  }
+  return { ok: true };
+}
+
+/**
+ * Currency-conversion brief PR 3 (plan §3.3/§5): the ONE PACKAGE obligation (DB-enforced shape: dueOn/graceDeadline/
+ * lateFeeAmount/policyVersionId all NULL, origin STAFF) and every one of its coverage rows — extracted from
+ * `purchasePackage`'s own inline write so BOTH it and the awaiting-rate resolution writer's `PACKAGE` branch create the
+ * identical row through one write path, never two drifting copies. Trusts the caller to have already validated `terms`
+ * and the coverage span are available — performs no validation itself, matching `writeMonthlyObligationInTx`'s own
+ * "resolve, then mutate" precedent.
+ */
+export async function writePackageObligationInTx(
+  tx: Tx,
+  args: {
+    context: TenantContext;
+    student: { id: string; homeAcademyId: string };
+    terms: { id: string; monthsCovered: number; priceAmount: { toFixed(digits?: number): string; decimalPlaces(): number }; currency: Currency };
+    startMonth: YearMonth;
+  },
+): Promise<{ obligationId: string }> {
+  const { context, student, terms, startMonth } = args;
+  const organizationId = context.organizationId;
+  const amount = terms.priceAmount.toFixed(2);
+  const obligation = await tx.duesObligation.create({
+    data: {
+      organizationId,
+      studentId: student.id,
+      academyId: student.homeAcademyId,
+      type: "PACKAGE",
+      origin: "STAFF",
+      coverageYear: startMonth.year,
+      coverageMonth: startMonth.month,
+      monthsCovered: terms.monthsCovered,
+      amount,
+      currency: terms.currency,
+      planTermsId: terms.id,
+      createdById: context.actorUserId,
+    },
+  });
+  for (let i = 0; i < terms.monthsCovered; i++) {
+    const month = addMonths(startMonth, i);
+    await tx.duesCoverage.create({ data: { organizationId, studentId: student.id, obligationId: obligation.id, year: month.year, month: month.month } });
+  }
+  await tx.auditLog.create({
+    data: {
+      actorId: context.actorUserId,
+      organizationId,
+      academyId: student.homeAcademyId,
+      action: "duesObligation.create",
+      entityType: "DuesObligation",
+      entityId: obligation.id,
+      before: Prisma.DbNull,
+      after: {
+        studentId: student.id,
+        type: "PACKAGE",
+        origin: "STAFF",
+        monthsCovered: terms.monthsCovered,
+        startCoverage: `${startMonth.year}-${String(startMonth.month).padStart(2, "0")}`,
+        amount,
+        currency: terms.currency,
+        planTermsId: terms.id,
+      },
+    },
+  });
+  return { obligationId: obligation.id };
 }
 
 export async function purchasePackage(
@@ -196,101 +352,22 @@ export async function purchasePackage(
       // Terms: must exist, be locked before its value is trusted, be a genuine package terms row (monthsCovered >= 2),
       // belong to this student's branch, and be the version CURRENTLY effective — a superseded name is refused, never
       // silently repriced (approved policy 2).
-      const termsRef = await tx.paymentPlanTerms.findFirst({ where: { id: planTermsId, organizationId }, select: { id: true, planId: true } });
-      if (!termsRef) return refuse("notFound");
-      if (!(await lockTermsShared(tx, organizationId, termsRef.id))) return refuse("notFound");
-      const terms = await tx.paymentPlanTerms.findFirstOrThrow({ where: { id: termsRef.id, organizationId } });
-      if (terms.monthsCovered < 2) return refuse("inapplicable");
-      const plan = await tx.paymentPlan.findFirst({ where: { id: terms.planId, organizationId }, select: { academyId: true } });
-      if (!plan || plan.academyId !== student.homeAcademyId) return refuse("inapplicable");
-      const termsHistory = await tx.paymentPlanTerms.findMany({ where: { organizationId, planId: terms.planId }, select: { id: true, effectiveYear: true, effectiveMonth: true } });
-      if (latestEffective(termsHistory, currentMonth)?.id !== terms.id) return refuse("staleTerms");
+      const termsResolved = await resolvePackageTermsInTx(tx, { organizationId, planTermsId, academyId: student.homeAcademyId, currentMonth });
+      if (!termsResolved.ok) return refuse(termsResolved.error);
+      const terms = termsResolved.terms;
 
-      // The prepayment horizon also bounds a package's final covered month (approved policy 1), resolved from the policy
-      // effective at recording time — never from receivedOn.
-      const policyHistory = await tx.duesPolicyVersion.findMany({
-        where: { organizationId, academyId: student.homeAcademyId },
-        select: { effectiveYear: true, effectiveMonth: true, maxPrepaidMonths: true },
-      });
-      const effectivePolicy = latestEffective(policyHistory, currentMonth);
-      if (!effectivePolicy || effectivePolicy.maxPrepaidMonths === null) return refuse("prepaymentUnavailable");
-      const horizonEnd = addMonths(currentMonth, effectivePolicy.maxPrepaidMonths);
-      const finalMonth = addMonths(requestedStartMonth, terms.monthsCovered - 1);
-      if (compareYearMonth(finalMonth, currentMonth) <= 0 || compareYearMonth(finalMonth, horizonEnd) > 0) return refuse("prepaymentLimitExceeded");
-
-      // Explicit, never substituted: the requested start must be exactly the first uncovered month, floored at the CURRENT
-      // month (approved policy 3 — a package may start immediately, unlike prepayment's currentMonth + 1 floor).
-      const searchBound = compareYearMonth(horizonEnd, SCHEMA_MAX_MONTH) < 0 ? horizonEnd : SCHEMA_MAX_MONTH;
-      const firstUncovered = await firstUncoveredFrom(tx, organizationId, student.id, currentMonth, searchBound);
-      if (firstUncovered === null) return refuse("prepaymentLimitExceeded");
-      if (compareYearMonth(requestedStartMonth, firstUncovered) !== 0) return refuse("coverageGap");
+      // Approved policies 1 and 3 (the horizon, and the start month being exactly the first uncovered one) — shared with
+      // the awaiting-rate resolution writer's own re-check of the identical rule, never a second, drifting copy of it.
+      const spanValid = await validatePackageSpanInTx(tx, { organizationId, academyId: student.homeAcademyId, studentId: student.id, startMonth: requestedStartMonth, monthsCovered: terms.monthsCovered, currentMonth });
+      if (!spanValid.ok) return refuse(spanValid.error);
 
       // firstUncovered only guarantees the FIRST month of the span is free — a package longer than one month must have
       // EVERY covered month checked (approved policy 4: existing obligations/coverage reserve their months regardless, and
       // this writer never replaces one). No obligation-level uniqueness protects a PACKAGE row the way it does MONTHLY
       // (DuesObligation_student_month_monthly_key is MONTHLY-scoped); DuesCoverage's own per-month uniqueness is the real
       // backstop, checked here first so a collision refuses cleanly instead of surfacing a raw constraint violation.
-      for (let i = 0; i < terms.monthsCovered; i++) {
-        const month = addMonths(requestedStartMonth, i);
-        const existingObligation = await tx.duesObligation.findFirst({
-          where: { organizationId, studentId: student.id, coverageYear: month.year, coverageMonth: month.month },
-          select: { id: true },
-        });
-        const existingCoverage = await tx.duesCoverage.findFirst({
-          where: { organizationId, studentId: student.id, year: month.year, month: month.month },
-          select: { id: true },
-        });
-        if (existingObligation || existingCoverage) return refuse("coverageGap");
-      }
-
-      // One PACKAGE obligation, DB-enforced shape: dueOn/graceDeadline/lateFeeAmount/policyVersionId all NULL, no
-      // reference to any DuesPolicyVersion — origin STAFF (a package purchase is a discrete, owner-recorded sale, not the
-      // scheduled job, and NOT the PREPAYMENT origin reverse-payment.ts's own permanent restriction is keyed on: reversal
-      // for a package is already blocked by its own type, so origin need not, and must not, carry that separate meaning).
-      const amount = terms.priceAmount.toFixed(2);
-      const obligation = await tx.duesObligation.create({
-        data: {
-          organizationId,
-          studentId: student.id,
-          academyId: student.homeAcademyId,
-          type: "PACKAGE",
-          origin: "STAFF",
-          coverageYear: requestedStartMonth.year,
-          coverageMonth: requestedStartMonth.month,
-          monthsCovered: terms.monthsCovered,
-          amount,
-          currency: terms.currency,
-          planTermsId: terms.id,
-          createdById: context.actorUserId,
-        },
-      });
-      for (let i = 0; i < terms.monthsCovered; i++) {
-        const month = addMonths(requestedStartMonth, i);
-        await tx.duesCoverage.create({ data: { organizationId, studentId: student.id, obligationId: obligation.id, year: month.year, month: month.month } });
-      }
-      await tx.auditLog.create({
-        data: {
-          actorId: context.actorUserId,
-          organizationId,
-          academyId: student.homeAcademyId,
-          action: "duesObligation.create",
-          entityType: "DuesObligation",
-          entityId: obligation.id,
-          before: Prisma.DbNull,
-          after: {
-            studentId: student.id,
-            type: "PACKAGE",
-            origin: "STAFF",
-            monthsCovered: terms.monthsCovered,
-            startCoverage: `${requestedStartMonth.year}-${String(requestedStartMonth.month).padStart(2, "0")}`,
-            amount,
-            currency: terms.currency,
-            planTermsId: terms.id,
-          },
-        },
-      });
-
-      if (frozenDeps.afterPackageObligationWrittenForTest) await frozenDeps.afterPackageObligationWrittenForTest();
+      const coverageAvailable = await checkPackageCoverageAvailableInTx(tx, { organizationId, studentId: student.id, startMonth: requestedStartMonth, monthsCovered: terms.monthsCovered });
+      if (!coverageAvailable.ok) return refuse("coverageGap");
 
       // Existing outstanding debt, resolved and validated exactly the way recordDuesPaymentInTx already does (oldest-first
       // among ALL of the student's open MONTHLY obligations) — reused, not duplicated.
@@ -305,7 +382,14 @@ export async function purchasePackage(
         throw new PackagePurchaseRefusedError(refuse("debtNotFullySettled"));
       }
 
-      const packageItem: SettlementLineItem = { obligationId: obligation.id, currency: terms.currency, amountMinor: columnToMinor(terms.priceAmount), feeEligible: false, expectedOwed: false };
+      // Currency-conversion brief PR 3 (plan §3.3): resolve and total EVERYTHING — including the cross-currency check,
+      // which is the one place a missing rate can be discovered — BEFORE creating the package obligation. A placeholder
+      // id stands in for the not-yet-created package row: settleReceipt's own matching only ever compares AMOUNTS and
+      // returns settledIds checked by COUNT (`.length`), never by identity, so computing the match against a placeholder
+      // and only then creating the real row (swapping the real id in afterward) is exact, not an approximation.
+      const PACKAGE_PLACEHOLDER_ID = "__package_pending__";
+      const packageAmountMinor = columnToMinor(terms.priceAmount);
+      const packageItem: SettlementLineItem = { obligationId: PACKAGE_PLACEHOLDER_ID, currency: terms.currency, amountMinor: packageAmountMinor, feeEligible: false, expectedOwed: false };
       const allItems: SettlementLineItem[] = [...debtResult.chosenItems, packageItem];
       const settlementItems: SettlementItem[] = allItems.map((i) => ({ id: i.obligationId, currency: i.currency, amountMinor: i.amountMinor }));
       const fullTotalMinor = settlementItems.reduce((sum, i) => sum + i.amountMinor, 0);
@@ -326,7 +410,30 @@ export async function purchasePackage(
         const resolved = await resolveCrossCurrency(tx, {
           organizationId, items: settlementItems, itemCurrency: [...itemCurrencies][0], receiptCurrency: tender.currency, receivedOn,
         });
-        if (!resolved.ok) throw new PackagePurchaseRefusedError(refuse("rateUnavailable"));
+        if (!resolved.ok) {
+          // Currency-conversion brief PR 3 (plan §2/§3.3): no eligible quote at all — capture instead of refusing. NOTHING
+          // has been written yet (the package obligation is created only after this point succeeds), so capturing here,
+          // in the same transaction, in place of the refusal, is transaction-safe with no rollback needed.
+          return captureAwaitingRateReceiptInTx(tx, {
+            context,
+            student,
+            kind: "PACKAGE",
+            receivedOn,
+            tenderCurrency: tender.currency,
+            tenderAmount: parsedAmount.value,
+            method,
+            notes,
+            snapshot: {
+              kind: "PACKAGE",
+              planTermsId: terms.id,
+              priceAmount: terms.priceAmount.toFixed(2),
+              startMonth: requestedStartMonth,
+              coverageMonths: Array.from({ length: terms.monthsCovered }, (_, i) => addMonths(requestedStartMonth, i)),
+              existingObligationIds: existingObligationIds ?? [],
+            },
+            capturedAt: purchaseInstant,
+          });
+        }
         crossCurrency = resolved.candidates;
         rateEvidence = resolved.evidence;
         // The full (debt + package) total, converted — if it overflows what the tender-currency column can hold, there is no
@@ -355,8 +462,14 @@ export async function purchasePackage(
         throw new PackagePurchaseRefusedError(refuse("totalMismatch", { selectableTotals: fullTotalOffer }));
       }
 
-      const written = await writeSettlementInTx(tx, { context, student, receivedOn, tender, method, notes, settledItems: allItems, rateEvidence }, frozenDeps);
-      return { ok: true, obligationId: obligation.id, paymentId: written.paymentId, settlementIds: written.settlementIds, totalMinor: tenderMinor };
+      // Every check has passed, including that a rate (if needed) genuinely resolved: only NOW is the package obligation
+      // (and its coverage rows) actually created — the real id replaces the placeholder in the final settled item list.
+      const obligation = await writePackageObligationInTx(tx, { context, student, terms, startMonth: requestedStartMonth });
+      if (frozenDeps.afterPackageObligationWrittenForTest) await frozenDeps.afterPackageObligationWrittenForTest();
+      const finalItems: SettlementLineItem[] = allItems.map((i) => (i.obligationId === PACKAGE_PLACEHOLDER_ID ? { ...i, obligationId: obligation.obligationId } : i));
+
+      const written = await writeSettlementInTx(tx, { context, student, receivedOn, tender, method, notes, settledItems: finalItems, rateEvidence }, frozenDeps);
+      return { ok: true, obligationId: obligation.obligationId, paymentId: written.paymentId, settlementIds: written.settlementIds, totalMinor: tenderMinor };
     });
   } catch (error) {
     if (error instanceof PackagePurchaseRefusedError) return error.result; // AFTER rollback, never before

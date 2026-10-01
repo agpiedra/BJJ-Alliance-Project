@@ -82,6 +82,28 @@ export function versionRevision(fields: Record<string, string | number | null>):
 }
 
 /**
+ * Second review round (currency-conversion brief PR 3): a `DuesPolicyVersion` row's OWN per-month billing values —
+ * `dueDay`/`graceDay`/`lateFeeAmount`/`lateFeeCurrency`, the fields that actually shape what a SPECIFIC month's
+ * obligation needs — fingerprinted via `versionRevision`'s existing, field-generic mechanism (the same tool
+ * `assignmentRevision` already uses for a `planId`). A future-effective policy row can be corrected IN PLACE (same id,
+ * new values), exactly like a terms row can; an id match alone never proves these are unchanged. One shared function so
+ * a capture site and its matching resolution re-check can never drift apart.
+ *
+ * Deliberately EXCLUDES `maxPrepaidMonths`: that is a standing, branch-wide HORIZON setting evaluated ONCE against the
+ * live current month (mirroring `prepayMonthlyObligations`'s own capture-time horizon check, resolved from
+ * `purchaseInstant` rather than per requested month) — a separate concern from what any one month's own obligation
+ * needs, re-checked by its own dedicated mechanism rather than folded into this per-month fingerprint.
+ */
+export function policyRevisionOf(policy: { dueDay: number; graceDay: number; lateFeeAmount: string; lateFeeCurrency: Currency }): string {
+  return versionRevision({
+    dueDay: policy.dueDay,
+    graceDay: policy.graceDay,
+    lateFeeAmount: policy.lateFeeAmount,
+    lateFeeCurrency: policy.lateFeeCurrency,
+  });
+}
+
+/**
  * One currency across a branch's whole dues configuration (every plan's terms and every fee): the calculation library prices tuition
  * and fee in one currency and nothing converts. `existing` is every currency already saved for the branch (repeats allowed); a history
  * that already mixes currencies is never compatible with anything.
