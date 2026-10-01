@@ -288,6 +288,7 @@ model Organization {
   duesLateFees           DuesLateFee[]
   duesPayments           DuesPayment[]
   duesSettlements        DuesSettlement[]
+  awaitingRateReceipts   AwaitingRateReceipt[]
   kioskAttempts       KioskAttempt[]
   queuedCheckIns      QueuedCheckIn[]
   staffAssignments    StaffAssignment[]
@@ -473,6 +474,7 @@ model Academy {
   duesPolicyVersions DuesPolicyVersion[]
   duesObligations   DuesObligation[]
   duesPayments      DuesPayment[]
+  awaitingRateReceipts AwaitingRateReceipt[]
   auditLogs         AuditLog[]
   kioskAttempts     KioskAttempt[]
   queuedCheckIns    QueuedCheckIn[]
@@ -536,6 +538,9 @@ model User {
   duesPaymentsRecorded           DuesPayment[]           @relation("DuesPaymentRecordedBy")
   duesPaymentsReversed           DuesPayment[]           @relation("DuesPaymentReversedBy")
   duesSettlementsReversed        DuesSettlement[]
+  awaitingRateReceiptsCaptured   AwaitingRateReceipt[]   @relation("AwaitingRateReceiptCapturedBy")
+  awaitingRateReceiptsResolved   AwaitingRateReceipt[]   @relation("AwaitingRateReceiptResolvedBy")
+  awaitingRateReceiptsCancelled  AwaitingRateReceipt[]   @relation("AwaitingRateReceiptCancelledBy")
   notifications           Notification[]
   organizationMemberships OrganizationMembership[]
   organizationsApproved   Organization[]           @relation("OrganizationApprovedBy")
@@ -717,6 +722,7 @@ model Student {
   duesObligations   DuesObligation[]
   duesCoverage      DuesCoverage[]
   duesPayments      DuesPayment[]
+  awaitingRateReceipts AwaitingRateReceipt[]
   organization      Organization       @relation(fields: [organizationId], references: [id])
 
   @@unique([organizationId, codeHash])
@@ -1169,6 +1175,18 @@ enum ExchangeRateSide {
   SELL
 }
 
+enum AwaitingRateReceiptKind {
+  ORDINARY
+  PREPAYMENT
+  PACKAGE
+}
+
+enum AwaitingRateReceiptStatus {
+  PENDING
+  RESOLVED
+  CANCELLED
+}
+
 /// Currency-conversion brief §2, §4, §5: an owner-entered BCR sell rate for one calendar date, append-only — a correction is a
 /// NEW row (a higher `revision` for the same logical key), never an edit. `revision` is allocated under an advisory lock
 /// (see exchange-rate.ts), never a timestamp: `enteredAt` is audit metadata only and is never read to decide which row is
@@ -1210,6 +1228,56 @@ model ExchangeRateQuote {
   /// invariant in this ledger already has (DuesObligation_student_month_monthly_key, DuesCoverage's per-month uniqueness).
   @@unique([organizationId, provider, pair, side, quoteDate, revision])
   @@index([organizationId, provider, pair, side, quoteDate])
+}
+
+/// Currency-conversion brief, PR 3: a receipt recorded with no eligible exchange-rate quote at all for its `receivedOn`
+/// (neither an exact-date match nor `resolveEffectiveQuote`'s own earlier-quote fallback) — settles nothing until an owner
+/// enters a rate and resolves it. `snapshot` captures the FULL resolved-evidence the original attempt would have used (not
+/// just its caller arguments) so resolution re-validates against drift rather than re-deriving anything fresh; see
+/// `src/lib/dues/ledger/awaiting-rate-receipt.ts` for its exact per-`kind` shape and the Zod schema that validates it
+/// before any financial use. `receivedOn`'s backdating limit is validated ONCE, at capture, against the real clock then —
+/// resolution never re-checks it (see that file's own doc comment for the full reasoning and its boundaries).
+/// Whole-row immutable outside `status` and its exactly-one matching marker group, enforced at the database level
+/// (CHECK + trigger, mirroring every other removal/reversal marker in this ledger) — both terminal states are irreversible.
+model AwaitingRateReceipt {
+  id                 String                    @id @default(cuid())
+  organizationId     String
+  studentId          String
+  /// The branch at capture.
+  academyId          String
+  kind               AwaitingRateReceiptKind
+  status             AwaitingRateReceiptStatus @default(PENDING)
+  receivedOn         DateTime                  @db.Date
+  tenderCurrency     Currency
+  tenderAmount       Decimal                   @db.Decimal(10, 2)
+  method             PaymentMethod
+  notes              String?
+  /// The frozen instant the outer writer captured at (its own one-capture-point pattern) — never re-read later.
+  capturedAt         DateTime
+  capturedById       String
+  /// Full resolved-evidence snapshot, per `kind` — see this model's own doc comment.
+  snapshot           Json
+  resolvedAt         DateTime?
+  resolvedById       String?
+  cancelledAt        DateTime?
+  cancelledById      String?
+  cancellationReason String?
+
+  student         Student      @relation(fields: [organizationId, studentId], references: [organizationId, id])
+  academy         Academy      @relation(fields: [organizationId, academyId], references: [organizationId, id])
+  capturedBy      User         @relation("AwaitingRateReceiptCapturedBy", fields: [capturedById], references: [id], onDelete: Restrict)
+  resolvedBy      User?        @relation("AwaitingRateReceiptResolvedBy", fields: [resolvedById], references: [id], onDelete: Restrict)
+  cancelledBy     User?        @relation("AwaitingRateReceiptCancelledBy", fields: [cancelledById], references: [id], onDelete: Restrict)
+  organization    Organization @relation(fields: [organizationId], references: [id])
+  /// The one `DuesPayment` this receipt resolved into, if any — `DuesPayment.resolvedFromReceiptId`'s own `@unique` is the
+  /// real database backstop for "at most one completed payment per receipt".
+  resolvedPayment DuesPayment?
+
+  /// Target of `DuesPayment.resolvedFromReceiptId`'s tenant- AND student-safe composite FK — a payment for one student can
+  /// never reference another student's receipt, rejected by the foreign key itself.
+  @@unique([organizationId, id, studentId])
+  @@index([organizationId])
+  @@index([studentId])
 }
 
 /// The price and length of a PaymentPlan from one month onward: a plan covering 1 month is the ordinary monthly plan, more is a
@@ -1468,6 +1536,10 @@ model DuesPayment {
   /// The rounding rule actually applied ("HALF_UP_TO_CENT" or "HALF_UP_TO_COLON") — see exchange-rate-arithmetic.ts. Null
   /// for a same-currency payment, exactly like the four fields above.
   appliedRoundingRule  String?
+  /// Currency-conversion brief, PR 3: set on the ORIGINAL INSERT only, never a later UPDATE (DuesPayment_marker_once
+  /// forbids any non-reversal field update) — threaded as a parameter through the settlement composition from the
+  /// resolution writer that created this payment. `null` for every ordinary, non-receipt-originated payment.
+  resolvedFromReceiptId String? @unique
 
   student      Student          @relation(fields: [organizationId, studentId], references: [organizationId, id])
   academy      Academy          @relation(fields: [organizationId, academyId], references: [organizationId, id])
@@ -1475,9 +1547,15 @@ model DuesPayment {
   reversedBy   User?            @relation("DuesPaymentReversedBy", fields: [reversedById], references: [id], onDelete: Restrict)
   organization Organization     @relation(fields: [organizationId], references: [id])
   appliedRate  ExchangeRateQuote? @relation(fields: [organizationId, appliedRateId], references: [organizationId, id], onDelete: Restrict)
+  /// Composite FK pins BOTH organization and student — a payment for one student can never reference another student's
+  /// receipt, rejected by the foreign key itself, not merely by application logic.
+  resolvedFromReceipt AwaitingRateReceipt? @relation(fields: [organizationId, resolvedFromReceiptId, studentId], references: [organizationId, id, studentId], onDelete: Restrict)
   settlements  DuesSettlement[]
 
   @@unique([organizationId, id, studentId])
+  /// Required by Prisma for the one-to-one `resolvedFromReceipt` relation above (its own `@unique` on
+  /// `resolvedFromReceiptId` alone already makes this triple unique at the database level; this is the DB-level mirror).
+  @@unique([organizationId, resolvedFromReceiptId, studentId])
   @@index([organizationId])
   @@index([studentId, receivedOn])
 }

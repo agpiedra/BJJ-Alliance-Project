@@ -161,7 +161,9 @@ afterAll(async () => {
     await prisma.$transaction(
       async (tx) => {
         await tx.$executeRawUnsafe("SET LOCAL session_replication_role = replica");
-        for (const table of ["DuesSettlement", "DuesPayment", "DuesLateFee", "DuesCoverage", "DuesObligation"]) {
+        // Currency-conversion brief PR 3: AwaitingRateReceipt added — a captured receipt (this file's own
+        // rateUnavailable-now-captured test) carries a composite FK from Student, same as every other dues table here.
+        for (const table of ["DuesSettlement", "DuesPayment", "DuesLateFee", "DuesCoverage", "DuesObligation", "AwaitingRateReceipt"]) {
           await tx.$executeRawUnsafe(`DELETE FROM "${table}" WHERE "organizationId" = ANY($1::text[])`, orgIds);
         }
       },
@@ -545,10 +547,12 @@ describe("recordDuesPayment: validate first, then write", () => {
     expect(await pay(ana.id, [sep], "100.00", { now: OCT_5, day: 30, month: 2 })).toMatchObject({ ok: false, error: "invalid" }); // February 30
     expect(await pay(ana.id, [sep], "100.00", { now: OCT_5, day: 5, month: 13 })).toMatchObject({ ok: false, error: "invalid" });
     expect(await pay(ana.id, [sep], "100.00", { now: OCT_5, day: 5 }, { tender: { currency: "EUR", amount: "100.00" } })).toMatchObject({ ok: false, error: "invalid" });
-    // CRC receipt against USD obligations: currency-conversion brief PR 2 — this org has never entered an exchange rate
-    // quote, so the conversion this writer now attempts resolves no rate at all, refusing rateUnavailable (zero writes),
-    // not the old currencyMismatch (reserved, since PR 2, for MIXED-currency items — see dues-currency-settlement.test.ts).
-    expect(await pay(ana.id, [sep], "52000.00", { now: OCT_5, day: 5 }, { tender: { currency: "CRC", amount: "52000.00" } })).toMatchObject({ ok: false, error: "rateUnavailable" });
+    // CRC receipt against USD obligations: currency-conversion brief PR 2/3 — this org has never entered an exchange
+    // rate quote, so the conversion this writer attempts resolves no rate at all. PR 3 changed what happens next: this
+    // now captures an awaiting-rate receipt (plan §2) rather than the plain rateUnavailable refusal PR 2 originally
+    // produced — an intentional, reviewed change in this one assertion, not the old currencyMismatch (reserved, since
+    // PR 2, for MIXED-currency items — see dues-currency-settlement.test.ts).
+    expect(await pay(ana.id, [sep], "52000.00", { now: OCT_5, day: 5 }, { tender: { currency: "CRC", amount: "52000.00" } })).toMatchObject({ ok: false, error: "captured" });
   });
 
   it("the received date cannot be in the future or older than the injected backdating window", async () => {

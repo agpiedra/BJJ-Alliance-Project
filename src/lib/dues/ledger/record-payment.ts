@@ -4,6 +4,7 @@ import type { TenantContext } from "@/lib/tenant/types";
 import { compareDates, type CalendarDate } from "@/lib/dues/calendar";
 import { parseMoney } from "@/lib/dues/config-input";
 import { amountDueMinor, feeAssessableFrom, lateFeeApplies, lateFeeToAssessMinor, orderOldestFirst, outstandingItems, settleReceipt, type CrossCurrencyCandidates, type ObligationTerms, type SettlementItem } from "@/lib/dues/settlement";
+import { captureAwaitingRateReceiptInTx } from "@/lib/dues/ledger/awaiting-rate-receipt";
 import { inactiveLedgerActivation, type LedgerDeps } from "@/lib/dues/ledger/activation";
 import { fromDbDate, inTenantScope, isRealDate, lockStudent, minusDays, todayIn, toDbDate, type Tx } from "@/lib/dues/ledger/common";
 import { resolveCrossCurrency, type RateEvidence } from "@/lib/dues/ledger/cross-currency-settlement";
@@ -159,17 +160,25 @@ export type RecordDuesPaymentError =
   // quote resolves for receivedOn (rateUnavailable, zero writes), or the matched total is produced by more than one
   // distinct prefix under rounding (ambiguousTotal) — genuinely unknowable which prefix a matching tender was meant to settle.
   | "rateUnavailable"
-  | "ambiguousTotal";
+  | "ambiguousTotal"
+  // Currency-conversion brief PR 3: no eligible quote at all (plan §2) — a receipt was captured instead of refusing.
+  // Structurally an `ok: false` result on purpose (plan's own design, see `awaiting-rate-receipt.ts`'s
+  // `CapturedAwaitingRateReceipt`) — not a settlement success, so every existing caller's `if (!result.ok)` narrowing
+  // keeps working completely unmodified; only a caller that specifically checks `error === "captured"` sees it.
+  | "captured";
 
 export type RecordDuesPaymentResult =
   | { ok: true; paymentId: string; settlementIds: string[]; feeIds: string[]; totalMinor: number }
-  | { ok: false; error: RecordDuesPaymentError; selectableTotals?: string[]; alreadySettledIds?: string[] };
+  | { ok: false; error: RecordDuesPaymentError; selectableTotals?: string[]; alreadySettledIds?: string[]; receiptId?: string };
 
 const MAX_SELECTED = 60;
 const MAX_BACKDATE_DAYS = 3660;
 const MAX_NOTES = 500;
 
-const refuse = (error: RecordDuesPaymentError, extra: { selectableTotals?: string[]; alreadySettledIds?: string[] } = {}): RecordDuesPaymentResult => ({ ok: false, error, ...extra });
+const refuse = (
+  error: RecordDuesPaymentError,
+  extra: { selectableTotals?: string[]; alreadySettledIds?: string[]; receiptId?: string } = {},
+): RecordDuesPaymentResult => ({ ok: false, error, ...extra });
 const ymd = (d: CalendarDate) => `${d.year}-${String(d.month).padStart(2, "0")}-${String(d.day).padStart(2, "0")}`;
 
 /**
@@ -330,10 +339,14 @@ export async function writeSettlementInTx(
      * exact quote resolveCrossCurrency already resolved, snapshotted onto DuesPayment. Undefined for same-currency (every
      * column stays null, unchanged from before PR 2). */
     rateEvidence?: RateEvidence;
+    /** Currency-conversion brief PR 3: set ONLY by the awaiting-rate resolution writer, on this ORIGINAL insert — never a
+     * later UPDATE (DuesPayment_marker_once forbids any non-reversal field update). `undefined` for every ordinary,
+     * non-receipt-originated payment. */
+    resolvedFromReceiptId?: string;
   },
   deps: LedgerDeps = {},
 ): Promise<{ paymentId: string; settlementIds: string[]; feeIds: string[] }> {
-  const { context, student, receivedOn, tender, method, notes, settledItems, rateEvidence } = args;
+  const { context, student, receivedOn, tender, method, notes, settledItems, rateEvidence, resolvedFromReceiptId } = args;
   const organizationId = context.organizationId;
 
   const feeIds: string[] = [];
@@ -375,6 +388,7 @@ export async function writeSettlementInTx(
       appliedRateQuoteDate: rateEvidence ? toDbDate(rateEvidence.appliedRateQuoteDate) : null,
       appliedRateRevision: rateEvidence?.appliedRateRevision ?? null,
       appliedRoundingRule: rateEvidence?.appliedRoundingRule ?? null,
+      resolvedFromReceiptId: resolvedFromReceiptId ?? null,
     },
   });
   const settlementIds: string[] = [];
@@ -408,43 +422,38 @@ export async function writeSettlementInTx(
  * never calls `prisma.$transaction` itself (see `classifyRecordPaymentError`, reused by both this file's own public wrapper and
  * the correction writer).
  */
-export async function recordDuesPaymentInTx(
+/**
+ * Currency-conversion brief PR 3 (plan §3.1): the "load, then validate, then write" half of what used to be
+ * `recordDuesPaymentInTx` in one function — extracted at the exact seam between "is this a legitimate new entry"
+ * (activation, format, scope, the student lock, `futureDate`/`tooOld`) and "resolve, match and write the settlement",
+ * because the second half needs `receivedOn` only as a plain VALUE (fee-timing, rate-date lookup), never compared
+ * against `today`.
+ *
+ * CALLER-OWNED PREREQUISITES — this function performs NONE of them itself: no activation check, no input-format
+ * validation, no student lock (the caller must already hold it — `lockStudent`, before calling this), and NO
+ * `futureDate`/`tooOld` check of any kind. `recordDuesPaymentInTx` (below) still runs all of those, unchanged, for
+ * every ordinary new-entry caller; the awaiting-rate resolution writer (`awaiting-rate-receipt.ts`) calls this function
+ * DIRECTLY instead, passing the receipt's own immutable, already-validated `receivedOn` — this is the entire mechanism
+ * by which resolution avoids re-running the live backdating check against a date that may since have aged past it.
+ */
+export async function settleObligationsInTx(
   tx: Tx,
   args: {
     context: TenantContext;
     student: { id: string; homeAcademyId: string };
     receivedOn: CalendarDate;
+    tenderMinor: number;
     tender: { currency: Currency; amount: string };
     method: PaymentMethod;
     obligationIds: string[];
     notes?: string;
-    maxBackdateDays: number;
+    /** See `writeSettlementInTx`'s own doc comment — threaded through unchanged. */
+    resolvedFromReceiptId?: string;
   },
   deps: LedgerDeps = {},
 ): Promise<RecordDuesPaymentResult> {
-  const { context, student, receivedOn, tender, method, obligationIds, notes, maxBackdateDays } = args;
+  const { context, student, receivedOn, tenderMinor, tender, method, obligationIds, notes, resolvedFromReceiptId } = args;
   const organizationId = context.organizationId;
-  const activation = deps.activation ?? inactiveLedgerActivation;
-  if (!(await activation.isActive(organizationId))) return refuse("notActive");
-  const inputError = validatePaymentInput({ receivedOn, tender, method, obligationIds, notes, maxBackdateDays });
-  if (inputError) return refuse(inputError);
-  if (typeof student?.id !== "string" || student.id === "" || typeof student?.homeAcademyId !== "string" || student.homeAcademyId === "") return refuse("invalid");
-  if (!inTenantScope(context, student.homeAcademyId)) return refuse("notFound");
-
-  const parsedAmount = parseMoney(tender.amount, { allowZero: false });
-  if (!parsedAmount.ok) return refuse("invalid"); // re-validated above; narrows the type for the write below
-  const tenderMinor = decimalToMinor(parsedAmount.value);
-
-  // The student row FOR UPDATE serializes every ledger write for this student. This path reads only the obligations' immutable
-  // snapshots, so it needs no configuration lock.
-  const locked = await lockStudent(tx, organizationId, student.id);
-  if (!locked || locked.homeAcademyId !== student.homeAcademyId) return refuse("conflict");
-  const branch = await tx.academy.findFirst({ where: { id: student.homeAcademyId, organizationId }, select: { timezone: true } });
-  if (!branch) return refuse("notFound");
-
-  const today = todayIn(branch.timezone, (deps.now ?? (() => new Date()))());
-  if (compareDates(receivedOn, today) > 0) return refuse("futureDate");
-  if (compareDates(receivedOn, minusDays(today, maxBackdateDays)) < 0) return refuse("tooOld");
 
   // ---- load, then validate. NOTHING is written until every check below has passed. ----
   const debtResult = await resolveMonthlyDebtItemsInTx(tx, { organizationId, studentId: student.id, obligationIds, receivedOn });
@@ -488,8 +497,49 @@ export async function recordDuesPaymentInTx(
   }
 
   // ---- every check passed: write, atomically ----
-  const written = await writeSettlementInTx(tx, { context, student, receivedOn, tender, method, notes, settledItems: chosenItems, rateEvidence }, deps);
+  const written = await writeSettlementInTx(tx, { context, student, receivedOn, tender, method, notes, settledItems: chosenItems, rateEvidence, resolvedFromReceiptId }, deps);
   return { ok: true, paymentId: written.paymentId, settlementIds: written.settlementIds, feeIds: written.feeIds, totalMinor: tenderMinor };
+}
+
+export async function recordDuesPaymentInTx(
+  tx: Tx,
+  args: {
+    context: TenantContext;
+    student: { id: string; homeAcademyId: string };
+    receivedOn: CalendarDate;
+    tender: { currency: Currency; amount: string };
+    method: PaymentMethod;
+    obligationIds: string[];
+    notes?: string;
+    maxBackdateDays: number;
+  },
+  deps: LedgerDeps = {},
+): Promise<RecordDuesPaymentResult> {
+  const { context, student, receivedOn, tender, method, obligationIds, notes, maxBackdateDays } = args;
+  const organizationId = context.organizationId;
+  const activation = deps.activation ?? inactiveLedgerActivation;
+  if (!(await activation.isActive(organizationId))) return refuse("notActive");
+  const inputError = validatePaymentInput({ receivedOn, tender, method, obligationIds, notes, maxBackdateDays });
+  if (inputError) return refuse(inputError);
+  if (typeof student?.id !== "string" || student.id === "" || typeof student?.homeAcademyId !== "string" || student.homeAcademyId === "") return refuse("invalid");
+  if (!inTenantScope(context, student.homeAcademyId)) return refuse("notFound");
+
+  const parsedAmount = parseMoney(tender.amount, { allowZero: false });
+  if (!parsedAmount.ok) return refuse("invalid"); // re-validated above; narrows the type for the write below
+  const tenderMinor = decimalToMinor(parsedAmount.value);
+
+  // The student row FOR UPDATE serializes every ledger write for this student. This path reads only the obligations' immutable
+  // snapshots, so it needs no configuration lock.
+  const locked = await lockStudent(tx, organizationId, student.id);
+  if (!locked || locked.homeAcademyId !== student.homeAcademyId) return refuse("conflict");
+  const branch = await tx.academy.findFirst({ where: { id: student.homeAcademyId, organizationId }, select: { timezone: true } });
+  if (!branch) return refuse("notFound");
+
+  const today = todayIn(branch.timezone, (deps.now ?? (() => new Date()))());
+  if (compareDates(receivedOn, today) > 0) return refuse("futureDate");
+  if (compareDates(receivedOn, minusDays(today, maxBackdateDays)) < 0) return refuse("tooOld");
+
+  return settleObligationsInTx(tx, { context, student, receivedOn, tenderMinor, tender, method, obligationIds, notes }, deps);
 }
 
 /**
@@ -518,6 +568,12 @@ export function classifyRecordPaymentError(error: unknown): RecordDuesPaymentRes
  * body was extracted into `recordDuesPaymentInTx`, above; it then opens one transaction and delegates to that function, which
  * repeats every one of these checks itself for a caller that reaches it directly (the late-fee-correction writer composes it
  * inside its own transaction, never through this wrapper).
+ *
+ * CURRENCY-CONVERSION BRIEF PR 3: capture is an explicit decision made HERE, the true outermost writer — never inside
+ * `recordDuesPaymentInTx`/`settleObligationsInTx`, which keep returning the plain `rateUnavailable` refusal exactly as
+ * before. `recordDuesPaymentInTx` never creates an obligation (it only settles existing ones), so by the time it can
+ * possibly return `rateUnavailable` nothing has been written yet — capturing in the SAME transaction, in place of
+ * returning that refusal, is transaction-safe with no reordering needed (plan §3.1).
  */
 export async function recordDuesPayment(
   args: {
@@ -557,11 +613,35 @@ export async function recordDuesPayment(
       // contention among themselves; only a concurrent rate correction (exclusive) genuinely waits, and is waited on.
       await lockExchangeRateNamespaceShared(tx, organizationId);
       if (deps.afterExchangeRateLockForTest) await deps.afterExchangeRateLockForTest();
-      return recordDuesPaymentInTx(tx, { context, student, receivedOn, tender, method, obligationIds, notes, maxBackdateDays }, deps);
+      const result = await recordDuesPaymentInTx(tx, { context, student, receivedOn, tender, method, obligationIds, notes, maxBackdateDays }, deps);
+      // The ONE capture trigger (plan §2): no eligible quote at all — neither exact-date nor the earlier-quote fallback.
+      // Every other outcome (success or any other refusal) passes through unchanged.
+      if (result.ok || result.error !== "rateUnavailable") return result;
+      const capturedAt = (deps.now ?? (() => new Date()))();
+      return captureAwaitingRateReceiptInTx(tx, {
+        context,
+        student,
+        kind: "ORDINARY",
+        receivedOn,
+        tenderCurrency: tender.currency,
+        tenderAmount: parsedTenderAmount(tender),
+        method,
+        notes,
+        snapshot: { kind: "ORDINARY", obligationIds },
+        capturedAt,
+      });
     });
   } catch (error) {
     const classified = classifyRecordPaymentError(error);
     if (classified) return classified;
     throw error;
   }
+}
+
+/** The canonical two-decimal tender amount — re-parsed here only because `validatePaymentInput` above already proved it
+ * parses; narrows the type for the capture-evidence write without a second, differently-shaped validation. */
+function parsedTenderAmount(tender: { amount: string }): string {
+  const parsed = parseMoney(tender.amount, { allowZero: false });
+  if (!parsed.ok) throw new Error(`parsedTenderAmount called with an amount that failed validatePaymentInput: ${tender.amount}`);
+  return parsed.value;
 }

@@ -1,13 +1,17 @@
-import { Prisma, type Currency, type PaymentMethod } from "@/generated/prisma/client";
+import { Prisma, PaymentMethod, type Currency } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import type { TenantContext } from "@/lib/tenant/types";
-import { addMonths, compareYearMonth, type CalendarDate, type YearMonth } from "@/lib/dues/calendar";
-import { currentMonthIn, versionRevision } from "@/lib/dues/config-input";
+import { addMonths, compareDates, compareYearMonth, type CalendarDate, type YearMonth } from "@/lib/dues/calendar";
+import { currentMonthIn, parseMoney, versionRevision } from "@/lib/dues/config-input";
+import { captureAwaitingRateReceiptInTx } from "@/lib/dues/ledger/awaiting-rate-receipt";
 import { inactiveLedgerActivation, type LedgerDeps } from "@/lib/dues/ledger/activation";
-import { inTenantScope, isRealDate, latestEffective, lockAssignmentShared, lockBranchShared, lockStudent, type Tx } from "@/lib/dues/ledger/common";
+import { inTenantScope, isRealDate, latestEffective, lockAssignmentShared, lockBranchShared, lockStudent, minusDays, todayIn, type Tx } from "@/lib/dues/ledger/common";
+import { resolveCrossCurrency } from "@/lib/dues/ledger/cross-currency-settlement";
 import { isValidCoverageMonth, writeMonthlyObligationInTx, type CreateMonthlyObligationError } from "@/lib/dues/ledger/create-monthly-obligation";
 import { lockExchangeRateNamespaceShared } from "@/lib/dues/ledger/exchange-rate";
-import { classifyRecordPaymentError, recordDuesPaymentInTx, type RecordDuesPaymentError } from "@/lib/dues/ledger/record-payment";
+import { decimalToMinor } from "@/lib/dues/ledger/minor-units";
+import { classifyRecordPaymentError, resolveMonthlyDebtItemsInTx, settleObligationsInTx, type RecordDuesPaymentError, type SettlementLineItem } from "@/lib/dues/ledger/record-payment";
+import { CURRENCIES } from "@/lib/payments/format-money";
 
 /**
  * Monthly-prepayment brief: an owner pays ahead for consecutive future months — each still a `type: "MONTHLY"` obligation,
@@ -59,12 +63,23 @@ export type PrepayMonthlyObligationsError =
 
 export type PrepayMonthlyObligationsResult =
   | { ok: true; obligationIds: string[]; paymentId: string; settlementIds: string[]; totalMinor: number }
-  | { ok: false; error: PrepayMonthlyObligationsError; selectableTotals?: string[]; alreadySettledIds?: string[] };
+  | { ok: false; error: PrepayMonthlyObligationsError; selectableTotals?: string[]; alreadySettledIds?: string[]; receiptId?: string };
 
 const refuse = (
   error: PrepayMonthlyObligationsError,
   extra: { selectableTotals?: string[]; alreadySettledIds?: string[] } = {},
 ): Extract<PrepayMonthlyObligationsResult, { ok: false }> => ({ ok: false, error, ...extra });
+
+const MAX_BACKDATE_DAYS = 3660;
+const MAX_NOTES = 500;
+
+/** The canonical two-decimal tender amount — re-parsed here only because this writer's own top-level validation already
+ * proved it parses; narrows the type for the hypothetical-total check and the capture-evidence write. */
+function parsedAmount(tender: { amount: string }): string {
+  const parsed = parseMoney(tender.amount, { allowZero: false });
+  if (!parsed.ok) throw new Error(`parsedAmount called with an amount that failed this writer's own top-level validation: ${tender.amount}`);
+  return parsed.value;
+}
 
 /** Tags a mid-transaction refusal (an obligation write, or the final settlement) so it can be thrown — forcing Prisma to roll
  * back every provisional obligation/coverage/audit row already written — and converted back to a plain result only after that
@@ -141,6 +156,15 @@ export async function prepayMonthlyObligations(
     return refuse("invalid");
   }
   if (!receivedOn || !isRealDate(receivedOn)) return refuse("invalid");
+  // Currency-conversion brief PR 3: this writer now settles via `settleObligationsInTx` directly on its success path
+  // (never `recordDuesPaymentInTx`, whose own `validatePaymentInput` used to cover these fields) — so it validates its
+  // own tender/method/notes/backdating shape here, the same checks `purchasePackage` already runs for the identical
+  // reason (it never routed through `recordDuesPaymentInTx` either).
+  if (!(CURRENCIES as readonly string[]).includes(tender?.currency)) return refuse("invalid");
+  if (!parseMoney(tender?.amount, { allowZero: false }).ok) return refuse("invalid");
+  if (!(Object.values(PaymentMethod) as string[]).includes(method)) return refuse("invalid");
+  if (notes !== undefined && (typeof notes !== "string" || notes.length > MAX_NOTES)) return refuse("invalid");
+  if (!Number.isInteger(maxBackdateDays) || maxBackdateDays < 0 || maxBackdateDays > MAX_BACKDATE_DAYS) return refuse("invalid");
 
   // Re-read the student scoped to the organization; a forged or foreign id is `notFound`, never trusted.
   const student = await prisma.student.findFirst({ where: { id: studentId, organizationId }, select: { id: true, homeAcademyId: true } });
@@ -205,8 +229,31 @@ export async function prepayMonthlyObligations(
       if (firstUncovered === null) return refuse("prepaymentLimitExceeded");
       if (!sameYearMonth(sorted[0], firstUncovered)) return refuse("coverageGap");
 
-      // §5: per requested month, oldest first (already sorted above).
-      const obligationIds: string[] = [];
+      // Currency-conversion brief PR 3: checked here — AFTER every horizon/gap check above, exactly where
+      // `recordDuesPaymentInTx`'s own `futureDate`/`tooOld` check used to fire relative to them (it ran last, once this
+      // writer composed it, well after these refusals already had their chance) — this writer now settles via
+      // `settleObligationsInTx`, which has no date check of its own, so it is checked here directly instead. Precedence
+      // among refusals is unchanged from before this PR; only which function contains the check moved.
+      const today = todayIn(branch.timezone, purchaseInstant);
+      if (compareDates(receivedOn, today) > 0) return refuse("futureDate");
+      if (compareDates(receivedOn, minusDays(today, maxBackdateDays)) < 0) return refuse("tooOld");
+
+      // Currency-conversion brief PR 3 (plan §3.2): RESOLVE every requested month first — nothing is written yet. Each
+      // month's assignment, terms and policy are resolved and locked (FOR SHARE) exactly as before, but `writeMonthlyObligationInTx`
+      // is not called until the hypothetical settlement total (existing debt + every resolved month's price) is confirmed
+      // payable, including that a rate exists if one is needed. §5: per requested month, oldest first (already sorted above).
+      type ResolvedMonth = {
+        month: YearMonth;
+        planTermsId: string;
+        policyVersionId: string;
+        priceAmount: string;
+        currency: Currency;
+        assignmentId: string;
+        assignmentEffectiveYear: number;
+        assignmentEffectiveMonth: number;
+        assignmentPlanId: string;
+      };
+      const resolvedMonths: ResolvedMonth[] = [];
       for (const month of sorted) {
         const assignments = await tx.studentPlanAssignment.findMany({
           where: { organizationId, studentId: student.id },
@@ -227,10 +274,79 @@ export async function prepayMonthlyObligations(
         const termsCandidate = latestEffective(termsCandidates, month);
         const policyCandidate = latestEffective(policyHistory, month);
         if (!termsCandidate || !policyCandidate) throw new PrepaymentRefusedError(refuse("inapplicable"));
+        const termsRow = await tx.paymentPlanTerms.findFirstOrThrow({ where: { id: termsCandidate.id, organizationId }, select: { priceAmount: true, currency: true } });
 
+        resolvedMonths.push({
+          month,
+          planTermsId: termsCandidate.id,
+          policyVersionId: policyCandidate.id,
+          priceAmount: termsRow.priceAmount.toFixed(2),
+          currency: termsRow.currency,
+          assignmentId: assignment.id,
+          assignmentEffectiveYear: assignment.effectiveYear,
+          assignmentEffectiveMonth: assignment.effectiveMonth,
+          assignmentPlanId: assignment.planId,
+        });
+      }
+
+      if (frozenDeps.afterPrepaymentObligationsWrittenForTest) await frozenDeps.afterPrepaymentObligationsWrittenForTest();
+
+      // Existing named current debt, resolved read-only (reused, not duplicated) — combined with each resolved month's
+      // own price (keyed by a placeholder id, since the obligation it will belong to does not exist yet) to compute the
+      // hypothetical full settlement total and discover, BEFORE any write, whether a rate would be needed and available.
+      const debtResult = await resolveMonthlyDebtItemsInTx(tx, { organizationId, studentId: student.id, obligationIds: existingObligationIds ?? [], receivedOn });
+      if (!debtResult.ok) throw new PrepaymentRefusedError(refuse(debtResult.error, { alreadySettledIds: debtResult.alreadySettledIds }));
+      const monthPlaceholderItems: SettlementLineItem[] = resolvedMonths.map((m, i) => ({
+        obligationId: `__prepay_month_${i}__`,
+        currency: m.currency,
+        amountMinor: decimalToMinor(m.priceAmount),
+        feeEligible: false,
+        expectedOwed: false,
+      }));
+      const hypotheticalItems = [...debtResult.chosenItems, ...monthPlaceholderItems];
+      const hypotheticalCurrencies = new Set(hypotheticalItems.map((i) => i.currency));
+      if (hypotheticalCurrencies.size === 1 && !hypotheticalCurrencies.has(tender.currency)) {
+        const hypotheticalSettlementItems = hypotheticalItems.map((i) => ({ id: i.obligationId, currency: i.currency, amountMinor: i.amountMinor }));
+        const resolved = await resolveCrossCurrency(tx, {
+          organizationId, items: hypotheticalSettlementItems, itemCurrency: [...hypotheticalCurrencies][0], receiptCurrency: tender.currency, receivedOn,
+        });
+        if (!resolved.ok) {
+          // Currency-conversion brief PR 3 (plan §2/§3.2): no eligible quote at all — capture instead of refusing. Nothing
+          // has been created yet (both loops above are entirely read-only), so capturing here is transaction-safe.
+          return captureAwaitingRateReceiptInTx(tx, {
+            context,
+            student,
+            kind: "PREPAYMENT",
+            receivedOn,
+            tenderCurrency: tender.currency,
+            tenderAmount: parsedAmount(tender),
+            method,
+            notes,
+            snapshot: {
+              kind: "PREPAYMENT",
+              existingObligationIds: existingObligationIds ?? [],
+              months: resolvedMonths.map((m) => ({
+                coverage: m.month,
+                planTermsId: m.planTermsId,
+                policyVersionId: m.policyVersionId,
+                priceAmount: m.priceAmount,
+                assignmentId: m.assignmentId,
+                assignmentRevision: versionRevision({ planId: m.assignmentPlanId }),
+              })),
+            },
+            capturedAt: purchaseInstant,
+          });
+        }
+        // A rate resolves — proceed. settleObligationsInTx (below) re-resolves it again with the REAL obligation ids once
+        // they exist; this pre-check only exists to decide whether to capture, never to short-circuit the real settlement.
+      }
+
+      // Confirmed payable (or same-currency): now actually create each month's obligation, in order.
+      const obligationIds: string[] = [];
+      for (const m of resolvedMonths) {
         const written = await writeMonthlyObligationInTx(
           tx,
-          { context, student, coverage: month, planTermsId: termsCandidate.id, policyVersionId: policyCandidate.id, origin: "PREPAYMENT" },
+          { context, student, coverage: m.month, planTermsId: m.planTermsId, policyVersionId: m.policyVersionId, origin: "PREPAYMENT" },
           frozenDeps,
         );
         if (!written.ok) throw new PrepaymentRefusedError(refuse(written.error));
@@ -248,23 +364,25 @@ export async function prepayMonthlyObligations(
             entityId: written.obligationId,
             before: Prisma.DbNull,
             after: {
-              assignmentId: assignment.id,
-              effectiveYear: assignment.effectiveYear,
-              effectiveMonth: assignment.effectiveMonth,
-              planId: assignment.planId,
-              revision: versionRevision({ planId: assignment.planId }),
+              assignmentId: m.assignmentId,
+              effectiveYear: m.assignmentEffectiveYear,
+              effectiveMonth: m.assignmentEffectiveMonth,
+              planId: m.assignmentPlanId,
+              revision: versionRevision({ planId: m.assignmentPlanId }),
             },
           },
         });
       }
 
-      if (frozenDeps.afterPrepaymentObligationsWrittenForTest) await frozenDeps.afterPrepaymentObligationsWrittenForTest();
-
       // §9: settle the newly created future months together with any named current debt, in the SAME transaction, reusing
-      // recordDuesPaymentInTx's existing oldest-first/exact-total/currency validation entirely unmodified.
-      const settled = await recordDuesPaymentInTx(
+      // the shared settlement core's existing oldest-first/exact-total/currency validation entirely unmodified.
+      const parsedTenderAmountValue = parsedAmount(tender);
+      const settled = await settleObligationsInTx(
         tx,
-        { context, student, receivedOn, tender, method, obligationIds: [...(existingObligationIds ?? []), ...obligationIds], notes, maxBackdateDays },
+        {
+          context, student, receivedOn, tenderMinor: decimalToMinor(parsedTenderAmountValue), tender, method,
+          obligationIds: [...(existingObligationIds ?? []), ...obligationIds], notes,
+        },
         frozenDeps,
       );
       if (!settled.ok) throw new PrepaymentRefusedError(refuse(settled.error, { selectableTotals: settled.selectableTotals, alreadySettledIds: settled.alreadySettledIds }));

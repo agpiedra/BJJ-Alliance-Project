@@ -40,6 +40,8 @@ export const TENANT_SCOPED_MODELS = new Set([
   "DuesSettlement",
   // Currency-conversion brief (PR 1): tenant-scoped from day one, before any settlement caller exists.
   "ExchangeRateQuote",
+  // Currency-conversion brief (PR 3): tenant-scoped from day one, before any owner-facing caller exists.
+  "AwaitingRateReceipt",
   "KioskAttempt",
   "QueuedCheckIn",
   "StaffAssignment",
