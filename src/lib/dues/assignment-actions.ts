@@ -9,6 +9,7 @@ import { currentMonthIn, parseEffectiveMonth, versionRevision } from "@/lib/dues
 import { getScopedDb } from "@/lib/tenant/scoped-client";
 import { lockStudent, type Tx } from "@/lib/students/lock";
 import type { ActionState } from "@/lib/action-state";
+import type { TenantContext } from "@/lib/tenant/types";
 
 /**
  * Eligibility-prerequisites brief, section 6.1: `StudentPlanAssignment` writer, owners only (approved: NOT inferred from the
@@ -55,8 +56,47 @@ async function lockAssignment(
 
 const assignmentRevision = (row: { planId: string | null }) => versionRevision({ planId: row.planId });
 
-/** `planId` re-validated against the student's own branch and refused if it names a package plan (packages are bought explicitly, never assigned this way — PR 3's isolation design). Empty/blank means "explicitly unassigned" (null). */
-async function resolvePlanId(organizationId: string, academyId: string, raw: string | null): Promise<{ ok: true; value: string | null } | { ok: false }> {
+/**
+ * Enrollment/resume integration plan §7.6: the transaction-aware core of `assignPlan`'s own create path, extracted
+ * so the enrollment composition (actions.ts `approveStudent`, create-student-action.ts `createStudent`) can create a
+ * NEW assignment inside its OWN transaction, which already holds the branch+student locks in the established order
+ * BEFORE calling this — exactly `writeMonthlyObligationInTx`'s own "narrow transaction-aware extraction" shape.
+ * Takes NO lock of its own (the caller's student lock already provides what `assignPlan`'s own standalone
+ * `lockStudent` call exists to give); trusts nothing else from its caller, repeating the identical fresh,
+ * under-the-lock current-month check `assignPlan` already performs. The unique constraint on
+ * `(studentId, effectiveYear, effectiveMonth)` is the backstop against a concurrent duplicate — this function does
+ * NOT catch that violation itself; it propagates to the caller's own `$transaction`, to be caught OUTSIDE it,
+ * exactly like `assignPlan`'s own existing `catch` below.
+ */
+export async function assignPlanInTx(
+  tx: Tx,
+  args: { context: TenantContext; studentId: string; homeAcademyId: string; timezone: string; planId: string | null; effectiveYear: number; effectiveMonth: number },
+): Promise<{ ok: true; assignmentId: string } | { ok: false; error: "pastMonth" }> {
+  const { context, studentId, homeAcademyId, timezone, planId, effectiveYear, effectiveMonth } = args;
+  if (compareYearMonth({ year: effectiveYear, month: effectiveMonth }, currentMonthIn(timezone)) < 0) return { ok: false, error: "pastMonth" };
+  const created = await tx.studentPlanAssignment.create({
+    data: { organizationId: context.organizationId, studentId, planId, effectiveYear, effectiveMonth, createdById: context.actorUserId },
+  });
+  await tx.auditLog.create({
+    data: {
+      actorId: context.actorUserId,
+      organizationId: context.organizationId,
+      academyId: homeAcademyId,
+      action: "studentPlanAssignment.create",
+      entityType: "StudentPlanAssignment",
+      entityId: created.id,
+      before: Prisma.DbNull,
+      after: { studentId: created.studentId, planId: created.planId, effectiveYear: created.effectiveYear, effectiveMonth: created.effectiveMonth },
+    },
+  });
+  return { ok: true, assignmentId: created.id };
+}
+
+/**
+ * `planId` re-validated against the student's own branch and refused if it names a package plan (packages are bought explicitly, never assigned this way — PR 3's isolation design). Empty/blank means "explicitly unassigned" (null).
+ * Exported (enrollment/resume integration plan §7.6) so the enrollment composition (actions.ts `approveStudent`, create-student-action.ts `createStudent`) reuses this EXACT validation for a staff-supplied plan id, rather than a second, drifting copy.
+ */
+export async function resolvePlanId(organizationId: string, academyId: string, raw: string | null): Promise<{ ok: true; value: string | null } | { ok: false }> {
   if (raw === null || raw === "") return { ok: true, value: null };
   const plan = await prisma.paymentPlan.findUnique({ where: { id: raw, organizationId }, select: { id: true, academyId: true } });
   if (!plan || plan.academyId !== academyId) return { ok: false };
@@ -92,29 +132,16 @@ export async function assignPlan(organizationId: string, _prevState: ActionState
       if (!locked) return reject("notFound"); // vanished between the pre-transaction read and the lock — no live path today
       // Evaluated fresh, under the lock, not before it: a month current when this action started can turn past while it waited
       // for a concurrent holder (monthly-generation.ts brief §5) — checking before the wait would miss that.
-      if (compareYearMonth(month.value, currentMonthIn(student.homeAcademy.timezone)) < 0) return reject("pastMonth");
-      const created = await tx.studentPlanAssignment.create({
-        data: {
-          organizationId: context.organizationId,
-          studentId: student.id,
-          planId: plan.value,
-          effectiveYear: month.value.year,
-          effectiveMonth: month.value.month,
-          createdById: context.actorUserId,
-        },
+      const result = await assignPlanInTx(tx, {
+        context,
+        studentId: student.id,
+        homeAcademyId: student.homeAcademyId,
+        timezone: student.homeAcademy.timezone,
+        planId: plan.value,
+        effectiveYear: month.value.year,
+        effectiveMonth: month.value.month,
       });
-      await tx.auditLog.create({
-        data: {
-          actorId: context.actorUserId,
-          organizationId: context.organizationId,
-          academyId: student.homeAcademyId,
-          action: "studentPlanAssignment.create",
-          entityType: "StudentPlanAssignment",
-          entityId: created.id,
-          before: Prisma.DbNull,
-          after: { studentId: created.studentId, planId: created.planId, effectiveYear: created.effectiveYear, effectiveMonth: created.effectiveMonth },
-        },
-      });
+      if (!result.ok) return reject(result.error);
       return null;
     });
   } catch (error) {

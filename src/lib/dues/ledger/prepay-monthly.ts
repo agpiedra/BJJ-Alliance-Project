@@ -106,7 +106,12 @@ export const SCHEMA_MAX_MONTH: YearMonth = { year: 2100, month: 12 };
  * fully consumed, not a corrupt-data condition, so this never throws. Exported for that reuse, not a new mechanism.
  */
 export async function firstUncoveredFrom(tx: Tx, organizationId: string, studentId: string, floor: YearMonth, bound: YearMonth): Promise<YearMonth | null> {
-  const obligationMonths = await tx.duesObligation.findMany({ where: { organizationId, studentId }, select: { coverageYear: true, coverageMonth: true } });
+  // Enrollment/resume integration plan §7.5: SIGNUP also sets coverageYear/coverageMonth (to the enrollment date)
+  // but never claims that month's coverage — it inserts zero DuesCoverage rows and coexists with that same month's
+  // own MONTHLY. Excluded here explicitly (an allow-list, not a deny-list, so a FUTURE obligation type defaults to
+  // NOT being treated as coverage unless deliberately added) so a SIGNUP-only enrollment month is never wrongly
+  // treated as already covered.
+  const obligationMonths = await tx.duesObligation.findMany({ where: { organizationId, studentId, type: { in: ["MONTHLY", "PACKAGE"] } }, select: { coverageYear: true, coverageMonth: true } });
   const coverageMonths = await tx.duesCoverage.findMany({ where: { organizationId, studentId }, select: { year: true, month: true } });
   const covered = new Set<string>();
   for (const o of obligationMonths) covered.add(`${o.coverageYear}-${o.coverageMonth}`);

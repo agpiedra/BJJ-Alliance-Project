@@ -39,6 +39,10 @@ export async function makeAccountingOrg(accounting: StripeAccounting, label: str
     await prisma.attendanceRecord.deleteMany({ where: { organizationId: org.id } });
     await prisma.promotionCredit.deleteMany({ where: { organizationId: org.id } });
     await prisma.promotion.deleteMany({ where: { organizationId: org.id } });
+    // Enrollment/resume integration plan: a caller composing createStudentInTx/approveStudentInTx now writes a
+    // StudentStatusChange row for every student it creates/transitions (previously, no test using this fixture
+    // exercised a path that wrote one) — its own FK on Student means it must be deleted first.
+    await prisma.studentStatusChange.deleteMany({ where: { organizationId: org.id } });
     await prisma.student.deleteMany({ where: { organizationId: org.id } });
     await prisma.organizationMembership.deleteMany({ where: { organizationId: org.id } });
     await prisma.user.deleteMany({ where: { id: admin.id } });

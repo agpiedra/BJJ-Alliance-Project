@@ -78,3 +78,50 @@ describe("CreateStudentForm — track control filters the rank dropdown", () => 
     expect(stripesSelect).toHaveValue("0");
   });
 });
+
+describe("CreateStudentForm — enrollment/resume integration plan §7.6 plan-selector", () => {
+  it("billing inactive (the default): no plan field, no 'requires admin' message — zero new DOM", () => {
+    renderForm();
+    expect(screen.queryByLabelText("Monthly plan (optional)")).toBeNull();
+    expect(screen.queryByText(/requires an owner/i)).toBeNull();
+  });
+
+  it("billing active, ADMIN: a keyboard-accessible plan selector is offered, package-free, no default", () => {
+    render(
+      <NextIntlClientProvider locale="en" messages={enMessages}>
+        <CreateStudentForm
+          organizationId="org-1"
+          academies={[{ id: "academy-1", name: "Alliance Escazú" }]}
+          rankOptions={RANK_OPTIONS}
+          billingActive
+          organizationRole="ADMIN"
+          plans={[{ id: "plan-1", name: "Monthly USD" }]}
+        />
+      </NextIntlClientProvider>,
+    );
+    // The label's own hint span (same established pattern as beltAwardedAtHint) joins its accessible name, so this
+    // matches by regex rather than the exact label text alone.
+    const select = screen.getByRole("combobox", { name: /Monthly plan \(optional\)/ });
+    expect(options(select)).toEqual(["", "plan-1"]);
+    expect(select).toHaveValue(""); // no default
+    fireEvent.change(select, { target: { value: "plan-1" } });
+    expect(select).toHaveValue("plan-1");
+  });
+
+  it("billing active, DIRECTOR: no selector is offered — only the 'requires an owner' message, never a doomed submission", () => {
+    render(
+      <NextIntlClientProvider locale="en" messages={enMessages}>
+        <CreateStudentForm
+          organizationId="org-1"
+          academies={[{ id: "academy-1", name: "Alliance Escazú" }]}
+          rankOptions={RANK_OPTIONS}
+          billingActive
+          organizationRole="DIRECTOR"
+          plans={[{ id: "plan-1", name: "Monthly USD" }]}
+        />
+      </NextIntlClientProvider>,
+    );
+    expect(screen.queryByLabelText("Monthly plan (optional)")).toBeNull();
+    expect(screen.getByText("Assigning a new plan at creation requires an owner (ADMIN).")).toBeInTheDocument();
+  });
+});

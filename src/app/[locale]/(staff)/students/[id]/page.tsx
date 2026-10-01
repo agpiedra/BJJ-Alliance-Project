@@ -21,6 +21,7 @@ import { EditStudentForm } from "./edit-student-form";
 import { ArchiveStudentButton } from "./archive-student-button";
 import { RestoreStudentButton } from "./restore-student-button";
 import { ApproveStudentButton } from "./approve-student-button";
+import { isEnrollmentBillingActive } from "../create-student-action";
 import { RegenerateCodeButton } from "./regenerate-code-button";
 import { AddAdjustmentForm } from "./add-adjustment-form";
 import { AttendanceEntriesCard } from "./attendance-entries-card";
@@ -142,6 +143,31 @@ export default async function StudentDetailPage({
     await ensureCustomPromoPlan(context.organizationId, student.homeAcademyId);
   }
   const paymentPlans = canEdit ? await listSelectablePlans(context.organizationId, [student.homeAcademyId]) : [];
+
+  // Enrollment/resume integration plan §7.6: resolved server-side, never from request data — zero new DOM for any
+  // organization while billing stays inactive (today, always). Only fetched for a PENDING student a session can
+  // actually approve, mirroring the `canEdit`-gated fetches around it.
+  const enrollmentBillingActive = canEdit && student.status === "PENDING" ? await isEnrollmentBillingActive(context.organizationId) : false;
+  let existingEnrollmentPlanName: string | null | undefined; // undefined = no assignment resolves for this month
+  if (enrollmentBillingActive) {
+    const { year: enrollYear, month: enrollMonth } = currentCrDateParts();
+    const assignments = await prisma.studentPlanAssignment.findMany({
+      where: { organizationId: context.organizationId, studentId: student.id },
+      select: { planId: true, effectiveYear: true, effectiveMonth: true },
+    });
+    // The identical "latest version effective on or before this month" rule as ledger/common.ts's own
+    // `latestEffective` — duplicated here (3 lines) rather than imported, since this page must never import from
+    // `src/lib/dues/ledger/` (tests/unit/dues-ledger-not-exposed.test.ts's own authorized-caller list), the same
+    // reasoning `todayInAsDbDate` (status-history.ts) already documents for its own deliberate duplication.
+    const index = (y: number, m: number) => y * 12 + (m - 1);
+    const existing = assignments
+      .filter((a) => index(a.effectiveYear, a.effectiveMonth) <= index(enrollYear, enrollMonth))
+      .sort((a, b) => index(b.effectiveYear, b.effectiveMonth) - index(a.effectiveYear, a.effectiveMonth))[0];
+    if (existing) {
+      const plan = existing.planId ? await prisma.paymentPlan.findUnique({ where: { id: existing.planId, organizationId: context.organizationId }, select: { name: true } }) : null;
+      existingEnrollmentPlanName = plan?.name ?? null; // null = explicitly unassigned for this month
+    }
+  }
   // What a NEW payment on this page is recorded in; recorded ones keep their own.
   const { currency: organizationCurrency } = await prisma.organization.findUniqueOrThrow({
     where: { id: context.organizationId },
@@ -363,7 +389,14 @@ export default async function StudentDetailPage({
               re-asserts that precondition itself; this just avoids offering
               a button that would always fail. */}
           {student.status === "PENDING" && (
-            <ApproveStudentButton organizationId={context.organizationId} studentId={student.id} />
+            <ApproveStudentButton
+              organizationId={context.organizationId}
+              studentId={student.id}
+              billingActive={enrollmentBillingActive}
+              existingPlanName={existingEnrollmentPlanName}
+              plans={paymentPlans.map((p) => ({ id: p.id, name: p.name }))}
+              organizationRole={context.organizationRole === "ADMIN" ? "ADMIN" : "DIRECTOR"}
+            />
           )}
           <EditStudentForm
             organizationId={context.organizationId}

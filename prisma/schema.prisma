@@ -694,6 +694,18 @@ model Student {
   /// code-hash uniqueness with organization-scoped uniqueness" — see the
   /// @@unique([organizationId, codeHash]) below. No longer @unique on its own.
   codeHash             String
+  /// Enrollment/resume integration plan §7.7: a client-generated, stable identity for ONE logical staff-creation
+  /// submission, set only on the active-billing path (§3's activation gate) — null for every other path (public
+  /// signup, the inactive path, a future bulk-import). Backed by @@unique([organizationId, creationRequestId])
+  /// below, NOT a field-level @unique (which would impose cross-organization uniqueness). A retry under the same
+  /// id is recognized by comparing creationFingerprint, never this row's own (possibly since-edited) fields.
+  creationRequestId    String?
+  /// The canonical, validated creation inputs (createStudentSchema's own output, including the selected plan id
+  /// if supplied; excluding every server-generated value: codeHash, id, createdAt) at the moment this row was
+  /// created — committed atomically with creationRequestId above, in the same create() call, and never edited
+  /// afterward. A retry's resubmitted inputs are compared against THIS snapshot, never against this row's current,
+  /// possibly-since-edited fields.
+  creationFingerprint  Json?
   status               StudentStatus        @default(PENDING)
   /// What a restore returns this student to. Set when they are archived, read and
   /// cleared when they are restored; null for everyone not currently archived — and
@@ -726,6 +738,7 @@ model Student {
   organization      Organization       @relation(fields: [organizationId], references: [id])
 
   @@unique([organizationId, codeHash])
+  @@unique([organizationId, creationRequestId])
   @@unique([organizationId, id])
   @@index([homeAcademyId])
   @@index([organizationId])
@@ -1394,13 +1407,22 @@ model StudentStatusChange {
 // exact and range-checked (no floating-point multiplication, no silent rounding).
 //
 // PENDING POLICIES, deliberately NOT modelled: refunds, coverage release, obligation cancellation, what happens when a reversed
-// payment had CREATED its obligations (prepaid months, packages), late-fee treatment after an obligation reopens, signup and opening
-// obligations, exchange rates.
+// payment had CREATED its obligations (prepaid months, packages), late-fee treatment after an obligation reopens, opening balances.
+//
+// SIGNUP (enrollment/resume integration plan §7.5/§8, added after this block was first written): a one-time, due-on-enrollment
+// charge, priced from the assigned monthly plan's OWN terms (planTermsId references that same terms row — monthsCovered therefore
+// equals the terms' own, i.e. 1, matching dues_obligation_check_references' unconditional duration check below; it does not mean
+// "covers one month"). No graceDeadline, no lateFeeAmount, no policyVersionId: it never incurs a late fee and is never driven by the
+// branch's due/grace-day policy. Inserts ZERO DuesCoverage rows — it claims no month's coverage at all, which is exactly how it
+// coexists with that same month's own MONTHLY obligation. At most one per student, ever (a partial unique index). NOT YET WIRED:
+// no payment-recording writer accepts type: 'SIGNUP' (recordDuesPaymentInTx is MONTHLY-only by its own query), so a SIGNUP charge
+// can be created but not yet paid, settled or currency-converted through this ledger — see docs/DUES_PAYMENT_SCHEDULES.md.
 // ---------------------------------------------------------------------------------------------------------------------
 
 enum DuesObligationType {
   MONTHLY
   PACKAGE
+  SIGNUP
 }
 
 enum DuesObligationOrigin {
@@ -1428,7 +1450,7 @@ model DuesObligation {
   /// The first covered calendar month.
   coverageYear    Int
   coverageMonth   Int
-  /// 1 for MONTHLY, 2 or more for PACKAGE.
+  /// 1 for MONTHLY, 2 or more for PACKAGE, 1 for SIGNUP (its terms' own duration — see the SIGNUP note above).
   monthsCovered   Int
   amount          Decimal              @db.Decimal(10, 2)
   currency        Currency

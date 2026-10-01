@@ -127,7 +127,7 @@ async function newTerms(
 }
 
 type ObligationOver = Partial<{
-  organizationId: string; studentId: string; academyId: string; type: "MONTHLY" | "PACKAGE"; origin: "SCHEDULED_JOB" | "PREPAYMENT" | "STAFF";
+  organizationId: string; studentId: string; academyId: string; type: "MONTHLY" | "PACKAGE" | "SIGNUP"; origin: "SCHEDULED_JOB" | "PREPAYMENT" | "STAFF";
   coverageYear: number; coverageMonth: number; monthsCovered: number; amount: string; currency: "USD" | "CRC"; lateFeeAmount: string | null;
   dueOn: Date | null; graceDeadline: Date | null; planTermsId: string; policyVersionId: string | null; createdById: string | null;
 }>;
@@ -339,6 +339,37 @@ describe("obligation shape and agreement with its configuration version", () => 
       await refused(tx, () => tx.duesObligation.create({ data: obligationData({ type: "PACKAGE", monthsCovered: 3, planTermsId: termsPackage.id }) }), "DuesObligation_shape_by_type");
       // a zero fee is allowed
       await tx.duesObligation.create({ data: obligationData({ lateFeeAmount: "0.00" }) });
+    });
+  });
+
+  it("CHECKs: the SIGNUP column shape (enrollment/resume integration plan §7.5/§8)", async () => {
+    await isolated(async (tx) => {
+      await tx.$executeRawUnsafe('ALTER TABLE "DuesObligation" DISABLE TRIGGER "DuesObligation_check_references"');
+      const signupData = (over: ObligationOver = {}) =>
+        obligationData({
+          type: "SIGNUP", monthsCovered: 1, planTermsId: termsMonthly.id, dueOn: dateOf(2031, 3, 3), graceDeadline: null, lateFeeAmount: null, policyVersionId: null, ...over,
+        });
+      await refused(tx, () => tx.duesObligation.create({ data: signupData({ dueOn: null }) }), "DuesObligation_shape_by_type");
+      await refused(tx, () => tx.duesObligation.create({ data: signupData({ graceDeadline: dateOf(2031, 4, 1) }) }), "DuesObligation_shape_by_type");
+      await refused(tx, () => tx.duesObligation.create({ data: signupData({ lateFeeAmount: "0.00" }) }), "DuesObligation_shape_by_type");
+      await refused(tx, () => tx.duesObligation.create({ data: signupData({ policyVersionId: policy1.id }) }), "DuesObligation_shape_by_type");
+      await refused(tx, () => tx.duesObligation.create({ data: signupData({ monthsCovered: 0 }) }), "DuesObligation_shape_by_type");
+      await refused(tx, () => tx.duesObligation.create({ data: signupData({ monthsCovered: 2 }) }), "DuesObligation_shape_by_type");
+      await tx.$executeRawUnsafe('ALTER TABLE "DuesObligation" ENABLE TRIGGER "DuesObligation_check_references"');
+      // and the matching shape is accepted, including by the (untouched) reference trigger: monthsCovered = 1
+      // matches termsMonthly's own monthsCovered, and policyVersionId being null skips that trigger's policy block
+      await tx.duesObligation.create({ data: signupData() });
+    });
+  });
+
+  it("at most one SIGNUP obligation per student, ever — enforced by the database, not application logic alone", async () => {
+    await isolated(async (tx) => {
+      const signupData = (studentId: string, dueOn: Date) =>
+        obligationData({ studentId, type: "SIGNUP", monthsCovered: 1, planTermsId: termsMonthly.id, dueOn, graceDeadline: null, lateFeeAmount: null, policyVersionId: null });
+      await tx.duesObligation.create({ data: signupData(ana.id, dateOf(2031, 5, 1)) });
+      await refused(tx, () => tx.duesObligation.create({ data: signupData(ana.id, dateOf(2031, 6, 1)) }), "DuesObligation_student_signup_once_key");
+      // a different student may still have their own SIGNUP
+      await tx.duesObligation.create({ data: signupData(bruno.id, dateOf(2031, 5, 1)) });
     });
   });
 

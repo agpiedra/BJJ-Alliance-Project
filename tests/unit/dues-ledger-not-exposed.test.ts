@@ -7,10 +7,11 @@ import { productionSourceFiles, stripComments } from "../helpers/source-files";
  * (the runtime gate is tested in tests/integration/dues-ledger-writers.test.ts):
  *
  *  1. Nothing outside `src/lib/dues/ledger/` imports them, EXCEPT the authorized callers listed in `AUTHORIZED_CALLERS` below
- *     (monthly-generation brief §5.2, late-fee-assessment brief §7, the resume-charge integration plan's own §3): no other
- *     page, route, server action, cron, script or library. The only other importers are tests. This test names those files
- *     explicitly rather than allowing a broad pattern — a fourth file starting to import from the ledger still fails it.
- *     `resumeStudent`'s own action file composes `resumeChargeInTx` (resume-charge.ts) — its public, exported signature is
+ *     (monthly-generation brief §5.2, late-fee-assessment brief §7, the resume/enrollment integration plan's own §3/§7.6): no
+ *     other page, route, server action, cron, script or library. The only other importers are tests. This test names those
+ *     files explicitly rather than allowing a broad pattern — a fifth file starting to import from the ledger still fails it.
+ *     `resumeStudent`/`approveStudent` (`[id]/actions.ts`) compose `resumeChargeInTx`/`enrollmentChargeInTx`; `createStudent`
+ *     (`create-student-action.ts`) composes `enrollmentChargeInTx` too — each one's own public, exported signature is
  *     unchanged by this; only its internal transaction body now calls into the ledger.
  *  2. They are plain library functions: no `"use server"` (which would make an exported function an invocable endpoint), no route, no
  *     client component.
@@ -22,6 +23,7 @@ const AUTHORIZED_CALLERS = [
   "src/lib/dues/monthly-generation.ts",
   "src/lib/dues/late-fee-assessment.ts",
   "src/app/[locale]/(staff)/students/[id]/actions.ts",
+  "src/app/[locale]/(staff)/students/create-student-action.ts",
 ];
 
 describe("the ledger writers are not reachable from production code", () => {
