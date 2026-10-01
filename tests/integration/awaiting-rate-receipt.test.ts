@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { getTestPrismaClient } from "../helpers/test-db";
 import { prisma as appPrisma } from "../../src/lib/prisma";
 import { makeAccountingOrg } from "../helpers/accounting-org";
@@ -11,6 +11,14 @@ import { prepayMonthlyObligations } from "../../src/lib/dues/ledger/prepay-month
 import { enterExchangeRateQuote } from "../../src/lib/dues/ledger/exchange-rate";
 import { resolveAwaitingRateReceipt, cancelAwaitingRateReceipt } from "../../src/lib/dues/ledger/awaiting-rate-receipt";
 import type { LedgerActivation } from "../../src/lib/dues/ledger/activation";
+import type { Tx } from "../../src/lib/dues/ledger/common";
+
+// correctAssignment (a real server action, used by the assignment-lock race test below) calls resolveActionContext ->
+// auth(), which needs a Next.js request scope that doesn't exist here — mocked exactly as prepay-monthly.test.ts already
+// does, dynamically imported only after the mock is registered.
+let currentSession: { user: { id: string; role: string } } | null = null;
+vi.mock("@/auth", () => ({ auth: () => Promise.resolve(currentSession), signIn: vi.fn() }));
+const { correctAssignment } = await import("../../src/lib/dues/assignment-actions");
 
 /**
  * Currency-conversion brief, PR 3: awaiting-rate receipt capture, resolution and cancellation, proved against the REAL
@@ -37,6 +45,7 @@ let a: Fixture;
 let usdTerms: { id: string };
 let usdPolicy: { id: string };
 let packageTerms: { id: string };
+let crcPackageTerms: { id: string };
 let usdPlanId: string;
 
 function context(over: Partial<TenantContext> = {}): TenantContext {
@@ -103,8 +112,58 @@ async function ledgerCounts(organizationId: string) {
   };
 }
 
+// --- Genuine lock-wait evidence (second review round, finding 4): `Promise.all` alone proves two calls were INITIATED
+// concurrently, never that their transactions actually OVERLAPPED — the pool or scheduler could serialize them while the
+// test still passes by coincidence. These three helpers, shared by every concurrency test below, establish CONTROLLED
+// overlap (one side paused mid-transaction via an injected test hook) and prove it with Postgres's own authoritative
+// `pg_blocking_pids()` — the identical evidentiary bar `dues-currency-settlement.test.ts` already applies to the
+// exchange-rate advisory lock.
+/** Postgres's own answer to "does `waiterPid` genuinely wait on `holderPid`" — not inferred from timing or from
+ * `pg_locks` rows alone. */
+async function isBlockedBy(waiterPid: number, holderPid: number): Promise<boolean> {
+  const rows = await prisma.$queryRaw<{ blocked: boolean }[]>`SELECT ${holderPid} = ANY(pg_blocking_pids(${waiterPid})) AS blocked`;
+  return rows[0].blocked;
+}
+async function waitUntil(predicate: () => Promise<boolean>, timeoutMs = 5000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await predicate()) return true;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  return false;
+}
+/** Races `promise` against a bounded timeout — a hung promise and a genuine mutation-induced deadlock must both fail an
+ * assertion within a bounded interval, never rely on vitest's own test-level timeout as the proof. */
+async function raceWithTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<{ kind: "resolved"; value: T } | { kind: "timedOut" }> {
+  let timer!: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<{ kind: "timedOut" }>((resolve) => { timer = setTimeout(() => resolve({ kind: "timedOut" }), timeoutMs); });
+  const result = await Promise.race([promise.then((value): { kind: "resolved"; value: T } => ({ kind: "resolved", value })), timeout]);
+  clearTimeout(timer);
+  return result;
+}
+/** The pid of a genuinely blocked SECOND transaction waiting on a ROW-level lock (`SELECT ... FOR UPDATE`/`FOR SHARE`)
+ * already held by another open transaction, excluding `excludePid` (the known holder) — how this suite finds that second
+ * transaction's own backend pid when it has no test hook of its own to report it directly (e.g. a real
+ * `correctAssignment`/`cancelAwaitingRateReceipt` call racing a paused counterpart). Postgres represents row-lock
+ * contention as the WAITER requesting a `ShareLock` on the HOLDER's own transaction id (`pg_locks.locktype =
+ * 'transactionid'`) — this has no `relation` at all, so a query joined on `pg_class`/`relname` (right for a genuine
+ * table-level or advisory lock) can never find it; this is the correct, lock-type-specific query for THIS kind of wait. */
+async function waitForTransactionIdWaiter(excludePid: number, timeoutMs = 5000): Promise<number | undefined> {
+  let found: number | undefined;
+  const ok = await waitUntil(async () => {
+    const waiting = await prisma.$queryRaw<{ pid: number }[]>`
+      SELECT pid FROM pg_locks WHERE locktype = 'transactionid' AND granted = false AND pid <> ${excludePid}
+    `;
+    if (waiting.length === 0) return false;
+    found = waiting[0].pid;
+    return true;
+  }, timeoutMs);
+  return ok ? found : undefined;
+}
+
 beforeAll(async () => {
   a = await makeAccountingOrg("CUMULATIVE", "receipt-a");
+  currentSession = { user: { id: a.admin.id, role: "ADMIN" } };
   const usdPlan = await prisma.paymentPlan.create({ data: { organizationId: a.org.id, academyId: a.academy.id, name: `Receipt USD plan ${suffix}` } });
   usdPlanId = usdPlan.id;
   usdTerms = await prisma.paymentPlanTerms.create({
@@ -116,6 +175,11 @@ beforeAll(async () => {
   const packagePlan = await prisma.paymentPlan.create({ data: { organizationId: a.org.id, academyId: a.academy.id, name: `Receipt package plan ${suffix}` } });
   packageTerms = await prisma.paymentPlanTerms.create({
     data: { organizationId: a.org.id, planId: packagePlan.id, effectiveYear: 2027, effectiveMonth: 1, priceAmount: "270.00", currency: "USD", monthsCovered: 3, createdById: a.admin.id },
+  });
+  // Reverse-direction fixture (plan priced in CRC, tendered in USD) for the PACKAGE financial-validation tests below.
+  const crcPackagePlan = await prisma.paymentPlan.create({ data: { organizationId: a.org.id, academyId: a.academy.id, name: `Receipt CRC package plan ${suffix}` } });
+  crcPackageTerms = await prisma.paymentPlanTerms.create({
+    data: { organizationId: a.org.id, planId: crcPackagePlan.id, effectiveYear: 2027, effectiveMonth: 1, priceAmount: "135000.00", currency: "CRC", monthsCovered: 3, createdById: a.admin.id },
   });
 }, 60_000);
 
@@ -356,7 +420,7 @@ describe("one payment per receipt (plan §7)", () => {
 });
 
 describe("concurrent resolve/resolve and resolve/cancel", () => {
-  it("two concurrent resolution attempts for the same receipt produce exactly one payment", async () => {
+  it("two concurrent resolution attempts for the same receipt produce exactly one payment, proven by a genuine, pg_blocking_pids-verified lock wait", async () => {
     const d = freshDate();
     const s = await newStudent("concresolve");
     const sep = await oneMonth(s.id, d);
@@ -368,20 +432,43 @@ describe("concurrent resolve/resolve and resolve/cancel", () => {
     const rate = await enterRate(d);
     if (!rate.ok) throw new Error("fixture: rate entry failed");
 
-    const [r1, r2] = await Promise.all([
-      resolveAwaitingRateReceipt({ context: context(), receiptId: captured.receiptId! }, deps({ now: nowAt(d) })),
-      resolveAwaitingRateReceipt({ context: context(), receiptId: captured.receiptId! }, deps({ now: nowAt(d) })),
-    ]);
-    const oks = [r1, r2].filter((r) => r.ok);
-    const fails = [r1, r2].filter((r) => !r.ok);
-    expect(oks.length, "exactly one of the two concurrent attempts succeeds (serialized by the student lock)").toBe(1);
+    let pid1: number | undefined;
+    let release1!: () => void;
+    const gate1 = new Promise<void>((resolve) => { release1 = resolve; });
+    const r1Promise = resolveAwaitingRateReceipt(
+      { context: context(), receiptId: captured.receiptId! },
+      deps({
+        now: nowAt(d),
+        afterResolveStudentLockForTest: async (tx: Tx) => {
+          const rows = await tx.$queryRaw<{ pid: number }[]>`SELECT pg_backend_pid() AS pid`;
+          pid1 = rows[0].pid;
+          await gate1; // hold the FOR UPDATE lock open until the test releases it below
+        },
+      }),
+    );
+    expect(await waitUntil(async () => pid1 !== undefined), "the first attempt must reach the student lock").toBe(true);
+
+    // Started concurrently, never awaited before the block below is proven.
+    const r2Promise = resolveAwaitingRateReceipt({ context: context(), receiptId: captured.receiptId! }, deps({ now: nowAt(d) }));
+    const pid2 = await waitForTransactionIdWaiter(pid1!);
+    expect(pid2, "the second attempt must show up as a genuine, ungranted lock waiter on the Student row").toBeDefined();
+    expect(await isBlockedBy(pid2!, pid1!), "the second attempt must be genuinely blocked by the first's own FOR UPDATE hold").toBe(true);
+
+    release1();
+    const [r1Outcome, r2Outcome] = await Promise.all([raceWithTimeout(r1Promise, 5000), raceWithTimeout(r2Promise, 5000)]);
+    expect(r1Outcome.kind).toBe("resolved");
+    expect(r2Outcome.kind).toBe("resolved");
+    const results = [r1Outcome, r2Outcome].map((r) => (r.kind === "resolved" ? r.value : undefined));
+    const oks = results.filter((r) => r?.ok);
+    const fails = results.filter((r) => r && !r.ok);
+    expect(oks.length, "exactly one of the two genuinely-overlapping attempts succeeds (serialized by the student lock)").toBe(1);
     expect(fails.length).toBe(1);
     expect(fails[0]).toMatchObject({ ok: false, error: "alreadyResolved" });
     const payments = await prisma.duesPayment.count({ where: { organizationId: a.org.id, resolvedFromReceiptId: captured.receiptId } });
     expect(payments).toBe(1);
   });
 
-  it("a resolve racing a cancel: whichever commits first wins, the other refuses cleanly", async () => {
+  it("a resolve racing a cancel: whichever commits first wins, the other refuses cleanly, proven by a genuine, pg_blocking_pids-verified lock wait", async () => {
     const d = freshDate();
     const s = await newStudent("concrace");
     const sep = await oneMonth(s.id, d);
@@ -393,13 +480,37 @@ describe("concurrent resolve/resolve and resolve/cancel", () => {
     const rate = await enterRate(d);
     if (!rate.ok) throw new Error("fixture: rate entry failed");
 
-    const [resolveResult, cancelResult] = await Promise.all([
-      resolveAwaitingRateReceipt({ context: context(), receiptId: captured.receiptId! }, deps({ now: nowAt(d) })),
-      cancelAwaitingRateReceipt({ context: context(), receiptId: captured.receiptId!, reason: "owner changed their mind" }, deps({ now: nowAt(d) })),
-    ]);
-    // Exactly one of the two mutually-exclusive outcomes won; the receipt's own final status proves which.
+    let resolvePid: number | undefined;
+    let releaseResolve!: () => void;
+    const gate = new Promise<void>((resolve) => { releaseResolve = resolve; });
+    const resolvePromise = resolveAwaitingRateReceipt(
+      { context: context(), receiptId: captured.receiptId! },
+      deps({
+        now: nowAt(d),
+        afterResolveStudentLockForTest: async (tx: Tx) => {
+          const rows = await tx.$queryRaw<{ pid: number }[]>`SELECT pg_backend_pid() AS pid`;
+          resolvePid = rows[0].pid;
+          await gate;
+        },
+      }),
+    );
+    expect(await waitUntil(async () => resolvePid !== undefined), "resolution must reach the student lock").toBe(true);
+
+    const cancelPromise = cancelAwaitingRateReceipt({ context: context(), receiptId: captured.receiptId!, reason: "owner changed their mind" }, deps({ now: nowAt(d) }));
+    const cancelPid = await waitForTransactionIdWaiter(resolvePid!);
+    expect(cancelPid, "the cancel attempt must show up as a genuine, ungranted lock waiter on the Student row").toBeDefined();
+    expect(await isBlockedBy(cancelPid!, resolvePid!), "cancel must be genuinely blocked by resolution's own FOR UPDATE hold").toBe(true);
+
+    releaseResolve();
+    const [resolveOutcome, cancelOutcome] = await Promise.all([raceWithTimeout(resolvePromise, 5000), raceWithTimeout(cancelPromise, 5000)]);
+    expect(resolveOutcome.kind).toBe("resolved");
+    expect(cancelOutcome.kind).toBe("resolved");
+    // Resolution committed first (it was paused and released first, cancel only started once it was already waiting
+    // behind resolution's lock) — the receipt's own final status is still the authoritative proof of which won.
     const receipt = await prisma.awaitingRateReceipt.findUniqueOrThrow({ where: { id: captured.receiptId } });
     expect(["RESOLVED", "CANCELLED"]).toContain(receipt.status);
+    const resolveResult = resolveOutcome.kind === "resolved" ? resolveOutcome.value : undefined;
+    const cancelResult = cancelOutcome.kind === "resolved" ? cancelOutcome.value : undefined;
     if (receipt.status === "RESOLVED") {
       expect(resolveResult).toMatchObject({ ok: true });
       expect(cancelResult).toMatchObject({ ok: false, error: "alreadyResolved" });
@@ -519,9 +630,17 @@ describe("PACKAGE: capture, fee-void-first fix, and resolution", () => {
     expect(feeAfter.removalKind).toBe("VOIDED");
   });
 
-  it("forbidden drift: a changed terms price refuses staleTerms, never silently repriced", async () => {
+  // --- Second review round (confirmed real, not disputed): PACKAGE resolution originally performed NO financial
+  // validation at all. `writeSettlementInTx` was called with the receipt's own, never-checked `tenderMinor`/`tender` and
+  // no `rateEvidence` — the comment claiming "the actual total/currency match already happened at capture time" was
+  // false by construction, since capture only ever happens when `resolveCrossCurrency` found NO rate, so no match could
+  // possibly have occurred then. The tests below reproduce this directly, matching every case the round's reproduction
+  // list requires, before the fix (reusing `resolveCrossCurrency`/`settleReceipt`, the same core `purchasePackage`
+  // already proved correct) is exercised.
+
+  it("resolution with still no rate at all refuses cleanly — never a crash, never an unvalidated success", async () => {
     const d = freshDate();
-    const s = await newStudent("packagedrift");
+    const s = await newStudent("packagenorate");
     const captured = await purchasePackage(
       {
         context: context(), studentId: s.id, planTermsId: packageTerms.id, requestedStartMonth: { year: d.year, month: d.month },
@@ -530,13 +649,256 @@ describe("PACKAGE: capture, fee-void-first fix, and resolution", () => {
       deps({ now: nowAt(d) }),
     );
     if (captured.ok || captured.error !== "captured") throw new Error("fixture: expected capture");
+    const before = await ledgerCounts(a.org.id);
+    const resolved = await resolveAwaitingRateReceipt({ context: context(), receiptId: captured.receiptId! }, deps({ now: nowAt(d) }));
+    expect(resolved).toMatchObject({ ok: false, error: "rateUnavailable" });
+    expect(await ledgerCounts(a.org.id)).toEqual(before);
+    const receipt = await prisma.awaitingRateReceipt.findUniqueOrThrow({ where: { id: captured.receiptId } });
+    expect(receipt.status).toBe("PENDING");
+  });
+
+  it("a rate making the tendered amount insufficient refuses, rolling back any fee voided in the same attempt", async () => {
+    const d = freshDate(5);
+    const s = await newStudent("packageinsufficient");
+    const priorMonth = await oneMonth(s.id, d);
+    const captured = await purchasePackage(
+      {
+        context: context(), studentId: s.id, planTermsId: packageTerms.id, requestedStartMonth: { year: d.year, month: d.month },
+        existingObligationIds: [priorMonth], receivedOn: d, // on time: day 5 is the inclusive grace deadline
+        tender: { currency: "CRC", amount: "185000.00" }, method: "EFECTIVO", maxBackdateDays: 5,
+      },
+      deps({ now: nowAt(d) }),
+    );
+    if (captured.ok || captured.error !== "captured") throw new Error("fixture: expected capture");
+
+    // A fee wrongly assessed on the existing debt while the receipt sat PENDING — the fee-void-first step must void it,
+    // then roll it back along with everything else once the financial mismatch below refuses the whole transaction.
+    const { assessLateFeeInTx } = await import("../../src/lib/dues/ledger/record-payment");
+    await appPrisma.$transaction((tx) => assessLateFeeInTx(tx, { context: context(), obligationId: priorMonth, asOf: { year: d.year, month: d.month, day: 20 }, actorId: a.admin.id }, deps()));
+    const feeBefore = await prisma.duesLateFee.findFirstOrThrow({ where: { organizationId: a.org.id, obligationId: priorMonth } });
+    expect(feeBefore.removedAt).toBeNull();
+
+    // Full required total: 100.00 USD debt + 270.00 USD package = 370.00 USD. At 600.00, that is 222000.00 CRC — more
+    // than the original 185000.00 CRC tender.
+    const rate = await enterRate(d, { value: "600.00" });
+    if (!rate.ok) throw new Error("fixture: rate entry failed");
+    const before = await ledgerCounts(a.org.id);
+    const resolved = await resolveAwaitingRateReceipt({ context: context(), receiptId: captured.receiptId! }, deps({ now: nowAt(d) }));
+    expect(resolved).toMatchObject({ ok: false, error: "notASelectableTotal" });
+    expect(await ledgerCounts(a.org.id)).toEqual(before);
+    const receipt = await prisma.awaitingRateReceipt.findUniqueOrThrow({ where: { id: captured.receiptId } });
+    expect(receipt.status).toBe("PENDING");
+    const feeAfter = await prisma.duesLateFee.findUniqueOrThrow({ where: { id: feeBefore.id } });
+    expect(feeAfter.removedAt, "the fee-void performed earlier in THIS SAME resolution attempt must roll back too").toBeNull();
+  });
+
+  it("a rate making the tendered amount excessive refuses, never silently accepted", async () => {
+    const d = freshDate();
+    const s = await newStudent("packageexcessive");
+    const captured = await purchasePackage(
+      {
+        context: context(), studentId: s.id, planTermsId: packageTerms.id, requestedStartMonth: { year: d.year, month: d.month },
+        receivedOn: d, tender: { currency: "CRC", amount: "135000.00" }, method: "EFECTIVO", maxBackdateDays: 5,
+      },
+      deps({ now: nowAt(d) }),
+    );
+    if (captured.ok || captured.error !== "captured") throw new Error("fixture: expected capture");
+    // 270.00 USD at 300.00 is 81000.00 CRC — the original 135000.00 CRC tender is now excessive.
+    const rate = await enterRate(d, { value: "300.00" });
+    if (!rate.ok) throw new Error("fixture: rate entry failed");
+    const before = await ledgerCounts(a.org.id);
+    const resolved = await resolveAwaitingRateReceipt({ context: context(), receiptId: captured.receiptId! }, deps({ now: nowAt(d) }));
+    expect(resolved).toMatchObject({ ok: false, error: "notASelectableTotal" });
+    expect(await ledgerCounts(a.org.id)).toEqual(before);
+    const receipt = await prisma.awaitingRateReceipt.findUniqueOrThrow({ where: { id: captured.receiptId } });
+    expect(receipt.status).toBe("PENDING");
+  });
+
+  it("a rate making it match exactly resolves, with appliedRate* fields asserted against the actual committed quote", async () => {
+    const d = freshDate();
+    const s = await newStudent("packageexactmatch");
+    const captured = await purchasePackage(
+      {
+        context: context(), studentId: s.id, planTermsId: packageTerms.id, requestedStartMonth: { year: d.year, month: d.month },
+        receivedOn: d, tender: { currency: "CRC", amount: "135000.00" }, method: "EFECTIVO", maxBackdateDays: 5,
+      },
+      deps({ now: nowAt(d) }),
+    );
+    if (captured.ok || captured.error !== "captured") throw new Error("fixture: expected capture");
+    const rate = await enterRate(d, { value: "500.00" });
+    if (!rate.ok) throw new Error("fixture: rate entry failed");
+    const resolved = await resolveAwaitingRateReceipt({ context: context(), receiptId: captured.receiptId! }, deps({ now: nowAt(d) }));
+    expect(resolved).toMatchObject({ ok: true });
+    if (!resolved.ok) return;
+    const quote = await prisma.exchangeRateQuote.findUniqueOrThrow({ where: { id: rate.quoteId } });
+    const payment = await prisma.duesPayment.findUniqueOrThrow({ where: { id: resolved.paymentId } });
+    expect(payment.appliedRateId).toBe(quote.id);
+    expect(payment.appliedRateValue?.toFixed(6)).toBe(quote.value.toFixed(6));
+    expect(payment.appliedRateQuoteDate?.toISOString()).toBe(quote.quoteDate.toISOString());
+    expect(payment.appliedRateRevision).toBe(quote.revision);
+    expect(payment.appliedRoundingRule).toBe("HALF_UP_TO_COLON");
+  });
+
+  it("the reverse direction: a CRC-priced package settled in USD validates and writes rate evidence identically", async () => {
+    const d = freshDate();
+    const s = await newStudent("packagereverse");
+    const captured = await purchasePackage(
+      {
+        context: context(), studentId: s.id, planTermsId: crcPackageTerms.id, requestedStartMonth: { year: d.year, month: d.month },
+        receivedOn: d, tender: { currency: "USD", amount: "270.00" }, method: "EFECTIVO", maxBackdateDays: 5,
+      },
+      deps({ now: nowAt(d) }),
+    );
+    if (captured.ok || captured.error !== "captured") throw new Error("fixture: expected capture");
+    // 135000.00 CRC at 500.00 is 270.00 USD exactly.
+    const rate = await enterRate(d, { value: "500.00" });
+    if (!rate.ok) throw new Error("fixture: rate entry failed");
+    const resolved = await resolveAwaitingRateReceipt({ context: context(), receiptId: captured.receiptId! }, deps({ now: nowAt(d) }));
+    expect(resolved).toMatchObject({ ok: true });
+    if (!resolved.ok) return;
+    const payment = await prisma.duesPayment.findUniqueOrThrow({ where: { id: resolved.paymentId } });
+    expect(payment.appliedRoundingRule).toBe("HALF_UP_TO_CENT");
+    expect(payment.appliedRateId).toBe(rate.quoteId);
+  });
+
+  // --- Second review round, finding 3: PACKAGE resolution's coverage/time validation was incomplete, and checked one
+  // span (the snapshotted one) while writing another (the freshly re-resolved terms' own `monthsCovered`).
+
+  it("forbidden drift: resolving once the current month has advanced past the package's own covered span refuses noLongerFuture", async () => {
+    const d = freshDate();
+    const s = await newStudent("packagetimedrift");
+    const captured = await purchasePackage(
+      {
+        context: context(), studentId: s.id, planTermsId: packageTerms.id, requestedStartMonth: { year: d.year, month: d.month },
+        receivedOn: d, tender: { currency: "CRC", amount: "135000.00" }, method: "EFECTIVO", maxBackdateDays: 5,
+      },
+      deps({ now: nowAt(d) }),
+    );
+    if (captured.ok || captured.error !== "captured") throw new Error("fixture: expected capture");
+    const rate = await enterRate(d);
+    if (!rate.ok) throw new Error("fixture: rate entry failed");
+    // The package covers d.month .. d.month + 2; resolving once the current month is past that entirely.
+    const resolved = await resolveAwaitingRateReceipt(
+      { context: context(), receiptId: captured.receiptId! },
+      deps({ now: nowAt({ year: d.year, month: d.month + 3, day: 15 }) }),
+    );
+    expect(resolved).toMatchObject({ ok: false, error: "noLongerFuture" });
+  });
+
+  it("forbidden drift: a month in the captured span becomes covered by something else while PENDING, refuses staleSelection", async () => {
+    const d = freshDate();
+    const s = await newStudent("packagecoverageoccupied");
+    const captured = await purchasePackage(
+      {
+        context: context(), studentId: s.id, planTermsId: packageTerms.id, requestedStartMonth: { year: d.year, month: d.month },
+        receivedOn: d, tender: { currency: "CRC", amount: "135000.00" }, method: "EFECTIVO", maxBackdateDays: 5,
+      },
+      deps({ now: nowAt(d) }),
+    );
+    if (captured.ok || captured.error !== "captured") throw new Error("fixture: expected capture");
+    // Something else now occupies the SECOND month of the captured 3-month span — never looked at, never substituted.
+    const { writeMonthlyObligationInTx } = await import("../../src/lib/dues/ledger/create-monthly-obligation");
+    await appPrisma.$transaction((tx) =>
+      writeMonthlyObligationInTx(
+        tx,
+        { context: context(), student: { id: s.id, homeAcademyId: a.academy.id }, coverage: { year: d.year, month: d.month + 1 }, planTermsId: usdTerms.id, policyVersionId: usdPolicy.id, origin: "STAFF" },
+        deps(),
+      ),
+    );
+    const rate = await enterRate(d);
+    if (!rate.ok) throw new Error("fixture: rate entry failed");
+    const before = await ledgerCounts(a.org.id);
+    const resolved = await resolveAwaitingRateReceipt({ context: context(), receiptId: captured.receiptId! }, deps({ now: nowAt(d) }));
+    expect(resolved).toMatchObject({ ok: false, error: "staleSelection" });
+    expect(await ledgerCounts(a.org.id)).toEqual(before);
+  });
+
+  it("an inconsistent-but-well-formed span (coverageMonths length not matching its own terms) refuses cleanly, never throws", async () => {
+    const d = freshDate();
+    const s = await newStudent("packagemalformedspan");
+    const receipt = await prisma.awaitingRateReceipt.create({
+      data: {
+        organizationId: a.org.id, studentId: s.id, academyId: a.academy.id, kind: "PACKAGE",
+        receivedOn: new Date(Date.UTC(d.year, d.month - 1, d.day)), tenderCurrency: "CRC", tenderAmount: "135000.00",
+        method: "EFECTIVO", capturedAt: nowAt(d)(), capturedById: a.admin.id,
+        snapshot: {
+          kind: "PACKAGE", planTermsId: packageTerms.id, priceAmount: "270.00",
+          startMonth: { year: d.year, month: d.month },
+          coverageMonths: [{ year: d.year, month: d.month }], // length 1, but packageTerms.monthsCovered is 3
+          existingObligationIds: [],
+        },
+      },
+    });
+    const rate = await enterRate(d);
+    if (!rate.ok) throw new Error("fixture: rate entry failed");
+    const before = await ledgerCounts(a.org.id);
+    let threw: unknown;
+    let resolved: Awaited<ReturnType<typeof resolveAwaitingRateReceipt>> | undefined;
+    try {
+      resolved = await resolveAwaitingRateReceipt({ context: context(), receiptId: receipt.id }, deps({ now: nowAt(d) }));
+    } catch (error) {
+      threw = error;
+    }
+    expect(threw, "must return a typed refusal, never throw").toBeUndefined();
+    expect(resolved).toMatchObject({ ok: false, error: "staleTerms" });
+    expect(await ledgerCounts(a.org.id)).toEqual(before);
+    const stored = await prisma.awaitingRateReceipt.findUniqueOrThrow({ where: { id: receipt.id } });
+    expect(stored.status).toBe("PENDING");
+  });
+
+  // These last two tests each supersede their OWN dedicated package plan/terms with a newer-effective version — never
+  // the shared `packageTerms`, so neither can ever stale-out any other test in this describe block regardless of order.
+
+  it("forbidden drift: a changed terms price refuses staleTerms, never silently repriced", async () => {
+    const d = freshDate();
+    const s = await newStudent("packagedrift");
+    // A dedicated, never-shared package plan/terms — superseding it below must never affect any OTHER test's own
+    // `packageTerms.id` staleness check.
+    const plan = await prisma.paymentPlan.create({ data: { organizationId: a.org.id, academyId: a.academy.id, name: `Receipt pricedrift package plan ${suffix}-${s.id}` } });
+    const terms = await prisma.paymentPlanTerms.create({
+      data: { organizationId: a.org.id, planId: plan.id, effectiveYear: 2027, effectiveMonth: 1, priceAmount: "270.00", currency: "USD", monthsCovered: 3, createdById: a.admin.id },
+    });
+    const captured = await purchasePackage(
+      {
+        context: context(), studentId: s.id, planTermsId: terms.id, requestedStartMonth: { year: d.year, month: d.month },
+        receivedOn: d, tender: { currency: "CRC", amount: "135000.00" }, method: "EFECTIVO", maxBackdateDays: 5,
+      },
+      deps({ now: nowAt(d) }),
+    );
+    if (captured.ok || captured.error !== "captured") throw new Error("fixture: expected capture");
 
     // A new terms version supersedes the one this receipt snapshotted.
-    const packagePlanRow = await prisma.paymentPlanTerms.findUniqueOrThrow({ where: { id: packageTerms.id } });
     await prisma.paymentPlanTerms.create({
-      data: { organizationId: a.org.id, planId: packagePlanRow.planId, effectiveYear: 2030, effectiveMonth: 9, priceAmount: "300.00", currency: "USD", monthsCovered: 3, createdById: a.admin.id },
+      data: { organizationId: a.org.id, planId: plan.id, effectiveYear: 2030, effectiveMonth: 9, priceAmount: "300.00", currency: "USD", monthsCovered: 3, createdById: a.admin.id },
     });
 
+    const rate = await enterRate(d);
+    if (!rate.ok) throw new Error("fixture: rate entry failed");
+    const before = await ledgerCounts(a.org.id);
+    const resolved = await resolveAwaitingRateReceipt({ context: context(), receiptId: captured.receiptId! }, deps({ now: nowAt(d) }));
+    expect(resolved).toMatchObject({ ok: false, error: "staleTerms" });
+    expect(await ledgerCounts(a.org.id)).toEqual(before);
+  });
+
+  it("forbidden drift: the terms' own duration changing between capture and resolution refuses staleTerms, never a span mismatch", async () => {
+    const d = freshDate();
+    const s = await newStudent("packagedurationdrift");
+    const plan = await prisma.paymentPlan.create({ data: { organizationId: a.org.id, academyId: a.academy.id, name: `Receipt durationdrift package plan ${suffix}-${s.id}` } });
+    const terms = await prisma.paymentPlanTerms.create({
+      data: { organizationId: a.org.id, planId: plan.id, effectiveYear: 2027, effectiveMonth: 1, priceAmount: "270.00", currency: "USD", monthsCovered: 3, createdById: a.admin.id },
+    });
+    const captured = await purchasePackage(
+      {
+        context: context(), studentId: s.id, planTermsId: terms.id, requestedStartMonth: { year: d.year, month: d.month },
+        receivedOn: d, tender: { currency: "CRC", amount: "135000.00" }, method: "EFECTIVO", maxBackdateDays: 5,
+      },
+      deps({ now: nowAt(d) }),
+    );
+    if (captured.ok || captured.error !== "captured") throw new Error("fixture: expected capture");
+    // Same price (an amount-only check would wrongly pass) but a DIFFERENT monthsCovered — a genuinely new terms version.
+    await prisma.paymentPlanTerms.create({
+      data: { organizationId: a.org.id, planId: plan.id, effectiveYear: 2030, effectiveMonth: 9, priceAmount: "270.00", currency: "USD", monthsCovered: 4, createdById: a.admin.id },
+    });
     const rate = await enterRate(d);
     if (!rate.ok) throw new Error("fixture: rate entry failed");
     const before = await ledgerCounts(a.org.id);
@@ -593,6 +955,101 @@ describe("PREPAYMENT: capture and resolution (mechanism shared with ORDINARY)", 
       deps({ now: nowAt({ year: d.year, month: d.month + 2, day: 15 }) }),
     );
     expect(resolved).toMatchObject({ ok: false, error: "noLongerFuture" });
+  });
+
+  // Second review round, finding 2: the per-month drift check compared `termsNow.id` only, never the terms row's actual
+  // `priceAmount` — a future-effective terms row can be corrected IN PLACE (same id, new price) via its own
+  // revision-token guard, so an id match alone does not prove the price is unchanged.
+  it("forbidden drift: an in-place future-price correction on the snapshotted terms refuses staleTerms, even when the new price numerically matches the original tender", async () => {
+    const d = freshDate();
+    const s = await newStudent("prepaypricedrift");
+    // A dedicated, never-shared plan/terms — `usdTerms` already has other obligations referencing it elsewhere in this
+    // file, and `dues_config_referenced` forbids correcting a REFERENCED terms row (a real DB guard, not an oversight to
+    // work around); this terms row has nothing referencing it until the resolution below actually creates an obligation.
+    const plan = await prisma.paymentPlan.create({ data: { organizationId: a.org.id, academyId: a.academy.id, name: `Receipt pricedrift plan ${suffix}-${s.id}` } });
+    const terms = await prisma.paymentPlanTerms.create({
+      data: { organizationId: a.org.id, planId: plan.id, effectiveYear: 2027, effectiveMonth: 1, priceAmount: "100.00", currency: "USD", monthsCovered: 1, createdById: a.admin.id },
+    });
+    await prisma.studentPlanAssignment.create({ data: { organizationId: a.org.id, studentId: s.id, planId: plan.id, effectiveYear: 2027, effectiveMonth: 1, createdById: a.admin.id } });
+    const captured = await prepayMonthlyObligations(
+      {
+        context: context(), studentId: s.id, requestedMonths: [{ year: d.year, month: d.month + 1 }],
+        receivedOn: d, tender: { currency: "CRC", amount: "50000.00" }, method: "EFECTIVO", maxBackdateDays: 5,
+      },
+      deps({ now: nowAt(d) }),
+    );
+    if (captured.ok || captured.error !== "captured") throw new Error("fixture: expected capture");
+    // In-place correction: SAME terms id, a DIFFERENT price (100.00 -> 125.00). Deliberately paired with a rate
+    // (400.00) that makes 125.00 * 400.00 = 50000.00 — numerically IDENTICAL to the original tender, so an id-only
+    // check would wrongly let this through. The price check must refuse anyway.
+    await prisma.paymentPlanTerms.update({ where: { id: terms.id }, data: { priceAmount: "125.00" } });
+    const rate = await enterRate(d, { value: "400.00" });
+    if (!rate.ok) throw new Error("fixture: rate entry failed");
+    const before = await ledgerCounts(a.org.id);
+    const resolved = await resolveAwaitingRateReceipt({ context: context(), receiptId: captured.receiptId! }, deps({ now: nowAt(d) }));
+    expect(resolved).toMatchObject({ ok: false, error: "staleTerms" });
+    expect(await ledgerCounts(a.org.id)).toEqual(before);
+  });
+});
+
+describe("PREPAYMENT: assignment-lock concurrency (plan's own correctAssignment race)", () => {
+  it("a resolve racing a real correctAssignment call on the same assignment row genuinely blocks, proven by pg_blocking_pids", async () => {
+    const d = freshDate();
+    const s = await newStudent("prepayassignmentrace");
+    const futureMonth = d.month + 1;
+    const assignment = await prisma.studentPlanAssignment.create({
+      data: { organizationId: a.org.id, studentId: s.id, planId: usdPlanId, effectiveYear: d.year, effectiveMonth: futureMonth, createdById: a.admin.id },
+    });
+    const captured = await prepayMonthlyObligations(
+      {
+        context: context(), studentId: s.id, requestedMonths: [{ year: d.year, month: futureMonth }],
+        receivedOn: d, tender: { currency: "CRC", amount: "50000.00" }, method: "EFECTIVO", maxBackdateDays: 5,
+      },
+      deps({ now: nowAt(d) }),
+    );
+    if (captured.ok || captured.error !== "captured") throw new Error("fixture: expected capture");
+    const rate = await enterRate(d);
+    if (!rate.ok) throw new Error("fixture: rate entry failed");
+
+    let resolvePid: number | undefined;
+    let releaseResolve!: () => void;
+    const gate = new Promise<void>((resolve) => { releaseResolve = resolve; });
+
+    const resolvePromise = resolveAwaitingRateReceipt(
+      { context: context(), receiptId: captured.receiptId! },
+      deps({
+        now: nowAt(d),
+        afterResolveAssignmentLockForTest: async (tx: Tx) => {
+          const rows = await tx.$queryRaw<{ pid: number }[]>`SELECT pg_backend_pid() AS pid`;
+          resolvePid = rows[0].pid;
+          await gate; // hold the FOR SHARE lock open until the test releases it below
+        },
+      }),
+    );
+
+    expect(await waitUntil(async () => resolvePid !== undefined), "resolution must reach the assignment lock").toBe(true);
+
+    // A REAL correctAssignment call (its own FOR UPDATE on the SAME row) should now genuinely block behind resolution's
+    // FOR SHARE hold — started concurrently, never awaited before the block is proven.
+    const formData = new FormData();
+    formData.set("assignmentId", assignment.id);
+    formData.set("expectedRevision", "0");
+    formData.set("planId", usdPlanId);
+    const correctPromise = correctAssignment(a.org.id, {}, formData);
+    // correctAssignment opens its own transaction with no test hook of its own — found instead as a genuine, ungranted
+    // lock waiter on the same table, scoped to exclude resolution's own already-known pid.
+    const correctPid = await waitForTransactionIdWaiter(resolvePid ?? -1);
+
+    expect(correctPid, "a real correctAssignment attempt must show up as a genuine, ungranted lock waiter").toBeDefined();
+    expect(resolvePid).toBeDefined();
+    expect(await isBlockedBy(correctPid!, resolvePid!), "correctAssignment must be genuinely blocked by resolution's own FOR SHARE hold").toBe(true);
+
+    releaseResolve();
+    const resolved = await raceWithTimeout(resolvePromise, 5000);
+    expect(resolved.kind).toBe("resolved");
+    if (resolved.kind === "resolved") expect(resolved.value).toMatchObject({ ok: true });
+    const correctResult = await raceWithTimeout(correctPromise, 5000);
+    expect(correctResult.kind).toBe("resolved");
   });
 });
 

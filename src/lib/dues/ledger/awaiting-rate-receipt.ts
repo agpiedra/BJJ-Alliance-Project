@@ -2,15 +2,16 @@ import { z } from "zod";
 import { Prisma, PaymentMethod, type Currency } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import type { TenantContext } from "@/lib/tenant/types";
-import { compareYearMonth, type CalendarDate } from "@/lib/dues/calendar";
+import { addMonths, compareYearMonth, type CalendarDate } from "@/lib/dues/calendar";
 import { currentMonthIn, versionRevision } from "@/lib/dues/config-input";
-import { lateFeeApplies } from "@/lib/dues/settlement";
+import { lateFeeApplies, settleReceipt, type CrossCurrencyCandidates, type SettlementItem } from "@/lib/dues/settlement";
 import { inactiveLedgerActivation, type LedgerDeps } from "@/lib/dues/ledger/activation";
-import { fromDbDate, inTenantScope, latestEffective, lockBranchShared, lockStudent, toDbDate, type Tx } from "@/lib/dues/ledger/common";
+import { fromDbDate, inTenantScope, latestEffective, lockAssignmentShared, lockBranchShared, lockStudent, toDbDate, type Tx } from "@/lib/dues/ledger/common";
 import { voidLateFeeInTx } from "@/lib/dues/ledger/correct-late-fee";
 import { lockExchangeRateNamespaceShared } from "@/lib/dues/ledger/exchange-rate";
+import { resolveCrossCurrency, type RateEvidence } from "@/lib/dues/ledger/cross-currency-settlement";
 import { writeMonthlyObligationInTx } from "@/lib/dues/ledger/create-monthly-obligation";
-import { decimalToMinor } from "@/lib/dues/ledger/minor-units";
+import { MAX_MINOR_UNITS, columnToMinor, decimalToMinor, minorToDecimal } from "@/lib/dues/ledger/minor-units";
 import {
   classifyRecordPaymentError,
   resolveMonthlyDebtItemsInTx,
@@ -20,7 +21,6 @@ import {
   type SettlementLineItem,
 } from "@/lib/dues/ledger/record-payment";
 import { checkPackageCoverageAvailableInTx, resolvePackageTermsInTx, writePackageObligationInTx } from "@/lib/dues/ledger/purchase-package";
-import type { SettlementItem } from "@/lib/dues/settlement";
 
 /**
  * Currency-conversion brief PR 3 (plan §2, §6, §7, §8): an awaiting-rate receipt is captured when a settlement attempt
@@ -242,6 +242,7 @@ export async function resolveAwaitingRateReceipt(
       }
       const locked = await lockStudent(tx, organizationId, pre.studentId);
       if (!locked || locked.homeAcademyId !== pre.academyId) return refuseResolve("notFound");
+      if (deps.afterResolveStudentLockForTest) await deps.afterResolveStudentLockForTest(tx);
 
       // Re-read the receipt fresh, under the lock — the authoritative state. Two concurrent resolution attempts for the
       // same receipt serialize on this student lock; whichever commits first fully determines what the other sees.
@@ -281,13 +282,19 @@ export async function resolveAwaitingRateReceipt(
           const existingObligation = await tx.duesObligation.findFirst({ where: { organizationId, studentId: student.id, coverageYear: m.coverage.year, coverageMonth: m.coverage.month }, select: { id: true } });
           const existingCoverage = await tx.duesCoverage.findFirst({ where: { organizationId, studentId: student.id, year: m.coverage.year, month: m.coverage.month }, select: { id: true } });
           if (existingObligation || existingCoverage) throw new ResolutionRefusedError(refuseResolve("staleSelection"));
-          // Forbidden drift: the snapshotted assignment must still be the one effective for this month, and the
-          // snapshotted terms/policy must still be the ones effective — a changed plan, price or terms version refuses,
-          // never silently re-picks whatever is current now.
+          // Forbidden drift: the snapshotted assignment must still be the one effective for this month. The student lock
+          // alone does not serialize against a concurrent `correctAssignment` call on this specific row (it never
+          // contends for the student row) — `lockAssignmentShared` closes that, taken BEFORE the row's `planId` is
+          // trusted, exactly like `prepayMonthlyObligations`'s own original resolution loop. The candidate is found from
+          // a plain pre-lock read (there is no other way to know WHICH row to lock), then re-read fresh once the lock is
+          // held — never the pre-lock snapshot.
           const assignments = await tx.studentPlanAssignment.findMany({ where: { organizationId, studentId: student.id }, select: { id: true, planId: true, effectiveYear: true, effectiveMonth: true } });
-          const assignmentNow = latestEffective(assignments, m.coverage);
+          const candidate = latestEffective(assignments, m.coverage);
+          if (!candidate) throw new ResolutionRefusedError(refuseResolve("staleTerms")); // no assignment at all for this month: drift
+          if (!(await lockAssignmentShared(tx, organizationId, candidate.id))) throw new ResolutionRefusedError(refuseResolve("staleTerms"));
+          if (deps.afterResolveAssignmentLockForTest) await deps.afterResolveAssignmentLockForTest(tx, candidate.id);
+          const assignmentNow = await tx.studentPlanAssignment.findUniqueOrThrow({ where: { id: candidate.id, organizationId } });
           if (
-            !assignmentNow ||
             assignmentNow.id !== m.assignmentId ||
             assignmentNow.planId === null ||
             versionRevision({ planId: assignmentNow.planId }) !== m.assignmentRevision
@@ -299,6 +306,12 @@ export async function resolveAwaitingRateReceipt(
           const policyHistory = await tx.duesPolicyVersion.findMany({ where: { organizationId, academyId: student.homeAcademyId }, select: { id: true, effectiveYear: true, effectiveMonth: true } });
           const policyNow = latestEffective(policyHistory, m.coverage);
           if (!termsNow || termsNow.id !== m.planTermsId || !policyNow || policyNow.id !== m.policyVersionId) throw new ResolutionRefusedError(refuseResolve("staleTerms"));
+          // A terms version can be corrected IN PLACE (same id, new price) via its own revision-token guard
+          // (`OWNER-CONFIG-BRIEF.md`) — an id match alone does not prove the price itself is unchanged. Re-fetch the
+          // live price and compare against the snapshotted value explicitly, the same drift discipline applied to
+          // everything else here.
+          const termsRowNow = await tx.paymentPlanTerms.findFirstOrThrow({ where: { id: termsNow.id, organizationId }, select: { priceAmount: true } });
+          if (termsRowNow.priceAmount.toFixed(2) !== m.priceAmount) throw new ResolutionRefusedError(refuseResolve("staleTerms"));
 
           const written = await writeMonthlyObligationInTx(tx, { context, student, coverage: m.coverage, planTermsId: m.planTermsId, policyVersionId: m.policyVersionId, origin: "PREPAYMENT" }, deps);
           if (!written.ok) throw new ResolutionRefusedError(refuseResolve(written.error === "notActive" ? "notActive" : "invalid"));
@@ -323,6 +336,11 @@ export async function resolveAwaitingRateReceipt(
         // otherwise make the exact case this feature exists for unresolvable), re-validate terms/coverage against the
         // snapshot, create the package, settle directly through writeSettlementInTx (never recordDuesPaymentInTx/
         // settleObligationsInTx — a package obligation fails that function's own type:"MONTHLY" filter).
+        //
+        // CORRECTED (second review round): capture happens ONLY when `resolveCrossCurrency` found no rate at all — so no
+        // match could possibly have occurred then. The receipt's own `tenderMinor`/`tender` are therefore UNVALIDATED
+        // against any actual total until this resolution step runs the identical cross-currency/settleReceipt matching
+        // `purchasePackage` itself performs at ordinary purchase time, reused here rather than re-implemented.
         const voidResult = await voidWronglyAssessedFeesInTx(tx, { context, obligationIds: snapshot.existingObligationIds, receivedOn }, deps);
         if (!voidResult.ok) throw new ResolutionRefusedError(refuseResolve("notFound"));
 
@@ -331,23 +349,81 @@ export async function resolveAwaitingRateReceipt(
         const termsResolved = await resolvePackageTermsInTx(tx, { organizationId, planTermsId: snapshot.planTermsId, academyId: student.homeAcademyId, currentMonth });
         if (!termsResolved.ok) throw new ResolutionRefusedError(refuseResolve("staleTerms"));
         if (termsResolved.terms.priceAmount.toFixed(2) !== snapshot.priceAmount) throw new ResolutionRefusedError(refuseResolve("staleTerms"));
+        // The terms' own duration can change between capture and resolution — the span `checkPackageCoverageAvailableInTx`
+        // validates and the span `writePackageObligationInTx` actually creates must be the IDENTICAL, already-validated
+        // value (never "check one span, write another"). A length mismatch is itself drift.
+        if (termsResolved.terms.monthsCovered !== snapshot.coverageMonths.length) throw new ResolutionRefusedError(refuseResolve("staleTerms"));
 
-        const coverageAvailable = await checkPackageCoverageAvailableInTx(tx, { organizationId, studentId: student.id, startMonth: snapshot.startMonth, monthsCovered: snapshot.coverageMonths.length });
+        // Forbidden drift (the package analog of PREPAYMENT's `noLongerFuture`): re-run the IDENTICAL current-month/horizon
+        // rule `purchasePackage` enforces at capture time, against the LIVE current month — never silently reinterpreted.
+        const policyHistory = await tx.duesPolicyVersion.findMany({
+          where: { organizationId, academyId: student.homeAcademyId },
+          select: { effectiveYear: true, effectiveMonth: true, maxPrepaidMonths: true },
+        });
+        const effectivePolicy = latestEffective(policyHistory, currentMonth);
+        if (!effectivePolicy || effectivePolicy.maxPrepaidMonths === null) throw new ResolutionRefusedError(refuseResolve("noLongerFuture"));
+        const horizonEnd = addMonths(currentMonth, effectivePolicy.maxPrepaidMonths);
+        const finalMonth = addMonths(snapshot.startMonth, termsResolved.terms.monthsCovered - 1);
+        if (compareYearMonth(finalMonth, currentMonth) <= 0 || compareYearMonth(finalMonth, horizonEnd) > 0) {
+          throw new ResolutionRefusedError(refuseResolve("noLongerFuture"));
+        }
+
+        const coverageAvailable = await checkPackageCoverageAvailableInTx(tx, { organizationId, studentId: student.id, startMonth: snapshot.startMonth, monthsCovered: termsResolved.terms.monthsCovered });
         if (!coverageAvailable.ok) throw new ResolutionRefusedError(refuseResolve("staleSelection"));
 
         const debtResult = await resolveMonthlyDebtItemsInTx(tx, { organizationId, studentId: student.id, obligationIds: snapshot.existingObligationIds, receivedOn });
         if (!debtResult.ok) throw new ResolutionRefusedError(refuseResolve(debtResult.error, { alreadySettledIds: debtResult.alreadySettledIds }));
         if (debtResult.chosenItems.length !== debtResult.allOpenItems.length) throw new ResolutionRefusedError(refuseResolve("staleSelection"));
 
-        const obligation = await writePackageObligationInTx(tx, { context, student, terms: termsResolved.terms, startMonth: snapshot.startMonth });
-        const packageItem: SettlementLineItem = { obligationId: obligation.obligationId, currency: termsResolved.terms.currency, amountMinor: decimalToMinor(snapshot.priceAmount), feeEligible: false, expectedOwed: false };
+        // Resolve and total EVERYTHING — including the cross-currency check — BEFORE the package obligation exists, the
+        // identical placeholder-id technique `purchasePackage` uses: `settleReceipt`'s own matching compares amounts only
+        // and reports `settledIds` by COUNT, never identity, so matching against a placeholder and swapping in the real id
+        // only once every check has passed is exact, not an approximation.
+        const PACKAGE_PLACEHOLDER_ID = "__package_resolving__";
+        const packageAmountMinor = columnToMinor(termsResolved.terms.priceAmount);
+        const packageItem: SettlementLineItem = { obligationId: PACKAGE_PLACEHOLDER_ID, currency: termsResolved.terms.currency, amountMinor: packageAmountMinor, feeEligible: false, expectedOwed: false };
         const allItems: SettlementLineItem[] = [...debtResult.chosenItems, packageItem];
         const settlementItems: SettlementItem[] = allItems.map((i) => ({ id: i.obligationId, currency: i.currency, amountMinor: i.amountMinor }));
-        const written = await writeSettlementInTx(tx, { context, student, receivedOn, tender, method: receipt.method, notes: receipt.notes ?? undefined, settledItems: allItems, resolvedFromReceiptId: receipt.id }, deps);
-        // writeSettlementInTx trusts its caller's own match — settlementItems is referenced only to keep the shape
-        // consistent with the other two branches; the actual total/currency match already happened at capture time and
-        // is re-proven correct simply by `tenderMinor`/`tender` being the receipt's own immutable, already-matched values.
-        void settlementItems;
+        const fullTotalMinor = settlementItems.reduce((sum, i) => sum + i.amountMinor, 0);
+
+        if (settlementItems.length > 0 && settlementItems[0].amountMinor > MAX_MINOR_UNITS) throw new ResolutionRefusedError(refuseResolve("amountUnsupported"));
+        if (fullTotalMinor > MAX_MINOR_UNITS) throw new ResolutionRefusedError(refuseResolve("amountUnsupported"));
+
+        const itemCurrencies = new Set(settlementItems.map((i) => i.currency));
+        let crossCurrency: CrossCurrencyCandidates | undefined;
+        let rateEvidence: RateEvidence | undefined;
+        let fullTotalRequiredMinor = fullTotalMinor;
+        if (itemCurrencies.size === 1 && !itemCurrencies.has(tender.currency)) {
+          const resolved = await resolveCrossCurrency(tx, {
+            organizationId, items: settlementItems, itemCurrency: [...itemCurrencies][0], receiptCurrency: tender.currency, receivedOn,
+          });
+          // No eligible quote at RESOLUTION time: unlike capture, there is no second place left to capture into — this
+          // receipt IS the capture. Refuse atomically; the receipt stays PENDING, nothing commits (including the fee void
+          // already performed above in this same transaction).
+          if (!resolved.ok) throw new ResolutionRefusedError(refuseResolve("rateUnavailable"));
+          crossCurrency = resolved.candidates;
+          rateEvidence = resolved.evidence;
+          const full = crossCurrency.totals.find((t) => t.sourceMinor === fullTotalMinor);
+          if (!full) throw new ResolutionRefusedError(refuseResolve("amountUnsupported"));
+          fullTotalRequiredMinor = full.requiredMinor;
+        }
+        const fullTotalOffer = [minorToDecimal(fullTotalRequiredMinor)];
+
+        const result = settleReceipt(settlementItems, tenderMinor, tender.currency, crossCurrency);
+        if (!result.ok) {
+          if (result.reason === "CURRENCY_MISMATCH") throw new ResolutionRefusedError(refuseResolve("currencyMismatch"));
+          if (result.reason === "AMBIGUOUS_TOTAL") throw new ResolutionRefusedError(refuseResolve("ambiguousTotal"));
+          throw new ResolutionRefusedError(refuseResolve("notASelectableTotal", { selectableTotals: fullTotalOffer }));
+        }
+        if (result.settledIds.length !== allItems.length) {
+          throw new ResolutionRefusedError(refuseResolve("totalMismatch", { selectableTotals: fullTotalOffer }));
+        }
+
+        // Every check has passed, including that a rate (if needed) genuinely resolved and the tender genuinely matches
+        // the full computed total: only NOW is the package obligation (and its coverage rows) actually created.
+        const obligation = await writePackageObligationInTx(tx, { context, student, terms: termsResolved.terms, startMonth: snapshot.startMonth });
+        const finalItems: SettlementLineItem[] = allItems.map((i) => (i.obligationId === PACKAGE_PLACEHOLDER_ID ? { ...i, obligationId: obligation.obligationId } : i));
+        const written = await writeSettlementInTx(tx, { context, student, receivedOn, tender, method: receipt.method, notes: receipt.notes ?? undefined, settledItems: finalItems, rateEvidence, resolvedFromReceiptId: receipt.id }, deps);
         settled = { ok: true, paymentId: written.paymentId, settlementIds: written.settlementIds, totalMinor: tenderMinor };
       }
 
@@ -405,6 +481,7 @@ export async function cancelAwaitingRateReceipt(
   return await prisma.$transaction(async (tx): Promise<CancelAwaitingRateReceiptResult> => {
     const locked = await lockStudent(tx, organizationId, pre.studentId);
     if (!locked || locked.homeAcademyId !== pre.academyId) return { ok: false, error: "notFound" };
+    if (deps.afterCancelStudentLockForTest) await deps.afterCancelStudentLockForTest(tx);
 
     const receipt = await tx.awaitingRateReceipt.findFirst({ where: { id: receiptId, organizationId }, select: { id: true, status: true, academyId: true } });
     if (!receipt) return { ok: false, error: "notFound" };
