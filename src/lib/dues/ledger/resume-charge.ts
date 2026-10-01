@@ -18,8 +18,13 @@ import { appendStatusChange } from "@/lib/students/status-history";
  * On `{ ok: false, error: "notActive" }`, the caller must run its own unchanged, pre-existing
  * inactive-path code — this is not a user-facing error, it is the signal that billing is not active
  * for this organization at all. Every other `ok: false` is a genuine refusal of the resume attempt
- * itself: status, history and audit are NOT written by the caller in that case, and nothing in this
- * function writes anything before the configuration/coverage checks below all pass.
+ * itself: status, history and audit are not left in place by this function in that case. For a
+ * configuration-gap refusal (returned before any write below — see the coverage-then-configuration
+ * ordering further down) that is because nothing was written at all. But a lost-race `"conflict"`
+ * refusal from the final `student.updateMany` CAN occur after `writeMonthlyObligationInTx` already
+ * performed a real write (a new obligation, or coverage row) earlier in this same call — this
+ * function does not undo that write itself. Full rollback in that case depends entirely on the
+ * caller (`resumeStudent`) treating this refusal as a thrown error inside its own `$transaction`.
  */
 export type ResumeChargeError = "notActive" | "conflict" | "notFound" | Exclude<CreateMonthlyObligationError, "notActive" | "invalid" | "futureMonth" | "conflict" | "coverageTaken">;
 
@@ -53,34 +58,55 @@ export async function resumeChargeInTx(
   const resumeDate = todayIn(branch.timezone, resumeInstant);
   const coverage = { year: resumeDate.year, month: resumeDate.month };
 
-  // Resolve the effective assignment, then terms and policy for this one month — the identical
-  // resolution shape `prepayMonthlyObligations` already uses per requested month.
-  const assignments = await tx.studentPlanAssignment.findMany({
-    where: { organizationId, studentId: student.id },
-    select: { id: true, planId: true, effectiveYear: true, effectiveMonth: true },
+  // CORRECTED (second review round): existing coverage must be checked BEFORE resolving assignment/terms/policy for
+  // a HYPOTHETICAL new charge. The original order resolved assignment first, wrongly refusing `inapplicable` for a
+  // student whose resume month was already covered but who happens to have no assignment for a charge that was
+  // never going to be needed. Reuses the IDENTICAL queries `writeMonthlyObligationInTx` itself performs internally
+  // (`create-monthly-obligation.ts`) — not a second, drifting copy of this check — so "already covered" means
+  // exactly the same thing here as it does there.
+  const existingMonthly = await tx.duesObligation.findFirst({
+    where: { organizationId, studentId: student.id, type: "MONTHLY", coverageYear: coverage.year, coverageMonth: coverage.month },
+    select: { id: true },
   });
-  const candidate = latestEffective(assignments, coverage);
-  if (!candidate) return { ok: false, error: "inapplicable" }; // no assignment at all for this month: config gap
-  if (!(await lockAssignmentShared(tx, organizationId, candidate.id))) return { ok: false, error: "notFound" };
-  const assignment = await tx.studentPlanAssignment.findUniqueOrThrow({ where: { id: candidate.id, organizationId } });
-  if (assignment.planId === null) return { ok: false, error: "inapplicable" }; // explicitly unassigned: config gap
+  const coverageTaken = existingMonthly ? null : await tx.duesCoverage.findFirst({ where: { organizationId, studentId: student.id, year: coverage.year, month: coverage.month }, select: { id: true } });
+  let chargedObligationId: string | null = existingMonthly?.id ?? null;
 
-  const termsCandidates = await tx.paymentPlanTerms.findMany({ where: { organizationId, planId: assignment.planId }, select: { id: true, effectiveYear: true, effectiveMonth: true } });
-  const termsCandidate = latestEffective(termsCandidates, coverage);
-  const policyHistory = await tx.duesPolicyVersion.findMany({ where: { organizationId, academyId: student.homeAcademyId }, select: { id: true, effectiveYear: true, effectiveMonth: true } });
-  const policyCandidate = latestEffective(policyHistory, coverage);
-  if (!termsCandidate || !policyCandidate) return { ok: false, error: "inapplicable" }; // config gap
+  if (!existingMonthly && !coverageTaken) {
+    // Genuinely uncovered: ONLY NOW does a hypothetical new charge's own configuration need to resolve — resolve the
+    // effective assignment, then terms and policy for this one month, the identical resolution shape
+    // `prepayMonthlyObligations` already uses per requested month.
+    const assignments = await tx.studentPlanAssignment.findMany({
+      where: { organizationId, studentId: student.id },
+      select: { id: true, planId: true, effectiveYear: true, effectiveMonth: true },
+    });
+    const candidate = latestEffective(assignments, coverage);
+    if (!candidate) return { ok: false, error: "inapplicable" }; // no assignment at all for this month: config gap
+    if (!(await lockAssignmentShared(tx, organizationId, candidate.id))) return { ok: false, error: "notFound" };
+    const assignment = await tx.studentPlanAssignment.findUniqueOrThrow({ where: { id: candidate.id, organizationId } });
+    if (assignment.planId === null) return { ok: false, error: "inapplicable" }; // explicitly unassigned: config gap
 
-  const written = await writeMonthlyObligationInTx(
-    tx,
-    { context, student, coverage, planTermsId: termsCandidate.id, policyVersionId: policyCandidate.id, origin: "STAFF", minimumDueOn: resumeDate },
-    deps,
-  );
-  // Approved outcome rule: an existing MONTHLY (created: false) or package coverage (coverageTaken)
-  // both let resume proceed without a new charge — everything else is a genuine configuration gap
-  // that refuses the WHOLE attempt. Nothing has been written yet at this point either way.
-  if (!written.ok && written.error !== "coverageTaken") {
-    return { ok: false, error: written.error as ResumeChargeError };
+    const termsCandidates = await tx.paymentPlanTerms.findMany({ where: { organizationId, planId: assignment.planId }, select: { id: true, effectiveYear: true, effectiveMonth: true } });
+    const termsCandidate = latestEffective(termsCandidates, coverage);
+    const policyHistory = await tx.duesPolicyVersion.findMany({ where: { organizationId, academyId: student.homeAcademyId }, select: { id: true, effectiveYear: true, effectiveMonth: true } });
+    const policyCandidate = latestEffective(policyHistory, coverage);
+    if (!termsCandidate || !policyCandidate) return { ok: false, error: "inapplicable" }; // config gap
+
+    const written = await writeMonthlyObligationInTx(
+      tx,
+      { context, student, coverage, planTermsId: termsCandidate.id, policyVersionId: policyCandidate.id, origin: "STAFF", minimumDueOn: resumeDate },
+      deps,
+    );
+    // written.error === "coverageTaken"/an existing-MONTHLY `created: false` are both unreachable here in practice
+    // (this branch only runs once this function's own fresh coverage check above already found neither) — kept as a
+    // defensive fallback, never the primary mechanism, in case of a genuine race with a concurrent writer under the
+    // same locks (the student lock already serializes against another resume; a concurrent DIFFERENT writer taking
+    // the identical lock order could still interleave here in principle). Any other refusal here is a genuine
+    // configuration gap — reached only when this function has not yet written anything — that refuses the WHOLE
+    // attempt, matching §5's approved rule.
+    if (!written.ok && written.error !== "coverageTaken") {
+      return { ok: false, error: written.error as ResumeChargeError };
+    }
+    if (written.ok) chargedObligationId = written.obligationId;
   }
   if (deps.afterResumeObligationWrittenForTest) await deps.afterResumeObligationWrittenForTest();
 
@@ -108,7 +134,7 @@ export async function resumeChargeInTx(
       entityType: "Student",
       entityId: student.id,
       before: { status: StudentStatus.INACTIVE },
-      after: { status: StudentStatus.ACTIVE, chargedObligationId: written.ok ? written.obligationId : null },
+      after: { status: StudentStatus.ACTIVE, chargedObligationId },
     },
   });
 

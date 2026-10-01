@@ -88,8 +88,10 @@ class StudentWriteMissError extends Error {
 }
 
 /** Tags a genuine refusal from `resumeChargeInTx`'s gated path (a configuration gap, or a lost race) so it can be
- * thrown — forcing the transaction to roll back whatever `resumeChargeInTx` had not yet committed (nothing, by
- * design: it refuses before writing anything) — and converted back to a specific `ActionState` error afterward. */
+ * thrown — forcing this transaction to roll back. A configuration-gap refusal has written nothing to roll back; a
+ * lost-race `"conflict"` refusal can follow a real write `resumeChargeInTx` already made earlier in the same call
+ * (see that function's own doc comment) — rollback of that write depends entirely on this throw, not on
+ * `resumeChargeInTx` itself having written nothing. Converted back to a specific `ActionState` error afterward. */
 class ResumeChargeRefusedError extends Error {
   constructor(public readonly reason: string) {
     super(`resume charge refused: ${reason}`);
@@ -658,8 +660,9 @@ export async function resumeStudent(
       if (charged.ok) return; // the gated path already wrote status/history/audit/obligation together
 
       if (charged.error !== "notActive") {
-        // A genuine refusal on the gated path (a configuration gap, or a lost race) — the whole attempt refuses;
-        // resumeChargeInTx has written nothing in either case, so there is nothing to roll back beyond this throw.
+        // A genuine refusal on the gated path (a configuration gap, or a lost race) — the whole attempt refuses.
+        // A configuration gap has written nothing; a lost-race "conflict" can follow a real write made earlier in
+        // this same call, and this throw is what rolls that write back (see ResumeChargeRefusedError's own comment).
         throw new ResumeChargeRefusedError(charged.error);
       }
 

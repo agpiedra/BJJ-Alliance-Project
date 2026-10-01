@@ -4,7 +4,7 @@ import type { TenantContext } from "@/lib/tenant/types";
 import { assertYearMonth, compareDates, compareYearMonth, dueDateFor, graceDeadlineFor, type CalendarDate, type YearMonth } from "@/lib/dues/calendar";
 import { currentMonthIn } from "@/lib/dues/config-input";
 import { inactiveLedgerActivation, type LedgerDeps } from "@/lib/dues/ledger/activation";
-import { inTenantScope, latestEffective, lockBranchShared, lockPolicyShared, lockStudent, lockTermsShared, toDbDate, type Tx } from "@/lib/dues/ledger/common";
+import { inTenantScope, isRealDate, latestEffective, lockBranchShared, lockPolicyShared, lockStudent, lockTermsShared, toDbDate, type Tx } from "@/lib/dues/ledger/common";
 
 export type CreateMonthlyObligationError =
   | "notActive"
@@ -73,6 +73,17 @@ export async function writeMonthlyObligationInTx(
   const activation = deps.activation ?? inactiveLedgerActivation;
   if (!(await activation.isActive(organizationId))) return refuse("notActive");
   if (!isValidCoverageMonth(coverage)) return refuse("invalid");
+  // minimumDueOn (resume-charge integration): validated here, early, alongside this function's other format/shape
+  // checks — before any database lookup, not at the point the due date is actually computed. `undefined` (every
+  // existing caller) is valid and applies no floor; a SUPPLIED but malformed value (not a real calendar date, or a
+  // real date outside coverage's own month) refuses `invalid` — never silently treated as if it had been omitted.
+  if (minimumDueOn !== undefined) {
+    // The `!minimumDueOn ||` guard matches this ledger's own established pattern (record-payment.ts/correct-late-fee.ts:
+    // `if (!x || !isRealDate(x)) return refuse("invalid")`) — isRealDate itself dereferences its argument's fields, so
+    // a literal `null` (a malformed value reaching this far, not merely omitted) must be caught before calling it.
+    if (!minimumDueOn || !isRealDate(minimumDueOn)) return refuse("invalid");
+    if (minimumDueOn.year !== coverage.year || minimumDueOn.month !== coverage.month) return refuse("invalid");
+  }
   if (!inTenantScope(context, student.homeAcademyId)) return refuse("notFound");
 
   // A duplicate returns the existing obligation and changes nothing: no snapshot edit, no coverage row, no audit row.
@@ -105,7 +116,6 @@ export async function writeMonthlyObligationInTx(
   if (!plan || plan.academyId !== student.homeAcademyId || policy.academyId !== student.homeAcademyId || terms.monthsCovered !== 1) return refuse("inapplicable");
   if (terms.currency !== policy.lateFeeCurrency) return refuse("currencyMismatch");
 
-  if (minimumDueOn && (minimumDueOn.year !== coverage.year || minimumDueOn.month !== coverage.month)) return refuse("invalid");
   const computedDue = dueDateFor(coverage, policy.dueDay);
   const due = minimumDueOn && compareDates(minimumDueOn, computedDue) > 0 ? minimumDueOn : computedDue;
   const grace = graceDeadlineFor(coverage, policy.graceDay);
