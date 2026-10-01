@@ -134,4 +134,22 @@ export interface LedgerDeps {
    * `correctAssignment` call on the SAME assignment row.
    */
   afterResolveAssignmentLockForTest?: (tx: Tx, assignmentId: string) => Promise<void>;
+  /**
+   * Test-only synchronization point, called by `resumeChargeInTx` (resume-charge.ts) right after its
+   * `DuesObligation`/`DuesCoverage` write (or after determining none was needed) but before the
+   * status/history/audit writes — never referenced by production code, never given a value outside a
+   * test. Lets a test force a failure there to prove the obligation, status, history and audit all
+   * roll back together, rather than assuming Prisma's transaction semantics "just work" without ever
+   * exercising it.
+   */
+  afterResumeObligationWrittenForTest?: () => Promise<void>;
+  /**
+   * Test-only synchronization point, called by `resumeChargeInTx` (resume-charge.ts) right after its branch/student
+   * locks succeed and the fresh re-validation passes, before resolving coverage/terms/policy — never referenced by
+   * production code, never given a value outside a test. Lets a test pause one resume there, still holding both
+   * locks, for a genuine-overlap proof: either against another real resume for a DIFFERENT student in the same
+   * organization (proving the branch's own FOR SHARE lock lets both proceed concurrently), or against a concurrent
+   * `correctAssignment` call on the specific assignment row this resume is about to read.
+   */
+  afterResumeLocksForTest?: () => Promise<void>;
 }
