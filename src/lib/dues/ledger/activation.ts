@@ -169,4 +169,12 @@ export interface LedgerDeps {
    * together.
    */
   afterGenuineReturnObligationWrittenForTest?: () => Promise<void>;
+  /**
+   * Test-only synchronization point, called by `genuineReturnChargeInTx` (genuine-return-charge.ts) right after its
+   * status/membership/`StudentStatusChange` writes but before the audit row — never referenced by production code,
+   * never given a value outside a test. The latest possible point to force a failure: proves status, membership AND
+   * history (not just the obligation `afterGenuineReturnObligationWrittenForTest` already covers) all roll back
+   * together when something fails even this late, one statement before the transaction would otherwise commit.
+   */
+  afterGenuineReturnStatusWrittenForTest?: () => Promise<void>;
 }

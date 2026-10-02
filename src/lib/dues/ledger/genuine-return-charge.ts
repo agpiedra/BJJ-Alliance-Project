@@ -114,6 +114,7 @@ export async function genuineReturnChargeInTx(
     source: "EVENT",
     actorId: context.actorUserId,
   });
+  if (deps.afterGenuineReturnStatusWrittenForTest) await deps.afterGenuineReturnStatusWrittenForTest();
 
   await tx.auditLog.create({
     data: {
