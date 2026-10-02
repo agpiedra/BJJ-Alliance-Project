@@ -12,7 +12,11 @@ export type EnrollmentRefusalReason =
   | "staleVersion"
   | "currencyMismatch"
   | "requiresAdmin"
-  | "planConflict";
+  | "planConflict"
+  // §7.7, corrected: a missing, blank, or malformed creationRequestId on the active-billing path — required before
+  // any write, distinct from every other refusal above (createStudentInTx only; approveStudentInTx never touches
+  // creationRequestId at all, since approval targets an EXISTING student row).
+  | "missingSubmissionIdentity";
 
 export class EnrollmentRefusedError extends Error {
   constructor(public readonly reason: EnrollmentRefusalReason) {

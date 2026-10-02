@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { getTestPrismaClient } from "../helpers/test-db";
 import { prisma as appPrisma } from "../../src/lib/prisma";
 import { makeAccountingOrg } from "../helpers/accounting-org";
+import { hashSecret } from "../../src/lib/crypto";
 import type { TenantContext } from "../../src/lib/tenant/types";
 import type { LedgerActivation } from "../../src/lib/dues/ledger/activation";
 import { enrollmentChargeInTx } from "../../src/lib/dues/ledger/enrollment-charge";
@@ -27,8 +28,11 @@ const deps = (extra: Record<string, unknown> = {}) => ({ activation: ACTIVE, ...
 
 let currentSession: { user: { id: string; role: string } | null; activeOrganizationId?: string } | null = null;
 vi.mock("@/auth", () => ({ auth: () => Promise.resolve(currentSession), signIn: vi.fn() }));
-const { approveStudent, approveStudentInTx } = await import("../../src/app/[locale]/(staff)/students/[id]/actions");
-const { createStudent, createStudentCore } = await import("../../src/app/[locale]/(staff)/students/create-student-action");
+const { approveStudent } = await import("../../src/app/[locale]/(staff)/students/[id]/actions");
+const { approveStudentInTx } = await import("../../src/app/[locale]/(staff)/students/[id]/approve-student-core");
+const { createStudent } = await import("../../src/app/[locale]/(staff)/students/create-student-action");
+const { createStudentCore } = await import("../../src/app/[locale]/(staff)/students/create-student-core");
+const { assignPlan } = await import("../../src/lib/dues/assignment-actions");
 
 let a: Fixture;
 let planA: { id: string }; // monthly, dueDay 5
@@ -301,7 +305,10 @@ describe("createStudentCore: §7.6 plan-selection, authorization, and §7.7 subm
     const data = baseData({ currentRankId: rankId, ...overrides });
     return {
       context: context(), academy: { organizationId: a.org.id, timezone: a.academy.timezone }, data, rank: { id: rankId, code: "WHITE" },
-      codeHash: `core-${Math.random()}-${suffix}`, beltAwardedAt: new Date(), planId: null, creationRequestId: null, fingerprint: {},
+      // §7.7 corrected: a well-formed creationRequestId is now REQUIRED whenever billing is active, so every test in
+      // this block that isn't specifically exercising that new requirement needs one by default — only the tests
+      // under "required active-billing submission identity" below deliberately override this to null/blank/malformed.
+      codeHash: `core-${Math.random()}-${suffix}`, beltAwardedAt: new Date(), planId: null, creationRequestId: crypto.randomUUID(), fingerprint: {},
       ...over,
     };
   }
@@ -351,8 +358,50 @@ describe("createStudentCore: §7.6 plan-selection, authorization, and §7.7 subm
     expect(row.creationFingerprint).toBeNull();
   });
 
+  describe("§7.7 corrected: a well-formed creationRequestId is REQUIRED whenever billing is active", () => {
+    it("active + omitted creationRequestId: refuses missingSubmissionIdentity, zero writes of any kind", async () => {
+      const args = await coreArgs({}, { planId: planA.id, creationRequestId: undefined, fingerprint: { planId: planA.id } });
+      const before = await ledgerCounts();
+      const result = await createStudentCore(args as never, deps({ now: at("2032-04-07T09:00:00") }));
+      expect(result).toEqual({ ok: false, error: "missingSubmissionIdentity" });
+      expect(await ledgerCounts()).toEqual(before);
+    });
+
+    it("active + blank creationRequestId: refuses missingSubmissionIdentity, zero writes", async () => {
+      const args = await coreArgs({}, { planId: planA.id, creationRequestId: "", fingerprint: { planId: planA.id } });
+      const before = await ledgerCounts();
+      const result = await createStudentCore(args as never, deps({ now: at("2032-04-07T09:05:00") }));
+      expect(result).toEqual({ ok: false, error: "missingSubmissionIdentity" });
+      expect(await ledgerCounts()).toEqual(before);
+    });
+
+    it("active + malformed creationRequestId (not the shape crypto.randomUUID() generates): refuses missingSubmissionIdentity, zero writes", async () => {
+      const args = await coreArgs({}, { planId: planA.id, creationRequestId: "not-a-real-uuid", fingerprint: { planId: planA.id } });
+      const before = await ledgerCounts();
+      const result = await createStudentCore(args as never, deps({ now: at("2032-04-07T09:10:00") }));
+      expect(result).toEqual({ ok: false, error: "missingSubmissionIdentity" });
+      expect(await ledgerCounts()).toEqual(before);
+    });
+
+    it("active + well-formed creationRequestId: proceeds exactly as every other active-billing test in this file already proves", async () => {
+      const args = await coreArgs({}, { planId: planA.id, creationRequestId: crypto.randomUUID(), fingerprint: { planId: planA.id } });
+      const before = await ledgerCounts();
+      const result = await createStudentCore(args as never, deps({ now: at("2032-04-07T09:15:00") }));
+      expect(result.ok).toBe(true);
+      expect((await ledgerCounts()).students).toBe(before.students + 1);
+    });
+
+    it("inactive + omitted/blank/malformed creationRequestId: all succeed exactly as before this correction (no new refusal)", async () => {
+      for (const badValue of [undefined, "", "not-a-real-uuid"]) {
+        const args = await coreArgs({ email: `inactive-no-identity-${Math.random()}-${suffix}@example.com` }, { creationRequestId: badValue });
+        const result = await createStudentCore(args as never, {}); // default deps => inactive
+        expect(result.ok, `expected success for creationRequestId=${JSON.stringify(badValue)} while inactive`).toBe(true);
+      }
+    });
+  });
+
   it("same creationRequestId, identical data, two sequential calls: exactly one Student row, both calls report success", async () => {
-    const key = `req-${suffix}-retry-identical`;
+    const key = crypto.randomUUID();
     const email = `retry-identical-${suffix}@example.com`;
     const args = { ...(await coreArgs({ email }, { creationRequestId: key, planId: planA.id })) };
     const fp = { email, firstName: "Core", lastName: "Student", planId: planA.id };
@@ -367,7 +416,7 @@ describe("createStudentCore: §7.6 plan-selection, authorization, and §7.7 subm
   });
 
   it("same creationRequestId, CONFLICTING data: refuses explicitly, original row unchanged", async () => {
-    const key = `req-${suffix}-retry-conflict`;
+    const key = crypto.randomUUID();
     const email = `retry-conflict-${suffix}@example.com`;
     const args = await coreArgs({ email }, { creationRequestId: key, planId: planA.id });
     const first = await createStudentCore({ ...args, fingerprint: { email, firstName: "Core", planId: planA.id } } as never, deps({ now: at("2032-05-02T09:00:00") }));
@@ -381,8 +430,8 @@ describe("createStudentCore: §7.6 plan-selection, authorization, and §7.7 subm
   it("different creationRequestIds, similar data: two separate students are created", async () => {
     const email1 = `different-key-1-${suffix}@example.com`;
     const email2 = `different-key-2-${suffix}@example.com`;
-    const args1 = await coreArgs({ email: email1, firstName: "Same" }, { creationRequestId: `req-${suffix}-a`, planId: planA.id });
-    const args2 = await coreArgs({ email: email2, firstName: "Same" }, { creationRequestId: `req-${suffix}-b`, planId: planA.id });
+    const args1 = await coreArgs({ email: email1, firstName: "Same" }, { creationRequestId: crypto.randomUUID(), planId: planA.id });
+    const args2 = await coreArgs({ email: email2, firstName: "Same" }, { creationRequestId: crypto.randomUUID(), planId: planA.id });
     const r1 = await createStudentCore({ ...args1, fingerprint: { email: email1, firstName: "Same", planId: planA.id } } as never, deps({ now: at("2032-05-03T09:00:00") }));
     const r2 = await createStudentCore({ ...args2, fingerprint: { email: email2, firstName: "Same", planId: planA.id } } as never, deps({ now: at("2032-05-03T09:01:00") }));
     expect(r1.ok && r2.ok).toBe(true);
@@ -391,7 +440,7 @@ describe("createStudentCore: §7.6 plan-selection, authorization, and §7.7 subm
   });
 
   it("retry AFTER the created student's mutable fields were edited: still recognized via the stored fingerprint, not current fields", async () => {
-    const key = `req-${suffix}-retry-after-edit`;
+    const key = crypto.randomUUID();
     const email = `retry-after-edit-${suffix}@example.com`;
     const args = await coreArgs({ email }, { creationRequestId: key, planId: planA.id });
     const first = await createStudentCore({ ...args, fingerprint: { email, firstName: "Core", planId: planA.id } } as never, deps({ now: at("2032-05-04T09:00:00") }));
@@ -405,7 +454,7 @@ describe("createStudentCore: §7.6 plan-selection, authorization, and §7.7 subm
   it("same creationRequestId reused across two different organizations: no collision", async () => {
     const b = await makeAccountingOrg("CUMULATIVE", "enroll-b");
     try {
-      const key = `req-${suffix}-cross-org`;
+      const key = crypto.randomUUID();
       const emailA = `cross-org-a-${suffix}@example.com`;
       const emailB = `cross-org-b-${suffix}@example.com`;
       const argsA = await coreArgs({ email: emailA }, { creationRequestId: key, planId: planA.id });
@@ -431,16 +480,16 @@ describe("createStudentCore: §7.6 plan-selection, authorization, and §7.7 subm
     const sharedCodeHash = `collide-${suffix}`;
     const email1 = `collide-1-${suffix}@example.com`;
     const email2 = `collide-2-${suffix}@example.com`;
-    const args1 = await coreArgs({ email: email1 }, { codeHash: sharedCodeHash, creationRequestId: `req-${suffix}-collide-1`, planId: planA.id, fingerprint: { email: email1, planId: planA.id } });
+    const args1 = await coreArgs({ email: email1 }, { codeHash: sharedCodeHash, creationRequestId: crypto.randomUUID(), planId: planA.id, fingerprint: { email: email1, planId: planA.id } });
     const first = await createStudentCore(args1 as never, deps({ now: at("2032-05-06T09:00:00") }));
     expect(first.ok).toBe(true);
-    const args2 = await coreArgs({ email: email2 }, { codeHash: sharedCodeHash, creationRequestId: `req-${suffix}-collide-2`, planId: planA.id, fingerprint: { email: email2, planId: planA.id } });
+    const args2 = await coreArgs({ email: email2 }, { codeHash: sharedCodeHash, creationRequestId: crypto.randomUUID(), planId: planA.id, fingerprint: { email: email2, planId: planA.id } });
     await expect(createStudentCore(args2 as never, deps({ now: at("2032-05-06T09:01:00") }))).rejects.toThrow();
     expect(await prisma.student.count({ where: { organizationId: a.org.id, email: email2 } })).toBe(0);
   });
 
   it("GENUINE CONCURRENT submission of the same creationRequestId: exactly one student is created, the loser recovers the winner's result", async () => {
-    const key = `req-${suffix}-concurrent`;
+    const key = crypto.randomUUID();
     const email = `concurrent-${suffix}@example.com`;
     const args1 = await coreArgs({ email }, { creationRequestId: key, planId: planA.id, fingerprint: { email, planId: planA.id } });
     const args2 = await coreArgs({ email }, { creationRequestId: key, planId: planA.id, fingerprint: { email, planId: planA.id } });
@@ -492,5 +541,119 @@ describe("via the real createStudent action end-to-end", () => {
     expect(result.ok).toBe(true);
     expect(result.code).toMatch(/^\d{4}$/);
     expect(result.alreadyCreated).toBeUndefined();
+  });
+});
+
+describe("public actions still refuse exactly as before: unauthenticated, wrong role, different organization (independent review, post server-action-exposure fix)", () => {
+  let foreign: Fixture;
+  let instructor: { id: string };
+  let director: { id: string };
+  let pendingForApprove: Awaited<ReturnType<typeof newStudent>>;
+
+  beforeAll(async () => {
+    foreign = await makeAccountingOrg("CUMULATIVE", "enroll-foreign-org");
+
+    const instructorUser = await prisma.user.create({ data: { email: `instructor-${suffix}@example.com`, passwordHash: await hashSecret("irrelevant-password-123"), role: "INSTRUCTOR" } });
+    await prisma.organizationMembership.create({ data: { userId: instructorUser.id, organizationId: a.org.id, role: "INSTRUCTOR" } });
+    await prisma.staffAssignment.create({ data: { userId: instructorUser.id, organizationId: a.org.id, academyId: a.academy.id, role: "INSTRUCTOR" } });
+    instructor = instructorUser;
+
+    const directorUser = await prisma.user.create({ data: { email: `director-${suffix}@example.com`, passwordHash: await hashSecret("irrelevant-password-123"), role: "DIRECTOR" } });
+    await prisma.organizationMembership.create({ data: { userId: directorUser.id, organizationId: a.org.id, role: "DIRECTOR" } });
+    await prisma.staffAssignment.create({ data: { userId: directorUser.id, organizationId: a.org.id, academyId: a.academy.id, role: "DIRECTOR" } });
+    director = directorUser;
+
+    pendingForApprove = await newStudent("PENDING", "auth-approve-target");
+  }, 60_000);
+
+  afterAll(async () => {
+    await prisma.staffAssignment.deleteMany({ where: { organizationId: a.org.id, userId: { in: [instructor.id, director.id] } } });
+    await prisma.organizationMembership.deleteMany({ where: { organizationId: a.org.id, userId: { in: [instructor.id, director.id] } } });
+    await prisma.user.deleteMany({ where: { id: { in: [instructor.id, director.id] } } });
+    await foreign.drop();
+  });
+
+  function studentCount() {
+    return prisma.student.count({ where: { organizationId: a.org.id } });
+  }
+
+  const createFields = () =>
+    form({
+      firstName: "Auth", lastName: "Probe", phone: "1", email: `auth-probe-${Math.random()}-${suffix}@example.com`,
+      homeAcademyId: a.academy.id, track: "ADULT", currentRankId: "placeholder", currentStripes: "0",
+    });
+
+  describe("createStudent", () => {
+    it("unauthenticated (no session): refused, zero students created", async () => {
+      currentSession = null;
+      const before = await studentCount();
+      const result = await createStudent(a.org.id, {}, createFields());
+      expect(result.ok).toBeUndefined();
+      expect(await studentCount()).toBe(before);
+    });
+
+    it("wrong role (INSTRUCTOR, in-scope): refused — resolveActionContext throws FORBIDDEN, same as before this PR — zero students created", async () => {
+      currentSession = { user: { id: instructor.id, role: "INSTRUCTOR" }, activeOrganizationId: a.org.id };
+      const before = await studentCount();
+      await expect(createStudent(a.org.id, {}, createFields())).rejects.toThrow("FORBIDDEN");
+      expect(await studentCount()).toBe(before);
+    });
+
+    it("different organization (a real ADMIN of a different org): refused, zero students created", async () => {
+      currentSession = { user: { id: foreign.admin.id, role: "ADMIN" }, activeOrganizationId: foreign.org.id };
+      const before = await studentCount();
+      const result = await createStudent(a.org.id, {}, createFields());
+      expect(result.ok).toBeUndefined();
+      expect(await studentCount()).toBe(before);
+    });
+  });
+
+  describe("approveStudent", () => {
+    it("unauthenticated (no session): refused, status unchanged", async () => {
+      currentSession = null;
+      const result = await approveStudent(a.org.id, {}, form({ studentId: pendingForApprove.id }));
+      expect(result.ok).toBeUndefined();
+      expect((await prisma.student.findUniqueOrThrow({ where: { id: pendingForApprove.id } })).status).toBe("PENDING");
+    });
+
+    it("wrong role (INSTRUCTOR, in-scope): refused — resolveActionContext throws FORBIDDEN, same as before this PR — status unchanged", async () => {
+      currentSession = { user: { id: instructor.id, role: "INSTRUCTOR" }, activeOrganizationId: a.org.id };
+      await expect(approveStudent(a.org.id, {}, form({ studentId: pendingForApprove.id }))).rejects.toThrow("FORBIDDEN");
+      expect((await prisma.student.findUniqueOrThrow({ where: { id: pendingForApprove.id } })).status).toBe("PENDING");
+    });
+
+    it("different organization (a real ADMIN of a different org): refused, status unchanged", async () => {
+      currentSession = { user: { id: foreign.admin.id, role: "ADMIN" }, activeOrganizationId: foreign.org.id };
+      const result = await approveStudent(a.org.id, {}, form({ studentId: pendingForApprove.id }));
+      expect(result.ok).toBeUndefined();
+      expect((await prisma.student.findUniqueOrThrow({ where: { id: pendingForApprove.id } })).status).toBe("PENDING");
+    });
+  });
+
+  describe("assignPlan (ADMIN-only — DIRECTOR is itself a wrong-role case here, not just INSTRUCTOR)", () => {
+    const assignFields = () => form({ studentId: pendingForApprove.id, effectiveYear: "2040", effectiveMonth: "1", planId: planA.id });
+
+    it("unauthenticated (no session): refused, zero assignments created", async () => {
+      currentSession = null;
+      const before = await prisma.studentPlanAssignment.count({ where: { organizationId: a.org.id } });
+      const result = await assignPlan(a.org.id, {}, assignFields());
+      expect(result.ok).toBeUndefined();
+      expect(await prisma.studentPlanAssignment.count({ where: { organizationId: a.org.id } })).toBe(before);
+    });
+
+    it("wrong role (DIRECTOR, in-scope — assignPlan is ADMIN-only): refused — resolveActionContext throws FORBIDDEN, same as before this PR — zero assignments created", async () => {
+      currentSession = { user: { id: director.id, role: "DIRECTOR" }, activeOrganizationId: a.org.id };
+      const before = await prisma.studentPlanAssignment.count({ where: { organizationId: a.org.id } });
+      await expect(assignPlan(a.org.id, {}, assignFields())).rejects.toThrow("FORBIDDEN");
+      expect(await prisma.studentPlanAssignment.count({ where: { organizationId: a.org.id } })).toBe(before);
+    });
+
+    it("different organization (a real ADMIN of a different org): refused, zero assignments created", async () => {
+      currentSession = { user: { id: foreign.admin.id, role: "ADMIN" }, activeOrganizationId: foreign.org.id };
+      const before = await prisma.studentPlanAssignment.count({ where: { organizationId: a.org.id } });
+      const result = await assignPlan(a.org.id, {}, assignFields());
+      expect(result.ok).toBeUndefined();
+      expect(await prisma.studentPlanAssignment.count({ where: { organizationId: a.org.id } })).toBe(before);
+    });
   });
 });

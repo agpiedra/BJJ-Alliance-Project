@@ -21,7 +21,7 @@ import { EditStudentForm } from "./edit-student-form";
 import { ArchiveStudentButton } from "./archive-student-button";
 import { RestoreStudentButton } from "./restore-student-button";
 import { ApproveStudentButton } from "./approve-student-button";
-import { isEnrollmentBillingActive } from "../create-student-action";
+import { isEnrollmentBillingActive } from "../create-student-core";
 import { RegenerateCodeButton } from "./regenerate-code-button";
 import { AddAdjustmentForm } from "./add-adjustment-form";
 import { AttendanceEntriesCard } from "./attendance-entries-card";

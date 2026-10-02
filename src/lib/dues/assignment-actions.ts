@@ -3,13 +3,12 @@
 import { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import { isAcademyInTenantScope, resolveActionContext } from "@/lib/tenant/context";
-import { isPackagePlan } from "@/lib/dues/package-plans";
 import { compareYearMonth, type YearMonth } from "@/lib/dues/calendar";
 import { currentMonthIn, parseEffectiveMonth, versionRevision } from "@/lib/dues/config-input";
 import { getScopedDb } from "@/lib/tenant/scoped-client";
 import { lockStudent, type Tx } from "@/lib/students/lock";
 import type { ActionState } from "@/lib/action-state";
-import type { TenantContext } from "@/lib/tenant/types";
+import { assignPlanInTx, resolvePlanId } from "@/lib/dues/assignment-core";
 
 /**
  * Eligibility-prerequisites brief, section 6.1: `StudentPlanAssignment` writer, owners only (approved: NOT inferred from the
@@ -32,6 +31,11 @@ import type { TenantContext } from "@/lib/tenant/types";
  *
  * The current-month check is evaluated ONCE, inside the transaction, right after the lock — never before it. A pre-lock check would
  * race the wait itself: a month current when the check ran can turn past while this call sat blocked behind a concurrent holder.
+ *
+ * `assignPlanInTx`/`resolvePlanId` (the transaction-aware core and the plan-validation helper, also reused by the enrollment
+ * composition) live in `./assignment-core` — a plain module, NOT "use server" — so they are never themselves directly
+ * client-invocable server actions. This file exports only `assignPlan` and `correctAssignment`: the genuinely public,
+ * already-authenticated actions.
  */
 
 type Rejection = { rejected: string };
@@ -55,54 +59,6 @@ async function lockAssignment(
 }
 
 const assignmentRevision = (row: { planId: string | null }) => versionRevision({ planId: row.planId });
-
-/**
- * Enrollment/resume integration plan §7.6: the transaction-aware core of `assignPlan`'s own create path, extracted
- * so the enrollment composition (actions.ts `approveStudent`, create-student-action.ts `createStudent`) can create a
- * NEW assignment inside its OWN transaction, which already holds the branch+student locks in the established order
- * BEFORE calling this — exactly `writeMonthlyObligationInTx`'s own "narrow transaction-aware extraction" shape.
- * Takes NO lock of its own (the caller's student lock already provides what `assignPlan`'s own standalone
- * `lockStudent` call exists to give); trusts nothing else from its caller, repeating the identical fresh,
- * under-the-lock current-month check `assignPlan` already performs. The unique constraint on
- * `(studentId, effectiveYear, effectiveMonth)` is the backstop against a concurrent duplicate — this function does
- * NOT catch that violation itself; it propagates to the caller's own `$transaction`, to be caught OUTSIDE it,
- * exactly like `assignPlan`'s own existing `catch` below.
- */
-export async function assignPlanInTx(
-  tx: Tx,
-  args: { context: TenantContext; studentId: string; homeAcademyId: string; timezone: string; planId: string | null; effectiveYear: number; effectiveMonth: number },
-): Promise<{ ok: true; assignmentId: string } | { ok: false; error: "pastMonth" }> {
-  const { context, studentId, homeAcademyId, timezone, planId, effectiveYear, effectiveMonth } = args;
-  if (compareYearMonth({ year: effectiveYear, month: effectiveMonth }, currentMonthIn(timezone)) < 0) return { ok: false, error: "pastMonth" };
-  const created = await tx.studentPlanAssignment.create({
-    data: { organizationId: context.organizationId, studentId, planId, effectiveYear, effectiveMonth, createdById: context.actorUserId },
-  });
-  await tx.auditLog.create({
-    data: {
-      actorId: context.actorUserId,
-      organizationId: context.organizationId,
-      academyId: homeAcademyId,
-      action: "studentPlanAssignment.create",
-      entityType: "StudentPlanAssignment",
-      entityId: created.id,
-      before: Prisma.DbNull,
-      after: { studentId: created.studentId, planId: created.planId, effectiveYear: created.effectiveYear, effectiveMonth: created.effectiveMonth },
-    },
-  });
-  return { ok: true, assignmentId: created.id };
-}
-
-/**
- * `planId` re-validated against the student's own branch and refused if it names a package plan (packages are bought explicitly, never assigned this way — PR 3's isolation design). Empty/blank means "explicitly unassigned" (null).
- * Exported (enrollment/resume integration plan §7.6) so the enrollment composition (actions.ts `approveStudent`, create-student-action.ts `createStudent`) reuses this EXACT validation for a staff-supplied plan id, rather than a second, drifting copy.
- */
-export async function resolvePlanId(organizationId: string, academyId: string, raw: string | null): Promise<{ ok: true; value: string | null } | { ok: false }> {
-  if (raw === null || raw === "") return { ok: true, value: null };
-  const plan = await prisma.paymentPlan.findUnique({ where: { id: raw, organizationId }, select: { id: true, academyId: true } });
-  if (!plan || plan.academyId !== academyId) return { ok: false };
-  if (await isPackagePlan(organizationId, plan.id)) return { ok: false };
-  return { ok: true, value: plan.id };
-}
 
 /** Add an effective-month plan assignment for a student. */
 export async function assignPlan(organizationId: string, _prevState: ActionState, formData: FormData): Promise<ActionState> {

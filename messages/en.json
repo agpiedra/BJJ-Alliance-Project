@@ -586,7 +586,8 @@
       "inapplicable": "This student's billing configuration is missing or incomplete for this plan.",
       "staleVersion": "This plan's pricing has changed. Reload and try again.",
       "currencyMismatch": "This plan's currency does not match its branch's fee currency.",
-      "conflictingResubmission": "A different submission already used this form. Reload and try again."
+      "conflictingResubmission": "A different submission already used this form. Reload and try again.",
+      "missingSubmissionIdentity": "This form could not confirm it was submitted normally. Reload the page and try again."
     },
     "detail": {
       "profile": {

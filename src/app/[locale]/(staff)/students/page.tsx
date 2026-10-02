@@ -24,7 +24,7 @@ import { ProgressToNextGrade } from "@/components/belt-graphic/progress-to-next-
 import { buildProgressView } from "@/lib/promotion/progress-view";
 import { listStudents } from "./actions";
 import { CreateStudentForm } from "./create-student-form";
-import { isEnrollmentBillingActive } from "./create-student-action";
+import { isEnrollmentBillingActive } from "./create-student-core";
 import { listSelectablePlans } from "@/lib/payments/list-plans";
 import { StudentStatus, Track } from "@/generated/prisma/client";
 import { getAtBeltSummary } from "@/lib/students/attendance-summary";
