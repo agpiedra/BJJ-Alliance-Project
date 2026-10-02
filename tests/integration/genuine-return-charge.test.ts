@@ -124,7 +124,7 @@ afterAll(async () => {
   await prisma.$transaction(
     async (tx) => {
       await tx.$executeRawUnsafe("SET LOCAL session_replication_role = replica");
-      for (const table of ["DuesCoverage", "DuesObligation", "StudentStatusChange", "StudentPlanAssignment"]) {
+      for (const table of ["DuesSettlement", "DuesPayment", "DuesCoverage", "DuesObligation", "StudentStatusChange", "StudentPlanAssignment"]) {
         await tx.$executeRawUnsafe(`DELETE FROM "${table}" WHERE "organizationId" = $1`, a.org.id);
       }
     },
@@ -269,6 +269,51 @@ describe("billing active: the month is already covered", () => {
     expect(await prisma.duesObligation.count({ where: { organizationId: a.org.id, studentId: student.id, coverageYear: 2030, coverageMonth: 8 } })).toBe(1);
     const after = await prisma.duesObligation.findUniqueOrThrow({ where: { id: existing.id } });
     expect(after.dueOn).toEqual(existing.dueOn);
+  });
+
+  it("package coverage for the return month: succeeds with NO configuration resolved (no assignment needed), no MONTHLY, no SIGNUP, the package and its coverage/settlements stay byte-for-byte unchanged, and status/membership/history/audit commit atomically", async () => {
+    const { student, archiveEventId } = await newArchivedStudent("ACTIVE", "packagecoverage");
+    // Deliberately NO assign() call — this is the whole point: checkMonthCoverageInTx's own `coverageTaken` branch
+    // (a DuesCoverage row with no matching MONTHLY obligation) must let the return proceed with ZERO configuration
+    // resolution, never reaching (and never needing) resolveMonthlyConfigCandidateInTx at all.
+    const pkgPlan = await prisma.paymentPlan.create({ data: { organizationId: a.org.id, academyId: a.academy.id, name: `Return pkg plan ${suffix}` } });
+    const packageTerms = await prisma.paymentPlanTerms.create({
+      data: { organizationId: a.org.id, planId: pkgPlan.id, effectiveYear: 2020, effectiveMonth: 1, priceAmount: "180.00", currency: "USD", monthsCovered: 2, createdById: a.admin.id },
+    });
+    const pkgObligation = await prisma.duesObligation.create({
+      data: {
+        organizationId: a.org.id, studentId: student.id, academyId: a.academy.id, type: "PACKAGE", origin: "STAFF",
+        coverageYear: 2030, coverageMonth: 12, monthsCovered: 2, amount: "180.00", currency: "USD", planTermsId: packageTerms.id, createdById: a.admin.id,
+      },
+    });
+    const coverageRow = await prisma.duesCoverage.create({ data: { organizationId: a.org.id, studentId: student.id, obligationId: pkgObligation.id, year: 2030, month: 12 } });
+    const payment = await prisma.duesPayment.create({
+      data: { organizationId: a.org.id, studentId: student.id, academyId: a.academy.id, receivedOn: new Date("2030-11-01"), tenderCurrency: "USD", tenderAmount: "180.00", method: "EFECTIVO", recordedById: a.admin.id },
+    });
+    const settlement = await prisma.duesSettlement.create({ data: { organizationId: a.org.id, studentId: student.id, paymentId: payment.id, obligationId: pkgObligation.id } });
+
+    const before = await ledgerCounts();
+    const result = await appPrisma.$transaction((tx) =>
+      genuineReturnChargeInTx(tx, { context: context(), student: { id: student.id, homeAcademyId: a.academy.id, userId: null }, archiveEventId: archiveEventId! }, deps({ now: at("2030-12-10T12:00:00") })),
+    );
+    expect(result).toMatchObject({ ok: true });
+
+    // Status, membership, history and audit all committed together, in the SAME transaction as everything else.
+    const after = await prisma.student.findUniqueOrThrow({ where: { id: student.id } });
+    expect(after.status).toBe("ACTIVE");
+    expect(after.statusBeforeArchive).toBeNull();
+    const history = await prisma.studentStatusChange.findFirst({ where: { organizationId: a.org.id, studentId: student.id, status: "ACTIVE", sequence: 2 } });
+    expect(history).toBeTruthy();
+    const audit = await prisma.auditLog.findFirst({ where: { organizationId: a.org.id, entityId: student.id, action: "student.returnToTraining" } });
+    expect(audit).toBeTruthy();
+
+    // No new obligation of ANY kind — neither MONTHLY nor SIGNUP — only statusChanges/audits moved from `before`.
+    expect(await ledgerCounts()).toEqual({ ...before, statusChanges: before.statusChanges + 1, audits: before.audits + 1 });
+
+    // The existing PACKAGE obligation, its DuesCoverage row, and its settlement: byte-for-byte unchanged, not merely "still exists".
+    expect(await prisma.duesObligation.findUniqueOrThrow({ where: { id: pkgObligation.id } })).toEqual(pkgObligation);
+    expect(await prisma.duesCoverage.findUniqueOrThrow({ where: { id: coverageRow.id } })).toEqual(coverageRow);
+    expect(await prisma.duesSettlement.findUniqueOrThrow({ where: { id: settlement.id } })).toEqual(settlement);
   });
 });
 

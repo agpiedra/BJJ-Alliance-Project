@@ -712,8 +712,9 @@ const returnToTrainingSchema = z.object({ studentId: z.string().min(1), archiveE
  * ADMIN/DIRECTOR only (D21, same gate as every status action in this file). Genuine-return-to-training brief: a new,
  * separate action — NEVER composing `restoreStudent`, which stays completely unchanged (D22) for the purely
  * administrative case. Eligible only for a currently `ARCHIVED` student whose `statusBeforeArchive` is `ACTIVE` or
- * `INACTIVE` (D20) — someone who actually trained before, not merely a `PENDING` applicant who was archived without
- * ever being approved. Status always becomes `ACTIVE` (never the stored `statusBeforeArchive` value, unlike
+ * `INACTIVE` (D20) — someone who previously held an enrolled status (proof of a prior billing/roster relationship,
+ * not a claim about actual physical attendance up to the moment of archiving), not merely a `PENDING` applicant who
+ * was archived without ever being approved. Status always becomes `ACTIVE` (never the stored `statusBeforeArchive` value, unlike
  * `restoreStudent`): a genuine return means training again now, regardless of what they held before the archive.
  *
  * `archiveEventId` is a hidden field the page embeds only for an eligible student with a trustworthy

@@ -19,8 +19,7 @@ import { getPromotionCreditHistory } from "./get-promotion-credit-history";
 import { getPaymentHistory } from "./get-payment-history";
 import { EditStudentForm } from "./edit-student-form";
 import { ArchiveStudentButton } from "./archive-student-button";
-import { RestoreStudentButton } from "./restore-student-button";
-import { ReturnToTrainingButton } from "./return-to-training-button";
+import { ArchivedStudentActions } from "./archived-student-actions";
 import { ApproveStudentButton } from "./approve-student-button";
 import { isEnrollmentBillingActive } from "../create-student-core";
 import { isGenuineReturnBillingActive } from "./genuine-return-core";
@@ -446,15 +445,7 @@ export default async function StudentDetailPage({
               dialog's "you can restore them later" refers to. Archive is only
               offered while there is something to archive. */}
           {student.status === "ARCHIVED" ? (
-            <div className="flex flex-col items-start gap-4">
-              <RestoreStudentButton organizationId={context.organizationId} studentId={student.id} />
-              {/* A separate, explicitly distinguished action (D22) — never a variant of Restore above. Rendered
-                  only once billing is active (never in production today) AND a trustworthy archive event was
-                  found for this exact student. */}
-              {trustworthyArchiveEvent?.ok && (
-                <ReturnToTrainingButton organizationId={context.organizationId} studentId={student.id} archiveEventId={trustworthyArchiveEvent.archiveEventId} />
-              )}
-            </div>
+            <ArchivedStudentActions organizationId={context.organizationId} studentId={student.id} trustworthyArchiveEvent={trustworthyArchiveEvent} />
           ) : (
             <ArchiveStudentButton organizationId={context.organizationId} studentId={student.id} />
           )}
