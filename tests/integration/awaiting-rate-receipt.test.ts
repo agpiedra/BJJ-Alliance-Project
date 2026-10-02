@@ -74,6 +74,20 @@ async function oneMonth(studentId: string, d: { year: number; month: number; day
   return r.obligationId;
 }
 
+/** A SIGNUP obligation (dues-signup-settlement brief): no writer creates a bare one outside enrollment, inserted directly in
+ * the shape `dues-ledger-schema.test.ts` proves the database accepts. Never fee-eligible, so unlike `oneMonth` its coverage
+ * month need not line up with any grace deadline. */
+async function newSignupObligation(studentId: string, coverage: { year: number; month: number }) {
+  return prisma.duesObligation.create({
+    data: {
+      organizationId: a.org.id, studentId, academyId: a.academy.id, type: "SIGNUP", origin: "STAFF",
+      coverageYear: coverage.year, coverageMonth: coverage.month, monthsCovered: 1, amount: "50.00", currency: "USD",
+      lateFeeAmount: null, dueOn: new Date(Date.UTC(coverage.year, coverage.month - 1, 1)), graceDeadline: null,
+      planTermsId: usdTerms.id, policyVersionId: null, createdById: a.admin.id,
+    },
+  });
+}
+
 async function assignPlan(studentId: string) {
   return prisma.studentPlanAssignment.create({ data: { organizationId: a.org.id, studentId, planId: usdPlanId, effectiveYear: 2027, effectiveMonth: 1, createdById: a.admin.id } });
 }
@@ -264,6 +278,35 @@ describe("ORDINARY: capture writes only the receipt, then resolves correctly", (
     const receipt = await prisma.awaitingRateReceipt.findUniqueOrThrow({ where: { id: captured.receiptId } });
     expect(receipt.status).toBe("RESOLVED");
     expect(receipt.resolvedById).toBe(a.admin.id);
+  });
+
+  /**
+   * SIGNUP-settlement brief (D16/D17, §5): the ORDINARY branch composes `settleObligationsInTx` unchanged, so a captured
+   * snapshot naming a SIGNUP resolves through the EXISTING flat `obligationIds: string[]` schema — no new discriminated-
+   * union branch. Also exercises `voidWronglyAssessedFeesInTx`'s own `type: "MONTHLY"`-filtered query safely `continue`-ing
+   * past the SIGNUP id (it is never fee-eligible, so no fee could ever need voiding for it) with zero code change.
+   */
+  it("a captured SIGNUP resolves through the unchanged ORDINARY snapshot shape, settling with no fee (dues-signup-settlement brief)", async () => {
+    const d = freshDate();
+    const s = await newStudent("ordinary-signup");
+    const signup = await newSignupObligation(s.id, { year: d.year, month: d.month });
+    const captured = await recordDuesPayment(
+      { context: context(), studentId: s.id, receivedOn: d, tender: { currency: "CRC", amount: "25000.00" }, method: "EFECTIVO", obligationIds: [signup.id], maxBackdateDays: 5 },
+      deps({ now: nowAt(d) }),
+    );
+    expect(captured).toMatchObject({ ok: false, error: "captured" });
+    if (captured.ok || captured.error !== "captured") return;
+    const receipt = await prisma.awaitingRateReceipt.findUniqueOrThrow({ where: { id: captured.receiptId } });
+    expect(receipt.snapshot).toMatchObject({ kind: "ORDINARY", obligationIds: [signup.id] });
+
+    const rate = await enterRate(d);
+    if (!rate.ok) throw new Error("fixture: rate entry failed");
+    const resolved = await resolveAwaitingRateReceipt({ context: context(), receiptId: captured.receiptId! }, deps({ now: nowAt(d) }));
+    expect(resolved).toMatchObject({ ok: true });
+    if (!resolved.ok) return;
+    const settlement = await prisma.duesSettlement.findFirstOrThrow({ where: { obligationId: signup.id, reversedAt: null } });
+    expect(settlement.lateFeeId).toBeNull();
+    expect(await prisma.duesLateFee.count({ where: { obligationId: signup.id } })).toBe(0);
   });
 
   it("owner authorization is enforced on resolution (a non-ADMIN context refuses, nothing changes)", async () => {
@@ -597,6 +640,54 @@ describe("PACKAGE: capture, fee-void-first fix, and resolution", () => {
     expect(obligation.monthsCovered).toBe(3);
     const coverageCount = await prisma.duesCoverage.count({ where: { organizationId: a.org.id, obligationId: obligation.id } });
     expect(coverageCount).toBe(3);
+  });
+
+  /**
+   * SIGNUP-settlement brief (D17): the PACKAGE branch's own direct `resolveMonthlyDebtItemsInTx` call picks up SIGNUP-
+   * awareness automatically — a named SIGNUP settles alongside the package with no code change here.
+   */
+  it("a named SIGNUP combined with the package settles automatically once a rate resolves (dues-signup-settlement brief)", async () => {
+    const d = freshDate();
+    const s = await newStudent("packagesignup");
+    const signup = await newSignupObligation(s.id, { year: d.year, month: d.month });
+    const captured = await purchasePackage(
+      {
+        context: context(), studentId: s.id, planTermsId: packageTerms.id, requestedStartMonth: { year: d.year, month: d.month },
+        existingObligationIds: [signup.id], receivedOn: d, // 50.00 (SIGNUP) + 270.00 (package) = 320.00 USD, at 500.00 = 160000.00 CRC
+        tender: { currency: "CRC", amount: "160000.00" }, method: "EFECTIVO", maxBackdateDays: 5,
+      },
+      deps({ now: nowAt(d) }),
+    );
+    if (captured.ok || captured.error !== "captured") throw new Error("fixture: expected capture");
+    const rate = await enterRate(d);
+    if (!rate.ok) throw new Error("fixture: rate entry failed");
+    const resolved = await resolveAwaitingRateReceipt({ context: context(), receiptId: captured.receiptId! }, deps({ now: nowAt(d) }));
+    expect(resolved).toMatchObject({ ok: true });
+    if (!resolved.ok) return;
+    const settlement = await prisma.duesSettlement.findFirstOrThrow({ where: { obligationId: signup.id, reversedAt: null } });
+    expect(settlement.lateFeeId).toBeNull();
+  });
+
+  it("forbidden drift: a SIGNUP that becomes open debt while the package receipt sits PENDING, unnamed, refuses staleSelection — the same protection the brief already gave an unnamed MONTHLY", async () => {
+    const d = freshDate();
+    const s = await newStudent("packagesignupdrift");
+    const captured = await purchasePackage(
+      {
+        context: context(), studentId: s.id, planTermsId: packageTerms.id, requestedStartMonth: { year: d.year, month: d.month },
+        receivedOn: d, tender: { currency: "CRC", amount: "135000.00" }, method: "EFECTIVO", maxBackdateDays: 5, // no existing debt named: none exists yet
+      },
+      deps({ now: nowAt(d) }),
+    );
+    if (captured.ok || captured.error !== "captured") throw new Error("fixture: expected capture");
+    // A SIGNUP obligation appears for this student while the receipt sits PENDING — never named in the original snapshot.
+    const signup = await newSignupObligation(s.id, { year: d.year, month: d.month });
+    const rate = await enterRate(d);
+    if (!rate.ok) throw new Error("fixture: rate entry failed");
+    const before = await ledgerCounts(a.org.id);
+    const resolved = await resolveAwaitingRateReceipt({ context: context(), receiptId: captured.receiptId! }, deps({ now: nowAt(d) }));
+    expect(resolved).toMatchObject({ ok: false, error: "staleSelection" });
+    expect(await ledgerCounts(a.org.id)).toEqual(before);
+    expect(await prisma.duesSettlement.count({ where: { obligationId: signup.id } })).toBe(0);
   });
 
   it("fee-void-first fix: an on-time package receipt resolves and voids a fee wrongly assessed on named existing debt while PENDING", async () => {

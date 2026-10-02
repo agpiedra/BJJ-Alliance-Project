@@ -72,6 +72,19 @@ function months(year: number, month: number, count: number): YearMonth[] {
   return out;
 }
 
+/** A SIGNUP obligation (dues-signup-settlement brief): no writer creates a bare one outside enrollment, inserted directly in
+ * the shape `dues-ledger-schema.test.ts` proves the database accepts. */
+async function newSignupObligation(studentId: string, coverage: { year: number; month: number }) {
+  return prisma.duesObligation.create({
+    data: {
+      organizationId: a.org.id, studentId, academyId: a.academy.id, type: "SIGNUP", origin: "STAFF",
+      coverageYear: coverage.year, coverageMonth: coverage.month, monthsCovered: 1, amount: "50.00", currency: "USD",
+      lateFeeAmount: null, dueOn: new Date(Date.UTC(coverage.year, coverage.month - 1, 1)), graceDeadline: null,
+      planTermsId: termsA.id, policyVersionId: null, createdById: a.admin.id,
+    },
+  });
+}
+
 const prepay = (over: Partial<Parameters<typeof prepayMonthlyObligations>[0]> = {}, extraDeps: Record<string, unknown> = {}) =>
   prepayMonthlyObligations(
     { context: context(), studentId: "", requestedMonths: [], receivedOn: { year: 2030, month: 12, day: 1 }, tender: { currency: "USD", amount: "" }, method: "EFECTIVO", maxBackdateDays: 90, ...over },
@@ -275,6 +288,31 @@ describe("prepayMonthlyObligations: existing outstanding debt plus future months
     if (!r.ok) return;
     expect(r.obligationIds).toHaveLength(2);
     expect(await prisma.duesSettlement.count({ where: { paymentId: r.paymentId, reversedAt: null } })).toBe(3);
+  });
+
+  /**
+   * SIGNUP-settlement brief (D17): this writer's "must settle everything" rule does NOT exist (unlike `purchasePackage`'s
+   * own `debtNotFullySettled`) and must NOT gain one — `existingObligationIds` stays an explicit, caller-named list. The
+   * only requirement, automatic once the shared resolver is SIGNUP-aware, is that it still be a valid oldest-first prefix.
+   */
+  it("a named SIGNUP settles alongside newly created future months, never fee-eligible, with no new 'must settle everything' rule", async () => {
+    const s = await newStudent("signup-combined");
+    await assign(s.id, planA.id);
+    const signup = await newSignupObligation(s.id, { year: 2030, month: 8 });
+    // 50.00 (SIGNUP, never late-fee eligible) + 100.00 (Jan) + 100.00 (Feb) = 250.00
+    const r = await prepay({ studentId: s.id, requestedMonths: months(2031, 1, 2), existingObligationIds: [signup.id], tender: { currency: "USD", amount: "250.00" } });
+    expect(r).toMatchObject({ ok: true, totalMinor: 25000 });
+    if (!r.ok) return;
+    const settlement = await prisma.duesSettlement.findFirstOrThrow({ where: { obligationId: signup.id, reversedAt: null } });
+    expect(settlement.lateFeeId).toBeNull();
+  });
+
+  it("leaving an open SIGNUP unnamed still refuses notOldestFirst — this writer never auto-settles it, but it still cannot be skipped", async () => {
+    const s = await newStudent("signup-unnamed");
+    await assign(s.id, planA.id);
+    await newSignupObligation(s.id, { year: 2030, month: 8 });
+    const r = await prepay({ studentId: s.id, requestedMonths: months(2031, 1, 2), tender: { currency: "USD", amount: "200.00" } }); // no existingObligationIds named
+    expect(r).toMatchObject({ ok: false, error: "notOldestFirst" });
   });
 });
 

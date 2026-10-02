@@ -125,6 +125,20 @@ async function threeMonths(studentId: string) {
   return ids;
 }
 
+/** A SIGNUP obligation (dues-signup-settlement brief): no writer creates a bare one outside enrollment, so it is inserted
+ * directly, the same shape `dues-ledger-schema.test.ts`'s own `signupData` proves the database accepts (monthsCovered 1,
+ * matching `terms1`'s own; `dueOn` present; `graceDeadline`/`lateFeeAmount`/`policyVersionId` all null). */
+async function newSignupObligation(studentId: string, coverage: { year: number; month: number }, over: { amount?: string } = {}) {
+  return prisma.duesObligation.create({
+    data: {
+      organizationId: a.org.id, studentId, academyId: a.academy.id, type: "SIGNUP", origin: "STAFF",
+      coverageYear: coverage.year, coverageMonth: coverage.month, monthsCovered: 1, amount: over.amount ?? "50.00", currency: "USD",
+      lateFeeAmount: null, dueOn: new Date(Date.UTC(coverage.year, coverage.month - 1, 1)), graceDeadline: null,
+      planTermsId: terms1.id, policyVersionId: null, createdById: a.admin.id,
+    },
+  });
+}
+
 const pay = (studentId: string, obligationIds: string[], amount: string, when: { now: () => Date; day: number; month?: number }, over: Record<string, unknown> = {}) =>
   recordDuesPayment(
     {
@@ -737,6 +751,68 @@ describe("recordDuesPayment: validate first, then write", () => {
     const [sep] = await threeMonths(ana.id);
     await prisma.student.update({ where: { id: ana.id }, data: { status: "ARCHIVED" } });
     expect(await pay(ana.id, [sep], "100.00", { now: OCT_5, day: 5 })).toMatchObject({ ok: true });
+  });
+});
+
+/**
+ * SIGNUP-settlement brief (D16-D18): `resolveMonthlyDebtItemsInTx` (`recordDuesPayment`'s own shared resolver) now treats an
+ * open SIGNUP exactly like an open MONTHLY obligation for ordering and whole-obligation settlement purposes, never fee-eligible.
+ */
+describe("recordDuesPayment: a SIGNUP obligation settles exactly like a MONTHLY one (dues-signup-settlement brief)", () => {
+  it("a lone SIGNUP, the student's only debt, settles standalone for its own exact amount and carries no fee", async () => {
+    const ana = await newStudent(a, a.academy.id, "signup-lone");
+    const signup = await newSignupObligation(ana.id, { year: 2030, month: 8 }, { amount: "50.00" });
+    const before = await counts(a.org.id);
+    const r = await pay(ana.id, [signup.id], "50.00", { now: OCT_5, day: 5 });
+    expect(r).toMatchObject({ ok: true, totalMinor: 5000 });
+    const after = await counts(a.org.id);
+    expect(after).toEqual({ ...before, payments: before.payments + 1, settlements: before.settlements + 1, audits: before.audits + 1 });
+    const settlement = await prisma.duesSettlement.findFirstOrThrow({ where: { obligationId: signup.id, reversedAt: null } });
+    expect(settlement.lateFeeId).toBeNull();
+    expect(await prisma.duesLateFee.count({ where: { obligationId: signup.id } })).toBe(0);
+  });
+
+  it("an older unpaid SIGNUP sorts ahead of a same-or-later-month MONTHLY and cannot be skipped (notOldestFirst)", async () => {
+    const ana = await newStudent(a, a.academy.id, "signup-order");
+    const signup = await newSignupObligation(ana.id, { year: 2030, month: 9 }, { amount: "50.00" }); // same coverage month as September
+    const [sep] = await threeMonths(ana.id);
+    // naming only the MONTHLY, skipping the older-or-equal SIGNUP, is refused
+    expect(await pay(ana.id, [sep], "100.00", { now: OCT_5, day: 5 })).toMatchObject({ ok: false, error: "notOldestFirst" });
+    // the full oldest-first prefix (SIGNUP, then September) settles together for the combined amount
+    const r = await pay(ana.id, [signup.id, sep], "150.00", { now: OCT_5, day: 5 });
+    expect(r).toMatchObject({ ok: true, totalMinor: 15000 });
+    expect(await prisma.duesSettlement.count({ where: { obligationId: { in: [signup.id, sep] }, reversedAt: null } })).toBe(2);
+  });
+
+  it("a SIGNUP strictly before all other debt must be named first, standalone or combined, never skipped", async () => {
+    const ana = await newStudent(a, a.academy.id, "signup-earliest");
+    const signup = await newSignupObligation(ana.id, { year: 2030, month: 1 }, { amount: "50.00" }); // well before September
+    const [sep, oct] = await threeMonths(ana.id);
+    expect(await pay(ana.id, [sep], "100.00", { now: OCT_5, day: 5 })).toMatchObject({ ok: false, error: "notOldestFirst" });
+    expect(await pay(ana.id, [sep, oct], "200.00", { now: OCT_5, day: 5 })).toMatchObject({ ok: false, error: "notOldestFirst" });
+    expect(await pay(ana.id, [signup.id], "50.00", { now: OCT_5, day: 5 })).toMatchObject({ ok: true, totalMinor: 5000 });
+    // the SIGNUP settled, September is now the oldest open item and may be paid alone
+    expect(await pay(ana.id, [sep], "100.00", { now: OCT_5, day: 5 })).toMatchObject({ ok: true, totalMinor: 10000 });
+  });
+
+  it("a late-fee-eligible MONTHLY ahead of an unpaid SIGNUP still gets its fee; the SIGNUP never does", async () => {
+    const ana = await newStudent(a, a.academy.id, "signup-fee");
+    const [sep] = await threeMonths(ana.id); // September: due 20th, grace through Oct 5
+    const signup = await newSignupObligation(ana.id, { year: 2030, month: 10 }, { amount: "50.00" }); // after September
+    // Oct 6: September is late (120.00), the SIGNUP is never fee-eligible regardless of date (50.00)
+    const r = await pay(ana.id, [sep, signup.id], "170.00", { now: OCT_6, day: 6 });
+    expect(r).toMatchObject({ ok: true, totalMinor: 17000 });
+    expect(await prisma.duesLateFee.count({ where: { obligationId: sep } })).toBe(1);
+    expect(await prisma.duesLateFee.count({ where: { obligationId: signup.id } })).toBe(0);
+    const signupSettlement = await prisma.duesSettlement.findFirstOrThrow({ where: { obligationId: signup.id, reversedAt: null } });
+    expect(signupSettlement.lateFeeId).toBeNull();
+  });
+
+  it("a SIGNUP already settled is refused as alreadySettled on replay, exactly like a MONTHLY", async () => {
+    const ana = await newStudent(a, a.academy.id, "signup-replay");
+    const signup = await newSignupObligation(ana.id, { year: 2030, month: 8 }, { amount: "50.00" });
+    expect(await pay(ana.id, [signup.id], "50.00", { now: OCT_5, day: 5 })).toMatchObject({ ok: true });
+    expect(await pay(ana.id, [signup.id], "50.00", { now: OCT_5, day: 5 })).toMatchObject({ ok: false, error: "alreadySettled", alreadySettledIds: [signup.id] });
   });
 });
 

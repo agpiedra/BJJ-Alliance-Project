@@ -76,9 +76,13 @@ export function totalLateFeesMinor(obligations: readonly (ObligationTerms & { se
   return obligations.reduce((sum, o) => sum + lateFeeToAssessMinor(o, asOf), 0);
 }
 
-/** Oldest coverage month first (ties broken by id so the order is deterministic). Returns a new array. */
-export function orderOldestFirst<T extends { id: string; coverage: YearMonth }>(items: readonly T[]): T[] {
-  return [...items].sort((a, b) => compareYearMonth(a.coverage, b.coverage) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+/** Oldest coverage month first; `priorityOf` (default: everything equal) breaks a tie on the SAME coverage month before the id
+ * tie-break does — a lower number sorts first (dues-signup-settlement brief D16: a SIGNUP due the same month as a MONTHLY sorts
+ * ahead of it). Omitting it reproduces every existing caller's order byte-for-byte. Returns a new array. */
+export function orderOldestFirst<T extends { id: string; coverage: YearMonth }>(items: readonly T[], priorityOf: (item: T) => number = () => 0): T[] {
+  return [...items].sort(
+    (a, b) => compareYearMonth(a.coverage, b.coverage) || (priorityOf(a) - priorityOf(b)) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+  );
 }
 
 /** The unsettled obligations as settlement items: oldest first, each at its full amount due on `receivedOn`. */

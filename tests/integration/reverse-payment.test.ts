@@ -53,6 +53,19 @@ async function newObligation(studentId: string, month = 10) {
   return r.obligationId;
 }
 
+/** A SIGNUP obligation (dues-signup-settlement brief): no writer creates a bare one outside enrollment, inserted directly in
+ * the shape `dues-ledger-schema.test.ts` proves the database accepts. */
+async function newSignupObligation(studentId: string, coverage: { year: number; month: number } = { year: 2030, month: 6 }) {
+  return prisma.duesObligation.create({
+    data: {
+      organizationId: a.org.id, studentId, academyId: a.academy.id, type: "SIGNUP", origin: "STAFF",
+      coverageYear: coverage.year, coverageMonth: coverage.month, monthsCovered: 1, amount: "50.00", currency: "USD",
+      lateFeeAmount: null, dueOn: new Date(Date.UTC(coverage.year, coverage.month - 1, 1)), graceDeadline: null,
+      planTermsId: terms.id, policyVersionId: null, createdById: a.admin.id,
+    },
+  });
+}
+
 async function assessAsOf(studentId: string, month: number, day: number) {
   const r = await assessLateFeesForStudent(context(), studentId, deps({ now: at(`2030-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}T12:00:00`) }));
   if (!r.ok) throw new Error(`fixture assessment failed: ${r.reason}`);
@@ -371,6 +384,35 @@ describe("reversePayment: defensive backstops with no live path today, forced by
     const result = await reverse({ paymentId: paid.paymentId });
     expect(result).toMatchObject({ ok: false, error: "inconsistentState" });
     expect((await currentPayment(paid.paymentId)).reversedAt).toBeNull();
+  });
+});
+
+/**
+ * SIGNUP-settlement brief (D19): UNLIKE the PACKAGE case above (still forced test data, no real writer composes it), a
+ * SIGNUP settlement is now a genuinely reachable case — `recordDuesPayment` settles one for real (see
+ * `dues-ledger-writers.test.ts`). `reversePayment` is UNCHANGED by that brief: its existing `type !== "MONTHLY"` check
+ * already refuses this payment with no code change here, proven below against a real settlement, not forced data.
+ */
+describe("reversePayment: a genuinely settled SIGNUP payment refuses reversal (unsupportedObligationType), zero code change (dues-signup-settlement brief D19)", () => {
+  it("a payment settling only a SIGNUP obligation refuses reversal and writes nothing", async () => {
+    const s = await newStudent("signup-only");
+    const signup = await newSignupObligation(s.id, { year: 2030, month: 9 });
+    const paid = await pay(s.id, [signup.id], "50.00", { year: 2030, month: 10, day: 1 }); // within DEC_2030's default 90-day backdate window
+    const result = await reverse({ paymentId: paid.paymentId });
+    expect(result).toMatchObject({ ok: false, error: "unsupportedObligationType" });
+    expect((await currentPayment(paid.paymentId)).reversedAt).toBeNull();
+    expect(await prisma.duesSettlement.count({ where: { obligationId: signup.id, reversedAt: { not: null } } })).toBe(0);
+  });
+
+  it("a payment combining a SIGNUP with a MONTHLY obligation also refuses reversal in full — never a partial reversal of just the MONTHLY side", async () => {
+    const s = await newStudent("signup-combined");
+    const signup = await newSignupObligation(s.id, { year: 2030, month: 9 });
+    const monthly = await newObligation(s.id, 10);
+    const paid = await pay(s.id, [signup.id, monthly], "150.00", { year: 2030, month: 10, day: 1 });
+    const result = await reverse({ paymentId: paid.paymentId });
+    expect(result).toMatchObject({ ok: false, error: "unsupportedObligationType" });
+    expect((await currentPayment(paid.paymentId)).reversedAt).toBeNull();
+    expect(await prisma.duesSettlement.count({ where: { obligationId: { in: [signup.id, monthly] }, reversedAt: { not: null } } })).toBe(0);
   });
 });
 

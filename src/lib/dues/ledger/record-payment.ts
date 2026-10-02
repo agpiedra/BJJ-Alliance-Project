@@ -241,17 +241,26 @@ function validatePaymentInput(input: {
 }
 
 /**
- * Package-purchase brief §5: `recordDuesPaymentInTx`'s own "load every open `MONTHLY` obligation, validate the caller's
- * chosen ids are exactly the oldest-first prefix, refuse a re-chargeable `feeAlreadyAssessed` case" logic, extracted so the
- * package writer can validate ITS OWN named current-debt ids the identical way — not a second, drifting copy of this
+ * Package-purchase brief §5: `recordDuesPaymentInTx`'s own "load every open `MONTHLY`/`SIGNUP` obligation, validate the
+ * caller's chosen ids are exactly the oldest-first prefix, refuse a re-chargeable `feeAlreadyAssessed` case" logic, extracted
+ * so the package writer can validate ITS OWN named current-debt ids the identical way — not a second, drifting copy of this
  * validation. Returns two things: `chosenItems` (only the caller's own ids, in settlement order, each already priced) for a
  * caller building its own combined item list (the package writer appends its package item after these); `allOpenItems`
- * (every open `MONTHLY` obligation, oldest first) for a caller that offers `settleReceipt` totals against the FULL picture,
- * not just what was chosen (`recordDuesPaymentInTx`'s own, unchanged behavior).
+ * (every open `MONTHLY`/`SIGNUP` obligation, oldest first) for a caller that offers `settleReceipt` totals against the FULL
+ * picture, not just what was chosen (`recordDuesPaymentInTx`'s own, unchanged behavior).
+ *
+ * SIGNUP-settlement brief (D16): a `SIGNUP` obligation never has a `graceDeadline` and is never late-fee eligible
+ * (`DuesObligation_shape_by_type`), so it is represented directly as a plain `SettlementItem`/`SettlementLineItem`
+ * (`feeEligible: false` hardcoded, never computed) — never as `ObligationTerms`, which `asTerms` builds for `MONTHLY` only.
+ * Ordering is oldest-first by coverage month, with a `SIGNUP` sorting ahead of a `MONTHLY` due the SAME month (the only tie
+ * `orderOldestFirst`'s `priorityOf` is for).
  */
 export type ResolveMonthlyDebtResult =
   | { ok: true; chosenItems: SettlementLineItem[]; allOpenItems: SettlementItem[] }
   | { ok: false; error: "notFound" | "alreadySettled" | "notOldestFirst" | "feeAlreadyAssessed"; alreadySettledIds?: string[] };
+
+type DebtOrderableRef = { id: string; coverage: { year: number; month: number }; type: "MONTHLY" | "SIGNUP" };
+const debtItemPriority = (r: DebtOrderableRef): number => (r.type === "SIGNUP" ? 0 : 1);
 
 export async function resolveMonthlyDebtItemsInTx(
   tx: Tx,
@@ -259,12 +268,12 @@ export async function resolveMonthlyDebtItemsInTx(
 ): Promise<ResolveMonthlyDebtResult> {
   const { organizationId, studentId, obligationIds, receivedOn } = args;
   const all = await tx.duesObligation.findMany({
-    where: { organizationId, studentId, type: "MONTHLY" },
+    where: { organizationId, studentId, type: { in: ["MONTHLY", "SIGNUP"] } },
     include: { lateFees: true, settlements: { where: { reversedAt: null }, select: { id: true } } },
   });
   const byId = new Map(all.map((o) => [o.id, o]));
   const selected = obligationIds.map((id) => byId.get(id));
-  // an unknown id, another student's, another organization's, or a non-monthly one: all look the same, and nothing is revealed
+  // an unknown id, another student's, another organization's, or a type outside this set: all look the same, and nothing is revealed
   if (selected.some((o) => o === undefined)) return { ok: false, error: "notFound" };
   const chosen = selected as NonNullable<(typeof selected)[number]>[];
 
@@ -273,7 +282,9 @@ export async function resolveMonthlyDebtItemsInTx(
   if (settledIds.length > 0) return { ok: false, error: "alreadySettled", alreadySettledIds: settledIds };
 
   const open = all.filter((o) => o.settlements.length === 0);
-  const asTerms = (o: (typeof all)[number]): ObligationTerms => {
+  const openMonthly = open.filter((o) => o.type === "MONTHLY");
+  const openSignup = open.filter((o) => o.type === "SIGNUP");
+  const asTerms = (o: (typeof openMonthly)[number]): ObligationTerms => {
     if (o.graceDeadline === null) throw new Error(`Monthly obligation ${o.id} has no grace deadline`);
     const removed = o.lateFees[0]?.removedAt != null;
     return {
@@ -286,20 +297,25 @@ export async function resolveMonthlyDebtItemsInTx(
       graceDeadline: fromDbDate(o.graceDeadline),
     };
   };
-  const openTerms = open.map(asTerms);
+  const openTerms = openMonthly.map(asTerms);
+  const monthlyRefs: DebtOrderableRef[] = openTerms.map((t) => ({ id: t.id, coverage: t.coverage, type: "MONTHLY" }));
+  const signupRefs: DebtOrderableRef[] = openSignup.map((o) => ({ id: o.id, coverage: { year: o.coverageYear, month: o.coverageMonth }, type: "SIGNUP" }));
 
-  // Oldest first, and the chosen ids must be exactly the first k outstanding: nothing older may be skipped.
-  const ordered = orderOldestFirst(openTerms.map((t) => ({ id: t.id, coverage: t.coverage })));
+  // Oldest first (a same-month SIGNUP ahead of a MONTHLY), and the chosen ids must be exactly the first k outstanding:
+  // nothing older — including an old unpaid SIGNUP — may be skipped.
+  const ordered = orderOldestFirst([...signupRefs, ...monthlyRefs], debtItemPriority);
   const firstK = ordered.slice(0, chosen.length).map((t) => t.id);
   const chosenIds = new Set(chosen.map((o) => o.id));
   if (firstK.length !== chosen.length || !firstK.every((id) => chosenIds.has(id))) return { ok: false, error: "notOldestFirst" };
 
-  // Fee state of the chosen obligations. An active fee already assessed cannot be removed by an earlier received date here.
-  // `feeOwed` is carried forward into each item's `expectedOwed` — restored from the original, pre-extraction code, which
-  // cross-checked this against `assessLateFeeInTx`'s own fresh read at write time rather than trusting it silently.
+  // Fee state of the chosen MONTHLY obligations only — a SIGNUP row never carries a late-fee row to check. An active fee
+  // already assessed cannot be removed by an earlier received date here. `feeOwed` is carried forward into each item's
+  // `expectedOwed` — restored from the original, pre-extraction code, which cross-checked this against
+  // `assessLateFeeInTx`'s own fresh read at write time rather than trusting it silently.
   const termsById = new Map(openTerms.map((t) => [t.id, t]));
   const feeOwed = new Map<string, boolean>();
   for (const o of chosen) {
+    if (o.type === "SIGNUP") continue;
     const t = termsById.get(o.id)!;
     const late = lateFeeApplies(receivedOn, t.graceDeadline);
     const feeRow = o.lateFees[0] ?? null;
@@ -308,9 +324,16 @@ export async function resolveMonthlyDebtItemsInTx(
     feeOwed.set(o.id, late && t.lateFeeMinor > 0);
   }
 
-  const allOpenItems = outstandingItems(openTerms, receivedOn);
+  const monthlyOpenItems = outstandingItems(openTerms, receivedOn);
+  const signupOpenItems: SettlementItem[] = openSignup.map((o) => ({ id: o.id, currency: o.currency, amountMinor: columnToMinor(o.amount) }));
+  const openItemById = new Map([...monthlyOpenItems, ...signupOpenItems].map((item) => [item.id, item]));
+  const allOpenItems: SettlementItem[] = ordered.map((r) => openItemById.get(r.id)!);
+
   const settlementOrder = chosen.slice().sort((x, y) => firstK.indexOf(x.id) - firstK.indexOf(y.id));
   const chosenItems: SettlementLineItem[] = settlementOrder.map((o) => {
+    if (o.type === "SIGNUP") {
+      return { obligationId: o.id, currency: o.currency, amountMinor: columnToMinor(o.amount), feeEligible: false, expectedOwed: false };
+    }
     const t = termsById.get(o.id)!;
     return { obligationId: o.id, currency: t.currency, amountMinor: amountDueMinor(t, receivedOn), feeEligible: true, expectedOwed: feeOwed.get(o.id) ?? false };
   });
