@@ -312,17 +312,168 @@ describe("type-aware facts: SIGNUP/PACKAGE never acquire monthly late-fee facts"
   });
 });
 
-describe("coverage ≠ paid (§4)", () => {
-  it("an unpaid MONTHLY with a real DuesCoverage row: coverageClaimed true, settled false, outstanding > 0", async () => {
+describe("coverage ≠ paid (§4): a real, independent top-level fact from DuesCoverage, never a boolean bolted onto each obligation", () => {
+  it("an unpaid MONTHLY with a real DuesCoverage row: coverage lists it, settled false, outstanding > 0 — independently correct", async () => {
     const s = await newStudent("ACTIVE", "coverageproof");
     const o = await createObligation({ studentId: s.id, type: "MONTHLY", year: 2030, month: 1, dueOn: new Date("2030-01-01"), graceDeadline: new Date("2030-01-06"), lateFeeAmount: "20.00", policyVersionId: policyA.id });
     await prisma.duesCoverage.create({ data: { organizationId: a.org.id, studentId: s.id, obligationId: o.id, year: 2030, month: 1 } });
     const result = await listDuesFactsForStudents(context(), [s.id], undefined, deps({ now: at("2030-01-02T12:00:00") }));
     if (!result.ok) throw new Error("unreachable");
-    const fact = result.facts[0]!.outstanding[0]!;
-    expect(fact.coverageClaimed).toBe(true);
-    expect(fact.settled).toBe(false);
-    expect(fact.outstandingAmountMinor).toBeGreaterThan(0);
+    const fact = result.facts[0]!;
+    expect(fact.coverage).toEqual([{ year: 2030, month: 1, obligationId: o.id }]);
+    expect(fact.outstanding[0]!.settled).toBe(false);
+    expect(fact.outstanding[0]!.outstandingAmountMinor).toBeGreaterThan(0);
+  });
+
+  it("a SIGNUP obligation shows zero entries in the top-level coverage fact — SIGNUP never claims coverage by design", async () => {
+    const s = await newStudent("ACTIVE", "signupnocoverage");
+    await createObligation({ studentId: s.id, type: "SIGNUP", year: 2030, month: 1, dueOn: new Date("2030-01-01"), graceDeadline: null, lateFeeAmount: null });
+    const result = await listDuesFactsForStudents(context(), [s.id], undefined, deps({ now: at("2030-06-01T12:00:00") }));
+    if (!result.ok) throw new Error("unreachable");
+    expect(result.facts[0]!.coverage).toEqual([]);
+  });
+
+  it("ALL months of a multi-month PACKAGE show covered, not just the start month", async () => {
+    const s = await newStudent("ACTIVE", "packageallmonths");
+    const pkgPlan = await prisma.paymentPlan.create({ data: { organizationId: a.org.id, academyId: a.academy.id, name: `Facts pkg-allmonths plan ${suffix}` } });
+    const packageTerms = await prisma.paymentPlanTerms.create({
+      data: { organizationId: a.org.id, planId: pkgPlan.id, effectiveYear: 2020, effectiveMonth: 1, priceAmount: "270.00", currency: "USD", monthsCovered: 3, createdById: a.admin.id },
+    });
+    const o = await createObligation({ studentId: s.id, type: "PACKAGE", year: 2030, month: 1, monthsCovered: 3, amount: "270.00", dueOn: null, graceDeadline: null, lateFeeAmount: null, planTermsId: packageTerms.id });
+    await prisma.duesCoverage.createMany({
+      data: [
+        { organizationId: a.org.id, studentId: s.id, obligationId: o.id, year: 2030, month: 1 },
+        { organizationId: a.org.id, studentId: s.id, obligationId: o.id, year: 2030, month: 2 },
+        { organizationId: a.org.id, studentId: s.id, obligationId: o.id, year: 2030, month: 3 },
+      ],
+    });
+    const result = await listDuesFactsForStudents(context(), [s.id], undefined, deps({ now: at("2030-02-15T12:00:00") }));
+    if (!result.ok) throw new Error("unreachable");
+    expect(result.facts[0]!.coverage).toHaveLength(3);
+    expect(result.facts[0]!.coverage).toEqual(
+      expect.arrayContaining([
+        { year: 2030, month: 1, obligationId: o.id },
+        { year: 2030, month: 2, obligationId: o.id },
+        { year: 2030, month: 3, obligationId: o.id },
+      ]),
+    );
+  });
+
+  it("a MONTHLY's coverage survives a reversal of its settlement — coverage unchanged, settled flips back to false", async () => {
+    const s = await newStudent("ACTIVE", "coveragesurvivesreversal");
+    const o = await createObligation({ studentId: s.id, type: "MONTHLY", year: 2030, month: 1, dueOn: new Date("2030-01-01"), graceDeadline: new Date("2030-01-06"), lateFeeAmount: "20.00", policyVersionId: policyA.id });
+    await prisma.duesCoverage.create({ data: { organizationId: a.org.id, studentId: s.id, obligationId: o.id, year: 2030, month: 1 } });
+    await settle(o.id, s.id, true); // already reversed
+    const result = await listDuesFactsForStudents(context(), [s.id], undefined, deps({ now: at("2030-02-01T12:00:00") }));
+    if (!result.ok) throw new Error("unreachable");
+    expect(result.facts[0]!.coverage).toEqual([{ year: 2030, month: 1, obligationId: o.id }]);
+    expect(result.facts[0]!.outstanding[0]!.settled).toBe(false);
+  });
+});
+
+describe("package coverage prevents the false OBSERVED_DISCREPANCY (§4.1.5)", () => {
+  it("eligible + configured + no MONTHLY for the period, but a PACKAGE covers it — resolves RESOLVED, not a false discrepancy", async () => {
+    const s = await newStudent("ACTIVE", "packagecoversdiscrepancy");
+    await prisma.studentStatusChange.create({ data: { organizationId: a.org.id, studentId: s.id, status: "ACTIVE", effectiveOn: new Date("2029-12-01"), sequence: 1, source: "EVENT", actorId: a.admin.id } });
+    await assign(s.id, planA.id, 2029, 12);
+    const pkgPlan = await prisma.paymentPlan.create({ data: { organizationId: a.org.id, academyId: a.academy.id, name: `Facts pkg-discrepancy plan ${suffix}` } });
+    const packageTerms = await prisma.paymentPlanTerms.create({
+      data: { organizationId: a.org.id, planId: pkgPlan.id, effectiveYear: 2020, effectiveMonth: 1, priceAmount: "180.00", currency: "USD", monthsCovered: 2, createdById: a.admin.id },
+    });
+    const o = await createObligation({ studentId: s.id, type: "PACKAGE", year: 2030, month: 1, monthsCovered: 2, amount: "180.00", dueOn: null, graceDeadline: null, lateFeeAmount: null, planTermsId: packageTerms.id });
+    await prisma.duesCoverage.createMany({
+      data: [
+        { organizationId: a.org.id, studentId: s.id, obligationId: o.id, year: 2030, month: 1 },
+        { organizationId: a.org.id, studentId: s.id, obligationId: o.id, year: 2030, month: 2 },
+      ],
+    });
+    // Deliberately no MONTHLY row for 2030-01 — genuinely satisfied by package coverage, by design.
+    const result = await listDuesFactsForStudents(context(), [s.id], { year: 2030, month: 1 }, deps({ now: at("2030-01-10T12:00:00") }));
+    if (!result.ok) throw new Error("unreachable");
+    expect(result.facts[0]!.eligibility).toEqual({ outcome: "RESOLVED", planId: planA.id });
+  });
+});
+
+describe("input validation (§6): month / studentIds entries / the captured clock, both entry points", () => {
+  it("listDuesFactsForStudents refuses invalid for a malformed supplied month", async () => {
+    const s = await newStudent("ACTIVE", "badmonth");
+    const result = await listDuesFactsForStudents(context(), [s.id], { year: 2030, month: 13 }, deps());
+    expect(result).toEqual({ ok: false, error: "invalid" });
+  });
+
+  it("listDuesFactsForStudents preserves the omitted-month default — no month means no validation gate", async () => {
+    const s = await newStudent("ACTIVE", "omittedmonth");
+    const result = await listDuesFactsForStudents(context(), [s.id], undefined, deps({ now: at("2030-01-10T12:00:00") }));
+    expect(result.ok).toBe(true);
+  });
+
+  it("listDuesFactsForStudents refuses invalid for a blank studentIds entry", async () => {
+    const result = await listDuesFactsForStudents(context(), [""], undefined, deps());
+    expect(result).toEqual({ ok: false, error: "invalid" });
+  });
+
+  it("listDuesFactsForStudents refuses invalid for a non-string studentIds entry", async () => {
+    const result = await listDuesFactsForStudents(context(), [null as unknown as string], undefined, deps());
+    expect(result).toEqual({ ok: false, error: "invalid" });
+  });
+
+  it("listDuesFactsForStudents refuses invalid for an Invalid Date clock", async () => {
+    const s = await newStudent("ACTIVE", "badclock");
+    const result = await listDuesFactsForStudents(context(), [s.id], undefined, deps({ now: () => new Date("not-a-date") }));
+    expect(result).toEqual({ ok: false, error: "invalid" });
+  });
+
+  it("getOwnDuesFacts returns null for a malformed supplied month", async () => {
+    const s = await newStudent("ACTIVE", "selfbadmonth");
+    const selfCtx: PortalSelfContext = { ...context({ organizationRole: "STUDENT", selfStudentId: s.id }), selfStudentId: s.id };
+    const result = await getOwnDuesFacts(selfCtx, { year: 99999, month: 1 }, deps());
+    expect(result).toBeNull();
+  });
+
+  it("getOwnDuesFacts returns null for a blank selfStudentId", async () => {
+    const selfCtx: PortalSelfContext = { ...context({ organizationRole: "STUDENT", selfStudentId: "" }), selfStudentId: "" };
+    const result = await getOwnDuesFacts(selfCtx, undefined, deps());
+    expect(result).toBeNull();
+  });
+
+  it("getOwnDuesFacts returns null for an Invalid Date clock", async () => {
+    const s = await newStudent("ACTIVE", "selfbadclock");
+    const selfCtx: PortalSelfContext = { ...context({ organizationRole: "STUDENT", selfStudentId: s.id }), selfStudentId: s.id };
+    const result = await getOwnDuesFacts(selfCtx, undefined, deps({ now: () => new Date("not-a-date") }));
+    expect(result).toBeNull();
+  });
+});
+
+describe("pending receipt integrity (§4.3): malformed/mismatched snapshots are a typed failure, never a silent empty success", () => {
+  it("a genuinely malformed snapshot produces ok:false, snapshotIntegrityFailure — never silently-empty components", async () => {
+    const s = await newStudent("ACTIVE", "malformedsnapshot");
+    await createReceipt(s.id, "ORDINARY", { kind: "ORDINARY" /* missing required obligationIds */ }, "100.00");
+    const result = await listDuesFactsForStudents(context(), [s.id], undefined, deps({ now: at("2030-01-10T12:00:00") }));
+    if (!result.ok) throw new Error("unreachable");
+    const receiptFact = result.facts[0]!.pendingReceipts[0]!;
+    expect(receiptFact.ok).toBe(false);
+    if (receiptFact.ok) throw new Error("unreachable");
+    expect(receiptFact.error).toBe("snapshotIntegrityFailure");
+    expect(receiptFact.kind).toBe("ORDINARY"); // the row's REAL kind, still reported
+  });
+
+  it("a well-formed snapshot whose own kind disagrees with the receipt row's real kind column is also a typed failure", async () => {
+    const s = await newStudent("ACTIVE", "kindmismatch");
+    const existing = await createObligation({ studentId: s.id, type: "MONTHLY", year: 2030, month: 1, dueOn: new Date("2030-01-01"), graceDeadline: new Date("2030-01-06"), lateFeeAmount: "20.00", policyVersionId: policyA.id });
+    // Row's real kind is ORDINARY, but the stored snapshot itself claims PACKAGE — two independent sources disagree.
+    await createReceipt(
+      s.id,
+      "ORDINARY",
+      { kind: "PACKAGE", planTermsId: termsA.id, priceAmount: "100.00", startMonth: { year: 2030, month: 1 }, coverageMonths: [{ year: 2030, month: 1 }], existingObligationIds: [existing.id] },
+      "100.00",
+    );
+    const result = await listDuesFactsForStudents(context(), [s.id], undefined, deps({ now: at("2030-01-10T12:00:00") }));
+    if (!result.ok) throw new Error("unreachable");
+    const receiptFact = result.facts[0]!.pendingReceipts[0]!;
+    expect(receiptFact.ok).toBe(false);
+    if (receiptFact.ok) throw new Error("unreachable");
+    expect(receiptFact.error).toBe("snapshotIntegrityFailure");
+    expect(receiptFact.kind).toBe("ORDINARY");
   });
 });
 
@@ -347,6 +498,8 @@ describe("pending receipts, decomposed into Component A / Component B (§4.3)", 
     expect(fact.outstanding[0]!.outstandingAmountMinor).toBeGreaterThan(0); // never reduced by the pending receipt
     expect(fact.pendingReceipts).toHaveLength(1);
     const receiptFact = fact.pendingReceipts[0]!;
+    expect(receiptFact.ok).toBe(true);
+    if (!receiptFact.ok) throw new Error("unreachable");
     expect(receiptFact.referencedExistingObligationIds).toEqual([existing.id]); // Component A
     expect(receiptFact.proposedCoverage).toEqual([{ year: 2030, month: 2 }]); // Component B
     expect(receiptFact.tenderAmountMinor).toBe(10000); // raw, unconverted
@@ -359,6 +512,8 @@ describe("pending receipts, decomposed into Component A / Component B (§4.3)", 
     const result = await listDuesFactsForStudents(context(), [s.id], undefined, deps({ now: at("2030-01-10T12:00:00") }));
     if (!result.ok) throw new Error("unreachable");
     const receiptFact = result.facts[0]!.pendingReceipts[0]!;
+    expect(receiptFact.ok).toBe(true);
+    if (!receiptFact.ok) throw new Error("unreachable");
     expect(receiptFact.referencedExistingObligationIds).toEqual([existing.id]);
     expect(receiptFact.proposedCoverage).toEqual([]);
   });
@@ -451,6 +606,7 @@ describe("bounded batching (§6)", () => {
     const statusFindManySpy = vi.spyOn(appPrisma.studentStatusChange, "findMany");
     const obligationFindManySpy = vi.spyOn(appPrisma.duesObligation, "findMany");
     const receiptFindManySpy = vi.spyOn(appPrisma.awaitingRateReceipt, "findMany");
+    const coverageFindManySpy = vi.spyOn(appPrisma.duesCoverage, "findMany");
     try {
       // Only the first 60 (MAX_SELECTED) can be requested in one call — this test proves the QUERY COUNT for that
       // bounded batch is fixed, not proportional to it.
@@ -461,11 +617,13 @@ describe("bounded batching (§6)", () => {
       expect(statusFindManySpy).toHaveBeenCalledTimes(1);
       expect(obligationFindManySpy).toHaveBeenCalledTimes(1);
       expect(receiptFindManySpy).toHaveBeenCalledTimes(1);
+      expect(coverageFindManySpy).toHaveBeenCalledTimes(1);
     } finally {
       studentFindManySpy.mockRestore();
       statusFindManySpy.mockRestore();
       obligationFindManySpy.mockRestore();
       receiptFindManySpy.mockRestore();
+      coverageFindManySpy.mockRestore();
       await prisma.student.deleteMany({ where: { organizationId: a.org.id, codeHash: { startsWith: "bulk-" } } });
     }
   }, 30_000);

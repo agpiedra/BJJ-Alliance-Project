@@ -8,6 +8,7 @@ import { lateFeeApplies, lateFeeToAssessMinor } from "@/lib/dues/settlement";
 import { eligibleAndAssigned, type StatusHistoryRow, type AssignmentRow } from "@/lib/dues/eligibility";
 import { columnToMinor } from "@/lib/dues/ledger/minor-units";
 import { awaitingRateReceiptSnapshotSchema } from "@/lib/dues/ledger/awaiting-rate-receipt";
+import { isValidCoverageMonth } from "@/lib/dues/ledger/create-monthly-obligation";
 import type { YearMonth } from "@/lib/dues/calendar";
 
 /**
@@ -45,10 +46,6 @@ export type DuesOutstandingFact = {
   currency: Currency;
   coverageYear: number;
   coverageMonth: number;
-  /** Always `true` for a row that exists at all (brief §4) — coverage is written at OBLIGATION-CREATION time, not
-   * payment time, and survives a reversal untouched. This field exists only to make that distinction explicit in
-   * the data shape itself: a reader must never infer "paid" from an obligation's mere presence. */
-  coverageClaimed: true;
   settled: boolean;
   /** 0 when settled (the historical fee, if any, was already paid atomically — never re-reported as owed); tuition
    * (+ fee, MONTHLY only) when not. See §5.1 of the brief for the exact algorithm this reuses. */
@@ -62,20 +59,35 @@ export type DuesOutstandingFact = {
   pastGrace: boolean | null;
 };
 
-export type DuesPendingReceiptFact = {
-  receiptId: string;
-  kind: "ORDINARY" | "PREPAYMENT" | "PACKAGE";
-  tenderCurrency: Currency;
-  /** The raw, UNCONVERTED tender — never subtracted from `outstanding` above, never implies settlement. */
-  tenderAmountMinor: number;
-  /** Component A (brief §4.3): real ids, already present in `outstanding` too, unmodified by the receipt's mere
-   * existence — a receipt never changes an obligation's own outstanding fact until it actually resolves. */
-  referencedExistingObligationIds: string[];
-  /** Component B (brief §4.3): nothing exists in `DuesObligation` for these months yet — a pending PURCHASE INTENT,
-   * never confirmed debt, never merged into `outstanding`. Empty for `ORDINARY` (nothing is proposed, only
-   * referenced). */
-  proposedCoverage: Array<{ year: number; month: number }>;
-};
+/** A malformed stored snapshot, or one whose own `kind` disagrees with the receipt row's real `kind` column, is a
+ * data-integrity hazard — never silently degraded to empty components, which would be indistinguishable from a
+ * receipt that genuinely references nothing. A discriminated union forces every consumer to handle this case. */
+export type DuesPendingReceiptFact =
+  | {
+      ok: true;
+      receiptId: string;
+      kind: "ORDINARY" | "PREPAYMENT" | "PACKAGE";
+      tenderCurrency: Currency;
+      /** The raw, UNCONVERTED tender — never subtracted from `outstanding` above, never implies settlement. */
+      tenderAmountMinor: number;
+      /** Component A (brief §4.3): real ids, already present in `outstanding` too, unmodified by the receipt's mere
+       * existence — a receipt never changes an obligation's own outstanding fact until it actually resolves. */
+      referencedExistingObligationIds: string[];
+      /** Component B (brief §4.3): nothing exists in `DuesObligation` for these months yet — a pending PURCHASE
+       * INTENT, never confirmed debt, never merged into `outstanding`. Empty for `ORDINARY` (nothing is proposed,
+       * only referenced). */
+      proposedCoverage: Array<{ year: number; month: number }>;
+    }
+  | {
+      ok: false;
+      receiptId: string;
+      /** The receipt row's own REAL `kind` column — still reported even on failure, since it never depends on the
+       * untrusted snapshot. */
+      kind: "ORDINARY" | "PREPAYMENT" | "PACKAGE";
+      tenderCurrency: Currency;
+      tenderAmountMinor: number;
+      error: "snapshotIntegrityFailure";
+    };
 
 export type DuesFactsForStudent = {
   studentId: string;
@@ -85,6 +97,11 @@ export type DuesFactsForStudent = {
   /** Any period, any type, independent of `eligibility` above — a NOT_ELIGIBLE/unassigned student can still have
    * real, old, unsettled obligations from a period when they were eligible and assigned. */
   outstanding: DuesOutstandingFact[];
+  /** Every real `DuesCoverage` row for this student (brief §4) — a claim from a real table, independent of
+   * `outstanding`'s settlement/debt facts: a MONTHLY's unpaid status and its coverage claim are two separate facts,
+   * both true simultaneously. SIGNUP never appears here (it writes zero `DuesCoverage` rows, by design). Survives a
+   * payment reversal untouched (`reverse-payment.ts` never touches `DuesCoverage`). */
+  coverage: Array<{ year: number; month: number; obligationId: string }>;
   pendingReceipts: DuesPendingReceiptFact[];
 };
 
@@ -94,12 +111,14 @@ const MAX_SELECTED = 60;
 /** `ScopedDb` (the tenant-scoped client) does not expose `studentStatusChange`/`duesObligation` at all — this
  * resolver uses the plain `prisma` client throughout instead, exactly like every other ledger reader/writer, and
  * scopes every query by `organizationId` explicitly itself (never trusting a bare id). */
-type FactsDb = Pick<typeof prisma, "student" | "studentStatusChange" | "studentPlanAssignment" | "paymentPlanTerms" | "duesPolicyVersion" | "duesObligation" | "awaitingRateReceipt">;
+type FactsDb = Pick<typeof prisma, "student" | "studentStatusChange" | "studentPlanAssignment" | "paymentPlanTerms" | "duesPolicyVersion" | "duesObligation" | "duesCoverage" | "awaitingRateReceipt">;
 
 const isoDate = (d: Date): string => {
   const c = fromDbDate(d);
   return `${c.year}-${String(c.month).padStart(2, "0")}-${String(c.day).padStart(2, "0")}`;
 };
+
+const isRealClock = (now: Date): boolean => now instanceof Date && !Number.isNaN(now.getTime());
 
 function groupBy<T, K>(items: readonly T[], key: (item: T) => K): Map<K, T[]> {
   const map = new Map<K, T[]>();
@@ -133,7 +152,7 @@ async function computeDuesFactsForStudents(
   if (students.length === 0) return [];
   const ids = students.map((s) => s.id);
 
-  const [statusRows, assignmentRows, obligations, receipts] = await Promise.all([
+  const [statusRows, assignmentRows, obligations, coverageRows, receipts] = await Promise.all([
     db.studentStatusChange.findMany({ where: { organizationId, studentId: { in: ids } }, select: { studentId: true, effectiveOn: true, sequence: true, status: true } }),
     db.studentPlanAssignment.findMany({
       where: { organizationId, studentId: { in: ids } },
@@ -143,6 +162,7 @@ async function computeDuesFactsForStudents(
       where: { organizationId, studentId: { in: ids } },
       include: { lateFees: true, settlements: { where: { reversedAt: null }, select: { id: true } } },
     }),
+    db.duesCoverage.findMany({ where: { organizationId, studentId: { in: ids } }, select: { studentId: true, year: true, month: true, obligationId: true } }),
     db.awaitingRateReceipt.findMany({
       where: { organizationId, studentId: { in: ids }, status: "PENDING" },
       select: { id: true, studentId: true, kind: true, tenderCurrency: true, tenderAmount: true, snapshot: true },
@@ -161,6 +181,7 @@ async function computeDuesFactsForStudents(
   const statusByStudent = groupBy(statusRows, (r) => r.studentId);
   const assignmentsByStudent = groupBy(assignmentRows, (r) => r.studentId);
   const obligationsByStudent = groupBy(obligations, (r) => r.studentId);
+  const coverageByStudent = groupBy(coverageRows, (r) => r.studentId);
   const receiptsByStudent = groupBy(receipts, (r) => r.studentId);
 
   return students.map((student): DuesFactsForStudent => {
@@ -177,6 +198,7 @@ async function computeDuesFactsForStudents(
       planAcademyId: r.plan?.academyId ?? null,
     }));
     const elig = eligibleAndAssigned(statusHistory, assignments, student.homeAcademyId, targetMonth);
+    const studentCoverage = (coverageByStudent.get(student.id) ?? []).map((c) => ({ year: c.year, month: c.month, obligationId: c.obligationId }));
     let eligibility: DuesEligibilityFact;
     if (elig.outcome !== "ELIGIBLE") {
       eligibility = { outcome: elig.outcome };
@@ -190,10 +212,14 @@ async function computeDuesFactsForStudents(
       if (!termsCandidate || !policyCandidate || termsCandidate.monthsCovered !== 1 || termsCandidate.currency !== policyCandidate.lateFeeCurrency) {
         eligibility = { outcome: "MISSING_CONFIGURATION" };
       } else {
+        // Mirrors checkMonthCoverageInTx's own two-check shape (monthly-config-resolution.ts): either an existing
+        // MONTHLY obligation for this month, OR a real DuesCoverage row from any other obligation (e.g. an active
+        // PACKAGE) — "already covered" means exactly the same thing here as it does when a writer checks it.
         const hasMonthlyThisPeriod = (obligationsByStudent.get(student.id) ?? []).some(
           (o) => o.type === "MONTHLY" && o.coverageYear === targetMonth.year && o.coverageMonth === targetMonth.month,
         );
-        eligibility = hasMonthlyThisPeriod ? { outcome: "RESOLVED", planId: elig.planId } : { outcome: "OBSERVED_DISCREPANCY" };
+        const hasCoverageThisPeriod = hasMonthlyThisPeriod || studentCoverage.some((c) => c.year === targetMonth.year && c.month === targetMonth.month);
+        eligibility = hasCoverageThisPeriod ? { outcome: "RESOLVED", planId: elig.planId } : { outcome: "OBSERVED_DISCREPANCY" };
       }
     }
 
@@ -203,7 +229,7 @@ async function computeDuesFactsForStudents(
       if (settled) {
         return {
           obligationId: o.id, type: o.type, currency: o.currency, coverageYear: o.coverageYear, coverageMonth: o.coverageMonth,
-          coverageClaimed: true, settled: true, outstandingAmountMinor: 0,
+          settled: true, outstandingAmountMinor: 0,
           outstandingFeeMinor: o.type === "MONTHLY" ? 0 : null,
           dueOn: o.dueOn ? isoDate(o.dueOn) : null,
           pastGrace: null,
@@ -234,7 +260,7 @@ async function computeDuesFactsForStudents(
       // SIGNUP/PACKAGE: pastGrace/outstandingFeeMinor stay null — never late-fee eligible by shape.
       return {
         obligationId: o.id, type: o.type, currency: o.currency, coverageYear: o.coverageYear, coverageMonth: o.coverageMonth,
-        coverageClaimed: true, settled: false, outstandingAmountMinor, outstandingFeeMinor,
+        settled: false, outstandingAmountMinor, outstandingFeeMinor,
         dueOn: o.dueOn ? isoDate(o.dueOn) : null, pastGrace,
       };
     });
@@ -242,25 +268,29 @@ async function computeDuesFactsForStudents(
     // ---- pending receipts, decomposed into Component A / Component B (brief §4.3) ----
     const pendingReceipts: DuesPendingReceiptFact[] = (receiptsByStudent.get(student.id) ?? []).map((r) => {
       const parsed = awaitingRateReceiptSnapshotSchema.safeParse(r.snapshot);
-      let referencedExistingObligationIds: string[] = [];
-      let proposedCoverage: Array<{ year: number; month: number }> = [];
-      if (parsed.success) {
-        if (parsed.data.kind === "ORDINARY") {
-          referencedExistingObligationIds = parsed.data.obligationIds;
-        } else if (parsed.data.kind === "PREPAYMENT") {
-          referencedExistingObligationIds = parsed.data.existingObligationIds;
-          proposedCoverage = parsed.data.months.map((m) => m.coverage);
-        } else {
-          referencedExistingObligationIds = parsed.data.existingObligationIds;
-          proposedCoverage = parsed.data.coverageMonths;
-        }
+      // A parse failure, OR a well-formed snapshot whose own `kind` disagrees with the receipt row's REAL `kind`
+      // column — two independent sources of truth that should never disagree — are both the same integrity failure.
+      // Never silently degraded to empty components, which would be indistinguishable from "genuinely references
+      // nothing": this is a typed, explicit fact a consumer must handle.
+      if (!parsed.success || parsed.data.kind !== r.kind) {
+        return { ok: false, receiptId: r.id, kind: r.kind, tenderCurrency: r.tenderCurrency, tenderAmountMinor: columnToMinor(r.tenderAmount), error: "snapshotIntegrityFailure" };
       }
-      // A malformed stored snapshot (never produced by this app's own writers; defensive only) degrades to empty
-      // components rather than throwing — this is a read model, not the authority on receipt integrity.
-      return { receiptId: r.id, kind: r.kind, tenderCurrency: r.tenderCurrency, tenderAmountMinor: columnToMinor(r.tenderAmount), referencedExistingObligationIds, proposedCoverage };
+      let referencedExistingObligationIds: string[];
+      let proposedCoverage: Array<{ year: number; month: number }>;
+      if (parsed.data.kind === "ORDINARY") {
+        referencedExistingObligationIds = parsed.data.obligationIds;
+        proposedCoverage = [];
+      } else if (parsed.data.kind === "PREPAYMENT") {
+        referencedExistingObligationIds = parsed.data.existingObligationIds;
+        proposedCoverage = parsed.data.months.map((m) => m.coverage);
+      } else {
+        referencedExistingObligationIds = parsed.data.existingObligationIds;
+        proposedCoverage = parsed.data.coverageMonths;
+      }
+      return { ok: true, receiptId: r.id, kind: r.kind, tenderCurrency: r.tenderCurrency, tenderAmountMinor: columnToMinor(r.tenderAmount), referencedExistingObligationIds, proposedCoverage };
     });
 
-    return { studentId: student.id, eligibility, outstanding, pendingReceipts };
+    return { studentId: student.id, eligibility, outstanding, coverage: studentCoverage, pendingReceipts };
   });
 }
 
@@ -285,10 +315,15 @@ export async function listDuesFactsForStudents(
   if (!(await activation.isActive(context.organizationId))) return { ok: false, error: "notActive" };
   if (!Array.isArray(studentIds)) return { ok: false, error: "invalid" };
   if (studentIds.length > MAX_SELECTED) return { ok: false, error: "invalid" };
+  if (studentIds.some((id) => typeof id !== "string" || id.trim().length === 0)) return { ok: false, error: "invalid" };
+  if (month !== undefined && !isValidCoverageMonth(month)) return { ok: false, error: "invalid" };
   if (studentIds.length === 0) return { ok: true, facts: [] };
 
+  const now = (deps.now ?? (() => new Date()))();
+  if (!isRealClock(now)) return { ok: false, error: "invalid" };
+
   const scope = branchScopeWhere(context);
-  const facts = await computeDuesFactsForStudents(prisma, context.organizationId, studentIds, month, (deps.now ?? (() => new Date()))(), scope);
+  const facts = await computeDuesFactsForStudents(prisma, context.organizationId, studentIds, month, now, scope);
   return { ok: true, facts };
 }
 
@@ -301,6 +336,10 @@ export async function listDuesFactsForStudents(
 export async function getOwnDuesFacts(context: PortalSelfContext, month?: YearMonth, deps: LedgerDeps = {}): Promise<DuesFactsForStudent | null> {
   const activation = deps.activation ?? inactiveLedgerActivation;
   if (!(await activation.isActive(context.organizationId))) return null;
-  const facts = await computeDuesFactsForStudents(prisma, context.organizationId, [context.selfStudentId], month, (deps.now ?? (() => new Date()))());
+  if (typeof context.selfStudentId !== "string" || context.selfStudentId.trim().length === 0) return null;
+  if (month !== undefined && !isValidCoverageMonth(month)) return null;
+  const now = (deps.now ?? (() => new Date()))();
+  if (!isRealClock(now)) return null;
+  const facts = await computeDuesFactsForStudents(prisma, context.organizationId, [context.selfStudentId], month, now);
   return facts[0] ?? null;
 }
