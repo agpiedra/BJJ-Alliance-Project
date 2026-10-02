@@ -212,7 +212,10 @@ export function CreateStudentForm({
           <input type="text" name="emergencyContact" className="rounded border px-3 py-2" />
         </label>
 
-        <input type="hidden" name="creationRequestId" value={creationRequestId} />
+        {/* §7.7: only submitted on the active-billing path — the inactive path's own tx.student.create() call
+            already discards this value (createStudentInTx sets creationRequestId: isActive ? creationRequestId :
+            null), but the field itself must not exist in the DOM while inactive either (zero new DOM, §3/§7.6). */}
+        {billingActive && <input type="hidden" name="creationRequestId" value={creationRequestId} />}
 
         {billingActive &&
           (organizationRole === "ADMIN" ? (

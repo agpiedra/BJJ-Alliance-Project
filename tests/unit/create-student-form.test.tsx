@@ -80,14 +80,17 @@ describe("CreateStudentForm — track control filters the rank dropdown", () => 
 });
 
 describe("CreateStudentForm — enrollment/resume integration plan §7.6 plan-selector", () => {
-  it("billing inactive (the default): no plan field, no 'requires admin' message — zero new DOM", () => {
-    renderForm();
+  it("billing inactive (the default): no plan field, no 'requires admin' message, no hidden creationRequestId field", () => {
+    const { container } = renderForm();
     expect(screen.queryByLabelText("Monthly plan (optional)")).toBeNull();
     expect(screen.queryByText(/requires an owner/i)).toBeNull();
+    // Narrow assertion: this proves the creationRequestId hidden input specifically is absent from the DOM while
+    // inactive — it is not a claim that the whole form's render is byte-identical/equivalent to any other state.
+    expect(container.querySelector('input[name="creationRequestId"]')).toBeNull();
   });
 
   it("billing active, ADMIN: a keyboard-accessible plan selector is offered, package-free, no default", () => {
-    render(
+    const { container } = render(
       <NextIntlClientProvider locale="en" messages={enMessages}>
         <CreateStudentForm
           organizationId="org-1"
@@ -106,6 +109,11 @@ describe("CreateStudentForm — enrollment/resume integration plan §7.6 plan-se
     expect(select).toHaveValue(""); // no default
     fireEvent.change(select, { target: { value: "plan-1" } });
     expect(select).toHaveValue("plan-1");
+    // Narrow assertion (the mirror of the billing-inactive check above): the hidden creationRequestId field IS
+    // present while active, carrying a non-empty, stable submission-identity value.
+    const hidden = container.querySelector('input[name="creationRequestId"]') as HTMLInputElement | null;
+    expect(hidden).not.toBeNull();
+    expect(hidden!.value).toMatch(/^[0-9a-f-]{36}$/i);
   });
 
   it("billing active, DIRECTOR: no selector is offered — only the 'requires an owner' message, never a doomed submission", () => {
