@@ -703,6 +703,20 @@
         "notFound": "Could not restore this student.",
         "notArchived": "This student is not archived."
       },
+      "returnToTraining": {
+        "button": "Return to training",
+        "confirm": "Return this student to training now? This bills this month's dues if they are not already covered, using today's date.",
+        "success": "Student returned to training.",
+        "notFound": "Could not return this student to training.",
+        "notActive": "Billing is not active for this organization yet.",
+        "notEligible": "This student is not eligible to return to training this way.",
+        "noTrustworthyArchiveEvent": "This student's archive history cannot be confirmed. Use Restore instead.",
+        "staleArchiveEvent": "This student's status changed since the page loaded. Reload and try again.",
+        "conflict": "Someone else already updated this student. Reload and try again.",
+        "inapplicable": "This student's billing configuration is missing or incomplete for this plan.",
+        "staleVersion": "This plan's pricing has changed. Reload and try again.",
+        "currencyMismatch": "This plan's currency does not match its branch's fee currency."
+      },
       "regenerateCode": {
         "button": "Regenerate code",
         "confirm": "Regenerate the 4-digit code? The old code will stop working.",

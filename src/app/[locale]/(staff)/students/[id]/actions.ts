@@ -13,6 +13,7 @@ import type { ActionState } from "@/lib/action-state";
 import { lockStudent } from "@/lib/students/lock";
 import { appendStatusChange, todayInAsDbDate } from "@/lib/students/status-history";
 import { resumeChargeInTx } from "@/lib/dues/ledger/resume-charge";
+import { genuineReturnChargeInTx } from "@/lib/dues/ledger/genuine-return-charge";
 import { resolvePlanId } from "@/lib/dues/assignment-core";
 import { EnrollmentRefusedError } from "@/lib/dues/enrollment-refused-error";
 import { StudentWriteMissError, approveStudentInTx } from "./approve-student-core";
@@ -97,6 +98,16 @@ class ResumeChargeRefusedError extends Error {
   constructor(public readonly reason: string) {
     super(`resume charge refused: ${reason}`);
     this.name = "ResumeChargeRefusedError";
+  }
+}
+
+/** Mirrors `ResumeChargeRefusedError` for `returnToTraining`/`genuineReturnChargeInTx`. UNLIKE resume, this action
+ * has no non-gated fallback path at all — every refusal `genuineReturnChargeInTx` can return, including `notActive`,
+ * forces this same rollback-by-throw (nothing it can return has already been safely handled another way). */
+class GenuineReturnChargeRefusedError extends Error {
+  constructor(public readonly reason: string) {
+    super(`genuine return charge refused: ${reason}`);
+    this.name = "GenuineReturnChargeRefusedError";
   }
 }
 
@@ -687,6 +698,73 @@ export async function resumeStudent(
     }
     if (error instanceof ResumeChargeRefusedError) {
       return { error: `resumeCharge:${error.reason}` };
+    }
+    throw error;
+  }
+
+  await refreshStudentPages(parsed.data.studentId);
+  return { ok: true };
+}
+
+const returnToTrainingSchema = z.object({ studentId: z.string().min(1), archiveEventId: z.string().min(1) });
+
+/**
+ * ADMIN/DIRECTOR only (D21, same gate as every status action in this file). Genuine-return-to-training brief: a new,
+ * separate action — NEVER composing `restoreStudent`, which stays completely unchanged (D22) for the purely
+ * administrative case. Eligible only for a currently `ARCHIVED` student whose `statusBeforeArchive` is `ACTIVE` or
+ * `INACTIVE` (D20) — someone who actually trained before, not merely a `PENDING` applicant who was archived without
+ * ever being approved. Status always becomes `ACTIVE` (never the stored `statusBeforeArchive` value, unlike
+ * `restoreStudent`): a genuine return means training again now, regardless of what they held before the archive.
+ *
+ * `archiveEventId` is a hidden field the page embeds only for an eligible student with a trustworthy
+ * (`EVENT`-sourced) archive history (`resolveTrustworthyArchiveEvent`, `@/lib/students/archive-event.ts`) — it binds
+ * this specific submission to that specific archive event, re-verified fresh under the student lock by
+ * `genuineReturnChargeInTx` before any write. This is the mechanism that tells a stale or lost-race retry apart from
+ * a legitimate new attempt across two different archive-and-return cycles; see that function's own doc comment.
+ *
+ * This action's own exported signature carries no activation dependency and no date override of any kind —
+ * production always calls `genuineReturnChargeInTx` with the default `deps` ({}), under which billing is
+ * unconditionally inactive and that function's own first check refuses `notActive` immediately, before taking any
+ * lock. UNLIKE `resumeStudent`, there is no non-gated fallback behavior here at all: this is a brand-new financial
+ * action with nothing useful to do while billing is inactive (today, always) — its own caller (`page.tsx`) renders
+ * no usable UI in that case.
+ */
+export async function returnToTraining(
+  organizationId: string,
+  _prevState: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const auth = await resolveActionContext(organizationId, ["ADMIN", "DIRECTOR"]);
+  if (!auth.ok) return { error: "notFound" };
+  const context = auth.context;
+
+  const parsed = returnToTrainingSchema.safeParse(Object.fromEntries(formData.entries()));
+  if (!parsed.success) {
+    return { error: "notFound" };
+  }
+
+  const student = await getScopedDb(context).student.findUnique({
+    where: { id: parsed.data.studentId },
+    select: { id: true, homeAcademyId: true, organizationId: true, userId: true },
+  });
+
+  if (!student || !isAcademyInTenantScope(context, student.homeAcademyId)) {
+    return { error: "notFound" };
+  }
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      const charged = await genuineReturnChargeInTx(
+        tx,
+        { context, student: { id: student.id, homeAcademyId: student.homeAcademyId, userId: student.userId }, archiveEventId: parsed.data.archiveEventId },
+        {},
+      );
+      if (charged.ok) return;
+      throw new GenuineReturnChargeRefusedError(charged.error);
+    });
+  } catch (error) {
+    if (error instanceof GenuineReturnChargeRefusedError) {
+      return { error: error.reason };
     }
     throw error;
   }

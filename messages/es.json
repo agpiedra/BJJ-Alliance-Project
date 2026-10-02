@@ -703,6 +703,20 @@
         "notFound": "No se pudo restaurar este estudiante.",
         "notArchived": "Este estudiante no está archivado."
       },
+      "returnToTraining": {
+        "button": "Volver a entrenar",
+        "confirm": "¿Volver a entrenar este estudiante ahora? Esto cobra la cuota de este mes si todavía no está cubierto, usando la fecha de hoy.",
+        "success": "Estudiante de vuelta a entrenar.",
+        "notFound": "No se pudo volver a entrenar a este estudiante.",
+        "notActive": "La facturación aún no está activa para esta organización.",
+        "notEligible": "Este estudiante no es elegible para volver a entrenar de esta forma.",
+        "noTrustworthyArchiveEvent": "No se puede confirmar el historial de archivo de este estudiante. Usa Restaurar en su lugar.",
+        "staleArchiveEvent": "El estado de este estudiante cambió desde que se cargó la página. Recarga e intenta de nuevo.",
+        "conflict": "Alguien más ya actualizó a este estudiante. Recarga e intenta de nuevo.",
+        "inapplicable": "La configuración de facturación de este estudiante falta o está incompleta para este plan.",
+        "staleVersion": "El precio de este plan cambió. Recarga e intenta de nuevo.",
+        "currencyMismatch": "La moneda de este plan no coincide con la moneda de cuotas de su sucursal."
+      },
       "regenerateCode": {
         "button": "Regenerar código",
         "confirm": "¿Regenerar el código de 4 dígitos? El código anterior dejará de funcionar.",

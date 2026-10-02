@@ -20,8 +20,11 @@ import { getPaymentHistory } from "./get-payment-history";
 import { EditStudentForm } from "./edit-student-form";
 import { ArchiveStudentButton } from "./archive-student-button";
 import { RestoreStudentButton } from "./restore-student-button";
+import { ReturnToTrainingButton } from "./return-to-training-button";
 import { ApproveStudentButton } from "./approve-student-button";
 import { isEnrollmentBillingActive } from "../create-student-core";
+import { isGenuineReturnBillingActive } from "./genuine-return-core";
+import { resolveTrustworthyArchiveEvent } from "@/lib/students/archive-event";
 import { RegenerateCodeButton } from "./regenerate-code-button";
 import { AddAdjustmentForm } from "./add-adjustment-form";
 import { AttendanceEntriesCard } from "./attendance-entries-card";
@@ -148,6 +151,14 @@ export default async function StudentDetailPage({
   // organization while billing stays inactive (today, always). Only fetched for a PENDING student a session can
   // actually approve, mirroring the `canEdit`-gated fetches around it.
   const enrollmentBillingActive = canEdit && student.status === "PENDING" ? await isEnrollmentBillingActive(context.organizationId) : false;
+
+  // Genuine-return-to-training brief §7: resolved server-side, never from request data — zero new DOM for any
+  // organization while billing stays inactive (today, always). Only fetched for an ARCHIVED student a session can
+  // actually act on, mirroring `enrollmentBillingActive`'s own gated fetch above. `resolveTrustworthyArchiveEvent`
+  // is called with the plain `prisma` client here (a pre-render, informational read); `genuineReturnChargeInTx`
+  // calls the SAME function again, under the student lock, as the authoritative re-check before any write.
+  const genuineReturnBillingActive = canEdit && student.status === "ARCHIVED" ? await isGenuineReturnBillingActive(context.organizationId) : false;
+  const trustworthyArchiveEvent = genuineReturnBillingActive ? await resolveTrustworthyArchiveEvent(prisma, context.organizationId, student.id) : null;
   let existingEnrollmentPlanName: string | null | undefined; // undefined = no assignment resolves for this month
   if (enrollmentBillingActive) {
     const { year: enrollYear, month: enrollMonth } = currentCrDateParts();
@@ -435,7 +446,15 @@ export default async function StudentDetailPage({
               dialog's "you can restore them later" refers to. Archive is only
               offered while there is something to archive. */}
           {student.status === "ARCHIVED" ? (
-            <RestoreStudentButton organizationId={context.organizationId} studentId={student.id} />
+            <div className="flex flex-col items-start gap-4">
+              <RestoreStudentButton organizationId={context.organizationId} studentId={student.id} />
+              {/* A separate, explicitly distinguished action (D22) — never a variant of Restore above. Rendered
+                  only once billing is active (never in production today) AND a trustworthy archive event was
+                  found for this exact student. */}
+              {trustworthyArchiveEvent?.ok && (
+                <ReturnToTrainingButton organizationId={context.organizationId} studentId={student.id} archiveEventId={trustworthyArchiveEvent.archiveEventId} />
+              )}
+            </div>
           ) : (
             <ArchiveStudentButton organizationId={context.organizationId} studentId={student.id} />
           )}
