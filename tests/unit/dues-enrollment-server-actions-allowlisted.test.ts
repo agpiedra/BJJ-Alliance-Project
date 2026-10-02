@@ -19,10 +19,14 @@ import { stripComments } from "../helpers/source-files";
  * server" file this PR touches, so a FUTURE accidental `export` of an internal helper from one of these three files
  * fails CI immediately, not silently.
  *
- * Deliberately scoped to the three files this PR actually audited — NOT a directory-wide scan. Many other
- * pre-existing "use server" files exist under these same directory trees (students/actions.ts,
- * [id]/adjustment-actions.ts, config-actions.ts, etc.); this test makes no claim about them, since they were never
- * part of this PR's review and auditing their exports is a separate, unstarted piece of work.
+ * Deliberately scoped to the files this PR and the genuine-return-to-training brief actually audited — NOT a
+ * directory-wide scan. Many other pre-existing "use server" files exist under these same directory trees
+ * (students/actions.ts, [id]/adjustment-actions.ts, config-actions.ts, etc.); this test makes no claim about them,
+ * since they were never part of either PR's review and auditing their exports is a separate, unstarted piece of
+ * work.
+ *
+ * Extended (genuine-return-to-training brief §7, same hard-learned lesson) for `returnToTraining`, composing the
+ * new `genuineReturnChargeInTx` core directly — re-verified the identical way, not assumed safe by precedent.
  */
 const ALLOWED_SERVER_ACTION_EXPORTS: Record<string, string[]> = {
   "src/lib/dues/assignment-actions.ts": ["assignPlan", "correctAssignment"],
@@ -34,6 +38,7 @@ const ALLOWED_SERVER_ACTION_EXPORTS: Record<string, string[]> = {
     "approveStudent",
     "pauseStudent",
     "resumeStudent",
+    "returnToTraining",
     "regenerateStudentCode",
   ],
 };
@@ -69,9 +74,13 @@ describe('"use server" files in the enrollment/resume area export only their int
       "src/lib/dues/assignment-core.ts",
       "src/app/[locale]/(staff)/students/[id]/approve-student-core.ts",
       "src/app/[locale]/(staff)/students/create-student-core.ts",
+      "src/app/[locale]/(staff)/students/[id]/genuine-return-core.ts",
+      "src/lib/dues/ledger/genuine-return-charge.ts",
+      "src/lib/dues/ledger/monthly-config-resolution.ts",
+      "src/lib/students/archive-event.ts",
     ]) {
       const text = readFileSync(file, "utf8");
-      expect(hasUseServerDirective(text), `${file} must NOT be a "use server" file — its exports (assignPlanInTx/resolvePlanId, approveStudentInTx, createStudentInTx/createStudentCore/isEnrollmentBillingActive) trust locks/validation their caller already did and must never be directly client-invocable`).toBe(false);
+      expect(hasUseServerDirective(text), `${file} must NOT be a "use server" file — its exports (assignPlanInTx/resolvePlanId, approveStudentInTx, createStudentInTx/createStudentCore/isEnrollmentBillingActive, genuineReturnChargeInTx, the shared coverage/config resolvers, isGenuineReturnBillingActive, resolveTrustworthyArchiveEvent) trust locks/validation their caller already did and must never be directly client-invocable`).toBe(false);
     }
   });
 });

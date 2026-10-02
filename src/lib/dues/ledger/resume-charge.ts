@@ -1,8 +1,9 @@
 import { StudentStatus } from "@/generated/prisma/client";
 import type { TenantContext } from "@/lib/tenant/types";
-import { latestEffective, lockAssignmentShared, lockBranchShared, lockStudent, toDbDate, todayIn, type Tx } from "@/lib/dues/ledger/common";
+import { lockBranchShared, lockStudent, toDbDate, todayIn, type Tx } from "@/lib/dues/ledger/common";
 import { inactiveLedgerActivation, type LedgerDeps } from "@/lib/dues/ledger/activation";
 import { writeMonthlyObligationInTx, type CreateMonthlyObligationError } from "@/lib/dues/ledger/create-monthly-obligation";
+import { checkMonthCoverageInTx, resolveMonthlyConfigCandidateInTx } from "@/lib/dues/ledger/monthly-config-resolution";
 import { appendStatusChange } from "@/lib/students/status-history";
 
 /**
@@ -61,39 +62,22 @@ export async function resumeChargeInTx(
   // CORRECTED (second review round): existing coverage must be checked BEFORE resolving assignment/terms/policy for
   // a HYPOTHETICAL new charge. The original order resolved assignment first, wrongly refusing `inapplicable` for a
   // student whose resume month was already covered but who happens to have no assignment for a charge that was
-  // never going to be needed. Reuses the IDENTICAL queries `writeMonthlyObligationInTx` itself performs internally
-  // (`create-monthly-obligation.ts`) — not a second, drifting copy of this check — so "already covered" means
-  // exactly the same thing here as it does there.
-  const existingMonthly = await tx.duesObligation.findFirst({
-    where: { organizationId, studentId: student.id, type: "MONTHLY", coverageYear: coverage.year, coverageMonth: coverage.month },
-    select: { id: true },
-  });
-  const coverageTaken = existingMonthly ? null : await tx.duesCoverage.findFirst({ where: { organizationId, studentId: student.id, year: coverage.year, month: coverage.month }, select: { id: true } });
-  let chargedObligationId: string | null = existingMonthly?.id ?? null;
+  // never going to be needed. `checkMonthCoverageInTx` reuses the IDENTICAL queries `writeMonthlyObligationInTx`
+  // itself performs internally (`create-monthly-obligation.ts`) — not a second, drifting copy of this check — so
+  // "already covered" means exactly the same thing here as it does there.
+  const coverageCheck = await checkMonthCoverageInTx(tx, { organizationId, studentId: student.id, coverage });
+  let chargedObligationId: string | null = coverageCheck.existingObligationId;
 
-  if (!existingMonthly && !coverageTaken) {
-    // Genuinely uncovered: ONLY NOW does a hypothetical new charge's own configuration need to resolve — resolve the
-    // effective assignment, then terms and policy for this one month, the identical resolution shape
-    // `prepayMonthlyObligations` already uses per requested month.
-    const assignments = await tx.studentPlanAssignment.findMany({
-      where: { organizationId, studentId: student.id },
-      select: { id: true, planId: true, effectiveYear: true, effectiveMonth: true },
-    });
-    const candidate = latestEffective(assignments, coverage);
-    if (!candidate) return { ok: false, error: "inapplicable" }; // no assignment at all for this month: config gap
-    if (!(await lockAssignmentShared(tx, organizationId, candidate.id))) return { ok: false, error: "notFound" };
-    const assignment = await tx.studentPlanAssignment.findUniqueOrThrow({ where: { id: candidate.id, organizationId } });
-    if (assignment.planId === null) return { ok: false, error: "inapplicable" }; // explicitly unassigned: config gap
-
-    const termsCandidates = await tx.paymentPlanTerms.findMany({ where: { organizationId, planId: assignment.planId }, select: { id: true, effectiveYear: true, effectiveMonth: true } });
-    const termsCandidate = latestEffective(termsCandidates, coverage);
-    const policyHistory = await tx.duesPolicyVersion.findMany({ where: { organizationId, academyId: student.homeAcademyId }, select: { id: true, effectiveYear: true, effectiveMonth: true } });
-    const policyCandidate = latestEffective(policyHistory, coverage);
-    if (!termsCandidate || !policyCandidate) return { ok: false, error: "inapplicable" }; // config gap
+  if (!coverageCheck.covered) {
+    // Genuinely uncovered: ONLY NOW does a hypothetical new charge's own configuration need to resolve — the
+    // identical resolution shape `prepayMonthlyObligations` already uses per requested month, extracted
+    // (genuine-return-to-training brief §6) so the genuine-return core can reuse it the identical way.
+    const candidate = await resolveMonthlyConfigCandidateInTx(tx, { organizationId, studentId: student.id, homeAcademyId: student.homeAcademyId, coverage });
+    if (!candidate.ok) return { ok: false, error: candidate.error };
 
     const written = await writeMonthlyObligationInTx(
       tx,
-      { context, student, coverage, planTermsId: termsCandidate.id, policyVersionId: policyCandidate.id, origin: "STAFF", minimumDueOn: resumeDate },
+      { context, student, coverage, planTermsId: candidate.planTermsId, policyVersionId: candidate.policyVersionId, origin: "STAFF", minimumDueOn: resumeDate },
       deps,
     );
     // written.error === "coverageTaken"/an existing-MONTHLY `created: false` are both unreachable here in practice

@@ -152,4 +152,29 @@ export interface LedgerDeps {
    * `correctAssignment` call on the specific assignment row this resume is about to read.
    */
   afterResumeLocksForTest?: () => Promise<void>;
+  /**
+   * Test-only synchronization point, called by `genuineReturnChargeInTx` (genuine-return-charge.ts) right after its
+   * branch/student locks succeed and the fresh archive-event re-validation passes, before resolving coverage/
+   * terms/policy — never referenced by production code, never given a value outside a test. Lets a test pause one
+   * return-to-training attempt there, still holding both locks, for a genuine two-connection overlap proof: a
+   * second attempt against the SAME archive event must block on the student lock, then, once the first commits and
+   * releases it, see the event as superseded and refuse.
+   */
+  afterGenuineReturnLocksForTest?: () => Promise<void>;
+  /**
+   * Test-only synchronization point, called by `genuineReturnChargeInTx` (genuine-return-charge.ts) right after its
+   * `DuesObligation`/`DuesCoverage` write (or after determining none was needed) but before the status/membership/
+   * history/audit writes — never referenced by production code, never given a value outside a test. Mirrors
+   * `afterResumeObligationWrittenForTest`'s role: lets a test force a failure there to prove everything rolls back
+   * together.
+   */
+  afterGenuineReturnObligationWrittenForTest?: () => Promise<void>;
+  /**
+   * Test-only synchronization point, called by `genuineReturnChargeInTx` (genuine-return-charge.ts) right after its
+   * status/membership/`StudentStatusChange` writes but before the audit row — never referenced by production code,
+   * never given a value outside a test. The latest possible point to force a failure: proves status, membership AND
+   * history (not just the obligation `afterGenuineReturnObligationWrittenForTest` already covers) all roll back
+   * together when something fails even this late, one statement before the transaction would otherwise commit.
+   */
+  afterGenuineReturnStatusWrittenForTest?: () => Promise<void>;
 }
