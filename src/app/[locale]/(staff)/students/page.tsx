@@ -24,6 +24,8 @@ import { ProgressToNextGrade } from "@/components/belt-graphic/progress-to-next-
 import { buildProgressView } from "@/lib/promotion/progress-view";
 import { listStudents } from "./actions";
 import { CreateStudentForm } from "./create-student-form";
+import { isEnrollmentBillingActive } from "./create-student-core";
+import { listSelectablePlans } from "@/lib/payments/list-plans";
 import { StudentStatus, Track } from "@/generated/prisma/client";
 import { getAtBeltSummary } from "@/lib/students/attendance-summary";
 import { resolvePromotionConfigMap } from "@/lib/promotion/config";
@@ -259,6 +261,14 @@ export default async function StudentsPage({
 
   const canCreate = context.organizationRole === "ADMIN" || context.organizationRole === "DIRECTOR";
 
+  // Enrollment/resume integration plan §7.6: resolved server-side, never from request data. `isEnrollmentBillingActive`
+  // wraps `LedgerActivation`, whose only production implementation is unconditionally false — this form renders
+  // exactly as it does today, with zero new DOM, for every current organization.
+  const billingActive = canCreate ? await isEnrollmentBillingActive(context.organizationId) : false;
+  const createStudentPlans = billingActive
+    ? (await listSelectablePlans(context.organizationId, Array.isArray(context.academyIds) ? context.academyIds : academies.map((a) => a.id))).map((p) => ({ id: p.id, name: p.name }))
+    : [];
+
   return (
     <main className="flex flex-col gap-6 p-4 sm:p-6">
       <header className="flex flex-col gap-1">
@@ -277,6 +287,9 @@ export default async function StudentsPage({
           organizationId={context.organizationId}
           academies={academies}
           rankOptions={createStudentRankOptions}
+          billingActive={billingActive}
+          plans={createStudentPlans}
+          organizationRole={context.organizationRole === "ADMIN" ? "ADMIN" : "DIRECTOR"}
         />
       )}
 

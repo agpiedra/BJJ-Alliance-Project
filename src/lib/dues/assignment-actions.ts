@@ -3,12 +3,12 @@
 import { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import { isAcademyInTenantScope, resolveActionContext } from "@/lib/tenant/context";
-import { isPackagePlan } from "@/lib/dues/package-plans";
 import { compareYearMonth, type YearMonth } from "@/lib/dues/calendar";
 import { currentMonthIn, parseEffectiveMonth, versionRevision } from "@/lib/dues/config-input";
 import { getScopedDb } from "@/lib/tenant/scoped-client";
 import { lockStudent, type Tx } from "@/lib/students/lock";
 import type { ActionState } from "@/lib/action-state";
+import { assignPlanInTx, resolvePlanId } from "@/lib/dues/assignment-core";
 
 /**
  * Eligibility-prerequisites brief, section 6.1: `StudentPlanAssignment` writer, owners only (approved: NOT inferred from the
@@ -31,6 +31,11 @@ import type { ActionState } from "@/lib/action-state";
  *
  * The current-month check is evaluated ONCE, inside the transaction, right after the lock — never before it. A pre-lock check would
  * race the wait itself: a month current when the check ran can turn past while this call sat blocked behind a concurrent holder.
+ *
+ * `assignPlanInTx`/`resolvePlanId` (the transaction-aware core and the plan-validation helper, also reused by the enrollment
+ * composition) live in `./assignment-core` — a plain module, NOT "use server" — so they are never themselves directly
+ * client-invocable server actions. This file exports only `assignPlan` and `correctAssignment`: the genuinely public,
+ * already-authenticated actions.
  */
 
 type Rejection = { rejected: string };
@@ -54,15 +59,6 @@ async function lockAssignment(
 }
 
 const assignmentRevision = (row: { planId: string | null }) => versionRevision({ planId: row.planId });
-
-/** `planId` re-validated against the student's own branch and refused if it names a package plan (packages are bought explicitly, never assigned this way — PR 3's isolation design). Empty/blank means "explicitly unassigned" (null). */
-async function resolvePlanId(organizationId: string, academyId: string, raw: string | null): Promise<{ ok: true; value: string | null } | { ok: false }> {
-  if (raw === null || raw === "") return { ok: true, value: null };
-  const plan = await prisma.paymentPlan.findUnique({ where: { id: raw, organizationId }, select: { id: true, academyId: true } });
-  if (!plan || plan.academyId !== academyId) return { ok: false };
-  if (await isPackagePlan(organizationId, plan.id)) return { ok: false };
-  return { ok: true, value: plan.id };
-}
 
 /** Add an effective-month plan assignment for a student. */
 export async function assignPlan(organizationId: string, _prevState: ActionState, formData: FormData): Promise<ActionState> {
@@ -92,29 +88,16 @@ export async function assignPlan(organizationId: string, _prevState: ActionState
       if (!locked) return reject("notFound"); // vanished between the pre-transaction read and the lock — no live path today
       // Evaluated fresh, under the lock, not before it: a month current when this action started can turn past while it waited
       // for a concurrent holder (monthly-generation.ts brief §5) — checking before the wait would miss that.
-      if (compareYearMonth(month.value, currentMonthIn(student.homeAcademy.timezone)) < 0) return reject("pastMonth");
-      const created = await tx.studentPlanAssignment.create({
-        data: {
-          organizationId: context.organizationId,
-          studentId: student.id,
-          planId: plan.value,
-          effectiveYear: month.value.year,
-          effectiveMonth: month.value.month,
-          createdById: context.actorUserId,
-        },
+      const result = await assignPlanInTx(tx, {
+        context,
+        studentId: student.id,
+        homeAcademyId: student.homeAcademyId,
+        timezone: student.homeAcademy.timezone,
+        planId: plan.value,
+        effectiveYear: month.value.year,
+        effectiveMonth: month.value.month,
       });
-      await tx.auditLog.create({
-        data: {
-          actorId: context.actorUserId,
-          organizationId: context.organizationId,
-          academyId: student.homeAcademyId,
-          action: "studentPlanAssignment.create",
-          entityType: "StudentPlanAssignment",
-          entityId: created.id,
-          before: Prisma.DbNull,
-          after: { studentId: created.studentId, planId: created.planId, effectiveYear: created.effectiveYear, effectiveMonth: created.effectiveMonth },
-        },
-      });
+      if (!result.ok) return reject(result.error);
       return null;
     });
   } catch (error) {

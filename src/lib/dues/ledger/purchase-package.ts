@@ -195,8 +195,12 @@ export async function checkPackageCoverageAvailableInTx(
   const { organizationId, studentId, startMonth, monthsCovered } = args;
   for (let i = 0; i < monthsCovered; i++) {
     const month = addMonths(startMonth, i);
+    // Enrollment/resume integration plan §7.5: SIGNUP also sets coverageYear/coverageMonth (to the enrollment date)
+    // but never claims that month's coverage (zero DuesCoverage rows, coexists with that month's own MONTHLY) — an
+    // allow-list excludes it here so a package starting in a student's own enrollment month is never wrongly
+    // refused as "already covered" by their SIGNUP charge alone.
     const existingObligation = await tx.duesObligation.findFirst({
-      where: { organizationId, studentId, coverageYear: month.year, coverageMonth: month.month },
+      where: { organizationId, studentId, coverageYear: month.year, coverageMonth: month.month, type: { in: ["MONTHLY", "PACKAGE"] } },
       select: { id: true },
     });
     const existingCoverage = await tx.duesCoverage.findFirst({ where: { organizationId, studentId, year: month.year, month: month.month }, select: { id: true } });

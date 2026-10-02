@@ -7,11 +7,16 @@ import { productionSourceFiles, stripComments } from "../helpers/source-files";
  * (the runtime gate is tested in tests/integration/dues-ledger-writers.test.ts):
  *
  *  1. Nothing outside `src/lib/dues/ledger/` imports them, EXCEPT the authorized callers listed in `AUTHORIZED_CALLERS` below
- *     (monthly-generation brief §5.2, late-fee-assessment brief §7, the resume-charge integration plan's own §3): no other
- *     page, route, server action, cron, script or library. The only other importers are tests. This test names those files
- *     explicitly rather than allowing a broad pattern — a fourth file starting to import from the ledger still fails it.
- *     `resumeStudent`'s own action file composes `resumeChargeInTx` (resume-charge.ts) — its public, exported signature is
- *     unchanged by this; only its internal transaction body now calls into the ledger.
+ *     (monthly-generation brief §5.2, late-fee-assessment brief §7, the resume/enrollment integration plan's own §3/§7.6): no
+ *     other page, route, server action, cron, script or library. The only other importers are tests. This test names those
+ *     files explicitly rather than allowing a broad pattern — a fifth file starting to import from the ledger still fails it.
+ *     `resumeStudent` (`[id]/actions.ts`) composes `resumeChargeInTx` directly. `approveStudentInTx`/`createStudentInTx` (the
+ *     gated cores `approveStudent`/`createStudent` compose) were moved out of their own "use server" action files into plain,
+ *     non-"use server" sibling modules (`[id]/approve-student-core.ts`, `create-student-core.ts`) after an independent review
+ *     found every exported async function in a "use server" file becomes a directly client-invocable server action — these two
+ *     cores trust locks/validation their caller already did and must never be reachable that way. Those two new core files are
+ *     the actual importers of `enrollmentChargeInTx` now, not the action files themselves; each action's own public, exported
+ *     signature is unchanged by any of this.
  *  2. They are plain library functions: no `"use server"` (which would make an exported function an invocable endpoint), no route, no
  *     client component.
  *  3. They are registered in `scripts/pending-callers.ts`, the repo's list of code built ahead of its caller.
@@ -22,6 +27,8 @@ const AUTHORIZED_CALLERS = [
   "src/lib/dues/monthly-generation.ts",
   "src/lib/dues/late-fee-assessment.ts",
   "src/app/[locale]/(staff)/students/[id]/actions.ts",
+  "src/app/[locale]/(staff)/students/[id]/approve-student-core.ts",
+  "src/app/[locale]/(staff)/students/create-student-core.ts",
 ];
 
 describe("the ledger writers are not reachable from production code", () => {

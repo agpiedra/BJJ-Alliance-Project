@@ -13,6 +13,7 @@ function stripeRange(maxStripes: number): number[] {
 const INITIAL_STATE: CreateStudentState = {};
 
 type Academy = { id: string; name: string };
+export type CreateStudentPlanOption = { id: string; name: string };
 
 export interface CreateStudentRankOption {
   id: string;
@@ -31,14 +32,33 @@ export function CreateStudentForm({
   organizationId,
   academies,
   rankOptions,
+  billingActive = false,
+  plans = [],
+  organizationRole,
 }: {
   organizationId: string;
   academies: Academy[];
   rankOptions: CreateStudentRankOption[];
+  /** Enrollment/resume integration plan §7.6: resolved server-side from `LedgerActivation` (always false today) at
+   * render time — never a request-supplied value. `false` (the default) renders this form exactly as it has always
+   * rendered, with zero new DOM, matching every current organization's behavior byte-for-byte. */
+  billingActive?: boolean;
+  /** Monthly-shaped plans for this student's branch (package plans already excluded — `resolvePlanId`'s own
+   * exclusion, reused). Only meaningful when `billingActive`. */
+  plans?: CreateStudentPlanOption[];
+  /** Only meaningful when `billingActive`: a DIRECTOR can never create a NEW assignment (assignPlan's own existing
+   * ADMIN-only restriction, §7.6) — shown a message instead of a selector whose only valid submission is a
+   * guaranteed server refusal. */
+  organizationRole?: "ADMIN" | "DIRECTOR";
 }) {
   const t = useTranslations("students.create");
   const locale = useLocale();
   const [state, formAction, isPending] = useActionState(createStudent.bind(null, organizationId), INITIAL_STATE);
+  // §7.7: generated ONCE per mount — stable across a validation-error re-render (the same `useActionState` instance
+  // keeps this component mounted) and across a resubmission of this already-rendered form. A fresh page load (a
+  // deliberate new visit to this form) remounts the component and generates a new one.
+  const [creationRequestId] = useState(() => crypto.randomUUID());
+  const [planId, setPlanId] = useState("");
 
   // MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 3c-i: "Selecting the track filters
   // the rank dropdown to that track's ranks... Default on create: first
@@ -78,6 +98,13 @@ export function CreateStudentForm({
         <div className="mt-4 flex flex-col gap-2 rounded border border-green-600 bg-green-50 p-3">
           <p>{t("successCodeWarning")}</p>
           <p className="text-3xl font-mono font-bold tracking-widest">{state.code}</p>
+        </div>
+      )}
+      {/* §7.7: a recognized retry of an already-created student. The original check-in code is a one-way hash — it
+          cannot be re-shown here, so this is an honest "already done" message, not a fabricated or re-derived code. */}
+      {state.ok && state.alreadyCreated && (
+        <div className="mt-4 flex flex-col gap-2 rounded border border-green-600 bg-green-50 p-3">
+          <p>{t("alreadyCreated")}</p>
         </div>
       )}
 
@@ -184,6 +211,30 @@ export function CreateStudentForm({
           <span>{t("emergencyContact")}</span>
           <input type="text" name="emergencyContact" className="rounded border px-3 py-2" />
         </label>
+
+        {/* §7.7: only submitted on the active-billing path — the inactive path's own tx.student.create() call
+            already discards this value (createStudentInTx sets creationRequestId: isActive ? creationRequestId :
+            null), but the field itself must not exist in the DOM while inactive either (zero new DOM, §3/§7.6). */}
+        {billingActive && <input type="hidden" name="creationRequestId" value={creationRequestId} />}
+
+        {billingActive &&
+          (organizationRole === "ADMIN" ? (
+            <label className="flex flex-col gap-1">
+              <span>{t("planLabel")}</span>
+              <select name="planId" value={planId} onChange={(event) => setPlanId(event.target.value)} className="rounded border px-3 py-2">
+                <option value="">{t("planNone")}</option>
+                {plans.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+              <span className="text-sm text-muted-foreground">{t("planHint")}</span>
+            </label>
+          ) : (
+            <p className="text-sm text-muted-foreground">{t("planRequiresAdmin")}</p>
+          ))}
+
         {state.error && <p className="text-sm text-red-600">{t(state.error)}</p>}
         <Button type="submit" disabled={isPending}>
           {t("submit")}

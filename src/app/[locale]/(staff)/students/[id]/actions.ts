@@ -13,6 +13,9 @@ import type { ActionState } from "@/lib/action-state";
 import { lockStudent } from "@/lib/students/lock";
 import { appendStatusChange, todayInAsDbDate } from "@/lib/students/status-history";
 import { resumeChargeInTx } from "@/lib/dues/ledger/resume-charge";
+import { resolvePlanId } from "@/lib/dues/assignment-core";
+import { EnrollmentRefusedError } from "@/lib/dues/enrollment-refused-error";
+import { StudentWriteMissError, approveStudentInTx } from "./approve-student-core";
 
 /**
  * `currentBelt` / `currentStripes` are deliberately ABSENT from this schema
@@ -79,13 +82,11 @@ function isoOrNull(date: Date | null | undefined): string | null {
  * between the scope check and the write). Never surfaces to the caller —
  * each action catches it and returns the same `notFound` the pre-audit
  * code did.
+ *
+ * Now defined in `./approve-student-core` (a plain, non-"use server" module) and imported here, so
+ * `approveStudentInTx`'s own `instanceof` checks against it share the same class identity across the module
+ * boundary — see that file's own doc comment for why it could not stay declared in both places.
  */
-class StudentWriteMissError extends Error {
-  constructor() {
-    super("STUDENT_WRITE_MISS");
-    this.name = "StudentWriteMissError";
-  }
-}
 
 /** Tags a genuine refusal from `resumeChargeInTx`'s gated path (a configuration gap, or a lost race) so it can be
  * thrown — forcing this transaction to roll back. A configuration-gap refusal has written nothing to roll back; a
@@ -437,6 +438,13 @@ export async function restoreStudent(
   return { ok: true };
 }
 
+const approveStudentSchema = z.object({ studentId: z.string().min(1), planId: z.string().optional() });
+
+// approveStudentInTx (the gated financial half of approveStudent, below) now lives in ./approve-student-core — a
+// plain, non-"use server" module, imported above — rather than being defined here. See that file's own doc comment
+// for exactly why: every exported async function in a "use server" file becomes a directly client-invocable server
+// action, and approveStudentInTx trusts locks/validation its caller (approveStudent) already did.
+
 /**
  * ADMIN/DIRECTOR only. The PENDING -> ACTIVE approval path for a
  * self-signed-up student (public `/signup` creates the row as PENDING; the
@@ -448,6 +456,11 @@ export async function restoreStudent(
  * Both are rejected with `notPending`. The status precondition is re-asserted
  * in the `updateMany`'s own WHERE clause, not just checked beforehand, so two
  * concurrent approvals can't both count as having done the transition.
+ *
+ * Enrollment/resume integration plan §7.5-§7.6: when billing is active, this now also resolves/creates the
+ * student's monthly-plan assignment for the enrollment month and the resulting SIGNUP(+MONTHLY) charge, atomically
+ * with the approval itself — via `approveStudentInTx` above, composed with the default, production `deps` ({}).
+ * This function's own exported signature is unchanged by that: no activation dependency, no date override.
  */
 export async function approveStudent(
   organizationId: string,
@@ -458,7 +471,7 @@ export async function approveStudent(
   if (!auth.ok) return { error: "notFound" };
   const context = auth.context;
 
-  const parsed = studentIdSchema.safeParse(Object.fromEntries(formData.entries()));
+  const parsed = approveStudentSchema.safeParse(Object.fromEntries(formData.entries()));
   if (!parsed.success) {
     return { error: "notFound" };
   }
@@ -476,51 +489,18 @@ export async function approveStudent(
     return { error: "notPending" };
   }
 
+  const planIdRaw = parsed.data.planId && parsed.data.planId.length > 0 ? parsed.data.planId : null;
+  const plan = planIdRaw ? await resolvePlanId(student.organizationId, student.homeAcademyId, planIdRaw) : { ok: true as const, value: null };
+  if (!plan.ok) return { error: "invalid", fieldErrors: { planId: ["invalid"] } };
+
   try {
-    await prisma.$transaction(async (tx) => {
-      const locked = await lockStudent(tx, student.organizationId, student.id);
-      if (!locked) throw new StudentWriteMissError();
-
-      const result = await tx.student.updateMany({
-        where: {
-          id: student.id,
-          organizationId: student.organizationId,
-          homeAcademyId: student.homeAcademyId,
-          status: StudentStatus.PENDING,
-        },
-        data: { status: StudentStatus.ACTIVE },
-      });
-
-      if (result.count === 0) {
-        throw new StudentWriteMissError();
-      }
-
-      // Approval is the moment they belong here — and what lets them into /portal.
-      const membership = await grantStudentMembership(tx, student);
-
-      await appendStatusChange(tx, {
-        organizationId: student.organizationId,
-        studentId: student.id,
-        status: StudentStatus.ACTIVE,
-        effectiveOn: todayInAsDbDate(student.homeAcademy.timezone, new Date()),
-        source: "EVENT",
-        actorId: context.actorUserId,
-      });
-
-      await tx.auditLog.create({
-        data: {
-          actorId: context.actorUserId,
-          organizationId: student.organizationId,
-          academyId: student.homeAcademyId,
-          action: "student.approve",
-          entityType: "Student",
-          entityId: student.id,
-          before: { status: StudentStatus.PENDING },
-          after: { status: StudentStatus.ACTIVE, membership },
-        },
-      });
-    });
+    await prisma.$transaction((tx) =>
+      approveStudentInTx(tx, { context, student: { id: student.id, organizationId: student.organizationId, homeAcademyId: student.homeAcademyId, timezone: student.homeAcademy.timezone, userId: student.userId }, planId: plan.value }, {}),
+    );
   } catch (error) {
+    if (error instanceof EnrollmentRefusedError) {
+      return { error: error.reason };
+    }
     if (error instanceof StudentWriteMissError) {
       return { error: "notPending" };
     }

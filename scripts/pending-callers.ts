@@ -281,6 +281,24 @@ const PENDING_CALLERS: PendingCaller[] = [
     reason:
       "Implements the approved resume-charge rule (eligibility-prerequisites brief §3.4): resuming bills the calendar month containing the resume date, dueOn = max(normal due date, resume date) via writeMonthlyObligationInTx's new minimumDueOn parameter, graceDeadline unchanged. An existing MONTHLY or package coverage for that month lets resume proceed without a new charge; a genuine configuration gap (no resolvable assignment/terms/policy) refuses the WHOLE resume attempt — status, history and audit all stay unchanged — an explicit, approved reversal of an earlier draft's 'proceed unbilled' recommendation. Signup/enrollment (approveStudent, create-student-action.ts) is explicitly out of scope for this entry; neither imports this ledger yet.",
   },
+  // Enrollment/resume integration plan, enrollment scope (§7.1-§7.7, §8). Like resumeChargeInTx above, this one DOES
+  // have real, already-exposed callers (approveStudent and createStudent, both active "use server" actions) — it is
+  // listed anyway because the gated branch is unreachable in production: LedgerActivation's only production
+  // implementation is unconditionally false, so enrollmentChargeInTx's first statement returns immediately, before
+  // taking any lock, for every organization today. Only a test, importing enrollmentChargeInTx / createStudentCore /
+  // approveStudentInTx directly and injecting deps.activation, ever exercises the SIGNUP/assignment-creation path.
+  // approveStudentInTx and createStudentInTx/createStudentCore live in plain, non-"use server" sibling modules
+  // ([id]/approve-student-core.ts, create-student-core.ts) — a post-merge review found every exported async
+  // function in a "use server" file becomes a directly client-invocable server action, and these cores trust
+  // locks/validation their caller already did; assignPlanInTx/resolvePlanId were moved the same way, into
+  // src/lib/dues/assignment-core.ts.
+  {
+    symbol: "enrollmentChargeInTx / assignPlanInTx",
+    file: "src/lib/dues/ledger/enrollment-charge.ts (callers: [id]/approve-student-core.ts approveStudentInTx, create-student-core.ts createStudentInTx); src/lib/dues/assignment-core.ts (assignPlanInTx, the transaction-aware core assignPlan itself also composes)",
+    dueBy: "activation rollout stage",
+    reason:
+      "Implements the approved enrollment rule (D13/D14/D3, §7.1-§7.5): a monthly-plan enrollment creates a one-time SIGNUP obligation due on the enrollment date (no grace, no late fee, zero DuesCoverage rows, at most one per student ever), plus that same month's MONTHLY when enrollment lands before the branch's configured due day. A package-shaped assignment refuses the WHOLE enrollment with a distinct unsupportedEnrollmentPlan error; a missing/invalid configuration refuses with a distinct error too — zero partial writes either way. Creating a NEW StudentPlanAssignment during enrollment is ADMIN-only (requiresAdmin otherwise, zero writes); an existing assignment for the month is reused, a conflicting supplied plan refuses (planConflict) rather than silently overwriting. createStudent additionally protects itself against a double-click or lost-response retry via Student.creationRequestId + an immutable creationFingerprint, compared on retry instead of the student's current (possibly since-edited) fields — recovery happens strictly OUTSIDE the failed transaction, after Postgres has rolled it back, via a fresh scoped lookup (createStudentCore). NOT YET WIRED: no payment-recording writer accepts type: 'SIGNUP' (recordDuesPaymentInTx is MONTHLY-only), so a SIGNUP charge can be created but not yet paid, settled or currency-converted — see docs/DUES_PAYMENT_SCHEDULES.md. Genuine return to training (an ARCHIVED student resuming, plan §7.4) remains explicitly deferred to its own later PR; restoreStudent and resume-charge.ts are untouched by this entry.",
+  },
 ];
 
 function main() {

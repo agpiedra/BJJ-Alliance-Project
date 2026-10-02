@@ -573,9 +573,21 @@
       "emergencyContact": "Emergency contact (optional)",
       "submit": "Create student",
       "successCodeWarning": "This is the student's 4-digit check-in code. Hand it over now — it will not be shown again:",
+      "alreadyCreated": "This student was already created from an earlier, identical submission. Use \"Regenerate code\" on their profile for a new check-in code.",
       "invalid": "Please check the form for errors.",
       "forbiddenAcademy": "You are not assigned to that academy.",
-      "guardianRequiredForMinor": "Guardian name and phone are required for students under 18."
+      "guardianRequiredForMinor": "Guardian name and phone are required for students under 18.",
+      "planLabel": "Monthly plan (optional)",
+      "planNone": "No plan",
+      "planHint": "Required to bill this student's initial charge automatically. Leaving it blank refuses creation if billing is active.",
+      "planRequiresAdmin": "Assigning a new plan at creation requires an owner (ADMIN).",
+      "requiresAdmin": "Assigning a new plan requires an owner (ADMIN).",
+      "unsupportedEnrollmentPlan": "Package plans cannot be assigned at enrollment. Create the student, then sell a package separately.",
+      "inapplicable": "This student's billing configuration is missing or incomplete for this plan.",
+      "staleVersion": "This plan's pricing has changed. Reload and try again.",
+      "currencyMismatch": "This plan's currency does not match its branch's fee currency.",
+      "conflictingResubmission": "A different submission already used this form. Reload and try again.",
+      "missingSubmissionIdentity": "This form could not confirm it was submitted normally. Reload the page and try again."
     },
     "detail": {
       "profile": {
@@ -701,7 +713,17 @@
         "button": "Approve student",
         "success": "Student approved.",
         "notFound": "Could not approve this student.",
-        "notPending": "This student is no longer pending approval."
+        "notPending": "This student is no longer pending approval.",
+        "planLabel": "Monthly plan (optional)",
+        "planNone": "No plan",
+        "planReused": "Monthly plan: {plan}",
+        "planRequiresAdmin": "Assigning a new plan at approval requires an owner (ADMIN).",
+        "requiresAdmin": "Assigning a new plan requires an owner (ADMIN).",
+        "planConflict": "A different plan is already assigned for this month. Reload and try again.",
+        "unsupportedEnrollmentPlan": "Package plans cannot be assigned at enrollment. Approve, then sell a package separately.",
+        "inapplicable": "This student's billing configuration is missing or incomplete for this plan.",
+        "staleVersion": "This plan's pricing has changed. Reload and try again.",
+        "currencyMismatch": "This plan's currency does not match its branch's fee currency."
       },
       "promociones": {
         "heading": "Promotions",

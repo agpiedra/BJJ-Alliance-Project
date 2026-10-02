@@ -573,9 +573,21 @@
       "emergencyContact": "Contacto de emergencia (opcional)",
       "submit": "Crear estudiante",
       "successCodeWarning": "Este es el código de 4 dígitos del estudiante para marcar asistencia. Entrégalo ahora — no se mostrará de nuevo:",
+      "alreadyCreated": "Este estudiante ya fue creado en un envío anterior idéntico. Usa \"Regenerar código\" en su perfil para obtener un nuevo código de marcaje.",
       "invalid": "Por favor revisa el formulario.",
       "forbiddenAcademy": "No estás asignado a esa academia.",
-      "guardianRequiredForMinor": "El nombre y teléfono del tutor son requeridos para menores de edad."
+      "guardianRequiredForMinor": "El nombre y teléfono del tutor son requeridos para menores de edad.",
+      "planLabel": "Plan mensual (opcional)",
+      "planNone": "Sin plan",
+      "planHint": "Requerido para cobrar el cargo inicial automáticamente. Dejarlo en blanco rechaza la creación si la facturación está activa.",
+      "planRequiresAdmin": "Asignar un plan nuevo al crear requiere un propietario (ADMIN).",
+      "requiresAdmin": "Asignar un plan nuevo requiere un propietario (ADMIN).",
+      "unsupportedEnrollmentPlan": "No se pueden asignar planes de paquete al inscribir. Crea el estudiante y luego vende un paquete por separado.",
+      "inapplicable": "La configuración de facturación de este estudiante falta o está incompleta para este plan.",
+      "staleVersion": "El precio de este plan cambió. Recarga e intenta de nuevo.",
+      "currencyMismatch": "La moneda de este plan no coincide con la moneda de cuotas de su sucursal.",
+      "conflictingResubmission": "Un envío distinto ya usó este formulario. Recarga e intenta de nuevo.",
+      "missingSubmissionIdentity": "No se pudo confirmar que este formulario se envió normalmente. Recarga la página e intenta de nuevo."
     },
     "detail": {
       "profile": {
@@ -701,7 +713,17 @@
         "button": "Aprobar estudiante",
         "success": "Estudiante aprobado.",
         "notFound": "No se pudo aprobar este estudiante.",
-        "notPending": "Este estudiante ya no está pendiente de aprobación."
+        "notPending": "Este estudiante ya no está pendiente de aprobación.",
+        "planLabel": "Plan mensual (opcional)",
+        "planNone": "Sin plan",
+        "planReused": "Plan mensual: {plan}",
+        "planRequiresAdmin": "Asignar un plan nuevo al aprobar requiere un propietario (ADMIN).",
+        "requiresAdmin": "Asignar un plan nuevo requiere un propietario (ADMIN).",
+        "planConflict": "Ya hay un plan distinto asignado para este mes. Recarga e intenta de nuevo.",
+        "unsupportedEnrollmentPlan": "No se pueden asignar planes de paquete al inscribir. Aprueba y luego vende un paquete por separado.",
+        "inapplicable": "La configuración de facturación de este estudiante falta o está incompleta para este plan.",
+        "staleVersion": "El precio de este plan cambió. Recarga e intenta de nuevo.",
+        "currencyMismatch": "La moneda de este plan no coincide con la moneda de cuotas de su sucursal."
       },
       "promociones": {
         "heading": "Promociones",

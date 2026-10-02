@@ -1,13 +1,12 @@
 "use server";
 
 import { z } from "zod";
-import { prisma } from "@/lib/prisma";
 import { generateStudentCode } from "@/lib/students/generate-code";
 import { isAcademyInTenantScope, resolveActionContext } from "@/lib/tenant/context";
 import { getScopedDb } from "@/lib/tenant/scoped-client";
-import { Prisma, StudentStatus } from "@/generated/prisma/client";
 import type { ActionState } from "@/lib/action-state";
-import { todayInAsDbDate } from "@/lib/students/status-history";
+import { resolvePlanId } from "@/lib/dues/assignment-core";
+import { createStudentCore } from "./create-student-core";
 
 const createStudentSchema = z
   .object({
@@ -36,6 +35,15 @@ const createStudentSchema = z
     guardianName: z.string().optional(),
     guardianPhone: z.string().optional(),
     emergencyContact: z.string().optional(),
+    // Enrollment/resume integration plan §7.6: the monthly plan to assign at enrollment, billing-active only.
+    // Empty/omitted means "no plan supplied" (§7.5's configuration-gap path decides what happens next), never a
+    // default or an inferred plan.
+    planId: z.string().optional(),
+    // §7.7: a client-generated, stable identity for ONE logical submission attempt (see create-student-form.tsx for
+    // its exact lifetime). Required, well-formed, and non-blank on the active-billing path (createStudentInTx
+    // refuses the whole operation otherwise, §7.7 corrected) — empty/omitted/malformed is only ever harmless on the
+    // inactive path, where it is never persisted at all.
+    creationRequestId: z.string().optional(),
   })
   .refine(
     (data) => {
@@ -47,7 +55,36 @@ const createStudentSchema = z
     { message: "guardianRequiredForMinor", path: ["guardianName"] },
   );
 
-export type CreateStudentState = ActionState & { code?: string };
+export type CreateStudentData = z.infer<typeof createStudentSchema>;
+
+export type CreateStudentState = ActionState & { code?: string; alreadyCreated?: boolean };
+
+/**
+ * §7.7: the canonical, validated creation inputs — every meaningful submitted field (including the selected plan
+ * id, if any), EXCLUDING every server-generated value (codeHash, the generated id, createdAt). Computed from
+ * `createStudentSchema`'s own already-validated, already-normalized output, never a second, parallel normalization
+ * pass. Stored verbatim as `Student.creationFingerprint`; a retry's resubmitted inputs are compared against this
+ * STORED snapshot (`createStudentCore`'s own `fingerprintsEqual`), never against the student's current,
+ * possibly-since-edited row.
+ */
+function buildCreationFingerprint(data: CreateStudentData, planId: string | null): Record<string, unknown> {
+  return {
+    firstName: data.firstName,
+    lastName: data.lastName,
+    phone: data.phone,
+    email: data.email,
+    homeAcademyId: data.homeAcademyId,
+    track: data.track,
+    currentRankId: data.currentRankId,
+    currentStripes: data.currentStripes,
+    beltAwardedAt: data.beltAwardedAt ?? null,
+    dateOfBirth: data.dateOfBirth ?? null,
+    guardianName: data.guardianName ?? null,
+    guardianPhone: data.guardianPhone ?? null,
+    emergencyContact: data.emergencyContact ?? null,
+    planId,
+  };
+}
 
 /**
  * Staff-side manual creation (spec §4.6: "Staff can also create students
@@ -55,6 +92,13 @@ export type CreateStudentState = ActionState & { code?: string };
  * public signup, this never creates a `User` row — staff-created students
  * get only the generated check-in code, no portal password yet, matching
  * `Student.userId` being nullable for exactly this case.
+ *
+ * Enrollment/resume integration plan §7.5-§7.7: when billing is active, this now also resolves/creates the
+ * student's monthly-plan assignment and the resulting SIGNUP(+MONTHLY) charge atomically with the creation itself,
+ * and protects the creation against a double-click or a lost-response retry via `creationRequestId`. This
+ * function's own exported signature is unchanged by any of that — no activation dependency, no date override. The
+ * gated/idempotency logic itself lives in `./create-student-core` (a plain, non-"use server" module) — see that
+ * file's own doc comment for why it cannot live here.
  */
 export async function createStudent(
   organizationId: string,
@@ -116,76 +160,32 @@ export async function createStudent(
   // The historical belt date exactly as staff typed it (or now when omitted). Progress does not read it.
   const beltAwardedAt = data.beltAwardedAt ? new Date(data.beltAwardedAt) : new Date();
 
-  // The create and its audit row go in one interactive transaction, so an
-  // audit row can never exist without the student it describes, nor a
-  // student appear with no record of who created them.
-  await prisma.$transaction(async (tx) => {
-    // Staff created this student directly (in person or over the phone) —
-    // there's no self-signup review step to wait on, so this row starts
-    // ACTIVE rather than the PENDING that public /signup uses.
-    const student = await tx.student.create({
-      data: {
-        homeAcademyId: data.homeAcademyId,
-        organizationId: academy.organizationId,
-        track: data.track,
-        firstName: data.firstName,
-        lastName: data.lastName,
-        phone: data.phone,
-        email: data.email,
-        currentRankId: rank.id,
-        currentStripes: data.currentStripes,
-        beltAwardedAt,
-        dateOfBirth: data.dateOfBirth ? new Date(data.dateOfBirth) : undefined,
-        guardianName: data.guardianName,
-        guardianPhone: data.guardianPhone,
-        emergencyContact: data.emergencyContact,
-        codeHash,
-        status: StudentStatus.ACTIVE,
-        userId: null,
-      },
-    });
+  // Enrollment/resume integration plan §7.6: `resolvePlanId` reuses `assignPlan`'s own exact validation (exists,
+  // in-org, this student's branch, not a package) — never a second, drifting copy. Empty/omitted means "no plan
+  // supplied", which the gated core correctly refuses as a configuration gap when billing is active (§7.5) — not a
+  // special case here.
+  const planIdRaw = data.planId && data.planId.length > 0 ? data.planId : null;
+  const plan = planIdRaw ? await resolvePlanId(academy.organizationId, data.homeAcademyId, planIdRaw) : { ok: true as const, value: null };
+  if (!plan.ok) {
+    return { error: "invalid", fieldErrors: { planId: ["invalid"] } };
+  }
 
-    // Eligibility-prerequisites brief, 3.2: the first `StudentStatusChange` row. No lock is needed — a row that does not yet exist
-    // cannot be locked, and nothing else can reference this student's freshly-generated id until this transaction commits.
-    await tx.studentStatusChange.create({
-      data: {
-        organizationId: student.organizationId,
-        studentId: student.id,
-        status: StudentStatus.ACTIVE,
-        effectiveOn: todayInAsDbDate(academy.timezone, new Date()),
-        sequence: 1,
-        source: "EVENT",
-        actorId: context.actorUserId,
-      },
-    });
+  // §7.7: normalized here (blank -> null), but the REQUIREDNESS check (well-formed, non-null, whenever billing is
+  // active) lives in createStudentInTx — this function has no way to know activation state before calling it.
+  const creationRequestId = data.creationRequestId && data.creationRequestId.length > 0 ? data.creationRequestId : null;
+  const fingerprint = buildCreationFingerprint(data, plan.value);
 
-    await tx.auditLog.create({
-      data: {
-        actorId: context.actorUserId,
-        organizationId: context.organizationId,
-        academyId: student.homeAcademyId,
-        action: "student.create",
-        entityType: "Student",
-        entityId: student.id,
-        // SQL NULL, not the JSON literal `null` — Prisma rejects a bare JS
-        // `null` for a nullable Json column.
-        before: Prisma.DbNull,
-        // Non-sensitive fields only. `codeHash` is deliberately excluded —
-        // it is the student's check-in secret in its only stored form, and
-        // copying it into an append-only audit table would create a second
-        // place it could leak from (see the note on `regenerateStudentCode`).
-        after: {
-          firstName: student.firstName,
-          lastName: student.lastName,
-          homeAcademyId: student.homeAcademyId,
-          track: student.track,
-          currentBelt: rank.code,
-          currentStripes: student.currentStripes,
-          status: student.status,
-        },
-      },
-    });
-  });
+  const result = await createStudentCore(
+    { context, academy, data, rank: { id: rank.id, code: rank.code }, codeHash, beltAwardedAt, planId: plan.value, creationRequestId, fingerprint },
+    {},
+  );
 
+  if (!result.ok) {
+    if (result.error === "requiresAdmin") return { error: "requiresAdmin", fieldErrors: { planId: ["requiresAdmin"] } };
+    return { error: result.error };
+  }
+  if (result.alreadyCreated) {
+    return { ok: true, alreadyCreated: true };
+  }
   return { ok: true, code };
 }
