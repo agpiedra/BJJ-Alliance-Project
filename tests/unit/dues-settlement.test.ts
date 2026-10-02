@@ -216,6 +216,39 @@ describe("settlement is oldest-first and whole-obligation only", () => {
 });
 
 /**
+ * SIGNUP-settlement brief (D16): `orderOldestFirst`'s optional `priorityOf` parameter, used by `resolveMonthlyDebtItemsInTx`
+ * to sort a SIGNUP ahead of a same-month MONTHLY. Tested here purely on plain `{id, coverage}` shapes — this module has no
+ * notion of obligation type at all, so the parameter is exercised generically.
+ */
+describe("orderOldestFirst: the optional priorityOf tie-break", () => {
+  it("omitting it reproduces the coverage-month-then-id order byte-for-byte (every existing caller)", () => {
+    const items = [{ id: "b", coverage: { year: 2026, month: 10 } }, { id: "a", coverage: { year: 2026, month: 10 } }];
+    expect(orderOldestFirst(items).map((i) => i.id)).toEqual(["a", "b"]);
+  });
+
+  it("breaks a tie on the SAME coverage month by priority (lower sorts first), before falling back to id", () => {
+    const signup = { id: "z-signup", coverage: { year: 2026, month: 10 } };
+    const monthly = { id: "a-monthly", coverage: { year: 2026, month: 10 } };
+    const priorityOf = (i: typeof signup) => (i.id.includes("signup") ? 0 : 1);
+    // id order alone would put "a-monthly" first; priority must override that within the same month.
+    expect(orderOldestFirst([monthly, signup], priorityOf).map((i) => i.id)).toEqual(["z-signup", "a-monthly"]);
+  });
+
+  it("coverage month still wins over priority: an earlier month sorts first regardless of priority", () => {
+    const laterSignup = { id: "signup", coverage: { year: 2026, month: 11 } };
+    const earlierMonthly = { id: "monthly", coverage: { year: 2026, month: 10 } };
+    const priorityOf = (i: typeof laterSignup) => (i.id === "signup" ? 0 : 1);
+    expect(orderOldestFirst([laterSignup, earlierMonthly], priorityOf).map((i) => i.id)).toEqual(["monthly", "signup"]);
+  });
+
+  it("does not mutate its input when a priorityOf is given", () => {
+    const input = [{ id: "b", coverage: { year: 2026, month: 10 } }, { id: "a", coverage: { year: 2026, month: 10 } }];
+    orderOldestFirst(input, () => 0);
+    expect(input.map((i) => i.id)).toEqual(["b", "a"]);
+  });
+});
+
+/**
  * Currency-conversion brief PR 2: `settleReceipt`'s own `crossCurrency` parameter, pure and DB-free — the caller (a ledger
  * writer) is responsible for resolving a quote and building these candidates via `exchange-rate-arithmetic.ts`'s
  * `detectAmbiguousRoundedTotals`; this module only matches against them. Omitting the parameter (every call above this

@@ -46,6 +46,19 @@ async function newStudent(label: string, academyId = a.academy.id, org: Fixture 
   });
 }
 
+/** A SIGNUP obligation (dues-signup-settlement brief): no writer creates a bare one outside enrollment, inserted directly in
+ * the shape `dues-ledger-schema.test.ts` proves the database accepts. */
+async function newSignupObligation(studentId: string, coverage: { year: number; month: number }, amount = "50.00") {
+  return prisma.duesObligation.create({
+    data: {
+      organizationId: a.org.id, studentId, academyId: a.academy.id, type: "SIGNUP", origin: "STAFF",
+      coverageYear: coverage.year, coverageMonth: coverage.month, monthsCovered: 1, amount, currency: "USD",
+      lateFeeAmount: null, dueOn: new Date(Date.UTC(coverage.year, coverage.month - 1, 1)), graceDeadline: null,
+      planTermsId: monthlyTerms.id, policyVersionId: null, createdById: a.admin.id,
+    },
+  });
+}
+
 const purchase = (over: Partial<Parameters<typeof purchasePackage>[0]> = {}, extraDeps: Record<string, unknown> = {}) =>
   purchasePackage(
     {
@@ -416,6 +429,33 @@ describe("purchasePackage: ALL outstanding MONTHLY debt must be named and settle
     expect(r).toMatchObject({ ok: true, totalMinor: 51000 });
     if (!r.ok) return;
     expect(await prisma.duesSettlement.count({ where: { paymentId: r.paymentId, reversedAt: null } })).toBe(3);
+  });
+});
+
+/**
+ * SIGNUP-settlement brief (D17): `debtNotFullySettled`'s own `chosenItems.length !== allOpenItems.length` check requires
+ * ZERO code change here to extend to SIGNUP — `resolveMonthlyDebtItemsInTx` now returns an open SIGNUP as part of
+ * `allOpenItems`, so an unnamed SIGNUP automatically fails this count comparison exactly like an unnamed MONTHLY would.
+ */
+describe("purchasePackage: an outstanding SIGNUP is also 'all outstanding debt' and must be named (dues-signup-settlement brief)", () => {
+  it("an unpaid SIGNUP exists; naming no existing-debt ids at all refuses debtNotFullySettled, zero writes", async () => {
+    const s = await newStudent("signup-unnamed");
+    const signup = await newSignupObligation(s.id, { year: 2030, month: 8 });
+    const before = await ledgerCounts(a.org.id);
+    const r = await purchase({ studentId: s.id, tender: { currency: "USD", amount: "270.00" } });
+    expect(r).toEqual({ ok: false, error: "debtNotFullySettled" });
+    expect(await ledgerCounts(a.org.id)).toEqual(before);
+    expect(await prisma.duesSettlement.count({ where: { obligationId: signup.id } })).toBe(0);
+  });
+
+  it("naming the SIGNUP plus the package together succeeds atomically, one exact total", async () => {
+    const s = await newStudent("signup-named");
+    const signup = await newSignupObligation(s.id, { year: 2030, month: 8 }, "50.00");
+    const r = await purchase({ studentId: s.id, existingObligationIds: [signup.id], tender: { currency: "USD", amount: "320.00" } }); // 50 (SIGNUP, never late-fee eligible) + 270 (package)
+    expect(r).toMatchObject({ ok: true, totalMinor: 32000 });
+    if (!r.ok) return;
+    const settlement = await prisma.duesSettlement.findFirstOrThrow({ where: { obligationId: signup.id, reversedAt: null } });
+    expect(settlement.lateFeeId).toBeNull();
   });
 });
 
