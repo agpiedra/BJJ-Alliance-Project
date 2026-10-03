@@ -1105,14 +1105,18 @@
           "open": "Add a rate",
           "submit": "Save rate",
           "success": "Rate saved.",
-          "stale": "A rate was already entered for this date. Your entry above is unchanged — use the Correct form listed for that date instead if you still want to apply it."
+          "stale": "A rate was already entered for this date. Your entry above is unchanged — use the correction form below to apply a new value.",
+          "staleLoadFailed": "A rate was already entered for this date, but the current value could not be loaded. Try again."
         },
         "correct": {
           "open": "Correct",
           "submit": "Save correction",
           "success": "Correction saved.",
           "warning": "{count, plural, one {# settled payment used} other {# settled payments used}} this rate.",
-          "staleBanner": "This rate changed since you opened this form: it's now revision {revision}, value {value}. Your entry above is unchanged — update and resubmit if you still want to apply it."
+          "warningLoadFailed": "Could not load how many payments used this rate. Try again.",
+          "staleBanner": "This rate changed since you opened this form: it's now revision {revision}, value {value}. Your entry above is unchanged — use the button below, then resubmit, if you still want to apply it.",
+          "staleLoadFailed": "This rate changed since you opened this form, but the current value could not be loaded. Try again.",
+          "useRevision": "Use revision {revision}"
         }
       }
     },

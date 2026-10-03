@@ -118,6 +118,7 @@ describe("AddExchangeRateForm: submits via enterOrCorrectExchangeRate (mocked), 
 
   it("a mocked stale refusal shows the add.stale message and preserves the owner's typed value (bug fix: this previously rendered nothing at all)", async () => {
     enterOrCorrectExchangeRate.mockResolvedValue({ error: "stale" });
+    getCurrentExchangeRate.mockResolvedValue(null); // no row found for this exact date — no embedded Correct form expected
     render(withMessages(<AddExchangeRateForm organizationId="org-1" />));
     fireEvent.click(screen.getByText(enMessages.payments.plans.exchangeRate.add.open));
     const valueInput = screen.getByLabelText(enMessages.payments.plans.exchangeRate.fields.value) as HTMLInputElement;
@@ -126,6 +127,46 @@ describe("AddExchangeRateForm: submits via enterOrCorrectExchangeRate (mocked), 
     await waitFor(() => expect(screen.getByText(enMessages.payments.plans.exchangeRate.add.stale)).toBeTruthy());
     expect(valueInput.value).toBe("505.37"); // not reset — useDuesAction only resets on ok: true
     expect(screen.queryByText(enMessages.payments.plans.exchangeRate.add.success)).toBeNull();
+  });
+});
+
+describe("AddExchangeRateForm: a stale refusal for a date outside the listed window still produces a working correction (bug fix)", () => {
+  it("fetches the current row for the EXACT submitted date (not today's default) and renders a fully working embedded Correct form, never a dead-end message alone", async () => {
+    const OUTSIDE_WINDOW_ROW = { id: "q-outside", quoteDate: { year: 2025, month: 6, day: 1 }, revision: 1, value: "450.00" };
+    enterOrCorrectExchangeRate.mockReset();
+    enterOrCorrectExchangeRate.mockResolvedValueOnce({ error: "stale" }).mockResolvedValueOnce({ ok: true });
+    getCurrentExchangeRate.mockResolvedValue(OUTSIDE_WINDOW_ROW);
+    getExchangeRateCorrectionWarning.mockResolvedValue(0);
+
+    render(withMessages(<AddExchangeRateForm organizationId="org-1" />));
+    fireEvent.click(screen.getByText(enMessages.payments.plans.exchangeRate.add.open));
+    fireEvent.change(screen.getByLabelText(enMessages.payments.plans.exchangeRate.fields.year), { target: { value: "2025" } });
+    fireEvent.change(screen.getByLabelText(enMessages.payments.plans.exchangeRate.fields.month), { target: { value: "6" } });
+    fireEvent.change(screen.getByLabelText(enMessages.payments.plans.exchangeRate.fields.day), { target: { value: "1" } });
+    fireEvent.change(screen.getByLabelText(enMessages.payments.plans.exchangeRate.fields.value), { target: { value: "460.00" } });
+    fireEvent.click(screen.getByText(enMessages.payments.plans.exchangeRate.add.submit));
+
+    // Fetched for the date the owner actually typed, not todayParts()'s default.
+    await waitFor(() => expect(getCurrentExchangeRate).toHaveBeenCalledWith("org-1", { year: 2025, month: 6, day: 1 }));
+    // A full, working Correct form renders inline — not merely a string pointing at a form that may not exist on the page.
+    await waitFor(() => expect(screen.getByText(enMessages.payments.plans.exchangeRate.correct.open)).toBeTruthy());
+    fireEvent.click(screen.getByText(enMessages.payments.plans.exchangeRate.correct.open));
+    const valueInputs = screen.getAllByLabelText(enMessages.payments.plans.exchangeRate.fields.value) as HTMLInputElement[];
+    const embeddedValueInput = valueInputs[valueInputs.length - 1]; // the Add form's own field is the first match
+    expect(embeddedValueInput.value).toBe(OUTSIDE_WINDOW_ROW.value);
+
+    fireEvent.click(screen.getByText(enMessages.payments.plans.exchangeRate.correct.submit));
+    await waitFor(() => expect(enterOrCorrectExchangeRate).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getByText(enMessages.payments.plans.exchangeRate.correct.success)).toBeTruthy());
+  });
+
+  it("a rejected getCurrentExchangeRate fetch shows an explicit failure message, never a silent blank", async () => {
+    enterOrCorrectExchangeRate.mockResolvedValue({ error: "stale" });
+    getCurrentExchangeRate.mockRejectedValue(new Error("network down"));
+    render(withMessages(<AddExchangeRateForm organizationId="org-1" />));
+    fireEvent.click(screen.getByText(enMessages.payments.plans.exchangeRate.add.open));
+    fireEvent.click(screen.getByText(enMessages.payments.plans.exchangeRate.add.submit));
+    await waitFor(() => expect(screen.getByText(enMessages.payments.plans.exchangeRate.add.staleLoadFailed)).toBeTruthy());
   });
 });
 
@@ -157,6 +198,126 @@ describe("CorrectExchangeRateForm: stale-form preservation (mocked \"stale\" res
     fireEvent.click(screen.getByText(enMessages.payments.plans.exchangeRate.correct.submit));
     await waitFor(() => expect(enterOrCorrectExchangeRate).toHaveBeenCalled());
     expect(getCurrentExchangeRate).not.toHaveBeenCalled();
+  });
+});
+
+const useRevisionLabel = (revision: number) => enMessages.payments.plans.exchangeRate.correct.useRevision.replace("{revision}", String(revision));
+
+describe("CorrectExchangeRateForm: stale recovery actually lets the owner retry correctly (bug fix)", () => {
+  it("resubmitting after explicitly accepting the refreshed revision carries the NEW revision, never the original row's", async () => {
+    enterOrCorrectExchangeRate.mockReset();
+    enterOrCorrectExchangeRate.mockResolvedValueOnce({ error: "stale" }).mockResolvedValueOnce({ ok: true });
+    getCurrentExchangeRate.mockResolvedValue(ROW_2);
+    getExchangeRateCorrectionWarning.mockResolvedValue(0);
+
+    render(withMessages(<CorrectExchangeRateForm organizationId="org-1" row={ROW_1} />));
+    fireEvent.click(screen.getByText(enMessages.payments.plans.exchangeRate.correct.open));
+    fireEvent.click(screen.getByText(enMessages.payments.plans.exchangeRate.correct.submit));
+    await waitFor(() => expect(screen.getByRole("alert")).toBeTruthy());
+
+    // Never auto-applied: the owner must click an explicit accept control before the hidden field changes.
+    const acceptButton = await screen.findByText(useRevisionLabel(ROW_2.revision));
+    fireEvent.click(acceptButton);
+    fireEvent.click(screen.getByText(enMessages.payments.plans.exchangeRate.correct.submit));
+
+    await waitFor(() => expect(enterOrCorrectExchangeRate).toHaveBeenCalledTimes(2));
+    const secondCallFormData = enterOrCorrectExchangeRate.mock.calls[1].at(-1) as FormData;
+    expect(secondCallFormData.get("expectedCurrentRevision")).toBe(String(ROW_2.revision));
+  });
+
+  it("the submit button stays disabled on a stale result until the owner explicitly accepts the refreshed target", async () => {
+    enterOrCorrectExchangeRate.mockResolvedValue({ error: "stale" });
+    getCurrentExchangeRate.mockResolvedValue(ROW_2);
+    getExchangeRateCorrectionWarning.mockResolvedValue(0);
+    render(withMessages(<CorrectExchangeRateForm organizationId="org-1" row={ROW_1} />));
+    fireEvent.click(screen.getByText(enMessages.payments.plans.exchangeRate.correct.open));
+    fireEvent.click(screen.getByText(enMessages.payments.plans.exchangeRate.correct.submit));
+    await waitFor(() => expect(screen.getByRole("alert")).toBeTruthy());
+    const submitButton = screen.getByText(enMessages.payments.plans.exchangeRate.correct.submit).closest("button") as HTMLButtonElement;
+    expect(submitButton.disabled).toBe(true);
+    fireEvent.click(await screen.findByText(useRevisionLabel(ROW_2.revision)));
+    expect(submitButton.disabled).toBe(false);
+  });
+
+  it("chains through a SECOND concurrent correction: accept 2, resubmit, get stale again (someone else reached 3 meanwhile), see 3, accept 3, resubmit, succeed", async () => {
+    const ROW_3 = { id: "q3", quoteDate: ROW_1.quoteDate, revision: 3, value: "515.00" };
+    enterOrCorrectExchangeRate.mockReset();
+    enterOrCorrectExchangeRate
+      .mockResolvedValueOnce({ error: "stale" })
+      .mockResolvedValueOnce({ error: "stale" })
+      .mockResolvedValueOnce({ ok: true });
+    getCurrentExchangeRate.mockReset();
+    getCurrentExchangeRate.mockResolvedValueOnce(ROW_2).mockResolvedValueOnce(ROW_3);
+    getExchangeRateCorrectionWarning.mockResolvedValue(0);
+
+    render(withMessages(<CorrectExchangeRateForm organizationId="org-1" row={ROW_1} />));
+    fireEvent.click(screen.getByText(enMessages.payments.plans.exchangeRate.correct.open));
+    fireEvent.click(screen.getByText(enMessages.payments.plans.exchangeRate.correct.submit));
+    await waitFor(() => expect(screen.getByRole("alert")).toBeTruthy());
+    fireEvent.click(await screen.findByText(useRevisionLabel(ROW_2.revision)));
+    fireEvent.click(screen.getByText(enMessages.payments.plans.exchangeRate.correct.submit));
+
+    await waitFor(() => expect(enterOrCorrectExchangeRate).toHaveBeenCalledTimes(2));
+    expect((enterOrCorrectExchangeRate.mock.calls[1].at(-1) as FormData).get("expectedCurrentRevision")).toBe(String(ROW_2.revision));
+
+    // A second, independent stale result arrives — the banner must update to the NEW current target (revision 3).
+    await waitFor(() => expect(screen.getByText(useRevisionLabel(ROW_3.revision))).toBeTruthy());
+    fireEvent.click(screen.getByText(useRevisionLabel(ROW_3.revision)));
+    fireEvent.click(screen.getByText(enMessages.payments.plans.exchangeRate.correct.submit));
+
+    await waitFor(() => expect(enterOrCorrectExchangeRate).toHaveBeenCalledTimes(3));
+    expect((enterOrCorrectExchangeRate.mock.calls[2].at(-1) as FormData).get("expectedCurrentRevision")).toBe(String(ROW_3.revision));
+    await waitFor(() => expect(screen.getByText(enMessages.payments.plans.exchangeRate.correct.success)).toBeTruthy());
+  });
+});
+
+describe("CorrectExchangeRateForm: warning count race between two targets (bug fix)", () => {
+  it("a late-arriving response for the ORIGINAL (no-longer-current) target never overwrites the count already shown for the refreshed target", async () => {
+    enterOrCorrectExchangeRate.mockResolvedValue({ error: "stale" });
+    getCurrentExchangeRate.mockResolvedValue(ROW_2);
+
+    let resolveOriginal!: (value: number) => void;
+    let resolveRefreshed!: (value: number) => void;
+    const originalPromise = new Promise<number>((resolve) => {
+      resolveOriginal = resolve;
+    });
+    const refreshedPromise = new Promise<number>((resolve) => {
+      resolveRefreshed = resolve;
+    });
+    getExchangeRateCorrectionWarning.mockImplementation((_orgId: string, quoteId: string) => (quoteId === ROW_1.id ? originalPromise : refreshedPromise));
+
+    render(withMessages(<CorrectExchangeRateForm organizationId="org-1" row={ROW_1} />));
+    fireEvent.click(screen.getByText(enMessages.payments.plans.exchangeRate.correct.open));
+    fireEvent.click(screen.getByText(enMessages.payments.plans.exchangeRate.correct.submit));
+    await waitFor(() => expect(getExchangeRateCorrectionWarning).toHaveBeenCalledWith("org-1", ROW_2.id));
+
+    // Resolve the NEWER (currently-displayed) target's fetch first...
+    resolveRefreshed(7);
+    await waitFor(() => expect(screen.getByText(/7/)).toBeTruthy());
+    // ...then the SLOWER, now-superseded original target's fetch resolves AFTER — it must be discarded, not applied.
+    resolveOriginal(99);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.queryByText(/99/)).toBeNull();
+    expect(screen.getByText(/7/)).toBeTruthy();
+  });
+});
+
+describe("CorrectExchangeRateForm: explicit failure states for the warning/refresh reads (bug fix)", () => {
+  it("a rejected warning-count fetch shows an explicit failure message, never rendered as zero or blank", async () => {
+    getExchangeRateCorrectionWarning.mockRejectedValue(new Error("network down"));
+    render(withMessages(<CorrectExchangeRateForm organizationId="org-1" row={ROW_1} />));
+    fireEvent.click(screen.getByText(enMessages.payments.plans.exchangeRate.correct.open));
+    await waitFor(() => expect(screen.getByText(enMessages.payments.plans.exchangeRate.correct.warningLoadFailed)).toBeTruthy());
+  });
+
+  it("a rejected stale-refresh fetch shows an explicit failure message, never silently blank", async () => {
+    enterOrCorrectExchangeRate.mockResolvedValue({ error: "stale" });
+    getExchangeRateCorrectionWarning.mockResolvedValue(0);
+    getCurrentExchangeRate.mockRejectedValue(new Error("network down"));
+    render(withMessages(<CorrectExchangeRateForm organizationId="org-1" row={ROW_1} />));
+    fireEvent.click(screen.getByText(enMessages.payments.plans.exchangeRate.correct.open));
+    fireEvent.click(screen.getByText(enMessages.payments.plans.exchangeRate.correct.submit));
+    await waitFor(() => expect(screen.getByText(enMessages.payments.plans.exchangeRate.correct.staleLoadFailed)).toBeTruthy());
   });
 });
 

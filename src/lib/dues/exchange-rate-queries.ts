@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { isRealDate } from "@/lib/dues/ledger/common";
 
 /**
  * Owner exchange-rate UI, read side. Plain module, no "use server" directive — these are composition cores a
@@ -7,6 +8,14 @@ import { prisma } from "@/lib/prisma";
  * duplicated here rather than widening that file's export surface for a display-only read) — there is exactly one
  * rate to read, same as there is exactly one to write.
  */
+
+/** Same guard as `dues-facts.ts:318` — Prisma treats an `undefined` filter value as "omit this filter entirely",
+ * so a bad id/organizationId must never reach a `where` clause: it would silently widen a lookup (or, for
+ * `organizationId` specifically, trip `tenant-guard.ts`'s own unscoped-query guard with a thrown exception instead
+ * of a quiet refusal) rather than failing closed. Checked before any Prisma call in every function below. */
+function isNonBlankString(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
 
 const PROVIDER = "BCR";
 const PAIR = "USD/CRC";
@@ -34,6 +43,7 @@ function toUtcDate(date: ExchangeRateQuoteRow["quoteDate"]): Date {
  * than leaking another organization's count or throwing.
  */
 export async function countPaymentsAgainstQuote(organizationId: string, quoteId: string): Promise<number> {
+  if (!isNonBlankString(organizationId) || !isNonBlankString(quoteId)) return 0;
   const quote = await prisma.exchangeRateQuote.findFirst({ where: { id: quoteId, organizationId }, select: { id: true } });
   if (!quote) return 0;
   return prisma.duesPayment.count({ where: { organizationId, appliedRateId: quoteId } });
@@ -45,6 +55,8 @@ export async function countPaymentsAgainstQuote(organizationId: string, quoteId:
  * `expectedCurrentRevision` check, which remains the sole authority over whether a write succeeds.
  */
 export async function findCurrentExchangeRateQuote(organizationId: string, quoteDate: ExchangeRateQuoteRow["quoteDate"]): Promise<ExchangeRateQuoteRow | null> {
+  if (!isNonBlankString(organizationId)) return null;
+  if (!quoteDate || !isRealDate(quoteDate)) return null; // never let Date.UTC silently roll an unreal date over into a different, real one
   const row = await prisma.exchangeRateQuote.findFirst({
     where: { organizationId, provider: PROVIDER, pair: PAIR, side: SIDE, quoteDate: toUtcDate(quoteDate) },
     orderBy: { revision: "desc" },

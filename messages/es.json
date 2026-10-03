@@ -1105,14 +1105,18 @@
           "open": "Agregar un tipo de cambio",
           "submit": "Guardar tipo de cambio",
           "success": "Tipo de cambio guardado.",
-          "stale": "Ya se ingresó un tipo de cambio para esta fecha. Tu entrada arriba no cambió — usa el formulario Corregir listado para esa fecha si aún quieres aplicarla."
+          "stale": "Ya se ingresó un tipo de cambio para esta fecha. Tu entrada arriba no cambió — usa el formulario de corrección de abajo para aplicar un nuevo valor.",
+          "staleLoadFailed": "Ya se ingresó un tipo de cambio para esta fecha, pero no se pudo cargar el valor actual. Inténtalo de nuevo."
         },
         "correct": {
           "open": "Corregir",
           "submit": "Guardar corrección",
           "success": "Corrección guardada.",
           "warning": "{count, plural, one {# pago liquidado usó} other {# pagos liquidados usaron}} este tipo de cambio.",
-          "staleBanner": "Este tipo de cambio cambió desde que abriste este formulario: ahora es la revisión {revision}, valor {value}. Tu entrada arriba no cambió — actualízala y reenvíala si aún quieres aplicarla."
+          "warningLoadFailed": "No se pudo cargar cuántos pagos usaron este tipo de cambio. Inténtalo de nuevo.",
+          "staleBanner": "Este tipo de cambio cambió desde que abriste este formulario: ahora es la revisión {revision}, valor {value}. Tu entrada arriba no cambió — usa el botón de abajo y luego reenvía si aún quieres aplicarla.",
+          "staleLoadFailed": "Este tipo de cambio cambió desde que abriste este formulario, pero no se pudo cargar el valor actual. Inténtalo de nuevo.",
+          "useRevision": "Usar revisión {revision}"
         }
       }
     },

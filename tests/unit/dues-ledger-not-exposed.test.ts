@@ -20,9 +20,11 @@ import { productionSourceFiles, stripComments } from "../helpers/source-files";
  *     the action files themselves; each action's own public, exported signature is unchanged by any of this.
  *     `[id]/genuine-return-core.ts` is the same pattern for `page.tsx`'s own read-only `isGenuineReturnBillingActive` check —
  *     `page.tsx` itself must never import the ledger directly. `src/lib/dues/exchange-rate-actions.ts` (a thin "use server"
- *     wrapper around `enterExchangeRateQuote`, owner-only, never passing a `deps` override) and
+ *     wrapper around `enterExchangeRateQuote`, owner-only, never passing a `deps` override),
+ *     `src/lib/dues/exchange-rate-queries.ts` (plain reads; imports only `isRealDate` from `dues/ledger/common.ts`, never a
+ *     writer, to guard a quote-date input the same way the engine's own write path already does), and
  *     `payments/plans/exchange-rate-section.tsx` (a server component's own read-only `inactiveLedgerActivation.isActive`
- *     pre-check, advisory only — `enterOrCorrectExchangeRate` itself is the unconditional enforcement) are the two new
+ *     pre-check, advisory only — `enterOrCorrectExchangeRate` itself is the unconditional enforcement) are the three new
  *     importers the owner exchange-rate UI brief adds.
  *  2. They are plain library functions: no `"use server"` (which would make an exported function an invocable endpoint), no route, no
  *     client component.
@@ -38,6 +40,7 @@ const AUTHORIZED_CALLERS = [
   "src/app/[locale]/(staff)/students/[id]/genuine-return-core.ts",
   "src/app/[locale]/(staff)/students/create-student-core.ts",
   "src/lib/dues/exchange-rate-actions.ts",
+  "src/lib/dues/exchange-rate-queries.ts",
   "src/app/[locale]/(staff)/payments/plans/exchange-rate-section.tsx",
 ];
 
