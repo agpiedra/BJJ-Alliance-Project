@@ -8,17 +8,24 @@ import { productionSourceFiles, stripComments } from "../helpers/source-files";
  *
  *  1. Nothing outside `src/lib/dues/ledger/` imports them, EXCEPT the authorized callers listed in `AUTHORIZED_CALLERS` below
  *     (monthly-generation brief §5.2, late-fee-assessment brief §7, the resume/enrollment integration plan's own §3/§7.6, the
- *     genuine-return-to-training brief's own §7): no other page, route, server action, cron, script or library. The only
- *     other importers are tests. This test names those files explicitly rather than allowing a broad pattern — a sixth file
- *     starting to import from the ledger still fails it. `resumeStudent`/`returnToTraining` (`[id]/actions.ts`) compose
- *     `resumeChargeInTx`/`genuineReturnChargeInTx` directly. `approveStudentInTx`/`createStudentInTx` (the gated cores
- *     `approveStudent`/`createStudent` compose) were moved out of their own "use server" action files into plain,
- *     non-"use server" sibling modules (`[id]/approve-student-core.ts`, `create-student-core.ts`) after an independent review
- *     found every exported async function in a "use server" file becomes a directly client-invocable server action — these two
- *     cores trust locks/validation their caller already did and must never be reachable that way. Those two new core files are
- *     the actual importers of `enrollmentChargeInTx` now, not the action files themselves; each action's own public, exported
- *     signature is unchanged by any of this. `[id]/genuine-return-core.ts` is the same pattern for `page.tsx`'s own read-only
- *     `isGenuineReturnBillingActive` check — `page.tsx` itself must never import the ledger directly.
+ *     genuine-return-to-training brief's own §7, the owner exchange-rate UI brief's own §2.1/§2.3): no other page, route,
+ *     server action, cron, script or library. The only other importers are tests. This test names those files explicitly
+ *     rather than allowing a broad pattern — a sixth file starting to import from the ledger still fails it. `resumeStudent`/
+ *     `returnToTraining` (`[id]/actions.ts`) compose `resumeChargeInTx`/`genuineReturnChargeInTx` directly.
+ *     `approveStudentInTx`/`createStudentInTx` (the gated cores `approveStudent`/`createStudent` compose) were moved out of
+ *     their own "use server" action files into plain, non-"use server" sibling modules (`[id]/approve-student-core.ts`,
+ *     `create-student-core.ts`) after an independent review found every exported async function in a "use server" file
+ *     becomes a directly client-invocable server action — these two cores trust locks/validation their caller already did and
+ *     must never be reachable that way. Those two new core files are the actual importers of `enrollmentChargeInTx` now, not
+ *     the action files themselves; each action's own public, exported signature is unchanged by any of this.
+ *     `[id]/genuine-return-core.ts` is the same pattern for `page.tsx`'s own read-only `isGenuineReturnBillingActive` check —
+ *     `page.tsx` itself must never import the ledger directly. `src/lib/dues/exchange-rate-actions.ts` (a thin "use server"
+ *     wrapper around `enterExchangeRateQuote`, owner-only, never passing a `deps` override),
+ *     `src/lib/dues/exchange-rate-queries.ts` (plain reads; imports only `isRealDate` from `dues/ledger/common.ts`, never a
+ *     writer, to guard a quote-date input the same way the engine's own write path already does), and
+ *     `payments/plans/exchange-rate-section.tsx` (a server component's own read-only `inactiveLedgerActivation.isActive`
+ *     pre-check, advisory only — `enterOrCorrectExchangeRate` itself is the unconditional enforcement) are the three new
+ *     importers the owner exchange-rate UI brief adds.
  *  2. They are plain library functions: no `"use server"` (which would make an exported function an invocable endpoint), no route, no
  *     client component.
  *  3. They are registered in `scripts/pending-callers.ts`, the repo's list of code built ahead of its caller.
@@ -32,6 +39,9 @@ const AUTHORIZED_CALLERS = [
   "src/app/[locale]/(staff)/students/[id]/approve-student-core.ts",
   "src/app/[locale]/(staff)/students/[id]/genuine-return-core.ts",
   "src/app/[locale]/(staff)/students/create-student-core.ts",
+  "src/lib/dues/exchange-rate-actions.ts",
+  "src/lib/dues/exchange-rate-queries.ts",
+  "src/app/[locale]/(staff)/payments/plans/exchange-rate-section.tsx",
 ];
 
 describe("the ledger writers are not reachable from production code", () => {

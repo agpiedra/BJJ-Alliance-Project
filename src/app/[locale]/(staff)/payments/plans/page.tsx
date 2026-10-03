@@ -9,6 +9,7 @@ import { isCustomPromoPlanName } from "@/lib/payments/custom-promo-plan-name";
 import { formatMoney } from "@/lib/payments/format-money";
 import { listPlansForManagement } from "@/lib/payments/list-plans";
 import { DuesSection } from "./dues-section";
+import { ExchangeRateSection } from "./exchange-rate-section";
 import { CreatePlanForm, CurrencyForm, PlanRowActions } from "./plan-forms";
 
 // Plans change without a redeploy; never statically frozen.
@@ -155,6 +156,16 @@ export default async function PaymentPlansPage() {
           <CardContent className="flex flex-col gap-4 pt-4">
             <p className="text-sm text-muted-foreground">{t("currency.body", { current: t(`currencyOption.${currency}`) })}</p>
             <CurrencyForm organizationId={context.organizationId} current={currency} />
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Organization-wide, not per-academy (unlike DuesSection above) — a BCR sell rate applies across every
+          location the organization has, the same scope CurrencyForm's own card above already uses. */}
+      {context.organizationRole === "ADMIN" && (
+        <Card>
+          <CardContent className="flex flex-col gap-4 pt-4">
+            <ExchangeRateSection organizationId={context.organizationId} />
           </CardContent>
         </Card>
       )}
