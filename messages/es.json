@@ -1104,7 +1104,8 @@
         "add": {
           "open": "Agregar un tipo de cambio",
           "submit": "Guardar tipo de cambio",
-          "success": "Tipo de cambio guardado."
+          "success": "Tipo de cambio guardado.",
+          "stale": "Ya se ingresó un tipo de cambio para esta fecha. Tu entrada arriba no cambió — usa el formulario Corregir listado para esa fecha si aún quieres aplicarla."
         },
         "correct": {
           "open": "Corregir",

@@ -115,6 +115,18 @@ describe("AddExchangeRateForm: submits via enterOrCorrectExchangeRate (mocked), 
     await waitFor(() => expect(screen.getByText(enMessages.payments.plans.exchangeRate.add.success)).toBeTruthy());
     expect(valueInput.value).toBe("");
   });
+
+  it("a mocked stale refusal shows the add.stale message and preserves the owner's typed value (bug fix: this previously rendered nothing at all)", async () => {
+    enterOrCorrectExchangeRate.mockResolvedValue({ error: "stale" });
+    render(withMessages(<AddExchangeRateForm organizationId="org-1" />));
+    fireEvent.click(screen.getByText(enMessages.payments.plans.exchangeRate.add.open));
+    const valueInput = screen.getByLabelText(enMessages.payments.plans.exchangeRate.fields.value) as HTMLInputElement;
+    fireEvent.change(valueInput, { target: { value: "505.37" } });
+    fireEvent.click(screen.getByText(enMessages.payments.plans.exchangeRate.add.submit));
+    await waitFor(() => expect(screen.getByText(enMessages.payments.plans.exchangeRate.add.stale)).toBeTruthy());
+    expect(valueInput.value).toBe("505.37"); // not reset — useDuesAction only resets on ok: true
+    expect(screen.queryByText(enMessages.payments.plans.exchangeRate.add.success)).toBeNull();
+  });
 });
 
 describe("CorrectExchangeRateForm: stale-form preservation (mocked \"stale\" response)", () => {

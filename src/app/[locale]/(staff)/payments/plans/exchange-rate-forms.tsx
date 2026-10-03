@@ -32,7 +32,14 @@ function DateFields({ defaults }: { defaults: { year: number; month: number; day
   );
 }
 
-/** Add a first entry for a date with no existing quote — `expectedCurrentRevision=0`, "believed first entry." */
+/**
+ * Add a first entry for a date with no existing quote — `expectedCurrentRevision=0`, "believed first entry." On a
+ * `"stale"` refusal (someone else already entered a rate for this date first), the owner's typed value is never
+ * discarded (`useDuesAction` only resets on success) and a plain message tells them so — unlike
+ * `CorrectExchangeRateForm`, there is no existing `row` here to refresh a revision/value banner against, so this
+ * deliberately does not duplicate that machinery; it only points the owner at the Correct form already listed for
+ * that date instead.
+ */
 export function AddExchangeRateForm({ organizationId }: { organizationId: string }) {
   const t = useTranslations("payments.plans.exchangeRate");
   const { state, onSubmit, isPending } = useDuesAction(enterOrCorrectExchangeRate.bind(null, organizationId));
@@ -45,7 +52,13 @@ export function AddExchangeRateForm({ organizationId }: { organizationId: string
           <TextField label={t("fields.value")} name="value" inputMode="decimal" />
           <TextField label={t("fields.sourceNote")} name="sourceNote" inputMode="text" maxLength={500} />
         </div>
-        {state.error !== "stale" && <Outcome state={state} success={t("add.success")} />}
+        {state.error === "stale" ? (
+          <p role="alert" className="text-sm text-bad">
+            {t("add.stale")}
+          </p>
+        ) : (
+          <Outcome state={state} success={t("add.success")} />
+        )}
         <div>
           <Button type="submit" disabled={isPending}>
             {t("add.submit")}

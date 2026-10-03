@@ -1104,7 +1104,8 @@
         "add": {
           "open": "Add a rate",
           "submit": "Save rate",
-          "success": "Rate saved."
+          "success": "Rate saved.",
+          "stale": "A rate was already entered for this date. Your entry above is unchanged — use the Correct form listed for that date instead if you still want to apply it."
         },
         "correct": {
           "open": "Correct",
