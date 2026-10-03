@@ -1079,7 +1079,39 @@
           "currencyMismatch": "This location uses one currency for all its dues configuration. Use the currency already saved for it.",
           "durationMismatch": "A monthly plan stays monthly and a package stays a package. Create a separate plan for a different duration.",
           "stale": "Someone else changed this version. Reload the page and try again.",
-          "referenced": "This version is already used by a financial record, so it can no longer be corrected. Add a new version for a later month instead."
+          "referenced": "This version is already used by a financial record, so it can no longer be corrected. Add a new version for a later month instead.",
+          "notActive": "Exchange rates are not active for this organization yet."
+        }
+      },
+      "exchangeRate": {
+        "heading": "Exchange rate (USD/CRC)",
+        "body": "The organization-wide BCR sell rate used to convert a payment made in the other currency. Entering a rate here does not activate billing.",
+        "inactive": "Exchange rates are not active for this organization yet.",
+        "none": "No rate has been entered yet.",
+        "columns": {
+          "date": "Date",
+          "value": "Rate",
+          "revision": "Revision",
+          "actions": "Actions"
+        },
+        "fields": {
+          "year": "Year",
+          "month": "Month",
+          "day": "Day",
+          "value": "Rate (CRC per USD)",
+          "sourceNote": "Source note (optional)"
+        },
+        "add": {
+          "open": "Add a rate",
+          "submit": "Save rate",
+          "success": "Rate saved."
+        },
+        "correct": {
+          "open": "Correct",
+          "submit": "Save correction",
+          "success": "Correction saved.",
+          "warning": "{count, plural, one {# settled payment used} other {# settled payments used}} this rate.",
+          "staleBanner": "This rate changed since you opened this form: it's now revision {revision}, value {value}. Your entry above is unchanged — update and resubmit if you still want to apply it."
         }
       }
     },
