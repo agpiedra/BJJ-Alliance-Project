@@ -1123,6 +1123,59 @@
           "staleNotFound": "Este tipo de cambio cambió desde que abriste este formulario, pero no se pudo encontrar el valor actual. Inténtalo de nuevo.",
           "useRevision": "Usar revisión {revision}"
         }
+      },
+      "receipts": {
+        "heading": "Recibos a la espera de tipo de cambio",
+        "body": "Pagos recibidos cuando todavía no había un tipo de cambio disponible para su fecha. Un propietario resuelve uno una vez que existe un tipo de cambio, o lo cancela — ninguna de las dos acciones reabre la fecha de recepción original.",
+        "inactive": "Los tipos de cambio no están activos para esta organización todavía.",
+        "loading": "Cargando…",
+        "loadFailed": "No se pudo cargar la cola de recibos. Inténtalo de nuevo.",
+        "empty": "No hay recibos en este estado.",
+        "loadMore": "Cargar más",
+        "retry": "Reintentar",
+        "resolve": "Resolver",
+        "cancel": "Cancelar recibo",
+        "actionSuccess": "Listo.",
+        "statusRefreshing": "Confirmando el estado actual de este recibo…",
+        "statusRefreshFailed": "No se pudo confirmar el estado actual de este recibo.",
+        "statusRefreshNotFound": "No se pudo localizar el estado actual de este recibo.",
+        "cancelDisclaimer": "Cancelar no reembolsa dinero ni salda ninguna deuda — solo marca este recibo como cancelado.",
+        "snapshotIntegrityFailure": "No se pudieron leer los datos guardados de este recibo.",
+        "tender": "Recibido: {amount} {currency}",
+        "existingReferenced": "{count, plural, one {# obligación existente referenciada} other {# obligaciones existentes referenciadas}}",
+        "proposedPending": "Propone nueva cobertura: {months}",
+        "proposedResolved": "Cobertura capturada en esta propuesta, creada al resolver: {months}",
+        "proposedCancelled": "Cobertura que había sido propuesta aquí (nunca creada): {months}",
+        "tabs": {
+          "PENDING": "Pendientes",
+          "RESOLVED": "Resueltos",
+          "CANCELLED": "Cancelados"
+        },
+        "kinds": {
+          "ORDINARY": "Ordinario",
+          "PREPAYMENT": "Prepago",
+          "PACKAGE": "Paquete"
+        },
+        "fields": {
+          "cancellationReason": "Motivo de la cancelación (obligatorio)"
+        },
+        "error": {
+          "notActive": "Los tipos de cambio no están activos para esta organización todavía.",
+          "invalid": "Esta solicitud no pudo ser entendida.",
+          "notFound": "Este recibo no pudo ser encontrado.",
+          "alreadyHandled": "Este recibo ya fue atendido. Su estado actual se actualizó arriba.",
+          "malformedSnapshot": "No se pudieron leer los datos guardados de este recibo.",
+          "drifted": "El plan, el precio o el calendario de esta propuesta cambió desde que fue capturada; ya no puede resolverse como se propuso originalmente. Cancélalo, con un motivo, si no debe continuarse.",
+          "obligationChanged": "Una o más de las obligaciones referenciadas ya no pueden saldarse a través de este recibo tal como fue capturado. Cancélalo, con un motivo, si no debe continuarse.",
+          "rateUnavailable": "Todavía no hay un tipo de cambio disponible para la fecha de este pago. Ingresa el tipo de cambio requerido y vuelve a intentar resolverlo.",
+          "currencyMismatchReceipt": "La moneda recibida no coincide con lo requerido, y no se encontró un tipo de cambio compatible.",
+          "ambiguousTotal": "El monto recibido coincide con más de un total posible y no puede resolverse automáticamente.",
+          "totalMismatch": "El monto recibido no coincide con el total esperado para esta propuesta.",
+          "amountUnsupported": "Este monto es demasiado grande para procesarlo.",
+          "conflict": "Esto no pudo completarse debido a un cambio en conflicto. Inténtalo de nuevo.",
+          "unexpected": "Este recibo está en un estado inesperado. Por favor contacta soporte.",
+          "transportFailure": "Ocurrió un problema de conexión al intentar completar esto. Confirmando el estado actual antes de volver a intentarlo."
+        }
       }
     },
     "table": {

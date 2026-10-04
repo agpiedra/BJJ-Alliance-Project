@@ -10,6 +10,7 @@ import { formatMoney } from "@/lib/payments/format-money";
 import { listPlansForManagement } from "@/lib/payments/list-plans";
 import { DuesSection } from "./dues-section";
 import { ExchangeRateSection } from "./exchange-rate-section";
+import { AwaitingRateReceiptSection } from "./awaiting-rate-receipt-section";
 import { CreatePlanForm, CurrencyForm, PlanRowActions } from "./plan-forms";
 
 // Plans change without a redeploy; never statically frozen.
@@ -166,6 +167,15 @@ export default async function PaymentPlansPage() {
         <Card>
           <CardContent className="flex flex-col gap-4 pt-4">
             <ExchangeRateSection organizationId={context.organizationId} />
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Organization-wide, not per-academy — an awaiting-rate receipt's own branch is informational only. */}
+      {context.organizationRole === "ADMIN" && (
+        <Card>
+          <CardContent className="flex flex-col gap-4 pt-4">
+            <AwaitingRateReceiptSection organizationId={context.organizationId} />
           </CardContent>
         </Card>
       )}

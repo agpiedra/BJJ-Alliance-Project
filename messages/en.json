@@ -1123,6 +1123,59 @@
           "staleNotFound": "This rate changed since you opened this form, but the current value could not be found. Try again.",
           "useRevision": "Use revision {revision}"
         }
+      },
+      "receipts": {
+        "heading": "Awaiting-rate receipts",
+        "body": "Payments received while no exchange rate was available yet for their date. An owner resolves one once a rate exists, or cancels it — neither action re-opens the original received date.",
+        "inactive": "Exchange rates are not active for this organization yet.",
+        "loading": "Loading…",
+        "loadFailed": "Could not load the receipt queue. Try again.",
+        "empty": "No receipts in this status.",
+        "loadMore": "Load more",
+        "retry": "Retry",
+        "resolve": "Resolve",
+        "cancel": "Cancel receipt",
+        "actionSuccess": "Done.",
+        "statusRefreshing": "Confirming this receipt's current status…",
+        "statusRefreshFailed": "Could not confirm this receipt's current status.",
+        "statusRefreshNotFound": "This receipt's current status could not be located.",
+        "cancelDisclaimer": "Cancelling does not refund any money or settle any debt — it only marks this receipt cancelled.",
+        "snapshotIntegrityFailure": "This receipt's stored proposal could not be read.",
+        "tender": "Received: {amount} {currency}",
+        "existingReferenced": "{count, plural, one {# referenced existing obligation} other {# referenced existing obligations}}",
+        "proposedPending": "Proposes new coverage: {months}",
+        "proposedResolved": "Coverage captured in this proposal, created on resolution: {months}",
+        "proposedCancelled": "Coverage that had been proposed here (never created): {months}",
+        "tabs": {
+          "PENDING": "Pending",
+          "RESOLVED": "Resolved",
+          "CANCELLED": "Cancelled"
+        },
+        "kinds": {
+          "ORDINARY": "Ordinary",
+          "PREPAYMENT": "Prepayment",
+          "PACKAGE": "Package"
+        },
+        "fields": {
+          "cancellationReason": "Reason for cancelling (required)"
+        },
+        "error": {
+          "notActive": "Exchange rates are not active for this organization yet.",
+          "invalid": "This request could not be understood.",
+          "notFound": "This receipt could not be found.",
+          "alreadyHandled": "This receipt was already handled. Its current status has been refreshed above.",
+          "malformedSnapshot": "This receipt's stored data could not be read.",
+          "drifted": "The plan, pricing, or timing for this proposal has changed since it was captured; it can no longer be resolved as originally proposed. Cancel it, with a reason, if it should not be pursued.",
+          "obligationChanged": "One or more of the referenced obligations can no longer be settled through this receipt as originally captured. Cancel it, with a reason, if it should not be pursued.",
+          "rateUnavailable": "No exchange rate is available yet for this payment's date. Enter the required rate, then try resolving again.",
+          "currencyMismatchReceipt": "The currency received does not match what's required, and no compatible exchange rate was found.",
+          "ambiguousTotal": "The amount received matches more than one possible total and cannot be resolved automatically.",
+          "totalMismatch": "The amount received does not match the expected total for this proposal.",
+          "amountUnsupported": "This amount is too large to process.",
+          "conflict": "This could not be completed due to a conflicting change. Try again.",
+          "unexpected": "This receipt is in an unexpected state. Please contact support.",
+          "transportFailure": "A connection issue occurred while trying to complete this. Confirming the current status before you try again."
+        }
       }
     },
     "table": {
