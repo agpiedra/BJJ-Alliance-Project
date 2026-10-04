@@ -261,7 +261,7 @@ describe("ReceiptRow: terminal-status refresh on alreadyResolved/alreadyCancelle
     expect(onStatusChanged).toHaveBeenCalledWith("r1", "RESOLVED");
   });
 
-  it("a REJECTED status-refresh shows an explicit failure message with a retry, and BLOCKS writes for the whole recovery window (bug fix: this previously left the controls fully clickable)", async () => {
+  it("a REJECTED status-refresh shows an explicit failure message with a retry, and BLOCKS writes (by disabling, not hiding, the controls) for the whole recovery window", async () => {
     resolveReceipt.mockResolvedValue({ error: "alreadyCancelled" });
     getReceiptStatus.mockRejectedValue(new Error("network down"));
     render(withMessages(<ReceiptRow organizationId="org-1" row={PENDING_ORDINARY_ROW} onStatusChanged={vi.fn()} />));
@@ -269,18 +269,18 @@ describe("ReceiptRow: terminal-status refresh on alreadyResolved/alreadyCancelle
     fireEvent.click(screen.getByText(R.resolve));
     await waitFor(() => expect(screen.getByText(R.statusRefreshFailed)).toBeTruthy());
     expect(screen.getByText(R.retry)).toBeTruthy();
-    // Controls are gone — not just disabled — for the entire recovery window; a receipt can never go back to
-    // actionable once a terminal result (even an unconfirmed one) has been reported.
-    expect(screen.queryByText(R.resolve)).toBeNull();
-    expect(screen.queryByText(R.cancel)).toBeNull();
+    // The controls stay MOUNTED (bug fix: an earlier version hid them, which destroyed the Cancel form's uncontrolled
+    // reason input via unmount) but are DISABLED for the entire recovery window.
+    expect((screen.getByText(R.resolve).closest("button") as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByText(R.cancel).closest("button") as HTMLButtonElement).disabled).toBe(true);
 
     getReceiptStatus.mockResolvedValue({ status: "CANCELLED" });
     fireEvent.click(screen.getByText(R.retry));
     await waitFor(() => expect(screen.getByText(R.tabs.CANCELLED)).toBeTruthy());
-    expect(screen.queryByText(R.resolve)).toBeNull();
+    expect(screen.queryByText(R.resolve)).toBeNull(); // NOW genuinely terminal — the block is gone for good
   });
 
-  it("a status-refresh resolving to null (notFound) gets its own distinct message, different from a rejected fetch, and also blocks writes", async () => {
+  it("a status-refresh resolving to null (notFound) gets its own distinct message, different from a rejected fetch, and also disables writes", async () => {
     resolveReceipt.mockResolvedValue({ error: "alreadyResolved" });
     getReceiptStatus.mockResolvedValue(null);
     render(withMessages(<ReceiptRow organizationId="org-1" row={PENDING_ORDINARY_ROW} onStatusChanged={vi.fn()} />));
@@ -288,10 +288,10 @@ describe("ReceiptRow: terminal-status refresh on alreadyResolved/alreadyCancelle
     fireEvent.click(screen.getByText(R.resolve));
     await waitFor(() => expect(screen.getByText(R.statusRefreshNotFound)).toBeTruthy());
     expect(screen.queryByText(R.statusRefreshFailed)).toBeNull();
-    expect(screen.queryByText(R.resolve)).toBeNull();
+    expect((screen.getByText(R.resolve).closest("button") as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it("writes stay blocked (and dispatch nothing) throughout the refresh-loading window itself, not just after it settles", async () => {
+  it("writes stay disabled (and dispatch nothing further) throughout the refresh-loading window itself, not just after it settles", async () => {
     resolveReceipt.mockResolvedValue({ error: "alreadyResolved" });
     let resolveStatusFetch!: (value: unknown) => void;
     getReceiptStatus.mockReturnValue(new Promise((resolve) => (resolveStatusFetch = resolve)));
@@ -299,38 +299,95 @@ describe("ReceiptRow: terminal-status refresh on alreadyResolved/alreadyCancelle
 
     fireEvent.click(screen.getByText(R.resolve));
     await waitFor(() => expect(screen.getByText(R.statusRefreshing)).toBeTruthy());
-    expect(screen.queryByText(R.resolve)).toBeNull();
+    expect((screen.getByText(R.resolve).closest("button") as HTMLButtonElement).disabled).toBe(true);
     expect(resolveReceipt).toHaveBeenCalledTimes(1);
 
     resolveStatusFetch({ status: "RESOLVED" });
     await waitFor(() => expect(screen.getByText(R.tabs.RESOLVED)).toBeTruthy());
+    expect(screen.queryByText(R.resolve)).toBeNull(); // genuinely terminal now
+  });
+
+  it("a refresh confirming PENDING clears the error and makes the row actionable again, never locking it out forever (bug fix)", async () => {
+    resolveReceipt.mockReset();
+    resolveReceipt.mockResolvedValueOnce({ error: "alreadyResolved" }).mockResolvedValueOnce({ ok: true });
+    getReceiptStatus.mockResolvedValue({ status: "PENDING" }); // the previous attempt genuinely did not take effect
+    const onStatusChanged = vi.fn();
+    render(withMessages(<ReceiptRow organizationId="org-1" row={PENDING_ORDINARY_ROW} onStatusChanged={onStatusChanged} />));
+
+    fireEvent.click(screen.getByText(R.resolve));
+    await waitFor(() => expect(getReceiptStatus).toHaveBeenCalledWith("org-1", "r1"));
+    // No success claimed, no longer locked: the Resolve button is present AND re-enabled.
+    await waitFor(() => expect((screen.getByText(R.resolve).closest("button") as HTMLButtonElement).disabled).toBe(false));
+    expect(screen.queryByText(R.actionSuccess)).toBeNull();
+    expect(onStatusChanged).not.toHaveBeenCalled(); // PENDING === the row's own current status — nothing "changed"
+    expect(resolveReceipt).toHaveBeenCalledTimes(1); // no auto-resubmission from the PENDING confirmation itself
+
+    // A fresh, explicit retry now succeeds normally.
+    fireEvent.click(screen.getByText(R.resolve));
+    await waitFor(() => expect(resolveReceipt).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getByText(R.actionSuccess)).toBeTruthy());
   });
 });
 
 describe("ReceiptRow: a transport failure (rejected promise) on Resolve/Cancel, never a permanently-stuck busy state (bug fix)", () => {
-  it("a rejected resolveReceipt releases busy, shows an honest message, and routes into the same status-refresh recovery", async () => {
+  it("a rejected resolveReceipt releases busy, shows an honest message, disables (not hides) the control during recovery, then removes it once genuinely terminal", async () => {
     resolveReceipt.mockRejectedValue(new Error("network down"));
-    getReceiptStatus.mockResolvedValue({ status: "RESOLVED" }); // simulates: the server had actually already committed it
+    let resolveStatusFetch!: (value: unknown) => void;
+    getReceiptStatus.mockReturnValue(new Promise((resolve) => (resolveStatusFetch = resolve)));
     render(withMessages(<ReceiptRow organizationId="org-1" row={PENDING_ORDINARY_ROW} onStatusChanged={vi.fn()} />));
 
     const resolveButton = screen.getByText(R.resolve).closest("button") as HTMLButtonElement;
     fireEvent.click(resolveButton);
     await waitFor(() => expect(screen.getByText(R.error.transportFailure)).toBeTruthy());
-    // Writes stay blocked until the refresh confirms what actually happened — never auto-resubmitted, never claimed safe.
-    expect(screen.queryByText(R.resolve)).toBeNull();
+    // Writes stay blocked (disabled, still present) until the refresh confirms what actually happened — never
+    // auto-resubmitted, never claimed safe.
+    expect((screen.getByText(R.resolve).closest("button") as HTMLButtonElement).disabled).toBe(true);
+
+    // The refresh now confirms the write actually DID commit despite the transport failure — this is the genuine
+    // terminal path, unchanged from before this round's fix.
+    resolveStatusFetch({ status: "RESOLVED" });
     await waitFor(() => expect(screen.getByText(R.tabs.RESOLVED)).toBeTruthy());
+    expect(screen.queryByText(R.resolve)).toBeNull();
   });
 
-  it("a rejected cancelReceipt preserves the typed reason and does not reset the form", async () => {
-    cancelReceipt.mockRejectedValue(new Error("network down"));
-    getReceiptStatus.mockReturnValue(new Promise(() => {})); // never resolves — only the pre-refresh state matters here
+  it("a rejected resolveReceipt whose refresh confirms PENDING (the write genuinely did not take effect) clears the lockout and allows a real second attempt", async () => {
+    resolveReceipt.mockReset();
+    resolveReceipt.mockRejectedValueOnce(new Error("network down")).mockResolvedValueOnce({ ok: true });
+    getReceiptStatus.mockResolvedValue({ status: "PENDING" });
     render(withMessages(<ReceiptRow organizationId="org-1" row={PENDING_ORDINARY_ROW} onStatusChanged={vi.fn()} />));
 
-    const reasonInput = screen.getByLabelText(R.fields.cancellationReason) as HTMLInputElement;
-    fireEvent.change(reasonInput, { target: { value: "owner changed their mind" } });
+    fireEvent.click(screen.getByText(R.resolve));
+    await waitFor(() => expect(screen.getByText(R.error.transportFailure)).toBeTruthy());
+    await waitFor(() => expect((screen.getByText(R.resolve).closest("button") as HTMLButtonElement).disabled).toBe(false));
+    expect(screen.queryByText(R.actionSuccess)).toBeNull();
+    expect(resolveReceipt).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByText(R.resolve));
+    await waitFor(() => expect(resolveReceipt).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getByText(R.actionSuccess)).toBeTruthy());
+  });
+
+  it("a rejected cancelReceipt preserves the typed reason through the mounted (not unmounted) form, re-queried live from the DOM, not held from before the refusal", async () => {
+    cancelReceipt.mockReset();
+    cancelReceipt.mockRejectedValueOnce(new Error("network down")).mockResolvedValueOnce({ ok: true });
+    getReceiptStatus.mockResolvedValue({ status: "PENDING" });
+    render(withMessages(<ReceiptRow organizationId="org-1" row={PENDING_ORDINARY_ROW} onStatusChanged={vi.fn()} />));
+
+    fireEvent.change(screen.getByLabelText(R.fields.cancellationReason), { target: { value: "owner changed their mind" } });
     fireEvent.click(screen.getByText(R.cancel));
     await waitFor(() => expect(screen.getByText(R.error.transportFailure)).toBeTruthy());
-    expect(reasonInput.value).toBe("owner changed their mind");
+    // Re-queried live — never a reference held from before the refusal — proving the field is the SAME surviving
+    // DOM node, not a coincidentally-equal one from a fresh mount.
+    expect((screen.getByLabelText(R.fields.cancellationReason) as HTMLInputElement).value).toBe("owner changed their mind");
+
+    await waitFor(() => expect((screen.getByText(R.cancel).closest("button") as HTMLButtonElement).disabled).toBe(false));
+    expect((screen.getByLabelText(R.fields.cancellationReason) as HTMLInputElement).value).toBe("owner changed their mind");
+
+    // Submitting again dispatches the ORIGINAL typed reason, not blank and not reset.
+    fireEvent.click(screen.getByText(R.cancel));
+    await waitFor(() => expect(cancelReceipt).toHaveBeenCalledTimes(2));
+    const secondCallFormData = cancelReceipt.mock.calls[1][2] as FormData;
+    expect(secondCallFormData.get("reason")).toBe("owner changed their mind");
   });
 
   it("busy returns to idle (not stuck forever) after a rejected call, even while recovery is pending", async () => {
@@ -339,9 +396,9 @@ describe("ReceiptRow: a transport failure (rejected promise) on Resolve/Cancel, 
     render(withMessages(<ReceiptRow organizationId="org-1" row={PENDING_ORDINARY_ROW} onStatusChanged={vi.fn()} />));
     fireEvent.click(screen.getByText(R.resolve));
     await waitFor(() => expect(screen.getByText(R.error.transportFailure)).toBeTruthy());
-    // The controls are gone (blocked by the pending recovery, per the fix above) rather than present-but-disabled —
-    // either way, nothing is left permanently spinning/disabled-forever purely due to the try/catch/finally itself.
-    expect(screen.queryByText(R.resolve)).toBeNull();
+    // Present (not hidden) but disabled — nothing left permanently spinning/clickable purely due to the
+    // try/catch/finally itself; the refresh's own in-flight state is what's gating it.
+    expect((screen.getByText(R.resolve).closest("button") as HTMLButtonElement).disabled).toBe(true);
   });
 });
 

@@ -205,6 +205,15 @@ export function ReceiptRow({
           return;
         }
         setRefreshStatus("idle");
+        if (current.status === "PENDING") {
+          // The previous attempt (a transportFailure, almost always — a genuine alreadyResolved/alreadyCancelled
+          // refusing should never legitimately refresh back to PENDING) genuinely did not take effect server-side.
+          // Never store a non-terminal value in confirmedTerminal (its whole purpose is marking a CONFIRMED
+          // TERMINAL state) and never auto-resubmit — only clear the error so the owner is free to manually try
+          // again, with no claim that anything succeeded.
+          setError(null);
+          return;
+        }
         setConfirmedTerminal(current.status);
         if (current.status !== row.status) onStatusChanged(row.id, current.status);
       })
@@ -265,12 +274,17 @@ export function ReceiptRow({
     }
   }
 
-  // Writes stay blocked for the ENTIRE recovery window (refresh loading, failed, or notFound) — not just while the
-  // write call itself is in flight. Previously `actionable` only checked `confirmedTerminal === null`, which stayed
-  // true throughout the refresh fetch (confirmedTerminal is only set once the refresh actually resolves), letting
-  // both controls be clicked again before the refresh had told us anything.
-  const actionable = row.status === "PENDING" && confirmedTerminal === null && !needsRefresh;
-  const disabled = busy !== "idle";
+  // "Should this block render at all" (actionable) is deliberately separate from "should its buttons be clickable
+  // right now" (disabled). The block — including the Cancel form's own uncontrolled `reason` input — must stay
+  // MOUNTED for as long as the receipt is still genuinely PENDING (never confirmed terminal), even while a refresh
+  // is loading, failed, or not-found: unmounting it (as an earlier version of this fix did, by folding `!needsRefresh`
+  // into `actionable`) destroys whatever the owner had typed into the uncontrolled `reason` field, since React does
+  // not preserve an uncontrolled input's DOM value across an unmount — independent of `form.reset()` never being
+  // called. The block disappears permanently only once `confirmedTerminal` is genuinely set (RESOLVED/CANCELLED).
+  const actionable = row.status === "PENDING" && confirmedTerminal === null;
+  // Writes stay blocked for the ENTIRE recovery window (refresh loading, failed, or notFound) by disabling the
+  // buttons themselves, not by hiding them — the owner's draft stays visible and typeable the whole time.
+  const disabled = busy !== "idle" || needsRefresh;
 
   return (
     <li className="flex flex-col gap-2 rounded-lg border border-border p-3">
