@@ -1088,6 +1088,7 @@
         "body": "The organization-wide BCR sell rate used to convert a payment made in the other currency. Entering a rate here does not activate billing.",
         "inactive": "Exchange rates are not active for this organization yet.",
         "none": "No rate has been entered yet.",
+        "retry": "Retry",
         "columns": {
           "date": "Date",
           "value": "Rate",
@@ -1106,7 +1107,9 @@
           "submit": "Save rate",
           "success": "Rate saved.",
           "stale": "A rate was already entered for this date. Your entry above is unchanged — use the correction form below to apply a new value.",
-          "staleLoadFailed": "A rate was already entered for this date, but the current value could not be loaded. Try again."
+          "staleLoading": "A rate was already entered for this date. Checking its current value…",
+          "staleLoadFailed": "A rate was already entered for this date, but the current value could not be loaded. Try again.",
+          "staleNotFound": "A rate was already entered for this date, but it could not be located. Try again."
         },
         "correct": {
           "open": "Correct",
@@ -1114,8 +1117,10 @@
           "success": "Correction saved.",
           "warning": "{count, plural, one {# settled payment used} other {# settled payments used}} this rate.",
           "warningLoadFailed": "Could not load how many payments used this rate. Try again.",
+          "staleLoading": "This rate changed since you opened this form. Checking its current value…",
           "staleBanner": "This rate changed since you opened this form: it's now revision {revision}, value {value}. Your entry above is unchanged — use the button below, then resubmit, if you still want to apply it.",
           "staleLoadFailed": "This rate changed since you opened this form, but the current value could not be loaded. Try again.",
+          "staleNotFound": "This rate changed since you opened this form, but the current value could not be found. Try again.",
           "useRevision": "Use revision {revision}"
         }
       }

@@ -60,6 +60,7 @@ export function AddExchangeRateForm({ organizationId }: { organizationId: string
   const [submittedDate, setSubmittedDate] = useState<QuoteDateParts | null>(null);
   const [staleTarget, setStaleTarget] = useState<ExchangeRateQuoteRow | null>(null);
   const [staleTargetStatus, setStaleTargetStatus] = useState<FetchStatus>("loading");
+  const [staleRetryNonce, setStaleRetryNonce] = useState(0);
 
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     setSubmittedDate(readSubmittedDate(new FormData(event.currentTarget)));
@@ -83,8 +84,15 @@ export function AddExchangeRateForm({ organizationId }: { organizationId: string
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- re-runs only when a fresh "stale" result arrives
-  }, [state, submittedDate]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- re-runs on a fresh "stale" result or an explicit Retry
+  }, [state, submittedDate, staleRetryNonce]);
+
+  // Three genuinely distinct non-recovered states, each its own message — a completed lookup that found nothing
+  // must never be confused with "still loading" or "the fetch itself failed", and must never show the
+  // found-a-row-below text when no form is actually rendered.
+  const staleMessageKey =
+    staleTargetStatus === "loading" ? "add.staleLoading" : staleTargetStatus === "failed" ? "add.staleLoadFailed" : staleTarget ? "add.stale" : "add.staleNotFound";
+  const staleNeedsRetry = staleTargetStatus === "failed" || (staleTargetStatus === "loaded" && !staleTarget);
 
   return (
     <Disclosure summary={t("add.open")}>
@@ -96,9 +104,18 @@ export function AddExchangeRateForm({ organizationId }: { organizationId: string
           <TextField label={t("fields.sourceNote")} name="sourceNote" inputMode="text" maxLength={500} />
         </div>
         {state.error === "stale" ? (
-          <p role="alert" className="text-sm text-bad">
-            {staleTargetStatus === "failed" ? t("add.staleLoadFailed") : t("add.stale")}
-          </p>
+          <div className="flex flex-col gap-2">
+            <p role="alert" className="text-sm text-bad">
+              {t(staleMessageKey)}
+            </p>
+            {staleNeedsRetry && (
+              <div>
+                <Button type="button" variant="outline" onClick={() => setStaleRetryNonce((n) => n + 1)}>
+                  {t("retry")}
+                </Button>
+              </div>
+            )}
+          </div>
         ) : (
           <Outcome state={state} success={t("add.success")} />
         )}
@@ -141,6 +158,7 @@ export function CorrectExchangeRateForm({ organizationId, row }: { organizationI
   const [warningStatus, setWarningStatus] = useState<FetchStatus>("loading");
   const [refreshed, setRefreshed] = useState<ExchangeRateQuoteRow | null>(null);
   const [refreshStatus, setRefreshStatus] = useState<FetchStatus>("loading");
+  const [refreshRetryNonce, setRefreshRetryNonce] = useState(0);
   const [acceptedTarget, setAcceptedTarget] = useState<ExchangeRateQuoteRow | null>(null);
 
   const currentTargetId = refreshed?.id ?? row.id;
@@ -185,12 +203,19 @@ export function CorrectExchangeRateForm({ organizationId, row }: { organizationI
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- re-runs only when a fresh `"stale"` result arrives
-  }, [state]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- re-runs on a fresh `"stale"` result or an explicit Retry
+  }, [state, refreshRetryNonce]);
 
   const target = acceptedTarget ?? row;
-  const stillNeedsAccept = state.error === "stale" && refreshed !== null && acceptedTarget?.id !== refreshed.id;
-  const canSubmit = !isPending && (state.error !== "stale" || !stillNeedsAccept);
+  // Submission must be blocked for ALL of: loading, failed, AND loaded-with-null — not merely "loaded but not yet
+  // accepted". `refreshed !== null` alone used to gate this, which is `true` only once a row is actually found —
+  // while the fetch is still in flight or has failed/found-nothing, `refreshed` stays `null`, which previously
+  // (wrongly) satisfied the gate and let a resubmit carry the stale `row.revision` through unchanged.
+  const recoveryRequired = state.error === "stale";
+  const recoverySatisfied = refreshStatus === "loaded" && refreshed !== null && acceptedTarget !== null && acceptedTarget.id === refreshed.id;
+  const canSubmit = !isPending && (!recoveryRequired || recoverySatisfied);
+  const showAcceptButton = recoveryRequired && refreshStatus === "loaded" && refreshed !== null && !recoverySatisfied;
+  const refreshNeedsRetry = refreshStatus === "failed" || (refreshStatus === "loaded" && refreshed === null);
 
   return (
     // key={row.revision}: remounts with fresh defaults only after a SUCCESSFUL correction changes the row's
@@ -211,24 +236,35 @@ export function CorrectExchangeRateForm({ organizationId, row }: { organizationI
         )}
         {state.error === "stale" && (
           <div className="flex flex-col gap-2">
+            {refreshStatus === "loading" && <p className="text-sm text-muted-foreground">{t("correct.staleLoading")}</p>}
             {refreshStatus === "failed" && (
               <p role="alert" className="text-sm text-bad">
                 {t("correct.staleLoadFailed")}
               </p>
             )}
+            {refreshStatus === "loaded" && refreshed === null && (
+              <p role="alert" className="text-sm text-bad">
+                {t("correct.staleNotFound")}
+              </p>
+            )}
             {refreshStatus === "loaded" && refreshed && (
-              <>
-                <p role="alert" className="text-sm text-bad">
-                  {t("correct.staleBanner", { revision: refreshed.revision, value: refreshed.value })}
-                </p>
-                {stillNeedsAccept && (
-                  <div>
-                    <Button type="button" variant="outline" onClick={() => setAcceptedTarget(refreshed)}>
-                      {t("correct.useRevision", { revision: refreshed.revision })}
-                    </Button>
-                  </div>
-                )}
-              </>
+              <p role="alert" className="text-sm text-bad">
+                {t("correct.staleBanner", { revision: refreshed.revision, value: refreshed.value })}
+              </p>
+            )}
+            {refreshNeedsRetry && (
+              <div>
+                <Button type="button" variant="outline" onClick={() => setRefreshRetryNonce((n) => n + 1)}>
+                  {t("retry")}
+                </Button>
+              </div>
+            )}
+            {showAcceptButton && refreshed && (
+              <div>
+                <Button type="button" variant="outline" onClick={() => setAcceptedTarget(refreshed)}>
+                  {t("correct.useRevision", { revision: refreshed.revision })}
+                </Button>
+              </div>
             )}
           </div>
         )}

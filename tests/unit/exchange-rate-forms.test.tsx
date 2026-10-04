@@ -118,7 +118,7 @@ describe("AddExchangeRateForm: submits via enterOrCorrectExchangeRate (mocked), 
 
   it("a mocked stale refusal shows the add.stale message and preserves the owner's typed value (bug fix: this previously rendered nothing at all)", async () => {
     enterOrCorrectExchangeRate.mockResolvedValue({ error: "stale" });
-    getCurrentExchangeRate.mockResolvedValue(null); // no row found for this exact date — no embedded Correct form expected
+    getCurrentExchangeRate.mockResolvedValue(ROW_1); // a row IS found for this date — add.stale (not add.staleNotFound) is the correct message
     render(withMessages(<AddExchangeRateForm organizationId="org-1" />));
     fireEvent.click(screen.getByText(enMessages.payments.plans.exchangeRate.add.open));
     const valueInput = screen.getByLabelText(enMessages.payments.plans.exchangeRate.fields.value) as HTMLInputElement;
@@ -167,6 +167,47 @@ describe("AddExchangeRateForm: a stale refusal for a date outside the listed win
     fireEvent.click(screen.getByText(enMessages.payments.plans.exchangeRate.add.open));
     fireEvent.click(screen.getByText(enMessages.payments.plans.exchangeRate.add.submit));
     await waitFor(() => expect(screen.getByText(enMessages.payments.plans.exchangeRate.add.staleLoadFailed)).toBeTruthy());
+  });
+});
+
+describe("AddExchangeRateForm: three distinct stale-target states — loading, failed, loaded-but-null (bug fix)", () => {
+  it("shows a distinct loading message while the lookup is in flight", async () => {
+    enterOrCorrectExchangeRate.mockResolvedValue({ error: "stale" });
+    let resolveLookup!: (value: typeof ROW_2 | null) => void;
+    const pending = new Promise<typeof ROW_2 | null>((resolve) => {
+      resolveLookup = resolve;
+    });
+    getCurrentExchangeRate.mockReturnValue(pending);
+    render(withMessages(<AddExchangeRateForm organizationId="org-1" />));
+    fireEvent.click(screen.getByText(enMessages.payments.plans.exchangeRate.add.open));
+    fireEvent.click(screen.getByText(enMessages.payments.plans.exchangeRate.add.submit));
+    await waitFor(() => expect(screen.getByText(enMessages.payments.plans.exchangeRate.add.staleLoading)).toBeTruthy());
+    resolveLookup(null); // avoid a dangling unresolved promise after the test
+  });
+
+  it("a rejected lookup shows the failure message and a Retry button, never the generic add.stale text that would promise a form that isn't rendered", async () => {
+    enterOrCorrectExchangeRate.mockResolvedValue({ error: "stale" });
+    getCurrentExchangeRate.mockRejectedValue(new Error("network down"));
+    render(withMessages(<AddExchangeRateForm organizationId="org-1" />));
+    fireEvent.click(screen.getByText(enMessages.payments.plans.exchangeRate.add.open));
+    fireEvent.click(screen.getByText(enMessages.payments.plans.exchangeRate.add.submit));
+    await waitFor(() => expect(screen.getByText(enMessages.payments.plans.exchangeRate.add.staleLoadFailed)).toBeTruthy());
+    expect(screen.getByText(enMessages.payments.plans.exchangeRate.retry)).toBeTruthy();
+    expect(screen.queryByText(enMessages.payments.plans.exchangeRate.add.stale)).toBeNull();
+    expect(screen.queryByText(enMessages.payments.plans.exchangeRate.correct.open)).toBeNull();
+  });
+
+  it("a successful lookup that finds nothing shows its own distinct not-found message plus Retry, never the generic add.stale text (no embedded form actually renders)", async () => {
+    enterOrCorrectExchangeRate.mockResolvedValue({ error: "stale" });
+    getCurrentExchangeRate.mockResolvedValue(null);
+    render(withMessages(<AddExchangeRateForm organizationId="org-1" />));
+    fireEvent.click(screen.getByText(enMessages.payments.plans.exchangeRate.add.open));
+    fireEvent.click(screen.getByText(enMessages.payments.plans.exchangeRate.add.submit));
+    await waitFor(() => expect(screen.getByText(enMessages.payments.plans.exchangeRate.add.staleNotFound)).toBeTruthy());
+    expect(screen.getByText(enMessages.payments.plans.exchangeRate.retry)).toBeTruthy();
+    // The success-case message promises a form below; it must not appear when no form actually renders.
+    expect(screen.queryByText(enMessages.payments.plans.exchangeRate.add.stale)).toBeNull();
+    expect(screen.queryByText(enMessages.payments.plans.exchangeRate.correct.open)).toBeNull();
   });
 });
 
@@ -268,6 +309,84 @@ describe("CorrectExchangeRateForm: stale recovery actually lets the owner retry 
     await waitFor(() => expect(enterOrCorrectExchangeRate).toHaveBeenCalledTimes(3));
     expect((enterOrCorrectExchangeRate.mock.calls[2].at(-1) as FormData).get("expectedCurrentRevision")).toBe(String(ROW_3.revision));
     await waitFor(() => expect(screen.getByText(enMessages.payments.plans.exchangeRate.correct.success)).toBeTruthy());
+  });
+});
+
+describe("CorrectExchangeRateForm: submit gating covers loading/failed/loaded-null, not just loaded-with-a-row (bug fix)", () => {
+  it("REPRO: while the refresh fetch is still loading, the submit button must stay disabled (it previously was not)", async () => {
+    enterOrCorrectExchangeRate.mockResolvedValue({ error: "stale" });
+    let resolveRefresh!: (value: typeof ROW_2 | null) => void;
+    const pending = new Promise<typeof ROW_2 | null>((resolve) => {
+      resolveRefresh = resolve;
+    });
+    getCurrentExchangeRate.mockReturnValue(pending);
+    getExchangeRateCorrectionWarning.mockResolvedValue(0);
+
+    render(withMessages(<CorrectExchangeRateForm organizationId="org-1" row={ROW_1} />));
+    fireEvent.click(screen.getByText(enMessages.payments.plans.exchangeRate.correct.open));
+    fireEvent.click(screen.getByText(enMessages.payments.plans.exchangeRate.correct.submit));
+    await waitFor(() => expect(screen.getByText(enMessages.payments.plans.exchangeRate.correct.staleLoading)).toBeTruthy());
+    const submitButton = screen.getByText(enMessages.payments.plans.exchangeRate.correct.submit).closest("button") as HTMLButtonElement;
+    expect(submitButton.disabled).toBe(true);
+    resolveRefresh(ROW_2); // avoid a dangling unresolved promise after the test
+  });
+
+  it("a rejected refresh fetch keeps submit disabled, shows the failure message plus a Retry button, and dispatches no second write even if the disabled button is clicked", async () => {
+    enterOrCorrectExchangeRate.mockReset();
+    enterOrCorrectExchangeRate.mockResolvedValueOnce({ error: "stale" });
+    getCurrentExchangeRate.mockRejectedValue(new Error("network down"));
+    getExchangeRateCorrectionWarning.mockResolvedValue(0);
+
+    render(withMessages(<CorrectExchangeRateForm organizationId="org-1" row={ROW_1} />));
+    fireEvent.click(screen.getByText(enMessages.payments.plans.exchangeRate.correct.open));
+    fireEvent.click(screen.getByText(enMessages.payments.plans.exchangeRate.correct.submit));
+    await waitFor(() => expect(screen.getByText(enMessages.payments.plans.exchangeRate.correct.staleLoadFailed)).toBeTruthy());
+    expect(screen.getByText(enMessages.payments.plans.exchangeRate.retry)).toBeTruthy();
+    const submitButton = screen.getByText(enMessages.payments.plans.exchangeRate.correct.submit).closest("button") as HTMLButtonElement;
+    expect(submitButton.disabled).toBe(true);
+    fireEvent.click(submitButton);
+    expect(enterOrCorrectExchangeRate).toHaveBeenCalledTimes(1); // only the original submit — a disabled button dispatches nothing
+  });
+
+  it("a refresh that resolves successfully but finds no row keeps submit disabled and shows a message distinct from both the loading and failure messages, plus Retry", async () => {
+    enterOrCorrectExchangeRate.mockReset();
+    enterOrCorrectExchangeRate.mockResolvedValueOnce({ error: "stale" });
+    getCurrentExchangeRate.mockResolvedValue(null);
+    getExchangeRateCorrectionWarning.mockResolvedValue(0);
+
+    render(withMessages(<CorrectExchangeRateForm organizationId="org-1" row={ROW_1} />));
+    fireEvent.click(screen.getByText(enMessages.payments.plans.exchangeRate.correct.open));
+    fireEvent.click(screen.getByText(enMessages.payments.plans.exchangeRate.correct.submit));
+    await waitFor(() => expect(screen.getByText(enMessages.payments.plans.exchangeRate.correct.staleNotFound)).toBeTruthy());
+    expect(screen.getByText(enMessages.payments.plans.exchangeRate.retry)).toBeTruthy();
+    expect(screen.queryByText(enMessages.payments.plans.exchangeRate.correct.staleLoading)).toBeNull();
+    expect(screen.queryByText(enMessages.payments.plans.exchangeRate.correct.staleLoadFailed)).toBeNull();
+    const submitButton = screen.getByText(enMessages.payments.plans.exchangeRate.correct.submit).closest("button") as HTMLButtonElement;
+    expect(submitButton.disabled).toBe(true);
+  });
+
+  it("recovery after Retry: a failed fetch, then Retry resolves with a real row, then accept, then submit succeeds carrying the accepted revision", async () => {
+    enterOrCorrectExchangeRate.mockReset();
+    enterOrCorrectExchangeRate.mockResolvedValueOnce({ error: "stale" }).mockResolvedValueOnce({ ok: true });
+    getCurrentExchangeRate.mockReset();
+    getCurrentExchangeRate.mockRejectedValueOnce(new Error("network down")).mockResolvedValueOnce(ROW_2);
+    getExchangeRateCorrectionWarning.mockResolvedValue(0);
+
+    render(withMessages(<CorrectExchangeRateForm organizationId="org-1" row={ROW_1} />));
+    fireEvent.click(screen.getByText(enMessages.payments.plans.exchangeRate.correct.open));
+    fireEvent.click(screen.getByText(enMessages.payments.plans.exchangeRate.correct.submit));
+    await waitFor(() => expect(screen.getByText(enMessages.payments.plans.exchangeRate.correct.staleLoadFailed)).toBeTruthy());
+
+    fireEvent.click(screen.getByText(enMessages.payments.plans.exchangeRate.retry));
+    const acceptButton = await screen.findByText(useRevisionLabel(ROW_2.revision));
+    fireEvent.click(acceptButton);
+
+    const submitButton = screen.getByText(enMessages.payments.plans.exchangeRate.correct.submit).closest("button") as HTMLButtonElement;
+    expect(submitButton.disabled).toBe(false);
+    fireEvent.click(submitButton);
+
+    await waitFor(() => expect(enterOrCorrectExchangeRate).toHaveBeenCalledTimes(2));
+    expect((enterOrCorrectExchangeRate.mock.calls[1].at(-1) as FormData).get("expectedCurrentRevision")).toBe(String(ROW_2.revision));
   });
 });
 
