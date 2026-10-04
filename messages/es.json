@@ -1079,7 +1079,49 @@
           "currencyMismatch": "Esta sede usa una sola moneda para toda su configuración de cuotas. Usa la moneda ya guardada.",
           "durationMismatch": "Un plan mensual sigue siendo mensual y un paquete sigue siendo paquete. Crea un plan aparte para otra duración.",
           "stale": "Otra persona cambió esta versión. Recarga la página e inténtalo de nuevo.",
-          "referenced": "Esta versión ya la usa un registro financiero, así que ya no se puede corregir. Agrega una versión nueva para un mes posterior."
+          "referenced": "Esta versión ya la usa un registro financiero, así que ya no se puede corregir. Agrega una versión nueva para un mes posterior.",
+          "notActive": "El tipo de cambio aún no está activo para esta organización."
+        }
+      },
+      "exchangeRate": {
+        "heading": "Tipo de cambio (USD/CRC)",
+        "body": "El tipo de venta del BCR, a nivel de toda la organización, usado para convertir un pago hecho en la otra moneda. Ingresar un tipo aquí no activa el cobro.",
+        "inactive": "El tipo de cambio aún no está activo para esta organización.",
+        "none": "Todavía no se ha ingresado ningún tipo de cambio.",
+        "retry": "Reintentar",
+        "columns": {
+          "date": "Fecha",
+          "value": "Tipo",
+          "revision": "Revisión",
+          "actions": "Acciones"
+        },
+        "fields": {
+          "year": "Año",
+          "month": "Mes",
+          "day": "Día",
+          "value": "Tipo (CRC por USD)",
+          "sourceNote": "Nota de origen (opcional)"
+        },
+        "add": {
+          "open": "Agregar un tipo de cambio",
+          "submit": "Guardar tipo de cambio",
+          "success": "Tipo de cambio guardado.",
+          "stale": "Ya se ingresó un tipo de cambio para esta fecha. Tu entrada arriba no cambió — usa el formulario de corrección de abajo para aplicar un nuevo valor.",
+          "staleLoading": "Ya se ingresó un tipo de cambio para esta fecha. Verificando su valor actual…",
+          "staleLoadFailed": "Ya se ingresó un tipo de cambio para esta fecha, pero no se pudo cargar el valor actual. Inténtalo de nuevo.",
+          "staleNotFound": "Ya se ingresó un tipo de cambio para esta fecha, pero no se pudo localizar. Inténtalo de nuevo."
+        },
+        "correct": {
+          "open": "Corregir",
+          "submit": "Guardar corrección",
+          "success": "Corrección guardada.",
+          "warning": "{count, plural, one {# pago liquidado usó} other {# pagos liquidados usaron}} este tipo de cambio.",
+          "warningLoadFailed": "No se pudo cargar cuántos pagos usaron este tipo de cambio. Inténtalo de nuevo.",
+          "staleLoading": "Este tipo de cambio cambió desde que abriste este formulario. Verificando su valor actual…",
+          "staleBanner": "Este tipo de cambio cambió desde que abriste este formulario: ahora es la revisión {revision}, valor {value}. Tu entrada arriba no cambió — usa el botón de abajo y luego reenvía si aún quieres aplicarla.",
+          "staleLoadFailed": "Este tipo de cambio cambió desde que abriste este formulario, pero no se pudo cargar el valor actual. Inténtalo de nuevo.",
+          "staleNotFound": "Este tipo de cambio cambió desde que abriste este formulario, pero no se pudo encontrar el valor actual. Inténtalo de nuevo.",
+          "useRevision": "Usar revisión {revision}"
         }
       }
     },

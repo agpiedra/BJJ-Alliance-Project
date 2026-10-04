@@ -1079,7 +1079,49 @@
           "currencyMismatch": "This location uses one currency for all its dues configuration. Use the currency already saved for it.",
           "durationMismatch": "A monthly plan stays monthly and a package stays a package. Create a separate plan for a different duration.",
           "stale": "Someone else changed this version. Reload the page and try again.",
-          "referenced": "This version is already used by a financial record, so it can no longer be corrected. Add a new version for a later month instead."
+          "referenced": "This version is already used by a financial record, so it can no longer be corrected. Add a new version for a later month instead.",
+          "notActive": "Exchange rates are not active for this organization yet."
+        }
+      },
+      "exchangeRate": {
+        "heading": "Exchange rate (USD/CRC)",
+        "body": "The organization-wide BCR sell rate used to convert a payment made in the other currency. Entering a rate here does not activate billing.",
+        "inactive": "Exchange rates are not active for this organization yet.",
+        "none": "No rate has been entered yet.",
+        "retry": "Retry",
+        "columns": {
+          "date": "Date",
+          "value": "Rate",
+          "revision": "Revision",
+          "actions": "Actions"
+        },
+        "fields": {
+          "year": "Year",
+          "month": "Month",
+          "day": "Day",
+          "value": "Rate (CRC per USD)",
+          "sourceNote": "Source note (optional)"
+        },
+        "add": {
+          "open": "Add a rate",
+          "submit": "Save rate",
+          "success": "Rate saved.",
+          "stale": "A rate was already entered for this date. Your entry above is unchanged — use the correction form below to apply a new value.",
+          "staleLoading": "A rate was already entered for this date. Checking its current value…",
+          "staleLoadFailed": "A rate was already entered for this date, but the current value could not be loaded. Try again.",
+          "staleNotFound": "A rate was already entered for this date, but it could not be located. Try again."
+        },
+        "correct": {
+          "open": "Correct",
+          "submit": "Save correction",
+          "success": "Correction saved.",
+          "warning": "{count, plural, one {# settled payment used} other {# settled payments used}} this rate.",
+          "warningLoadFailed": "Could not load how many payments used this rate. Try again.",
+          "staleLoading": "This rate changed since you opened this form. Checking its current value…",
+          "staleBanner": "This rate changed since you opened this form: it's now revision {revision}, value {value}. Your entry above is unchanged — use the button below, then resubmit, if you still want to apply it.",
+          "staleLoadFailed": "This rate changed since you opened this form, but the current value could not be loaded. Try again.",
+          "staleNotFound": "This rate changed since you opened this form, but the current value could not be found. Try again.",
+          "useRevision": "Use revision {revision}"
         }
       }
     },

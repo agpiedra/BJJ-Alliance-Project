@@ -24,7 +24,7 @@ type MonthDefaults = { year: number; month: number };
  * Submits through a handler instead of the form `action` prop: React 19 clears every field after a form action finishes, even a refused
  * one, and an owner who mistyped one price should not have to retype the rest. The form is cleared only after a successful save.
  */
-function useDuesAction(action: (prevState: ActionState, formData: FormData) => Promise<ActionState>) {
+export function useDuesAction(action: (prevState: ActionState, formData: FormData) => Promise<ActionState>) {
   const [state, setState] = useState<ActionState>(INITIAL_STATE);
   const [isPending, startTransition] = useTransition();
   const onSubmit = (event: React.FormEvent<HTMLFormElement>) => {
@@ -40,7 +40,7 @@ function useDuesAction(action: (prevState: ActionState, formData: FormData) => P
   return { state, onSubmit, isPending };
 }
 
-function TextField({
+export function TextField({
   label,
   name,
   defaultValue,
@@ -121,7 +121,7 @@ function MonthFields({ defaults, invalid }: { defaults: MonthDefaults; invalid?:
   );
 }
 
-function Outcome({ state, success }: { state: ActionState; success: string }) {
+export function Outcome({ state, success }: { state: ActionState; success: string }) {
   const t = useTranslations("payments.plans.dues.error");
   if (state.error) {
     return (
@@ -140,7 +140,7 @@ function Outcome({ state, success }: { state: ActionState; success: string }) {
   return null;
 }
 
-function Disclosure({ summary, children }: { summary: string; children: React.ReactNode }) {
+export function Disclosure({ summary, children }: { summary: string; children: React.ReactNode }) {
   return (
     <details className="rounded-lg border border-border">
       <summary className="cursor-pointer px-3 py-2 text-sm font-medium">{summary}</summary>
