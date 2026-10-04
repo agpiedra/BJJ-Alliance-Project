@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { TextField } from "./dues-config-forms";
@@ -58,22 +58,37 @@ export function ReceiptQueueList({ organizationId }: { organizationId: string })
   const [rows, setRows] = useState<AwaitingRateReceiptRow[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
   const [loadStatus, setLoadStatus] = useState<LoadStatus>("loading");
+  // Every `loadPage` call (a tab switch OR a "load more") gets its own id; a `.then`/`.catch` only applies its
+  // result if it is STILL the most recent request when it resolves. This is the single mechanism that closes both
+  // the tab-switch race (a stale PENDING response overwriting the CANCELLED tab's own rows) and the pagination race
+  // (a "load more" response landing after the tab has since changed) — a response for a superseded request is
+  // discarded entirely, never applied, matching the identity-keyed pattern already proven in `ReceiptRow` below and
+  // in the merged exchange-rate UI's own `currentTargetIdRef` fix.
+  const requestIdRef = useRef(0);
 
   const loadPage = useCallback(
     (targetStatus: AwaitingRateReceiptStatusFilter, afterCursor: string | null, replace: boolean) => {
+      const requestId = ++requestIdRef.current;
       setLoadStatus("loading");
       listReceipts(organizationId, { status: targetStatus, cursor: afterCursor ?? undefined })
         .then((result) => {
+          if (requestIdRef.current !== requestId) return; // superseded by a newer request — discard, never apply
           setRows((prev) => (replace ? result.rows : [...prev, ...result.rows]));
           setCursor(result.nextCursor);
           setLoadStatus("loaded");
         })
-        .catch(() => setLoadStatus("failed"));
+        .catch(() => {
+          if (requestIdRef.current !== requestId) return;
+          setLoadStatus("failed");
+        });
     },
     [organizationId],
   );
 
   useEffect(() => {
+    // Cleared immediately (synchronously with the effect, before the fetch resolves) so the previous tab's own
+    // actionable rows are never visible, even briefly, under the new tab's heading while its fetch is in flight.
+    setRows([]);
     loadPage(status, null, true);
   }, [status, loadPage]);
 
@@ -95,9 +110,14 @@ export function ReceiptQueueList({ organizationId }: { organizationId: string })
 
       {loadStatus === "loading" && rows.length === 0 && <p className="text-sm text-muted-foreground">{t("loading")}</p>}
       {loadStatus === "failed" && (
-        <p role="alert" className="text-sm text-bad">
-          {t("loadFailed")}
-        </p>
+        <div className="flex items-center gap-2">
+          <p role="alert" className="text-sm text-bad">
+            {t("loadFailed")}
+          </p>
+          <Button type="button" variant="outline" onClick={() => loadPage(status, null, true)}>
+            {t("retry")}
+          </Button>
+        </div>
       )}
       {loadStatus === "loaded" && rows.length === 0 && <p className="text-sm text-muted-foreground">{t("empty")}</p>}
 
@@ -161,10 +181,17 @@ export function ReceiptRow({
   const [error, setError] = useState<string | null>(null);
   const [ok, setOk] = useState(false);
   const [confirmedTerminal, setConfirmedTerminal] = useState<RowStatus | null>(null);
-  const [refreshStatus, setRefreshStatus] = useState<"idle" | "loading" | "failed">("idle");
+  // Three genuinely distinct outcomes for the status-refresh fetch, not two: a rejected fetch ("failed") and a
+  // well-formed `null` result ("notFound" — the id/org no longer matches) are different conditions and must never
+  // share one message or one bucket.
+  const [refreshStatus, setRefreshStatus] = useState<"idle" | "loading" | "failed" | "notFound">("idle");
   const [refreshNonce, setRefreshNonce] = useState(0);
 
-  const needsRefresh = error === "alreadyResolved" || error === "alreadyCancelled";
+  // `"transportFailure"` is not a real engine error — it marks a REJECTED resolveReceipt/cancelReceipt promise (a
+  // transport failure, not a normal `{ok:false}` refusal). The server may have already committed the write despite
+  // the transport failing, so this is routed into the EXACT SAME recovery machinery as alreadyResolved/
+  // alreadyCancelled — never claimed as "nothing happened," never auto-resubmitted.
+  const needsRefresh = error === "alreadyResolved" || error === "alreadyCancelled" || error === "transportFailure";
 
   useEffect(() => {
     if (!needsRefresh) return;
@@ -174,7 +201,7 @@ export function ReceiptRow({
       .then((current) => {
         if (cancelled) return;
         if (!current) {
-          setRefreshStatus("failed");
+          setRefreshStatus("notFound");
           return;
         }
         setRefreshStatus("idle");
@@ -193,17 +220,22 @@ export function ReceiptRow({
   async function handleResolve() {
     setBusy("resolving");
     setOk(false);
-    const formData = new FormData();
-    formData.set("receiptId", row.id);
-    const result = await resolveReceipt(organizationId, {}, formData);
-    setBusy("idle");
-    if (result.ok) {
-      setOk(true);
-      setError(null);
-      setConfirmedTerminal("RESOLVED");
-      onStatusChanged(row.id, "RESOLVED");
-    } else {
-      setError(result.error ?? "unexpected");
+    try {
+      const formData = new FormData();
+      formData.set("receiptId", row.id);
+      const result = await resolveReceipt(organizationId, {}, formData);
+      if (result.ok) {
+        setOk(true);
+        setError(null);
+        setConfirmedTerminal("RESOLVED");
+        onStatusChanged(row.id, "RESOLVED");
+      } else {
+        setError(result.error ?? "unexpected");
+      }
+    } catch {
+      setError("transportFailure");
+    } finally {
+      setBusy("idle");
     }
   }
 
@@ -212,21 +244,32 @@ export function ReceiptRow({
     const form = event.currentTarget; // captured before the await — never cleared on a refusal, matching useDuesAction's own convention
     setBusy("cancelling");
     setOk(false);
-    const formData = new FormData(form);
-    const result = await cancelReceipt(organizationId, {}, formData);
-    setBusy("idle");
-    if (result.ok) {
-      setOk(true);
-      setError(null);
-      form.reset();
-      setConfirmedTerminal("CANCELLED");
-      onStatusChanged(row.id, "CANCELLED");
-    } else {
-      setError(result.error ?? "unexpected");
+    try {
+      const formData = new FormData(form);
+      const result = await cancelReceipt(organizationId, {}, formData);
+      if (result.ok) {
+        setOk(true);
+        setError(null);
+        form.reset();
+        setConfirmedTerminal("CANCELLED");
+        onStatusChanged(row.id, "CANCELLED");
+      } else {
+        setError(result.error ?? "unexpected");
+      }
+      // The catch path below never calls form.reset() — by construction, not by accident — so the owner's typed
+      // reason (and any other field) survives a transport failure exactly like it survives any other refusal.
+    } catch {
+      setError("transportFailure");
+    } finally {
+      setBusy("idle");
     }
   }
 
-  const actionable = row.status === "PENDING" && confirmedTerminal === null;
+  // Writes stay blocked for the ENTIRE recovery window (refresh loading, failed, or notFound) — not just while the
+  // write call itself is in flight. Previously `actionable` only checked `confirmedTerminal === null`, which stayed
+  // true throughout the refresh fetch (confirmedTerminal is only set once the refresh actually resolves), letting
+  // both controls be clicked again before the refresh had told us anything.
+  const actionable = row.status === "PENDING" && confirmedTerminal === null && !needsRefresh;
   const disabled = busy !== "idle";
 
   return (
@@ -239,10 +282,26 @@ export function ReceiptRow({
       <CoverageSummary row={row} t={t} />
       {confirmedTerminal && confirmedTerminal !== row.status && <p className="text-xs text-muted-foreground">{t(`tabs.${confirmedTerminal}`)}</p>}
 
+      {error === "transportFailure" && (
+        <p role="alert" className="text-sm text-bad">
+          {t("error.transportFailure")}
+        </p>
+      )}
+      {refreshStatus === "loading" && <p className="text-sm text-muted-foreground">{t("statusRefreshing")}</p>}
       {refreshStatus === "failed" && (
         <div className="flex items-center gap-2">
           <p role="alert" className="text-sm text-bad">
             {t("statusRefreshFailed")}
+          </p>
+          <Button type="button" variant="outline" onClick={() => setRefreshNonce((n) => n + 1)}>
+            {t("retry")}
+          </Button>
+        </div>
+      )}
+      {refreshStatus === "notFound" && (
+        <div className="flex items-center gap-2">
+          <p role="alert" className="text-sm text-bad">
+            {t("statusRefreshNotFound")}
           </p>
           <Button type="button" variant="outline" onClick={() => setRefreshNonce((n) => n + 1)}>
             {t("retry")}

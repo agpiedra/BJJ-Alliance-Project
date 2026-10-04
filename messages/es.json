@@ -1136,7 +1136,9 @@
         "resolve": "Resolver",
         "cancel": "Cancelar recibo",
         "actionSuccess": "Listo.",
+        "statusRefreshing": "Confirmando el estado actual de este recibo…",
         "statusRefreshFailed": "No se pudo confirmar el estado actual de este recibo.",
+        "statusRefreshNotFound": "No se pudo localizar el estado actual de este recibo.",
         "cancelDisclaimer": "Cancelar no reembolsa dinero ni salda ninguna deuda — solo marca este recibo como cancelado.",
         "snapshotIntegrityFailure": "No se pudieron leer los datos guardados de este recibo.",
         "tender": "Recibido: {amount} {currency}",
@@ -1171,7 +1173,8 @@
           "totalMismatch": "El monto recibido no coincide con el total esperado para esta propuesta.",
           "amountUnsupported": "Este monto es demasiado grande para procesarlo.",
           "conflict": "Esto no pudo completarse debido a un cambio en conflicto. Inténtalo de nuevo.",
-          "unexpected": "Este recibo está en un estado inesperado. Por favor contacta soporte."
+          "unexpected": "Este recibo está en un estado inesperado. Por favor contacta soporte.",
+          "transportFailure": "Ocurrió un problema de conexión al intentar completar esto. Confirmando el estado actual antes de volver a intentarlo."
         }
       }
     },

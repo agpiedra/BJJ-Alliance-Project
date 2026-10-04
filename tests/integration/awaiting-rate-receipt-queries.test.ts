@@ -123,15 +123,35 @@ describe("listAwaitingRateReceipts: real cursor pagination, never fetch-all-then
     expect(page.rows.some((r) => r.id === bReceipt.id)).toBe(false);
   });
 
-  it("refuses safely (empty result) on malformed input, never throwing", async () => {
+  it("refuses safely (empty result) on a malformed organizationId or an out-of-range limit, never throwing", async () => {
     expect(await listAwaitingRateReceipts("", {})).toEqual({ rows: [], nextCursor: null });
     expect(await listAwaitingRateReceipts(undefined as unknown as string, {})).toEqual({ rows: [], nextCursor: null });
-    const badStatus = await listAwaitingRateReceipts(a.org.id, { status: "BOGUS" as never });
-    expect(badStatus.rows.length).toBeGreaterThanOrEqual(0); // an invalid status is ignored (no filter), never throws
-    const badCursor = await listAwaitingRateReceipts(a.org.id, { cursor: "" });
-    expect(badCursor).toBeTruthy();
     const badLimit = await listAwaitingRateReceipts(a.org.id, { limit: -5 });
     expect(badLimit.rows.length).toBeLessThanOrEqual(25); // clamped to the default, never a negative/zero take
+  });
+
+  it("a DEFINED-but-invalid status refuses (empty result), never silently broadening to every status (bug fix)", async () => {
+    // Seed a real PENDING row so a wrongly-broadened query would have something to wrongly return.
+    await createReceipt(a, studentA.id, { status: "PENDING" });
+    const result = await listAwaitingRateReceipts(a.org.id, { status: "BOGUS" as never });
+    expect(result).toEqual({ rows: [], nextCursor: null });
+  });
+
+  it("an OMITTED status still works exactly as before (no regression): every status is returned", async () => {
+    const pending = await createReceipt(a, studentA.id, { status: "PENDING" });
+    const result = await listAwaitingRateReceipts(a.org.id, { limit: 200 });
+    expect(result.rows.some((r) => r.id === pending.id)).toBe(true);
+  });
+
+  it("a DEFINED-but-invalid cursor (blank, whitespace, or non-string past TS) refuses (empty result), never silently restarting from page 1 (bug fix)", async () => {
+    expect(await listAwaitingRateReceipts(a.org.id, { cursor: "" })).toEqual({ rows: [], nextCursor: null });
+    expect(await listAwaitingRateReceipts(a.org.id, { cursor: "   " })).toEqual({ rows: [], nextCursor: null });
+    expect(await listAwaitingRateReceipts(a.org.id, { cursor: 123 as unknown as string })).toEqual({ rows: [], nextCursor: null });
+  });
+
+  it("an OMITTED cursor still works exactly as before (no regression): the first page", async () => {
+    const result = await listAwaitingRateReceipts(a.org.id, { limit: 5 });
+    expect(result.rows.length).toBeGreaterThan(0);
   });
 
   it("a cursor naming a nonexistent id returns an empty page, never a thrown P2025", async () => {

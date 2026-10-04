@@ -97,10 +97,14 @@ describe("ReceiptQueueList: tabs, pagination, and empty/failed states", () => {
     await waitFor(() => expect(listReceipts).toHaveBeenCalledWith("org-1", { status: "RESOLVED", cursor: undefined }));
   });
 
-  it("a rejected fetch shows an explicit failure message, never a silent blank", async () => {
-    listReceipts.mockRejectedValue(new Error("network down"));
+  it("a rejected fetch shows an explicit failure message with a Retry control that re-fetches", async () => {
+    listReceipts.mockRejectedValueOnce(new Error("network down"));
     render(withMessages(<ReceiptQueueList organizationId="org-1" />));
     await waitFor(() => expect(screen.getByText(R.loadFailed)).toBeTruthy());
+
+    listReceipts.mockResolvedValueOnce({ rows: [PENDING_ORDINARY_ROW], nextCursor: null });
+    fireEvent.click(screen.getByText(R.retry));
+    await waitFor(() => expect(screen.getByText("Ana Perez")).toBeTruthy());
   });
 
   it("a page with rows shows a Load more button only when nextCursor is present, and paging appends rows via the real cursor", async () => {
@@ -116,6 +120,71 @@ describe("ReceiptQueueList: tabs, pagination, and empty/failed states", () => {
     await waitFor(() => expect(screen.getByText("Beto Soto")).toBeTruthy());
     expect(screen.getByText("Ana Perez")).toBeTruthy(); // appended, not replaced
     expect(screen.queryByText(R.loadMore)).toBeNull(); // nextCursor null now
+  });
+});
+
+describe("ReceiptQueueList: request-identity races (bug fix) — a stale response never overwrites a current one", () => {
+  it("switching PENDING -> CANCELLED: if the PENDING request resolves SECOND (out of order), its rows never overwrite CANCELLED's own rows", async () => {
+    let resolvePending!: (value: unknown) => void;
+    const pendingPromise = new Promise((resolve) => (resolvePending = resolve));
+    let resolveCancelled!: (value: unknown) => void;
+    const cancelledPromise = new Promise((resolve) => (resolveCancelled = resolve));
+    listReceipts.mockImplementationOnce(() => pendingPromise).mockImplementationOnce(() => cancelledPromise);
+
+    render(withMessages(<ReceiptQueueList organizationId="org-1" />));
+    await waitFor(() => expect(listReceipts).toHaveBeenCalledWith("org-1", { status: "PENDING", cursor: undefined }));
+    fireEvent.click(screen.getByText(R.tabs.CANCELLED));
+    await waitFor(() => expect(listReceipts).toHaveBeenCalledWith("org-1", { status: "CANCELLED", cursor: undefined }));
+
+    const CANCELLED_ROW = { ...PENDING_ORDINARY_ROW, id: "cancelled-1", studentName: "Cancelled Row", status: "CANCELLED" as const };
+    // Resolve the NEWER (currently-displayed) tab's request FIRST...
+    resolveCancelled({ rows: [CANCELLED_ROW], nextCursor: null });
+    await waitFor(() => expect(screen.getByText("Cancelled Row")).toBeTruthy());
+    // ...then the SLOWER, now-superseded PENDING request resolves AFTER — it must be discarded, not applied.
+    const STALE_PENDING_ROW = { ...PENDING_ORDINARY_ROW, id: "stale-pending", studentName: "Stale Pending Row" };
+    resolvePending({ rows: [STALE_PENDING_ROW], nextCursor: null });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.queryByText("Stale Pending Row")).toBeNull();
+    expect(screen.getByText("Cancelled Row")).toBeTruthy();
+  });
+
+  it("a 'load more' request that resolves AFTER the tab has since changed never has its rows appended to the new tab's list", async () => {
+    listReceipts.mockResolvedValueOnce({ rows: [PENDING_ORDINARY_ROW], nextCursor: "r1" });
+    render(withMessages(<ReceiptQueueList organizationId="org-1" />));
+    await waitFor(() => expect(screen.getByText("Ana Perez")).toBeTruthy());
+
+    let resolveLoadMore!: (value: unknown) => void;
+    listReceipts.mockImplementationOnce(() => new Promise((resolve) => (resolveLoadMore = resolve)));
+    fireEvent.click(screen.getByText(R.loadMore));
+
+    // The tab changes WHILE the "load more" request is still in flight.
+    listReceipts.mockResolvedValueOnce({ rows: [], nextCursor: null });
+    fireEvent.click(screen.getByText(R.tabs.RESOLVED));
+    await waitFor(() => expect(screen.getByText(R.empty)).toBeTruthy());
+
+    // The stale "load more" response arrives late — it must never be appended to the (now RESOLVED) list.
+    const STALE_NEXT_PAGE_ROW = { ...PENDING_ORDINARY_ROW, id: "stale-next-page", studentName: "Stale Next Page Row" };
+    resolveLoadMore({ rows: [STALE_NEXT_PAGE_ROW], nextCursor: null });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.queryByText("Stale Next Page Row")).toBeNull();
+    expect(screen.getByText(R.empty)).toBeTruthy();
+  });
+
+  it("a REJECTED response for an obsolete (superseded by a tab switch) request never flips loadStatus to failed once the newer request already succeeded", async () => {
+    let rejectPending!: (reason: unknown) => void;
+    listReceipts.mockImplementationOnce(() => new Promise((_resolve, reject) => (rejectPending = reject)));
+    render(withMessages(<ReceiptQueueList organizationId="org-1" />));
+    await waitFor(() => expect(listReceipts).toHaveBeenCalledWith("org-1", { status: "PENDING", cursor: undefined }));
+
+    listReceipts.mockResolvedValueOnce({ rows: [PENDING_ORDINARY_ROW], nextCursor: null });
+    fireEvent.click(screen.getByText(R.tabs.RESOLVED)); // supersedes the still-pending PENDING request
+    await waitFor(() => expect(screen.getByText("Ana Perez")).toBeTruthy());
+
+    // The original PENDING request, now obsolete, finally rejects.
+    rejectPending(new Error("late failure for a superseded request"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.queryByText(R.loadFailed)).toBeNull(); // never flipped to failed by the stale rejection
+    expect(screen.getByText("Ana Perez")).toBeTruthy(); // the current (RESOLVED-tab) rows are untouched
   });
 });
 
@@ -192,7 +261,7 @@ describe("ReceiptRow: terminal-status refresh on alreadyResolved/alreadyCancelle
     expect(onStatusChanged).toHaveBeenCalledWith("r1", "RESOLVED");
   });
 
-  it("a REJECTED status-refresh shows an explicit failure message with a retry, never a silently-stale PENDING badge", async () => {
+  it("a REJECTED status-refresh shows an explicit failure message with a retry, and BLOCKS writes for the whole recovery window (bug fix: this previously left the controls fully clickable)", async () => {
     resolveReceipt.mockResolvedValue({ error: "alreadyCancelled" });
     getReceiptStatus.mockRejectedValue(new Error("network down"));
     render(withMessages(<ReceiptRow organizationId="org-1" row={PENDING_ORDINARY_ROW} onStatusChanged={vi.fn()} />));
@@ -200,12 +269,79 @@ describe("ReceiptRow: terminal-status refresh on alreadyResolved/alreadyCancelle
     fireEvent.click(screen.getByText(R.resolve));
     await waitFor(() => expect(screen.getByText(R.statusRefreshFailed)).toBeTruthy());
     expect(screen.getByText(R.retry)).toBeTruthy();
-    // Controls remain since the refresh failed to confirm a terminal status — it must not silently claim success.
-    expect(screen.getByText(R.resolve)).toBeTruthy();
+    // Controls are gone — not just disabled — for the entire recovery window; a receipt can never go back to
+    // actionable once a terminal result (even an unconfirmed one) has been reported.
+    expect(screen.queryByText(R.resolve)).toBeNull();
+    expect(screen.queryByText(R.cancel)).toBeNull();
 
     getReceiptStatus.mockResolvedValue({ status: "CANCELLED" });
     fireEvent.click(screen.getByText(R.retry));
-    await waitFor(() => expect(screen.queryByText(R.resolve)).toBeNull());
+    await waitFor(() => expect(screen.getByText(R.tabs.CANCELLED)).toBeTruthy());
+    expect(screen.queryByText(R.resolve)).toBeNull();
+  });
+
+  it("a status-refresh resolving to null (notFound) gets its own distinct message, different from a rejected fetch, and also blocks writes", async () => {
+    resolveReceipt.mockResolvedValue({ error: "alreadyResolved" });
+    getReceiptStatus.mockResolvedValue(null);
+    render(withMessages(<ReceiptRow organizationId="org-1" row={PENDING_ORDINARY_ROW} onStatusChanged={vi.fn()} />));
+
+    fireEvent.click(screen.getByText(R.resolve));
+    await waitFor(() => expect(screen.getByText(R.statusRefreshNotFound)).toBeTruthy());
+    expect(screen.queryByText(R.statusRefreshFailed)).toBeNull();
+    expect(screen.queryByText(R.resolve)).toBeNull();
+  });
+
+  it("writes stay blocked (and dispatch nothing) throughout the refresh-loading window itself, not just after it settles", async () => {
+    resolveReceipt.mockResolvedValue({ error: "alreadyResolved" });
+    let resolveStatusFetch!: (value: unknown) => void;
+    getReceiptStatus.mockReturnValue(new Promise((resolve) => (resolveStatusFetch = resolve)));
+    render(withMessages(<ReceiptRow organizationId="org-1" row={PENDING_ORDINARY_ROW} onStatusChanged={vi.fn()} />));
+
+    fireEvent.click(screen.getByText(R.resolve));
+    await waitFor(() => expect(screen.getByText(R.statusRefreshing)).toBeTruthy());
+    expect(screen.queryByText(R.resolve)).toBeNull();
+    expect(resolveReceipt).toHaveBeenCalledTimes(1);
+
+    resolveStatusFetch({ status: "RESOLVED" });
+    await waitFor(() => expect(screen.getByText(R.tabs.RESOLVED)).toBeTruthy());
+  });
+});
+
+describe("ReceiptRow: a transport failure (rejected promise) on Resolve/Cancel, never a permanently-stuck busy state (bug fix)", () => {
+  it("a rejected resolveReceipt releases busy, shows an honest message, and routes into the same status-refresh recovery", async () => {
+    resolveReceipt.mockRejectedValue(new Error("network down"));
+    getReceiptStatus.mockResolvedValue({ status: "RESOLVED" }); // simulates: the server had actually already committed it
+    render(withMessages(<ReceiptRow organizationId="org-1" row={PENDING_ORDINARY_ROW} onStatusChanged={vi.fn()} />));
+
+    const resolveButton = screen.getByText(R.resolve).closest("button") as HTMLButtonElement;
+    fireEvent.click(resolveButton);
+    await waitFor(() => expect(screen.getByText(R.error.transportFailure)).toBeTruthy());
+    // Writes stay blocked until the refresh confirms what actually happened — never auto-resubmitted, never claimed safe.
+    expect(screen.queryByText(R.resolve)).toBeNull();
+    await waitFor(() => expect(screen.getByText(R.tabs.RESOLVED)).toBeTruthy());
+  });
+
+  it("a rejected cancelReceipt preserves the typed reason and does not reset the form", async () => {
+    cancelReceipt.mockRejectedValue(new Error("network down"));
+    getReceiptStatus.mockReturnValue(new Promise(() => {})); // never resolves — only the pre-refresh state matters here
+    render(withMessages(<ReceiptRow organizationId="org-1" row={PENDING_ORDINARY_ROW} onStatusChanged={vi.fn()} />));
+
+    const reasonInput = screen.getByLabelText(R.fields.cancellationReason) as HTMLInputElement;
+    fireEvent.change(reasonInput, { target: { value: "owner changed their mind" } });
+    fireEvent.click(screen.getByText(R.cancel));
+    await waitFor(() => expect(screen.getByText(R.error.transportFailure)).toBeTruthy());
+    expect(reasonInput.value).toBe("owner changed their mind");
+  });
+
+  it("busy returns to idle (not stuck forever) after a rejected call, even while recovery is pending", async () => {
+    resolveReceipt.mockRejectedValue(new Error("network down"));
+    getReceiptStatus.mockReturnValue(new Promise(() => {})); // never resolves
+    render(withMessages(<ReceiptRow organizationId="org-1" row={PENDING_ORDINARY_ROW} onStatusChanged={vi.fn()} />));
+    fireEvent.click(screen.getByText(R.resolve));
+    await waitFor(() => expect(screen.getByText(R.error.transportFailure)).toBeTruthy());
+    // The controls are gone (blocked by the pending recovery, per the fix above) rather than present-but-disabled —
+    // either way, nothing is left permanently spinning/disabled-forever purely due to the try/catch/finally itself.
+    expect(screen.queryByText(R.resolve)).toBeNull();
   });
 });
 

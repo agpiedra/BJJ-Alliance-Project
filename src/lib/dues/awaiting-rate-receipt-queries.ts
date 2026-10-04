@@ -89,8 +89,14 @@ export async function listAwaitingRateReceipts(
   args: { status?: AwaitingRateReceiptStatusFilter; limit?: number; cursor?: string } = {},
 ): Promise<{ rows: AwaitingRateReceiptRow[]; nextCursor: string | null }> {
   if (!isNonBlankString(organizationId)) return { rows: [], nextCursor: null };
-  const status = args.status !== undefined && STATUSES.includes(args.status) ? args.status : undefined;
-  const cursor = args.cursor !== undefined && isNonBlankString(args.cursor) ? args.cursor : undefined;
+  // A DEFINED-but-invalid status/cursor is a caller error, refused safely — never silently treated the same as
+  // "the caller legitimately omitted this" (which falls through to the default: no filter / first page). Collapsing
+  // the two previously let a malformed status silently broaden the query to every status, and a malformed cursor
+  // silently restart pagination from page 1.
+  if (args.status !== undefined && !STATUSES.includes(args.status)) return { rows: [], nextCursor: null };
+  const status = args.status;
+  if (args.cursor !== undefined && !isNonBlankString(args.cursor)) return { rows: [], nextCursor: null };
+  const cursor = args.cursor;
   const limit = clampLimit(args.limit);
 
   // Prisma's native `cursor` looks the id up by its own unique index, NOT scoped by `where` — a cursor naming a
