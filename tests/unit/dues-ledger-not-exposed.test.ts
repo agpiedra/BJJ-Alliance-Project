@@ -25,7 +25,12 @@ import { productionSourceFiles, stripComments } from "../helpers/source-files";
  *     writer, to guard a quote-date input the same way the engine's own write path already does), and
  *     `payments/plans/exchange-rate-section.tsx` (a server component's own read-only `inactiveLedgerActivation.isActive`
  *     pre-check, advisory only — `enterOrCorrectExchangeRate` itself is the unconditional enforcement) are the three new
- *     importers the owner exchange-rate UI brief adds.
+ *     importers the owner exchange-rate UI brief adds. `src/lib/dues/awaiting-rate-receipt-actions.ts` (a thin "use
+ *     server" wrapper around the already-complete `resolveAwaitingRateReceipt`/`cancelAwaitingRateReceipt`, owner-only,
+ *     never passing a `deps` override), `src/lib/dues/awaiting-rate-receipt-queries.ts` (plain reads; imports only the
+ *     snapshot schema/type, never a writer), and `payments/plans/awaiting-rate-receipt-section.tsx` (the same
+ *     read-only `inactiveLedgerActivation.isActive` pre-check pattern) are the three new importers the owner
+ *     awaiting-rate receipt queue UI brief adds.
  *  2. They are plain library functions: no `"use server"` (which would make an exported function an invocable endpoint), no route, no
  *     client component.
  *  3. They are registered in `scripts/pending-callers.ts`, the repo's list of code built ahead of its caller.
@@ -42,6 +47,9 @@ const AUTHORIZED_CALLERS = [
   "src/lib/dues/exchange-rate-actions.ts",
   "src/lib/dues/exchange-rate-queries.ts",
   "src/app/[locale]/(staff)/payments/plans/exchange-rate-section.tsx",
+  "src/lib/dues/awaiting-rate-receipt-actions.ts",
+  "src/lib/dues/awaiting-rate-receipt-queries.ts",
+  "src/app/[locale]/(staff)/payments/plans/awaiting-rate-receipt-section.tsx",
 ];
 
 describe("the ledger writers are not reachable from production code", () => {
