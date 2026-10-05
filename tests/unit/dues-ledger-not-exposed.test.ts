@@ -30,7 +30,14 @@ import { productionSourceFiles, stripComments } from "../helpers/source-files";
  *     never passing a `deps` override), `src/lib/dues/awaiting-rate-receipt-queries.ts` (plain reads; imports only the
  *     snapshot schema/type, never a writer), and `payments/plans/awaiting-rate-receipt-section.tsx` (the same
  *     read-only `inactiveLedgerActivation.isActive` pre-check pattern) are the three new importers the owner
- *     awaiting-rate receipt queue UI brief adds.
+ *     awaiting-rate receipt queue UI brief adds. `src/lib/dues/payment-entry-actions.ts` (a thin "use server" wrapper
+ *     around `recordDuesPaymentWithSubmissionIdentity`/`getSubmissionOutcome` from PR #89, never passing a `deps`
+ *     override, plus `getPayableObligations` composing `listPayableObligations`), `src/lib/dues/payment-entry-queries.ts`
+ *     (plain reads over `listDuesFactsForStudents`, never a writer), `src/lib/dues/payment-entry-recovery.ts`
+ *     (TYPE-ONLY — imports `RecordDuesPaymentWithSubmissionIdentityResult`/`SubmissionOutcome` as types to classify a
+ *     result the action layer already returned; erased at compile time, no runtime dependency on the ledger), and
+ *     `src/app/[locale]/(staff)/payments/page.tsx` (the same read-only `inactiveLedgerActivation.isActive` pre-check
+ *     pattern, advisory only) are the four new importers the ordinary payment-entry UI brief adds.
  *  2. They are plain library functions: no `"use server"` (which would make an exported function an invocable endpoint), no route, no
  *     client component.
  *  3. They are registered in `scripts/pending-callers.ts`, the repo's list of code built ahead of its caller.
@@ -50,6 +57,10 @@ const AUTHORIZED_CALLERS = [
   "src/lib/dues/awaiting-rate-receipt-actions.ts",
   "src/lib/dues/awaiting-rate-receipt-queries.ts",
   "src/app/[locale]/(staff)/payments/plans/awaiting-rate-receipt-section.tsx",
+  "src/lib/dues/payment-entry-actions.ts",
+  "src/lib/dues/payment-entry-queries.ts",
+  "src/lib/dues/payment-entry-recovery.ts",
+  "src/app/[locale]/(staff)/payments/page.tsx",
 ];
 
 describe("the ledger writers are not reachable from production code", () => {

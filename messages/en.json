@@ -485,7 +485,10 @@
     "referralSource": "How did you hear about us? (optional)",
     "preferredLocale": "Preferred language",
     "currency": "Currency",
-    "currencyOption": { "CRC": "Colones (₡)", "USD": "US dollars ($)" },
+    "currencyOption": {
+      "CRC": "Colones (₡)",
+      "USD": "US dollars ($)"
+    },
     "termsAccepted": "I agree to the terms",
     "submit": "Submit for review",
     "successHeading": "Request received",
@@ -918,10 +921,19 @@
     "sub": "{month} · {academy} · manual recording — the app doesn't process charges.",
     "academyJoin": "and",
     "stats": {
-      "paid": { "label": "Current", "note": "of {total} active students" },
-      "pending": { "label": "Pending" },
-      "overdue": { "label": "Overdue" },
-      "promo": { "label": "Promotion or scholarship" }
+      "paid": {
+        "label": "Current",
+        "note": "of {total} active students"
+      },
+      "pending": {
+        "label": "Pending"
+      },
+      "overdue": {
+        "label": "Overdue"
+      },
+      "promo": {
+        "label": "Promotion or scholarship"
+      }
     },
     "recordCard": {
       "heading": "Record a payment",
@@ -951,7 +963,10 @@
         "payments": "Payments",
         "actions": "Actions"
       },
-      "status": { "active": "Active", "inactive": "Inactive" },
+      "status": {
+        "active": "Active",
+        "inactive": "Inactive"
+      },
       "systemPlanNote": "System plan, managed automatically",
       "create": {
         "heading": "New plan",
@@ -962,12 +977,19 @@
         "submit": "Create plan",
         "success": "Plan created."
       },
-      "edit": { "open": "Edit", "save": "Save", "close": "Close", "success": "Plan updated." },
+      "edit": {
+        "open": "Edit",
+        "save": "Save",
+        "close": "Close",
+        "success": "Plan updated."
+      },
       "deactivate": {
         "button": "Deactivate",
         "confirm": "Deactivate this plan? It will disappear from the payment picker. Payments already recorded on it are not affected."
       },
-      "reactivate": { "button": "Reactivate" },
+      "reactivate": {
+        "button": "Reactivate"
+      },
       "currency": {
         "heading": "Currency",
         "body": "This academy prices in {current}. Changing it affects NEW payments only: payments already recorded keep the currency they were recorded in, and plans' default amounts are not converted.",
@@ -975,7 +997,10 @@
         "submit": "Save currency",
         "success": "Currency updated."
       },
-      "currencyOption": { "CRC": "Colones (₡)", "USD": "US dollars ($)" },
+      "currencyOption": {
+        "CRC": "Colones (₡)",
+        "USD": "US dollars ($)"
+      },
       "error": {
         "invalid": "Check the plan's name and amount.",
         "notFound": "That academy or plan wasn't found.",
@@ -1213,6 +1238,79 @@
         "promoName": "Promotion",
         "notes": "Notes",
         "recordedBy": "Recorded by"
+      }
+    },
+    "ledgerEntry": {
+      "heading": "Record a ledger payment",
+      "body": "Settles outstanding dues against the new ledger. Nothing here replaces \"Record a payment\" above.",
+      "submit": "Record payment",
+      "submitting": "Recording...",
+      "recordAnother": "Record another payment",
+      "fields": {
+        "student": "Student",
+        "studentPlaceholder": "Select a student",
+        "amount": "Amount received",
+        "currency": "Currency",
+        "receivedOn": "Date received",
+        "method": "Method",
+        "notes": "Notes"
+      },
+      "obligations": {
+        "loading": "Loading outstanding balance...",
+        "none": "Nothing outstanding for this student.",
+        "mixedCurrency": "This student owes in more than one currency. This cannot be settled in one payment yet. Please contact support.",
+        "notOldestFirst": "The oldest outstanding item must be included. The server will refuse this selection otherwise.",
+        "todaysTotal": "Today's outstanding total for this selection: {amount}",
+        "backdatedDisclaimer": "This total reflects today's balance. The amount due, and whether this submission succeeds at all, may differ for the date you've entered; the server's own result is final.",
+        "type": {
+          "MONTHLY": "Monthly",
+          "SIGNUP": "Signup"
+        },
+        "retry": "Retry"
+      },
+      "outcome": {
+        "success": "Payment recorded.",
+        "reversed": "This payment was already recorded, but has since been reversed. The student's balance no longer reflects it.",
+        "capturedPending": "No exchange rate was available yet. This payment is saved and waiting, pending, in the exchange-rate queue.",
+        "capturedResolved": "This payment was waiting on an exchange rate and has since been resolved into a real payment.",
+        "capturedCancelled": "This payment was waiting on an exchange rate and was cancelled. No payment was recorded.",
+        "payloadMismatch": "Something went wrong with this submission's identity. Please contact support before retrying.",
+        "capturedAdminLink": "Review it in the exchange-rate queue",
+        "capturedDirectorGuidance": "Ask an owner to review this in the exchange-rate queue."
+      },
+      "recovery": {
+        "inProgress": "There's an unconfirmed payment attempt from earlier.",
+        "checking": "Checking what happened...",
+        "blockedAuth": "You don't currently have access to check this payment's status.",
+        "blockedNotFound": "We couldn't find a confirmed outcome yet. This does not mean it failed.",
+        "blockedRejected": "We couldn't reach the server to check. This does not mean it failed.",
+        "blockedWrite": "We can't confirm this payment's status right now ({reason}). This does not mean it failed.",
+        "unreadableDraft": "This draft could not be read back fully. Contact support if a payment seems missing.",
+        "checkAgain": "Check status again",
+        "retrySafely": "Retry safely",
+        "storageUnavailable": "We can't verify your browser's storage right now, so a new payment can't be started safely. Reload the page or try a different browser.",
+        "clearFailed": "This payment's outcome is confirmed, but we couldn't finish clearing the local draft. Try again.",
+        "finishCleanup": "Finish cleanup"
+      },
+      "error": {
+        "notActive": "This feature is not active for your organization yet.",
+        "invalid": "Some of the entered information isn't valid.",
+        "notFound": "That student couldn't be found in your scope.",
+        "futureDate": "The date received can't be in the future.",
+        "tooOld": "The date received is too far in the past.",
+        "alreadySettled": "One or more selected items were already settled. The list has been refreshed.",
+        "notOldestFirst": "The selection must start with the oldest outstanding item.",
+        "currencyMismatch": "The tender currency doesn't match what's owed.",
+        "notASelectableTotal": "That amount doesn't match any payable total.",
+        "totalMismatch": "That amount doesn't match the selected items.",
+        "feeAlreadyAssessed": "A late fee was already assessed for one of these items and can't be removed this way.",
+        "amountUnsupported": "This amount is too large to record.",
+        "conflict": "Something changed for this student. Please try again.",
+        "attemptAlreadyExists": "An attempt with this identity already exists. Please check its status before retrying.",
+        "storageUnavailable": "Your browser couldn't save this attempt safely, so it wasn't sent. Try enabling storage or a different browser.",
+        "unexpected": "Something unexpected happened.",
+        "alreadySettledDetail": "Already settled: {ids}",
+        "selectableTotalsDetail": "Amounts that would be accepted: {totals}"
       }
     }
   },
@@ -1617,7 +1715,10 @@
           "currency": "Currency",
           "promotionMode": "Promotion mode"
         },
-        "currencyOption": { "CRC": "Colones (₡)", "USD": "US dollars ($)" },
+        "currencyOption": {
+          "CRC": "Colones (₡)",
+          "USD": "US dollars ($)"
+        },
         "promotionModes": {
           "ATTENDANCE": "Attendance-based",
           "TIME": "Time-based",

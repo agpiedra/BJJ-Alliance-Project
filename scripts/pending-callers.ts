@@ -333,19 +333,6 @@ const PENDING_CALLERS: PendingCaller[] = [
     reason:
       "A shared, batched, tenant-scoped READ model over the dues ledger — never a writer, never a transaction, never a lock. Separates three independent facts this ledger's own data conflates if read naively: coverage claimed (written at obligation-creation time, proves nothing about payment), an active settlement (the only real 'paid' fact), and outstanding debt (independent of current-period eligibility — an ARCHIVED/unassigned student's old unpaid obligations stay visible). A pending AwaitingRateReceipt decomposes into two independent components: referenced existing debt (already counted in `outstanding`, unmodified) and proposed-but-not-yet-created coverage (never merged into `outstanding`). Late-fee/grace facts are type-aware (MONTHLY only) and reuse `lateFeeToAssessMinor`'s own pure calculation directly — critically, NEVER called on a settled obligation (it would return the historical fee paid at settlement time, not a currently-owed figure). Two distinct function signatures, not one with a mode flag: `listDuesFactsForStudents` (staff, branch-scoped, a foreign-branch id silently excluded) and `getOwnDuesFacts` (self, no `studentIds` parameter at all — structurally cannot name another student). Gated by the identical `LedgerActivation` default every other ledger function uses; production returns `notActive`/`null` for every organization today.",
   },
-  // Payment-submission-identity prerequisite. No production caller exists on purpose — not a route, not a server
-  // action, no scheduler entry, no UI (the payment-entry UI is the following PR). Lives inside
-  // src/lib/dues/ledger/ (it composes lockExchangeRateNamespaceShared/recordDuesPaymentInTx/captureAwaitingRateReceiptInTx
-  // directly), so it needs no entry in the ledger's own no-caller guard. getSubmissionOutcome is the one exception to
-  // that guard's premise — it calls resolveActionContext (an auth()-backed, request-scoped function) directly from
-  // inside the ledger folder, since it is deliberately NOT a "use server" action itself (brief §6: no UI in this PR).
-  {
-    symbol: "recordDuesPaymentWithSubmissionIdentity / getSubmissionOutcome",
-    file: "src/lib/dues/ledger/submission-identity.ts",
-    dueBy: "the following payment-entry UI PR",
-    reason:
-      "Idempotent retry safety for an ordinary payment submission, keyed by a REQUIRED, caller-supplied submissionId (never server-generated) — across all three outcomes a submission can have: genuine success, capture with no rate available, or genuine refusal. Wraps recordDuesPayment's own exact internal composition unchanged (lockExchangeRateNamespaceShared, then a DuesPaymentAttempt INSERT ... ON CONFLICT DO NOTHING RETURNING sitting between that lock and the student lock recordDuesPaymentInTx itself takes, then recordDuesPaymentInTx, then conditionally captureAwaitingRateReceiptInTx) — recordDuesPayment itself, recordDuesPaymentInTx, settleObligationsInTx and captureAwaitingRateReceiptInTx are untouched, and recordDuesPayment's own full existing test suite passes unmodified. A losing/replay insert returns the original committed outcome re-read fresh (never a cached lifecycle snapshot); a payload differing from the original submissionId's own canonicalized request refuses submissionPayloadMismatch, writing nothing. getSubmissionOutcome is the authorized read-only counterpart: resolveActionContext is called first, gated to the ADMIN and DIRECTOR roles (a non-member/inactive-org resolves notFound; a genuine member with neither role THROWS, left uncaught), then a separate academyId-scope check (inTenantScope against the attempt's own denormalized academyId, never studentId) that resolves notFound on failure rather than throwing — three deliberately distinct outcomes, never collapsed.",
-  },
 ];
 
 function main() {

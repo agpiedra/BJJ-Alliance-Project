@@ -12,6 +12,9 @@ import { listCurrentPaymentStatus } from "@/lib/payments/list-current-status";
 import { ensureCustomPromoPlan } from "@/lib/payments/ensure-custom-promo-plan";
 import { listSelectablePlans } from "@/lib/payments/list-plans";
 import { formatMonthYear } from "@/lib/format-month";
+import { inactiveLedgerActivation } from "@/lib/dues/ledger/activation";
+import { listStudentsForPaymentEntry } from "@/lib/dues/payment-entry-queries";
+import { PaymentEntrySection } from "./payment-entry-section";
 import { PaymentsTable } from "./payments-table";
 
 // Same reasoning as the roster/dashboard pages: payment status is staff data
@@ -56,12 +59,16 @@ export default async function PaymentsPage() {
     await Promise.all(academies.map((academy) => ensureCustomPromoPlan(context.organizationId, academy.id)));
   }
 
-  const [rows, plans, organization] = await Promise.all([
+  const [rows, plans, organization, ledgerActive] = await Promise.all([
     listCurrentPaymentStatus(context, today),
     listSelectablePlans(context.organizationId, academies.map((a) => a.id)),
     // What NEW payments are recorded in. An existing payment keeps the currency
     // it was recorded in (its own snapshot) — see PaymentPeriod.currency.
     prisma.organization.findUniqueOrThrow({ where: { id: context.organizationId }, select: { currency: true } }),
+    // Ordinary payment-entry UI brief §0/§2.5: a read-only, advisory pre-check of the real, unmodified
+    // activation singleton — the engine's own check inside `recordDuesPaymentWithSubmissionIdentity` remains
+    // the actual enforcement; this only decides whether the card renders at all.
+    inactiveLedgerActivation.isActive(context.organizationId),
   ]);
 
   const students = rows.map((row) => ({
@@ -71,6 +78,11 @@ export default async function PaymentsPage() {
     academyId: row.homeAcademyId,
     academyName: row.homeAcademyName,
   }));
+
+  // Point 6's correction: the ledger card's own picker is NOT `students` above (that list is `listCurrentPaymentStatus`'s
+  // own `status: "ACTIVE"`-filtered roster, correct for the legacy flow, wrong here — real ledger debt does not depend
+  // on current billing eligibility). Fetched only when the card can actually render.
+  const paymentEntryStudents = canRecordPayments && ledgerActive ? await listStudentsForPaymentEntry(context) : [];
 
   const paidRows = rows.filter((r) => r.bucket === "PAID");
   const pendingRows = rows.filter((r) => r.bucket === "PENDING");
@@ -138,6 +150,25 @@ export default async function PaymentsPage() {
               canManagePromotions={canRecordPayments}
               currency={organization.currency}
               defaults={{ month: `${today.year}-${String(today.month).padStart(2, "0")}` }}
+            />
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Ordinary payment-entry UI brief §0: a NEW, clearly separate, inactive-gated card on this SAME page,
+          never a new top-level route, alongside (not replacing) the legacy RecordPaymentForm card above. */}
+      {canRecordPayments && ledgerActive && (
+        <Card>
+          <CardHeader className="border-b">
+            <CardTitle>{t("ledgerEntry.heading")}</CardTitle>
+          </CardHeader>
+          <CardContent className="pt-4">
+            <PaymentEntrySection
+              organizationId={context.organizationId}
+              currentUserId={context.actorUserId}
+              students={paymentEntryStudents.map((s) => ({ id: s.id, firstName: s.firstName, lastName: s.lastName, academyId: s.homeAcademyId, academyName: s.homeAcademyName }))}
+              organizationRole={context.organizationRole === "ADMIN" ? "ADMIN" : "DIRECTOR"}
+              plansHref={`/${locale}/payments/plans`}
             />
           </CardContent>
         </Card>
