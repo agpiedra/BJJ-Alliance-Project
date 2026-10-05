@@ -71,6 +71,18 @@ function storedKeys(): string[] {
   return keys;
 }
 
+/** A manually-resolvable promise, for asserting MID-FLIGHT state precisely (round-3 point 3) rather than only the
+ * eventual state `waitFor` would observe. */
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 beforeEach(() => {
   window.localStorage.clear();
   recordPayment.mockReset();
@@ -416,5 +428,175 @@ describe("point 5 (component-facing): a storage-access failure blocks the form, 
     fireEvent.click(screen.getByRole("button", { name: /Finish cleanup/i }));
     await waitFor(() => expect(screen.getByText("Payment recorded.")).toBeInTheDocument());
     expect(window.localStorage.getItem(`payment-attempt:${ORG_ID}:${USER_ID}:sub-clearfail`)).toBeNull();
+  });
+});
+
+describe("round 3, point 1: the WRITE path's own clear-failure is never silently ignored", () => {
+  it("after a fresh SUCCESS, a clearAttempt failure blocks the form, offers Finish cleanup, and resetting the draft waits for it", async () => {
+    recordPayment.mockResolvedValue({ ok: true, paymentId: "p1", settlementIds: ["s1"], feeIds: [], totalMinor: 10000 });
+    const spy = vi.spyOn(window.localStorage.__proto__, "removeItem").mockImplementationOnce(() => {
+      throw new Error("storage inaccessible");
+    });
+    renderSection();
+    await selectStudentAndFillAmount();
+
+    fireEvent.click(screen.getByRole("button", { name: /Record payment/i }));
+
+    // Blocked on cleanup, NOT the terminal outcome screen — the entry is still genuinely present.
+    await waitFor(() => expect(screen.getByText(/couldn't finish clearing the local draft/i)).toBeInTheDocument());
+    expect(screen.queryByText("Payment recorded.")).toBeNull();
+    expect(window.localStorage.length).toBe(1);
+    // The form itself isn't even rendered while blocked — no way to start a new submission.
+    expect(screen.queryByLabelText(/Student/i)).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: /Finish cleanup/i }));
+
+    // Only NOW, once cleanup genuinely succeeds, does the draft reset and the terminal outcome render.
+    await waitFor(() => expect(screen.getByText("Payment recorded.")).toBeInTheDocument());
+    expect(window.localStorage.length).toBe(0);
+    expect(recordPayment).toHaveBeenCalledTimes(1); // no new submission was ever possible while blocked
+    spy.mockRestore();
+  });
+
+  it("after a BUSINESS REFUSAL, a clearAttempt failure blocks the form the same way, but once cleanup succeeds the draft is PRESERVED (nothing new was confirmed)", async () => {
+    recordPayment.mockResolvedValue({ ok: false, error: "notOldestFirst" });
+    const spy = vi.spyOn(window.localStorage.__proto__, "removeItem").mockImplementationOnce(() => {
+      throw new Error("storage inaccessible");
+    });
+    renderSection();
+    await selectStudentAndFillAmount();
+    fireEvent.change(screen.getByLabelText(/Notes/i), { target: { value: "keep me" } });
+
+    fireEvent.click(screen.getByRole("button", { name: /Record payment/i }));
+
+    await waitFor(() => expect(screen.getByText(/couldn't finish clearing the local draft/i)).toBeInTheDocument());
+    expect(window.localStorage.length).toBe(1);
+    expect(screen.queryByLabelText(/Student/i)).toBeNull(); // still blocked, no submission possible
+
+    fireEvent.click(screen.getByRole("button", { name: /Finish cleanup/i }));
+
+    // Cleanup succeeded, but this was a REFUSAL — the form reappears with the draft intact, never the outcome screen.
+    await waitFor(() => expect(screen.getByLabelText(/Notes/i)).toBeInTheDocument());
+    expect((screen.getByLabelText(/Notes/i) as HTMLInputElement).value).toBe("keep me");
+    expect(screen.queryByText("Payment recorded.")).toBeNull();
+    expect(window.localStorage.length).toBe(0);
+    expect(recordPayment).toHaveBeenCalledTimes(1);
+    spy.mockRestore();
+  });
+});
+
+describe("round 3, point 2: the draft resets after a confirmed outcome reached via the RECOVERY path too", () => {
+  it("a filled form, a lost submit response, then a confirmed capture via 'Check status again': 'Record another' shows a genuinely empty form, and no duplicate write ever happens", async () => {
+    recordPayment.mockRejectedValueOnce(new TypeError("network error"));
+    renderSection();
+    await selectStudentAndFillAmount();
+
+    fireEvent.click(screen.getByRole("button", { name: /Record payment/i }));
+    await waitFor(() => expect(screen.getByText(/couldn't reach the server/i)).toBeInTheDocument());
+
+    checkSubmissionOutcome.mockResolvedValue({ status: "committed", outcome: { kind: "receipt", receiptId: "r1", currentStatus: "PENDING" } });
+    fireEvent.click(screen.getByRole("button", { name: /Check status again/i }));
+
+    await waitFor(() => expect(screen.getByText(/waiting, pending, in the exchange-rate queue/i)).toBeInTheDocument());
+    expect(window.localStorage.length).toBe(0);
+
+    fireEvent.click(screen.getByRole("button", { name: /Record another/i }));
+
+    // Genuinely empty — not the filled-in draft from before the lost submission.
+    expect((screen.getByLabelText(/Student/i) as HTMLSelectElement).value).toBe("");
+    expect((screen.getByLabelText(/Amount received/i) as HTMLInputElement).value).toBe("");
+    expect(screen.queryByRole("checkbox")).toBeNull(); // no obligations selected/shown until a student is picked again
+    expect(screen.getByRole("button", { name: /Record payment/i })).toBeDisabled();
+    expect(recordPayment).toHaveBeenCalledTimes(1); // the recovery check never performed a new financial write
+  });
+});
+
+describe("round 3, point 3: the alreadySettled reconciliation fetch is locked, awaited, and its own rejection is handled", () => {
+  it("submit stays disabled for the ENTIRE duration of a pending reconciliation fetch", async () => {
+    const older = { ...OBLIGATION, obligationId: "ob-older", coverageMonth: 1 };
+    const newer = { ...OBLIGATION, obligationId: "ob-newer", coverageMonth: 2 };
+    renderSection();
+    getPayableObligations.mockResolvedValueOnce({ ok: true, obligations: [older, newer], mixedCurrency: false, todayLocal: TODAY_LOCAL });
+    fireEvent.change(screen.getByLabelText(/Student/i), { target: { value: "student-1" } });
+    await waitFor(() => expect(screen.getByLabelText(/Amount received/i)).toBeInTheDocument());
+    fireEvent.click(screen.getAllByRole("checkbox")[1]);
+    fireEvent.change(screen.getByLabelText(/Amount received/i), { target: { value: "220.00" } });
+
+    const reconcile = deferred<Awaited<ReturnType<typeof getPayableObligations>>>();
+    getPayableObligations.mockReturnValueOnce(reconcile.promise);
+    recordPayment.mockResolvedValueOnce({ ok: false, error: "alreadySettled", alreadySettledIds: ["ob-older"] });
+
+    fireEvent.click(screen.getByRole("button", { name: /Record payment/i }));
+    await waitFor(() => expect(screen.getByText(/Already settled: ob-older/i)).toBeInTheDocument());
+
+    // The reconciliation fetch is still pending — submit must stay disabled the whole time, and no second write fires.
+    expect(screen.getByRole("button", { name: /Record payment/i })).toBeDisabled();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.getByRole("button", { name: /Record payment/i })).toBeDisabled();
+    expect(recordPayment).toHaveBeenCalledTimes(1);
+
+    reconcile.resolve({ ok: true, obligations: [newer], mixedCurrency: false, todayLocal: TODAY_LOCAL });
+    await waitFor(() => expect(screen.getByRole("button", { name: /Record payment/i })).not.toBeDisabled());
+  });
+
+  it("a rejected reconciliation fetch is handled (never an unhandled rejection), offers a retry, and a successful retry reconciles the selection while leaving typed fields untouched", async () => {
+    const older = { ...OBLIGATION, obligationId: "ob-older", coverageMonth: 1 };
+    const newer = { ...OBLIGATION, obligationId: "ob-newer", coverageMonth: 2 };
+    renderSection();
+    getPayableObligations.mockResolvedValueOnce({ ok: true, obligations: [older, newer], mixedCurrency: false, todayLocal: TODAY_LOCAL });
+    fireEvent.change(screen.getByLabelText(/Student/i), { target: { value: "student-1" } });
+    await waitFor(() => expect(screen.getByLabelText(/Amount received/i)).toBeInTheDocument());
+    fireEvent.click(screen.getAllByRole("checkbox")[1]);
+    fireEvent.change(screen.getByLabelText(/Amount received/i), { target: { value: "220.00" } });
+    fireEvent.change(screen.getByLabelText(/Notes/i), { target: { value: "please keep this" } });
+
+    getPayableObligations.mockRejectedValueOnce(new Error("network down"));
+    recordPayment.mockResolvedValueOnce({ ok: false, error: "alreadySettled", alreadySettledIds: ["ob-older"] });
+
+    fireEvent.click(screen.getByRole("button", { name: /Record payment/i }));
+
+    // Handled, not an unhandled rejection — a distinct error with a retry control, submission still blocked.
+    await waitFor(() => expect(screen.getByRole("button", { name: /^Retry$/i })).toBeInTheDocument());
+    expect(screen.getByRole("button", { name: /Record payment/i })).toBeDisabled();
+    expect((screen.getByLabelText(/Amount received/i) as HTMLInputElement).value).toBe("220.00");
+    expect((screen.getByLabelText(/Notes/i) as HTMLInputElement).value).toBe("please keep this");
+
+    getPayableObligations.mockResolvedValueOnce({ ok: true, obligations: [newer], mixedCurrency: false, todayLocal: TODAY_LOCAL });
+    fireEvent.click(screen.getByRole("button", { name: /Retry/i }));
+
+    await waitFor(() => expect(screen.getByRole("button", { name: /Record payment/i })).not.toBeDisabled());
+    // Typed fields survived the whole reconciliation round-trip untouched.
+    expect((screen.getByLabelText(/Amount received/i) as HTMLInputElement).value).toBe("220.00");
+    expect((screen.getByLabelText(/Notes/i) as HTMLInputElement).value).toBe("please keep this");
+    // Only the still-valid obligation remains in the list.
+    expect(screen.getByText(/2027-02 \(Monthly\)/)).toBeInTheDocument();
+    expect(screen.queryByText(/2027-01 \(Monthly\)/)).toBeNull();
+  });
+
+  it("a stale reconciliation response for student A never overwrites student B's state once the owner has switched", async () => {
+    renderSection();
+    getPayableObligations.mockResolvedValueOnce({ ok: true, obligations: [OBLIGATION], mixedCurrency: false, todayLocal: TODAY_LOCAL });
+    fireEvent.change(screen.getByLabelText(/Student/i), { target: { value: "student-1" } });
+    await waitFor(() => expect(screen.getByLabelText(/Amount received/i)).toBeInTheDocument());
+    fireEvent.change(screen.getByLabelText(/Amount received/i), { target: { value: "100.00" } });
+
+    const reconcileA = deferred<Awaited<ReturnType<typeof getPayableObligations>>>();
+    getPayableObligations.mockReturnValueOnce(reconcileA.promise);
+    recordPayment.mockResolvedValueOnce({ ok: false, error: "alreadySettled", alreadySettledIds: ["ob-1"] });
+    fireEvent.click(screen.getByRole("button", { name: /Record payment/i }));
+    await waitFor(() => expect(screen.getByText(/Already settled: ob-1/i)).toBeInTheDocument());
+
+    // The owner switches to student B while A's reconciliation is still pending.
+    const obligationB = { ...OBLIGATION, obligationId: "ob-B" };
+    getPayableObligations.mockResolvedValueOnce({ ok: true, obligations: [obligationB], mixedCurrency: false, todayLocal: TODAY_LOCAL });
+    fireEvent.change(screen.getByLabelText(/Student/i), { target: { value: "student-2" } });
+    await waitFor(() => expect(screen.getByText(/2027-02 \(Monthly\)/)).toBeInTheDocument());
+
+    // A's stale reconciliation now resolves — must be discarded, never overwriting B's already-shown state.
+    reconcileA.resolve({ ok: true, obligations: [OBLIGATION], mixedCurrency: false, todayLocal: TODAY_LOCAL });
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect((screen.getByLabelText(/Student/i) as HTMLSelectElement).value).toBe("student-2");
+    expect(screen.getAllByRole("checkbox")).toHaveLength(1);
   });
 });

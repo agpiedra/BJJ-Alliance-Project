@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { FIELD_CLASS, Input } from "@/components/ui/input";
 import { recordPayment, checkSubmissionOutcome, getPayableObligations } from "@/lib/dues/payment-entry-actions";
 import { beginAttempt, readAttempt, clearAttempt, listStoredAttemptIds, type StoredAttemptPayload } from "@/lib/dues/payment-attempt-storage";
-import { classifyWriteResult, classifyRecoveryCheck, shouldClearAfterWrite, shouldClearAfterRecoveryCheck, type WriteOutcomeClassification, type RecoveryCheckClassification } from "@/lib/dues/payment-entry-recovery";
+import { classifyWriteResult, classifyRecoveryCheck, shouldClearAfterRecoveryCheck, type WriteOutcomeClassification, type RecoveryCheckClassification } from "@/lib/dues/payment-entry-recovery";
 import { CURRENCIES } from "@/lib/payments/format-money";
 import type { PayableObligation } from "@/lib/dues/payment-entry-queries";
 import type { CalendarDate } from "@/lib/dues/calendar";
@@ -52,7 +52,10 @@ type Phase =
   /** Point 5: `listStoredAttemptIds`/`readAttempt` itself couldn't be inspected — never silently treated as
    * "nothing stored." The whole form stays blocked: starting a new entry while unable to verify an existing
    * uncertain one would be exactly the double-submission risk this feature exists to prevent. */
-  | "storageUnavailable";
+  | "storageUnavailable"
+  /** Round-3 point 3: an `alreadySettled` refusal's own re-fetch-and-reconcile — locked the same way
+   * `loadingObligations` is, so a submit can never race a selection the server has already told us is stale. */
+  | "reconcilingObligations";
 
 type OutcomeDisplay = { source: "write"; classification: WriteOutcomeClassification | { kind: "rejected" } } | { source: "recovery"; classification: RecoveryCheckClassification };
 
@@ -86,6 +89,9 @@ export function PaymentEntrySection({
   const [obligations, setObligations] = useState<PayableObligation[] | null>(null);
   const [mixedCurrency, setMixedCurrency] = useState(false);
   const [obligationsError, setObligationsError] = useState<string | null>(null);
+  // Round-3 point 3: which path produced the current obligationsError — so "Retry" re-runs the RIGHT fetch (a plain
+  // re-fetch for the main effect, vs. a reconciling re-fetch that must not reset the selection to just-the-oldest).
+  const [obligationsErrorSource, setObligationsErrorSource] = useState<"fetch" | "reconcile" | null>(null);
   const [selectedObligationIds, setSelectedObligationIds] = useState<Set<string>>(new Set());
   const [obligationsRetryNonce, setObligationsRetryNonce] = useState(0);
 
@@ -110,8 +116,56 @@ export function PaymentEntrySection({
   // Guards a stale fetch (a student change while a prior fetch is in flight) from overwriting newer state —
   // the same discriminator-based discard `ReceiptQueueList` already uses for its own tab-switch race.
   const obligationsRequestRef = useRef(0);
+  // Round-3 point 1: a `clearAttempt` that genuinely failed, and what to do once a LATER retry (via "Finish cleanup")
+  // finally succeeds — the single shared mechanism every clear-then-advance call site below uses, so the
+  // write path and the recovery-read path can no longer drift (the write path previously discarded this result
+  // entirely and advanced as if cleanup had succeeded).
+  const pendingClearRef = useRef<{ id: string; onSuccess: () => void | Promise<void> } | null>(null);
 
-  const locked = phase === "recoveryChecking" || phase === "recoveryBlocked" || phase === "submitting" || phase === "loadingObligations" || phase === "storageUnavailable";
+  const locked =
+    phase === "recoveryChecking" ||
+    phase === "recoveryBlocked" ||
+    phase === "submitting" ||
+    phase === "loadingObligations" ||
+    phase === "storageUnavailable" ||
+    phase === "reconcilingObligations";
+
+  /** The ONE place a stored identity is ever cleared (point 1). On success, runs `onSuccess` immediately. On
+   * failure, preserves exactly what `onSuccess` would have needed (never assumes the entry is gone, never advances
+   * the queue, never resets any draft) and offers "Finish cleanup", which retries the SAME clear and — only once it
+   * genuinely succeeds — runs the SAME `onSuccess` the original call would have run. */
+  function attemptClear(id: string, onSuccess: () => void | Promise<void>) {
+    const cleared = clearAttempt(organizationId, currentUserId, id);
+    if (!cleared.ok) {
+      pendingClearRef.current = { id, onSuccess };
+      setClearFailed(true);
+      setPhase("recoveryBlocked");
+      return;
+    }
+    void onSuccess();
+  }
+
+  function handleFinishCleanup() {
+    const pending = pendingClearRef.current;
+    if (!pending) return;
+    const cleared = clearAttempt(organizationId, currentUserId, pending.id);
+    if (!cleared.ok) return; // still failing — stay exactly as-is, the button remains
+    pendingClearRef.current = null;
+    setClearFailed(false);
+    void pending.onSuccess();
+  }
+
+  /** Pops `id` off the front of the queue if it's still there, then either continues to the next queued id or runs
+   * `otherwise` (the genuinely-nothing-left-uncertain case). Shared by every "an attempt just finished resolving"
+   * call site so queue-advancement logic lives in exactly one place. */
+  function popQueueAndContinueOrElse(id: string, otherwise: () => void | Promise<void>) {
+    if (recoveryQueueRef.current[0] === id) recoveryQueueRef.current = recoveryQueueRef.current.slice(1);
+    if (recoveryQueueRef.current.length > 0) {
+      void resolveQueueHead();
+      return;
+    }
+    void otherwise();
+  }
 
   // ---- recovery: process EVERY stored attempt, one at a time, never just the first (point 4) ----
 
@@ -130,22 +184,17 @@ export function PaymentEntrySection({
       setPhase("recoveryBlocked");
       return;
     }
-    const cleared = clearAttempt(organizationId, currentUserId, id);
-    if (!cleared.ok) {
-      // Point 5: a known, resolved outcome whose LOCAL cleanup failed — never assumed gone, never advanced past.
-      setOutcome({ source: "recovery", classification });
-      setClearFailed(true);
-      setPhase("recoveryBlocked");
-      return;
-    }
-    recoveryQueueRef.current = recoveryQueueRef.current.slice(1);
-    if (recoveryQueueRef.current.length > 0) {
-      void resolveQueueHead();
-      return;
-    }
-    submissionIdRef.current = null;
     setOutcome({ source: "recovery", classification });
-    setPhase("outcome");
+    attemptClear(id, () => {
+      // Round-3 point 2: a definitive, confirmed outcome reached via the RECOVERY path resets the draft exactly
+      // like a fresh write success already did — otherwise a filled-in-then-lost submission's own student/amount/
+      // selection stays sitting in the form, one click from a genuine duplicate under a brand-new submissionId.
+      popQueueAndContinueOrElse(id, () => {
+        submissionIdRef.current = null;
+        resetForm();
+        setPhase("outcome");
+      });
+    });
   }
 
   useEffect(() => {
@@ -165,21 +214,6 @@ export function PaymentEntrySection({
     void resolveQueueHead();
   }
 
-  function handleFinishCleanup() {
-    const id = recoveryQueueRef.current[0];
-    if (!id) return;
-    const cleared = clearAttempt(organizationId, currentUserId, id);
-    if (!cleared.ok) return;
-    setClearFailed(false);
-    recoveryQueueRef.current = recoveryQueueRef.current.slice(1);
-    if (recoveryQueueRef.current.length > 0) {
-      void resolveQueueHead();
-      return;
-    }
-    submissionIdRef.current = null;
-    setPhase("outcome");
-  }
-
   // ---- obligations fetch (point 3: synchronous clear, loading is locked, mixed-currency never pre-selects) ----
 
   useEffect(() => {
@@ -188,6 +222,7 @@ export function PaymentEntrySection({
     setObligations(null);
     setMixedCurrency(false);
     setObligationsError(null);
+    setObligationsErrorSource(null);
     setFormError(null);
     if (!selectedStudentId) return;
     const requestId = ++obligationsRequestRef.current;
@@ -197,6 +232,7 @@ export function PaymentEntrySection({
         if (obligationsRequestRef.current !== requestId) return;
         if (!result.ok) {
           setObligationsError(result.error);
+          setObligationsErrorSource("fetch");
           setObligations([]);
           setMixedCurrency(false);
         } else {
@@ -212,30 +248,51 @@ export function PaymentEntrySection({
       .catch(() => {
         if (obligationsRequestRef.current !== requestId) return;
         setObligationsError("transportFailure");
+        setObligationsErrorSource("fetch");
         setObligations([]);
         setPhase((p) => (p === "loadingObligations" ? "form" : p));
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- receivedOnTouched intentionally not a dep: re-fetching must not re-run on every date edit
   }, [organizationId, selectedStudentId, obligationsRetryNonce]);
 
-  /** Re-fetches without resetting the selection to just-the-oldest (point 2's `alreadySettled` reconciliation) —
-   * drops ids no longer present, keeps the rest. */
-  async function refetchObligationsReconciling() {
-    if (!selectedStudentId) return;
-    const requestId = ++obligationsRequestRef.current;
-    const result = await getPayableObligations(organizationId, selectedStudentId);
-    if (obligationsRequestRef.current !== requestId) return;
-    if (!result.ok) {
-      setObligationsError(result.error);
-      setObligations([]);
-      setMixedCurrency(false);
-      setSelectedObligationIds(new Set());
+  /**
+   * Round-3 point 3: `alreadySettled`'s own re-fetch-and-reconcile — LOCKED (`reconcilingObligations`, included in
+   * `locked`) for its entire duration so a submit can never race a selection the server has already told us is
+   * stale, genuinely `await`ed (not fire-and-forgotten) by every caller, and its own rejection is caught here —
+   * never an unhandled promise rejection. Never resets the selection to just-the-oldest (unlike the main fetch
+   * above): it drops ids no longer present and keeps the rest, exactly what "reconcile" means here. The same
+   * `obligationsRequestRef` discriminator the main fetch already uses discards a lagging response, including one for
+   * a student the owner has since changed away from.
+   */
+  async function refetchObligationsReconciling(): Promise<void> {
+    if (!selectedStudentId) {
+      setPhase("form");
       return;
     }
-    setObligations(result.obligations);
-    setMixedCurrency(result.mixedCurrency);
-    const validIds = new Set(result.obligations.map((o) => o.obligationId));
-    setSelectedObligationIds((prev) => new Set([...prev].filter((id) => validIds.has(id))));
+    const requestId = ++obligationsRequestRef.current;
+    setPhase("reconcilingObligations");
+    try {
+      const result = await getPayableObligations(organizationId, selectedStudentId);
+      if (obligationsRequestRef.current !== requestId) return; // a newer fetch (or student change) has since started
+      if (!result.ok) {
+        setObligationsError(result.error);
+        setObligationsErrorSource("reconcile");
+        setPhase("form");
+        return;
+      }
+      setObligations(result.obligations);
+      setMixedCurrency(result.mixedCurrency);
+      const validIds = new Set(result.obligations.map((o) => o.obligationId));
+      setSelectedObligationIds((prev) => new Set([...prev].filter((id) => validIds.has(id))));
+      setObligationsError(null);
+      setObligationsErrorSource(null);
+      setPhase("form");
+    } catch {
+      if (obligationsRequestRef.current !== requestId) return;
+      setObligationsError("transportFailure");
+      setObligationsErrorSource("reconcile");
+      setPhase("form");
+    }
   }
 
   function toggleObligation(id: string) {
@@ -295,6 +352,8 @@ export function PaymentEntrySection({
     setObligations(null);
     setSelectedObligationIds(new Set());
     setFormError(null);
+    setObligationsError(null);
+    setObligationsErrorSource(null);
   }
 
   const canSubmit = !locked && !obligationsError && !mixedCurrency && isPrefixSelection && selectedObligationIds.size > 0 && amount.trim() !== "";
@@ -327,36 +386,39 @@ export function PaymentEntrySection({
       return;
     }
 
-    if (shouldClearAfterWrite(classification)) {
-      clearAttempt(organizationId, currentUserId, submissionId);
-      if (recoveryQueueRef.current[0] === submissionId) recoveryQueueRef.current = recoveryQueueRef.current.slice(1);
-      submissionIdRef.current = null;
-    }
-
+    // Every remaining classification (businessRefusal or a TERMINAL_WRITE_KINDS member) clears the stored identity
+    // (round-3 point 1: via the SAME `attemptClear` the recovery-read path uses — a `clearAttempt` failure here used
+    // to be silently discarded, advancing as if cleanup had succeeded while the stale entry stayed in `localStorage`
+    // under the old key).
     if (classification.kind === "businessRefusal") {
-      // Point 2: clears only the IDENTITY above — the draft (amount/currency/receivedOn/notes/selection) is
+      // Point 2 (prior round): clears only the IDENTITY — the draft (amount/currency/receivedOn/notes/selection) is
       // preserved so the owner can fix one field and resubmit, never retype everything.
       setFormError({ error: classification.error, selectableTotals: classification.selectableTotals, alreadySettledIds: classification.alreadySettledIds });
-      if (classification.error === "alreadySettled") void refetchObligationsReconciling();
-      // Another stored attempt may still be queued (rare multi-tab case) — recheck it before unlocking the form.
-      if (recoveryQueueRef.current.length > 0) {
-        void resolveQueueHead();
-        return;
-      }
-      setPhase("form");
+      attemptClear(submissionId, () => {
+        // Another stored attempt may still be queued (rare multi-tab case) — recheck it before unlocking the form.
+        popQueueAndContinueOrElse(submissionId, async () => {
+          submissionIdRef.current = null;
+          if (classification.error === "alreadySettled") {
+            await refetchObligationsReconciling(); // round-3 point 3: locked for its own duration, genuinely awaited
+          } else {
+            setPhase("form");
+          }
+        });
+      });
       return;
     }
 
-    // freshSuccess / replaySuccess / freshCapture / replayCapture — genuinely confirmed, draft reset.
     if (TERMINAL_WRITE_KINDS.has(classification.kind)) {
-      resetForm();
-      if (recoveryQueueRef.current.length > 0) {
-        setOutcome({ source: "write", classification });
-        void resolveQueueHead();
-        return;
-      }
       setOutcome({ source: "write", classification });
-      setPhase("outcome");
+      attemptClear(submissionId, () => {
+        popQueueAndContinueOrElse(submissionId, () => {
+          // Round-3 point 2: the draft is reset only once the identity is CONFIRMED cleared (or, if clearing
+          // failed, only once "Finish cleanup" confirms it) — never unconditionally beforehand.
+          submissionIdRef.current = null;
+          resetForm();
+          setPhase("outcome");
+        });
+      });
     }
   }
 
@@ -398,6 +460,13 @@ export function PaymentEntrySection({
   }
 
   function retryObligations() {
+    // Round-3 point 3: a reconciliation-sourced error retries the RECONCILING fetch (preserving the current
+    // selection, filtered to whatever is still valid) — never the plain fetch, which would reset the selection
+    // back to just-the-oldest and discard the very reconciliation this error interrupted.
+    if (obligationsErrorSource === "reconcile") {
+      void refetchObligationsReconciling();
+      return;
+    }
     setObligationsRetryNonce((n) => n + 1);
   }
 
@@ -574,7 +643,7 @@ export function PaymentEntrySection({
         </div>
       )}
 
-      {(phase === "form" || phase === "loadingObligations" || phase === "submitting") && (
+      {(phase === "form" || phase === "loadingObligations" || phase === "submitting" || phase === "reconcilingObligations") && (
         <form onSubmit={handleSubmit} className="flex flex-col gap-3">
           <label className="flex flex-col gap-1 text-sm">
             <span>{t("fields.student")}</span>
