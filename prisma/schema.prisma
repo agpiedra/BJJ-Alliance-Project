@@ -288,6 +288,7 @@ model Organization {
   duesLateFees           DuesLateFee[]
   duesPayments           DuesPayment[]
   duesSettlements        DuesSettlement[]
+  duesPaymentAttempts    DuesPaymentAttempt[]
   awaitingRateReceipts   AwaitingRateReceipt[]
   kioskAttempts       KioskAttempt[]
   queuedCheckIns      QueuedCheckIn[]
@@ -474,6 +475,7 @@ model Academy {
   duesPolicyVersions DuesPolicyVersion[]
   duesObligations   DuesObligation[]
   duesPayments      DuesPayment[]
+  duesPaymentAttempts DuesPaymentAttempt[]
   awaitingRateReceipts AwaitingRateReceipt[]
   auditLogs         AuditLog[]
   kioskAttempts     KioskAttempt[]
@@ -734,6 +736,7 @@ model Student {
   duesObligations   DuesObligation[]
   duesCoverage      DuesCoverage[]
   duesPayments      DuesPayment[]
+  duesPaymentAttempts DuesPaymentAttempt[]
   awaitingRateReceipts AwaitingRateReceipt[]
   organization      Organization       @relation(fields: [organizationId], references: [id])
 
@@ -1285,6 +1288,9 @@ model AwaitingRateReceipt {
   /// The one `DuesPayment` this receipt resolved into, if any — `DuesPayment.resolvedFromReceiptId`'s own `@unique` is the
   /// real database backstop for "at most one completed payment per receipt".
   resolvedPayment DuesPayment?
+  /// Payment-submission-identity prerequisite: the attempt row whose winning INSERT captured into this receipt, if this
+  /// receipt was captured through `recordDuesPaymentWithSubmissionIdentity` rather than the plain, untouched `recordDuesPayment`.
+  submissionAttempt DuesPaymentAttempt?
 
   /// Target of `DuesPayment.resolvedFromReceiptId`'s tenant- AND student-safe composite FK — a payment for one student can
   /// never reference another student's receipt, rejected by the foreign key itself.
@@ -1573,6 +1579,9 @@ model DuesPayment {
   /// receipt, rejected by the foreign key itself, not merely by application logic.
   resolvedFromReceipt AwaitingRateReceipt? @relation(fields: [organizationId, resolvedFromReceiptId, studentId], references: [organizationId, id, studentId], onDelete: Restrict)
   settlements  DuesSettlement[]
+  /// Payment-submission-identity prerequisite: the attempt row whose winning INSERT settled into this payment, if this
+  /// payment was recorded through `recordDuesPaymentWithSubmissionIdentity` rather than the plain, untouched `recordDuesPayment`.
+  submissionAttempt DuesPaymentAttempt?
 
   @@unique([organizationId, id, studentId])
   /// Required by Prisma for the one-to-one `resolvedFromReceipt` relation above (its own `@unique` on
@@ -1606,6 +1615,52 @@ model DuesSettlement {
   @@index([organizationId])
   @@index([paymentId])
   @@index([obligationId])
+}
+
+/// Payment-submission-identity prerequisite: one row per distinct client submission, keyed by the caller's own
+/// `submissionId` — the idempotency record `recordDuesPaymentWithSubmissionIdentity` (record-payment.ts) uses to make a
+/// retried submission (a lost or uncertain network response) safe to resend verbatim, across all three outcomes a
+/// submission can have: genuine success (`paymentId` set), capture with no rate available (`receiptId` set), or genuine
+/// refusal (neither ever set — nothing commits for that outcome; a both-null row never legitimately exists standalone
+/// outside the writer's own open transaction). `recordDuesPayment` itself, and its own full test suite, are completely
+/// untouched by this model's existence. `canonicalPayload` is immutable from the very first UPDATE onward, and exactly
+/// one finalizing UPDATE (setting paymentId XOR receiptId, nothing else) is ever permitted — both enforced below by
+/// reusing `dues_set_once_marker`, the identical trigger function already protecting `DuesPayment`/`DuesSettlement`/
+/// `DuesLateFee`. Never deleted (`dues_reject_delete`, the identical function already protecting every other ledger table).
+model DuesPaymentAttempt {
+  id             String   @id @default(cuid())
+  organizationId String
+  studentId      String
+  /// The branch at capture (the same "branch at capture" precedent as `AwaitingRateReceipt.academyId`), denormalized
+  /// from the student's own `homeAcademyId` at insert time so `getSubmissionOutcome`'s own scope check needs no join.
+  academyId      String
+  /// The caller's own idempotency key for one logical submission — required, never server-generated: minting one here
+  /// would defeat the entire point of a client-supplied retry key.
+  submissionId   String
+  /// The canonicalized request this submissionId was first associated with (sorted obligationIds, canonical date,
+  /// `parseMoney`-normalized amount, trimmed notes — `maxBackdateDays` excluded, a server-resolved policy value, never
+  /// part of the client's own request identity). Written once, on the original INSERT, and never changed again.
+  canonicalPayload Json
+  /// Exactly one of paymentId/receiptId may ever be set (CHECK, below); both null is the transient pre-finalization
+  /// state inside the writer's own open transaction — it never commits standalone on its own.
+  paymentId      String?  @unique
+  receiptId      String?  @unique
+  createdAt      DateTime @default(now())
+
+  student      Student              @relation(fields: [organizationId, studentId], references: [organizationId, id])
+  academy      Academy              @relation(fields: [organizationId, academyId], references: [organizationId, id])
+  payment      DuesPayment?         @relation(fields: [organizationId, paymentId, studentId], references: [organizationId, id, studentId], onDelete: Restrict)
+  receipt      AwaitingRateReceipt? @relation(fields: [organizationId, receiptId, studentId], references: [organizationId, id, studentId], onDelete: Restrict)
+  organization Organization         @relation(fields: [organizationId], references: [id])
+
+  @@unique([organizationId, submissionId])
+  /// Required by Prisma for the one-to-one `payment`/`receipt` relations above (their own field-level `@unique` already
+  /// makes each triple unique at the database level; these are the DB-level mirrors, matching `DuesPayment`'s own
+  /// identical `resolvedFromReceiptId` precedent).
+  @@unique([organizationId, paymentId, studentId])
+  @@unique([organizationId, receiptId, studentId])
+  @@index([organizationId])
+  @@index([studentId])
 }
 
 model KioskAttempt {

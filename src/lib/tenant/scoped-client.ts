@@ -48,6 +48,11 @@ export const TENANT_SCOPED_MODELS = new Set([
   "ExchangeRateQuote",
   // Currency-conversion brief (PR 3): tenant-scoped from day one, before any owner-facing caller exists.
   "AwaitingRateReceipt",
+  // Payment-submission-identity prerequisite: tenant-scoped from day one, before any caller of
+  // recordDuesPaymentWithSubmissionIdentity/getSubmissionOutcome exists. Deliberately absent from ScopedDb's own
+  // accessor union below, matching duesObligation/duesPayment/etc. — this table has no general-purpose staff-facing
+  // reader; the ledger engine always uses the plain prisma client, scoping explicitly itself.
+  "DuesPaymentAttempt",
   "KioskAttempt",
   "QueuedCheckIn",
   "StaffAssignment",

@@ -177,4 +177,15 @@ export interface LedgerDeps {
    * together when something fails even this late, one statement before the transaction would otherwise commit.
    */
   afterGenuineReturnStatusWrittenForTest?: () => Promise<void>;
+  /**
+   * Payment-submission-identity prerequisite, test-only synchronization point: called by
+   * `recordDuesPaymentWithSubmissionIdentity` (submission-identity.ts) right after its `DuesPaymentAttempt`
+   * `INSERT ... ON CONFLICT DO NOTHING RETURNING` — regardless of whether that insert won or lost — but before
+   * composing `recordDuesPaymentInTx`/reading the existing row, never referenced by production code, never given a
+   * value outside a test. Receives the open transaction itself so a test can capture this transaction's own backend
+   * pid (`pg_backend_pid()`) and then pause it there, holding the identity lock open, for a `pg_blocking_pids`-verified
+   * genuine-overlap proof that a second, concurrent submission for the same `submissionId` truly BLOCKS on the row
+   * lock rather than merely losing a timing race.
+   */
+  afterSubmissionIdentityInsertForTest?: (tx: Tx) => Promise<void>;
 }

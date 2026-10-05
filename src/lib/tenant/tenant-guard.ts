@@ -42,6 +42,9 @@ export const TENANT_SCOPED_MODELS = new Set([
   "ExchangeRateQuote",
   // Currency-conversion brief (PR 3): tenant-scoped from day one, before any owner-facing caller exists.
   "AwaitingRateReceipt",
+  // Payment-submission-identity prerequisite: tenant-scoped from day one, before any caller of
+  // recordDuesPaymentWithSubmissionIdentity/getSubmissionOutcome exists.
+  "DuesPaymentAttempt",
   "KioskAttempt",
   "QueuedCheckIn",
   "StaffAssignment",
