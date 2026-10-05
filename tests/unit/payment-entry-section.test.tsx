@@ -586,11 +586,13 @@ describe("round 3, point 3: the alreadySettled reconciliation fetch is locked, a
     fireEvent.click(screen.getByRole("button", { name: /Record payment/i }));
     await waitFor(() => expect(screen.getByText(/Already settled: ob-1/i)).toBeInTheDocument());
 
-    // The owner switches to student B while A's reconciliation is still pending.
-    const obligationB = { ...OBLIGATION, obligationId: "ob-B" };
+    // The owner switches to student B while A's reconciliation is still pending. B's obligation is deliberately a
+    // DIFFERENT coverage month from A's — otherwise "2027-02 (Monthly)" would render identically regardless of
+    // whose data actually won, and the test couldn't tell A's stale response apart from B's real one.
+    const obligationB = { ...OBLIGATION, obligationId: "ob-B", coverageMonth: 3 };
     getPayableObligations.mockResolvedValueOnce({ ok: true, obligations: [obligationB], mixedCurrency: false, todayLocal: TODAY_LOCAL });
     fireEvent.change(screen.getByLabelText(/Student/i), { target: { value: "student-2" } });
-    await waitFor(() => expect(screen.getByText(/2027-02 \(Monthly\)/)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/2027-03 \(Monthly\)/)).toBeInTheDocument());
 
     // A's stale reconciliation now resolves — must be discarded, never overwriting B's already-shown state.
     reconcileA.resolve({ ok: true, obligations: [OBLIGATION], mixedCurrency: false, todayLocal: TODAY_LOCAL });
@@ -598,5 +600,15 @@ describe("round 3, point 3: the alreadySettled reconciliation fetch is locked, a
 
     expect((screen.getByLabelText(/Student/i) as HTMLSelectElement).value).toBe("student-2");
     expect(screen.getAllByRole("checkbox")).toHaveLength(1);
+    expect(screen.getByText(/2027-03 \(Monthly\)/)).toBeInTheDocument(); // B's obligation, still present
+    expect(screen.queryByText(/2027-02 \(Monthly\)/)).toBeNull(); // A's stale obligation never appeared
+
+    // Proof beyond what's rendered: a submission from here actually carries B's own identity, not A's.
+    recordPayment.mockResolvedValueOnce({ ok: true, paymentId: "p-b", settlementIds: ["s-b"], feeIds: [], totalMinor: 10000 });
+    fireEvent.click(screen.getByRole("button", { name: /Record payment/i }));
+    await waitFor(() => expect(recordPayment).toHaveBeenCalledTimes(2)); // A's refused attempt, then B's
+    const formData = recordPayment.mock.calls[1][2] as FormData;
+    expect(formData.get("studentId")).toBe("student-2");
+    expect(formData.getAll("obligationIds")).toEqual(["ob-B"]);
   });
 });
