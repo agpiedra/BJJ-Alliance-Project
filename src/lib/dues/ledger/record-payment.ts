@@ -221,7 +221,7 @@ function selectableCrossCurrencyTotals(candidates: readonly { requiredMinor: num
  * copies that could drift apart. Does not validate `studentId`/tenant scope; those depend on what shape the student arrives in at
  * each call site (a raw id for the wrapper, an already-resolved row for a direct caller) and are checked separately at each site.
  */
-function validatePaymentInput(input: {
+export function validatePaymentInput(input: {
   receivedOn: CalendarDate;
   tender: { currency: Currency; amount: string };
   method: PaymentMethod;
