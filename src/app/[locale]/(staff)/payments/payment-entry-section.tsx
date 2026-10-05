@@ -9,23 +9,35 @@ import { beginAttempt, readAttempt, clearAttempt, listStoredAttemptIds, type Sto
 import { classifyWriteResult, classifyRecoveryCheck, shouldClearAfterWrite, shouldClearAfterRecoveryCheck, type WriteOutcomeClassification, type RecoveryCheckClassification } from "@/lib/dues/payment-entry-recovery";
 import { CURRENCIES } from "@/lib/payments/format-money";
 import type { PayableObligation } from "@/lib/dues/payment-entry-queries";
+import type { CalendarDate } from "@/lib/dues/calendar";
 import type { Currency, PaymentMethod } from "@/generated/prisma/client";
 
 /**
  * Ordinary payment-entry UI brief §2/§8/§10: the new, functionally-integrated ledger payment card for
  * `payments/page.tsx` (§0 — never `payments/plans/page.tsx`). Deliberately does NOT reuse `useDuesAction`
  * (`dues-config-forms.tsx:27-41` has no rejected-promise handling and resets the form on any truthy `result.ok`,
- * including a reversed-payment replay) — this component owns its own submit/recovery state machine, built on the
- * same visual primitives (`TextField`-equivalent inputs, `Button`) and the same `startTransition`-free manual
- * busy/error/ok pattern `ReceiptRow` (`awaiting-rate-receipt-list.tsx`) already establishes for a form that must
- * route a rejected promise into recovery rather than lose it.
+ * including a reversed-payment replay) — this component owns its own submit/recovery state machine.
+ *
+ * Corrected (post-review, 8 points): the write-result CLASSIFICATION now genuinely controls `phase` (a
+ * `recoveryBlocked`/`payloadMismatch` classification never falls through to the terminal "outcome" screen); an
+ * ordinary business refusal clears only the stored IDENTITY, never the owner's typed draft; the student-change
+ * obligations fetch clears its own stale selection synchronously and the loading phase is itself locked; EVERY
+ * stored attempt (not just the first) is processed before the form ever unlocks; a storage-access failure is
+ * treated as blocking, never as "nothing stored"; the student picker is not filtered to `status: "ACTIVE"`; the
+ * default `receivedOn`/disclaimer use the student's own branch-local date, never the browser's; a capture outcome's
+ * guidance is role-aware (a `DIRECTOR` is never shown a link into a page section only an `ADMIN` can see there).
  */
 
 const METHODS: PaymentMethod[] = ["EFECTIVO", "SINPE", "TRANSFERENCIA", "TARJETA"];
 
-function todayIso(): string {
+/** Used only before any student/branch is known — the moment a student is selected, the branch-local date from
+ * `getPayableObligations` takes over (point 7). */
+function browserTodayIso(): string {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+function calendarDateToIso(d: CalendarDate): string {
+  return `${d.year}-${String(d.month).padStart(2, "0")}-${String(d.day).padStart(2, "0")}`;
 }
 
 type Student = { id: string; firstName: string; lastName: string; academyId: string; academyName: string };
@@ -36,11 +48,36 @@ type Phase =
   | "submitting"
   | "recoveryChecking"
   | "recoveryBlocked"
-  | "outcome";
+  | "outcome"
+  /** Point 5: `listStoredAttemptIds`/`readAttempt` itself couldn't be inspected — never silently treated as
+   * "nothing stored." The whole form stays blocked: starting a new entry while unable to verify an existing
+   * uncertain one would be exactly the double-submission risk this feature exists to prevent. */
+  | "storageUnavailable";
 
-type OutcomeDisplay = { source: "write"; classification: WriteOutcomeClassification } | { source: "write"; classification: { kind: "rejected" } } | { source: "recovery"; classification: RecoveryCheckClassification };
+type OutcomeDisplay = { source: "write"; classification: WriteOutcomeClassification | { kind: "rejected" } } | { source: "recovery"; classification: RecoveryCheckClassification };
 
-export function PaymentEntrySection({ organizationId, currentUserId, students }: { organizationId: string; currentUserId: string; students: Student[] }) {
+/** A business refusal (brief §2.3 case 6) shown INLINE in the still-editable form — never the separate terminal
+ * "outcome" screen, and never a reason to wipe the owner's typed draft (point 2). */
+type FormError = { error: string; selectableTotals?: string[]; alreadySettledIds?: string[] };
+
+const TERMINAL_WRITE_KINDS = new Set(["freshSuccess", "replaySuccess", "freshCapture", "replayCapture"]);
+
+export function PaymentEntrySection({
+  organizationId,
+  currentUserId,
+  students,
+  organizationRole,
+  plansHref,
+}: {
+  organizationId: string;
+  currentUserId: string;
+  students: Student[];
+  /** Point 8: a capture outcome's own guidance is role-aware — only an `ADMIN` can see the receipt queue section on
+   * `payments/plans/page.tsx` (that page gates it to `organizationRole === "ADMIN"` even though a `DIRECTOR` can
+   * load the page itself); a `DIRECTOR` is never shown a link implying access they don't have. */
+  organizationRole: "ADMIN" | "DIRECTOR";
+  plansHref: string;
+}) {
   const t = useTranslations("payments.ledgerEntry");
   const tMethod = useTranslations("payments.method");
 
@@ -50,61 +87,111 @@ export function PaymentEntrySection({ organizationId, currentUserId, students }:
   const [mixedCurrency, setMixedCurrency] = useState(false);
   const [obligationsError, setObligationsError] = useState<string | null>(null);
   const [selectedObligationIds, setSelectedObligationIds] = useState<Set<string>>(new Set());
+  const [obligationsRetryNonce, setObligationsRetryNonce] = useState(0);
 
   const [amount, setAmount] = useState("");
   const [currency, setCurrency] = useState<Currency>("USD");
-  const [receivedOn, setReceivedOn] = useState(todayIso());
+  const [receivedOn, setReceivedOn] = useState(browserTodayIso());
+  const [receivedOnTouched, setReceivedOnTouched] = useState(false);
+  const [branchToday, setBranchToday] = useState<CalendarDate | null>(null);
   const [method, setMethod] = useState<PaymentMethod>("EFECTIVO");
   const [notes, setNotes] = useState("");
 
   const [outcome, setOutcome] = useState<OutcomeDisplay | null>(null);
+  const [formError, setFormError] = useState<FormError | null>(null);
   const [storedPayloadReadable, setStoredPayloadReadable] = useState(true);
   const [beginError, setBeginError] = useState<"alreadyExists" | "storageUnavailable" | null>(null);
+  const [clearFailed, setClearFailed] = useState(false);
 
   const submissionIdRef = useRef<string | null>(null);
+  // The FULL set of still-unresolved stored attempt ids (point 4) — index 0 is always the one currently shown while
+  // phase is recoveryChecking/recoveryBlocked. Never just "the first one found."
+  const recoveryQueueRef = useRef<string[]>([]);
   // Guards a stale fetch (a student change while a prior fetch is in flight) from overwriting newer state —
   // the same discriminator-based discard `ReceiptQueueList` already uses for its own tab-switch race.
   const obligationsRequestRef = useRef(0);
 
-  const locked = phase === "recoveryChecking" || phase === "recoveryBlocked" || phase === "submitting";
+  const locked = phase === "recoveryChecking" || phase === "recoveryBlocked" || phase === "submitting" || phase === "loadingObligations" || phase === "storageUnavailable";
 
-  async function runRecoveryCheck(submissionId: string) {
+  // ---- recovery: process EVERY stored attempt, one at a time, never just the first (point 4) ----
+
+  async function resolveQueueHead(): Promise<void> {
+    const id = recoveryQueueRef.current[0];
+    if (!id) return;
+    submissionIdRef.current = id;
+    setClearFailed(false);
+    const read = readAttempt(organizationId, currentUserId, id);
+    setStoredPayloadReadable(read.status === "ok");
     setPhase("recoveryChecking");
-    const settled = (await Promise.allSettled([checkSubmissionOutcome(organizationId, submissionId)]))[0];
+    const settled = (await Promise.allSettled([checkSubmissionOutcome(organizationId, id)]))[0];
     const classification = classifyRecoveryCheck(settled);
-    if (shouldClearAfterRecoveryCheck(classification)) {
-      clearAttempt(organizationId, currentUserId, submissionId);
-      submissionIdRef.current = null;
+    if (!shouldClearAfterRecoveryCheck(classification)) {
       setOutcome({ source: "recovery", classification });
-      setPhase("outcome");
+      setPhase("recoveryBlocked");
       return;
     }
+    const cleared = clearAttempt(organizationId, currentUserId, id);
+    if (!cleared.ok) {
+      // Point 5: a known, resolved outcome whose LOCAL cleanup failed — never assumed gone, never advanced past.
+      setOutcome({ source: "recovery", classification });
+      setClearFailed(true);
+      setPhase("recoveryBlocked");
+      return;
+    }
+    recoveryQueueRef.current = recoveryQueueRef.current.slice(1);
+    if (recoveryQueueRef.current.length > 0) {
+      void resolveQueueHead();
+      return;
+    }
+    submissionIdRef.current = null;
     setOutcome({ source: "recovery", classification });
-    setPhase("recoveryBlocked");
+    setPhase("outcome");
   }
 
-  // Reload-recovery mount check (brief §2.4b): never auto-cleared, never auto-retried — the owner sees the blocked
-  // state and chooses to check status or retry.
   useEffect(() => {
-    const ids = listStoredAttemptIds(organizationId, currentUserId);
-    if (ids.length === 0) return;
-    const submissionId = ids[0];
-    submissionIdRef.current = submissionId;
-    const read = readAttempt(organizationId, currentUserId, submissionId);
-    setStoredPayloadReadable(read.status === "ok");
-    void runRecoveryCheck(submissionId);
+    const scanned = listStoredAttemptIds(organizationId, currentUserId);
+    if (scanned.status === "unavailable") {
+      setPhase("storageUnavailable");
+      return;
+    }
+    if (scanned.ids.length === 0) return;
+    recoveryQueueRef.current = scanned.ids;
+    void resolveQueueHead();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only
   }, []);
 
-  useEffect(() => {
-    if (!selectedStudentId) {
-      setObligations(null);
-      setSelectedObligationIds(new Set());
+  function handleCheckStatusAgain() {
+    if (recoveryQueueRef.current.length === 0) return;
+    void resolveQueueHead();
+  }
+
+  function handleFinishCleanup() {
+    const id = recoveryQueueRef.current[0];
+    if (!id) return;
+    const cleared = clearAttempt(organizationId, currentUserId, id);
+    if (!cleared.ok) return;
+    setClearFailed(false);
+    recoveryQueueRef.current = recoveryQueueRef.current.slice(1);
+    if (recoveryQueueRef.current.length > 0) {
+      void resolveQueueHead();
       return;
     }
+    submissionIdRef.current = null;
+    setPhase("outcome");
+  }
+
+  // ---- obligations fetch (point 3: synchronous clear, loading is locked, mixed-currency never pre-selects) ----
+
+  useEffect(() => {
+    // Synchronous, same render as the student change — no stale selection survives into the fetch window.
+    setSelectedObligationIds(new Set());
+    setObligations(null);
+    setMixedCurrency(false);
+    setObligationsError(null);
+    setFormError(null);
+    if (!selectedStudentId) return;
     const requestId = ++obligationsRequestRef.current;
     setPhase("loadingObligations");
-    setObligationsError(null);
     getPayableObligations(organizationId, selectedStudentId)
       .then((result) => {
         if (obligationsRequestRef.current !== requestId) return;
@@ -115,9 +202,10 @@ export function PaymentEntrySection({ organizationId, currentUserId, students }:
         } else {
           setObligations(result.obligations);
           setMixedCurrency(result.mixedCurrency);
-          // Default-check the oldest unselected run (§2.1) — the single oldest item only; the owner extends the
-          // selection themselves for a longer run, and a non-prefix selection is flagged before submission.
-          setSelectedObligationIds(result.obligations.length > 0 ? new Set([result.obligations[0].obligationId]) : new Set());
+          setBranchToday(result.todayLocal);
+          if (!receivedOnTouched) setReceivedOn(calendarDateToIso(result.todayLocal));
+          // Default-check the oldest unselected run (§2.1) — never when mixed-currency (no selectable set exists).
+          setSelectedObligationIds(!result.mixedCurrency && result.obligations.length > 0 ? new Set([result.obligations[0].obligationId]) : new Set());
         }
         setPhase((p) => (p === "loadingObligations" ? "form" : p));
       })
@@ -127,7 +215,28 @@ export function PaymentEntrySection({ organizationId, currentUserId, students }:
         setObligations([]);
         setPhase((p) => (p === "loadingObligations" ? "form" : p));
       });
-  }, [organizationId, selectedStudentId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- receivedOnTouched intentionally not a dep: re-fetching must not re-run on every date edit
+  }, [organizationId, selectedStudentId, obligationsRetryNonce]);
+
+  /** Re-fetches without resetting the selection to just-the-oldest (point 2's `alreadySettled` reconciliation) —
+   * drops ids no longer present, keeps the rest. */
+  async function refetchObligationsReconciling() {
+    if (!selectedStudentId) return;
+    const requestId = ++obligationsRequestRef.current;
+    const result = await getPayableObligations(organizationId, selectedStudentId);
+    if (obligationsRequestRef.current !== requestId) return;
+    if (!result.ok) {
+      setObligationsError(result.error);
+      setObligations([]);
+      setMixedCurrency(false);
+      setSelectedObligationIds(new Set());
+      return;
+    }
+    setObligations(result.obligations);
+    setMixedCurrency(result.mixedCurrency);
+    const validIds = new Set(result.obligations.map((o) => o.obligationId));
+    setSelectedObligationIds((prev) => new Set([...prev].filter((id) => validIds.has(id))));
+  }
 
   function toggleObligation(id: string) {
     setSelectedObligationIds((prev) => {
@@ -173,14 +282,22 @@ export function PaymentEntrySection({ organizationId, currentUserId, students }:
     return fd;
   }
 
+  /** The CONFIRMED-SLATE reset (point 2) — only ever called for a terminal, genuinely confirmed outcome
+   * (freshSuccess/replaySuccess/freshCapture/replayCapture). An ordinary business refusal never calls this: the
+   * owner's typed draft survives so they can fix one field and resubmit. */
   function resetForm() {
     setSelectedStudentId("");
     setAmount("");
-    setReceivedOn(todayIso());
+    setReceivedOnTouched(false);
+    setReceivedOn(browserTodayIso());
+    setBranchToday(null);
     setNotes("");
     setObligations(null);
     setSelectedObligationIds(new Set());
+    setFormError(null);
   }
+
+  const canSubmit = !locked && !obligationsError && !mixedCurrency && isPrefixSelection && selectedObligationIds.size > 0 && amount.trim() !== "";
 
   async function runWrite(submissionId: string, formData: FormData, isRecoveryRetry: boolean) {
     setPhase("submitting");
@@ -198,19 +315,57 @@ export function PaymentEntrySection({ organizationId, currentUserId, students }:
       setPhase("recoveryBlocked");
       return;
     }
+
     const classification = classifyWriteResult(settled.value, { isRecoveryRetry });
+
+    // Point 1 (the core bug): the classification genuinely controls phase. A recoveryBlocked/payloadMismatch
+    // classification NEVER reaches the terminal "outcome" screen — it stays locked, in the SAME recoveryBlocked
+    // rendering the recovery-check path already uses.
+    if (classification.kind === "recoveryBlocked" || classification.kind === "payloadMismatch") {
+      setOutcome({ source: "write", classification });
+      setPhase("recoveryBlocked");
+      return;
+    }
+
     if (shouldClearAfterWrite(classification)) {
       clearAttempt(organizationId, currentUserId, submissionId);
+      if (recoveryQueueRef.current[0] === submissionId) recoveryQueueRef.current = recoveryQueueRef.current.slice(1);
       submissionIdRef.current = null;
-      resetForm();
     }
-    setOutcome({ source: "write", classification });
-    setPhase("outcome");
+
+    if (classification.kind === "businessRefusal") {
+      // Point 2: clears only the IDENTITY above — the draft (amount/currency/receivedOn/notes/selection) is
+      // preserved so the owner can fix one field and resubmit, never retype everything.
+      setFormError({ error: classification.error, selectableTotals: classification.selectableTotals, alreadySettledIds: classification.alreadySettledIds });
+      if (classification.error === "alreadySettled") void refetchObligationsReconciling();
+      // Another stored attempt may still be queued (rare multi-tab case) — recheck it before unlocking the form.
+      if (recoveryQueueRef.current.length > 0) {
+        void resolveQueueHead();
+        return;
+      }
+      setPhase("form");
+      return;
+    }
+
+    // freshSuccess / replaySuccess / freshCapture / replayCapture — genuinely confirmed, draft reset.
+    if (TERMINAL_WRITE_KINDS.has(classification.kind)) {
+      resetForm();
+      if (recoveryQueueRef.current.length > 0) {
+        setOutcome({ source: "write", classification });
+        void resolveQueueHead();
+        return;
+      }
+      setOutcome({ source: "write", classification });
+      setPhase("outcome");
+    }
   }
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (selectedObligationIds.size === 0) return;
+    // Defense-in-depth beyond the submit button's own `disabled` (point 3/1): never reachable while locked, while
+    // an unresolved stored attempt exists, or while the selection is not a genuine, complete, single-currency
+    // oldest-first prefix.
+    if (locked || submissionIdRef.current || !canSubmit) return;
 
     const submissionId = crypto.randomUUID();
     const payload = currentPayload();
@@ -222,21 +377,19 @@ export function PaymentEntrySection({ organizationId, currentUserId, students }:
       return;
     }
     submissionIdRef.current = submissionId;
+    // A fresh submission is its own one-item recovery queue (point 4's queue is what handleRetrySafely/
+    // handleCheckStatusAgain read from) — without this, a rejected promise from THIS call would have nothing for
+    // either handler to act on.
+    recoveryQueueRef.current = [submissionId];
     await runWrite(submissionId, buildFormData(payload, submissionId), false);
   }
 
   function handleRetrySafely() {
-    const submissionId = submissionIdRef.current;
+    const submissionId = recoveryQueueRef.current[0];
     if (!submissionId) return;
     const read = readAttempt(organizationId, currentUserId, submissionId);
     if (read.status !== "ok") return; // no payload to resend — only the status check remains available
     void runWrite(submissionId, buildFormData(read.payload, submissionId), true);
-  }
-
-  function handleCheckStatusAgain() {
-    const submissionId = submissionIdRef.current;
-    if (!submissionId) return;
-    void runRecoveryCheck(submissionId);
   }
 
   function startOver() {
@@ -244,27 +397,49 @@ export function PaymentEntrySection({ organizationId, currentUserId, students }:
     setPhase("form");
   }
 
+  function retryObligations() {
+    setObligationsRetryNonce((n) => n + 1);
+  }
+
   // ---- outcome copy (brief §2.3/§2.4c) ----
+  function renderCaptureGuidance(): React.ReactNode {
+    // Point 8: role-aware — a DIRECTOR cannot see the receipt queue section on payments/plans/page.tsx (gated there
+    // to ADMIN even though the page itself admits DIRECTOR), so they are never shown a link implying otherwise.
+    if (organizationRole === "ADMIN") {
+      return (
+        <a href={plansHref} className="text-xs underline">
+          {t("outcome.capturedAdminLink")}
+        </a>
+      );
+    }
+    return <p className="text-xs text-muted-foreground">{t("outcome.capturedDirectorGuidance")}</p>;
+  }
+
   function renderOutcome(display: OutcomeDisplay): React.ReactNode {
     if (display.source === "recovery") {
       const c = display.classification;
       if (c.kind === "committed") {
-        const inner = c.outcome.kind === "payment"
-          ? c.outcome.currentlyReversed
-            ? t("outcome.reversed")
-            : t("outcome.success")
-          : c.outcome.currentStatus === "PENDING"
-            ? t("outcome.capturedPending")
-            : c.outcome.currentStatus === "RESOLVED"
-              ? t("outcome.capturedResolved")
-              : t("outcome.capturedCancelled");
+        const isCapture = c.outcome.kind === "receipt";
+        const inner =
+          c.outcome.kind === "payment"
+            ? c.outcome.currentlyReversed
+              ? t("outcome.reversed")
+              : t("outcome.success")
+            : c.outcome.currentStatus === "PENDING"
+              ? t("outcome.capturedPending")
+              : c.outcome.currentStatus === "RESOLVED"
+                ? t("outcome.capturedResolved")
+                : t("outcome.capturedCancelled");
         return (
-          <p role="status" className="text-sm text-ok">
-            {inner}
-          </p>
+          <>
+            <p role="status" className="text-sm text-ok">
+              {inner}
+            </p>
+            {isCapture && renderCaptureGuidance()}
+          </>
         );
       }
-      return null; // handled by the "recoveryBlocked" phase render below
+      return null; // notFound/authFailure/rejected — handled by the "recoveryBlocked" phase render below
     }
     const c = display.classification;
     switch (c.kind) {
@@ -276,22 +451,32 @@ export function PaymentEntrySection({ organizationId, currentUserId, students }:
       case "replayCapture": {
         const status = c.kind === "replayCapture" ? c.currentStatus : "PENDING";
         const key = status === "PENDING" ? "capturedPending" : status === "RESOLVED" ? "capturedResolved" : "capturedCancelled";
-        return <p role="status" className="text-sm text-ok">{t(`outcome.${key}`)}</p>;
+        return (
+          <>
+            <p role="status" className="text-sm text-ok">{t(`outcome.${key}`)}</p>
+            {renderCaptureGuidance()}
+          </>
+        );
       }
       case "payloadMismatch":
-        return <p role="alert" className="text-sm text-bad">{t("outcome.payloadMismatch")}</p>;
-      case "businessRefusal":
-        return <p role="alert" className="text-sm text-bad">{t(`error.${c.error}`, { defaultValue: t("error.unexpected") })}</p>;
       case "recoveryBlocked":
+      case "rejected":
         return null; // handled by the "recoveryBlocked" phase render below
+      case "businessRefusal":
+        // businessRefusal no longer reaches phase "outcome" (point 1/2) — kept only so this switch stays exhaustive.
+        return null;
     }
   }
-
-  const canRecordMore = phase === "outcome" || phase === "form";
 
   return (
     <div className="flex flex-col gap-4">
       <p className="text-xs text-muted-foreground">{t("body")}</p>
+
+      {phase === "storageUnavailable" && (
+        <p role="alert" className="text-sm text-bad">
+          {t("recovery.storageUnavailable")}
+        </p>
+      )}
 
       {beginError && (
         <p role="alert" className="text-sm text-bad">
@@ -303,7 +488,17 @@ export function PaymentEntrySection({ organizationId, currentUserId, students }:
         <div className="flex flex-col gap-2 rounded-lg border border-border p-3">
           <p className="text-sm">{t("recovery.inProgress")}</p>
           {phase === "recoveryChecking" && <p className="text-xs text-muted-foreground">{t("recovery.checking")}</p>}
-          {phase === "recoveryBlocked" && outcome?.source === "recovery" && (
+          {phase === "recoveryBlocked" && clearFailed && (
+            <>
+              <p role="alert" className="text-sm text-bad">{t("recovery.clearFailed")}</p>
+              <div>
+                <Button type="button" variant="outline" onClick={handleFinishCleanup}>
+                  {t("recovery.finishCleanup")}
+                </Button>
+              </div>
+            </>
+          )}
+          {phase === "recoveryBlocked" && !clearFailed && outcome?.source === "recovery" && (
             <>
               <p role="alert" className="text-sm text-bad">
                 {outcome.classification.kind === "authFailure" ? t("recovery.blockedAuth") : outcome.classification.kind === "notFound" ? t("recovery.blockedNotFound") : t("recovery.blockedRejected")}
@@ -321,7 +516,7 @@ export function PaymentEntrySection({ organizationId, currentUserId, students }:
               </div>
             </>
           )}
-          {phase === "recoveryBlocked" && outcome?.source === "write" && outcome.classification.kind === "recoveryBlocked" && (
+          {phase === "recoveryBlocked" && !clearFailed && outcome?.source === "write" && outcome.classification.kind === "recoveryBlocked" && (
             <>
               <p role="alert" className="text-sm text-bad">
                 {t("recovery.blockedWrite", { reason: outcome.classification.error })}
@@ -336,7 +531,21 @@ export function PaymentEntrySection({ organizationId, currentUserId, students }:
               </div>
             </>
           )}
-          {phase === "recoveryBlocked" && outcome?.source === "write" && outcome.classification.kind === "rejected" && (
+          {phase === "recoveryBlocked" && !clearFailed && outcome?.source === "write" && outcome.classification.kind === "payloadMismatch" && (
+            // Never offered a "retry safely" affordance (point 1): retrying would resend the identical payload that
+            // already mismatched, reproducing the same refusal. Only the read-only status check remains useful.
+            <>
+              <p role="alert" className="text-sm text-bad">
+                {t("outcome.payloadMismatch")}
+              </p>
+              <div>
+                <Button type="button" variant="outline" onClick={handleCheckStatusAgain}>
+                  {t("recovery.checkAgain")}
+                </Button>
+              </div>
+            </>
+          )}
+          {phase === "recoveryBlocked" && !clearFailed && outcome?.source === "write" && outcome.classification.kind === "rejected" && (
             <>
               <p role="alert" className="text-sm text-bad">
                 {t("recovery.blockedRejected")}
@@ -357,13 +566,11 @@ export function PaymentEntrySection({ organizationId, currentUserId, students }:
       {phase === "outcome" && outcome && (
         <div className="flex flex-col gap-2 rounded-lg border border-border p-3">
           {renderOutcome(outcome)}
-          {canRecordMore && (
-            <div>
-              <Button type="button" variant="outline" onClick={startOver}>
-                {t("recordAnother")}
-              </Button>
-            </div>
-          )}
+          <div>
+            <Button type="button" variant="outline" onClick={startOver}>
+              {t("recordAnother")}
+            </Button>
+          </div>
         </div>
       )}
 
@@ -391,7 +598,14 @@ export function PaymentEntrySection({ organizationId, currentUserId, students }:
           </label>
 
           {phase === "loadingObligations" && <p className="text-sm text-muted-foreground">{t("obligations.loading")}</p>}
-          {obligationsError && <p role="alert" className="text-sm text-bad">{t(`error.${obligationsError}`, { defaultValue: t("error.unexpected") })}</p>}
+          {obligationsError && (
+            <div className="flex items-center gap-2">
+              <p role="alert" className="text-sm text-bad">{t(`error.${obligationsError}`, { defaultValue: t("error.unexpected") })}</p>
+              <Button type="button" variant="outline" onClick={retryObligations}>
+                {t("obligations.retry")}
+              </Button>
+            </div>
+          )}
 
           {mixedCurrency && (
             <p role="alert" className="text-sm text-bad">
@@ -425,11 +639,23 @@ export function PaymentEntrySection({ organizationId, currentUserId, students }:
                 </p>
               )}
               <p className="text-sm font-medium">{t("obligations.todaysTotal", { amount: (todaysTotalMinor / 100).toFixed(2) })}</p>
-              {receivedOn !== todayIso() && <p className="text-xs text-muted-foreground">{t("obligations.backdatedDisclaimer")}</p>}
+              {branchToday && receivedOn !== calendarDateToIso(branchToday) && <p className="text-xs text-muted-foreground">{t("obligations.backdatedDisclaimer")}</p>}
             </div>
           )}
           {!mixedCurrency && obligations && obligations.length === 0 && selectedStudentId && (
             <p className="text-sm text-muted-foreground">{t("obligations.none")}</p>
+          )}
+
+          {formError && (
+            <div className="flex flex-col gap-1">
+              <p role="alert" className="text-sm text-bad">{t(`error.${formError.error}`, { defaultValue: t("error.unexpected") })}</p>
+              {formError.alreadySettledIds && formError.alreadySettledIds.length > 0 && (
+                <p className="text-xs text-muted-foreground">{t("error.alreadySettledDetail", { ids: formError.alreadySettledIds.join(", ") })}</p>
+              )}
+              {formError.selectableTotals && formError.selectableTotals.length > 0 && (
+                <p className="text-xs text-muted-foreground">{t("error.selectableTotalsDetail", { totals: formError.selectableTotals.join(", ") })}</p>
+              )}
+            </div>
           )}
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -449,7 +675,16 @@ export function PaymentEntrySection({ organizationId, currentUserId, students }:
             </label>
             <label className="flex flex-col gap-1 text-sm">
               <span>{t("fields.receivedOn")}</span>
-              <Input type="date" required disabled={locked} value={receivedOn} onChange={(e) => setReceivedOn(e.target.value)} />
+              <Input
+                type="date"
+                required
+                disabled={locked}
+                value={receivedOn}
+                onChange={(e) => {
+                  setReceivedOnTouched(true);
+                  setReceivedOn(e.target.value);
+                }}
+              />
             </label>
             <label className="flex flex-col gap-1 text-sm">
               <span>{t("fields.method")}</span>
@@ -468,7 +703,7 @@ export function PaymentEntrySection({ organizationId, currentUserId, students }:
           </label>
 
           <div>
-            <Button type="submit" disabled={locked || selectedObligationIds.size === 0 || !amount}>
+            <Button type="submit" disabled={!canSubmit}>
               {phase === "submitting" ? t("submitting") : t("submit")}
             </Button>
           </div>

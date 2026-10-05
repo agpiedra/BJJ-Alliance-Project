@@ -1,6 +1,10 @@
 import type { TenantContext } from "@/lib/tenant/types";
+import { branchScopeWhere } from "@/lib/tenant/context";
+import { getScopedDb } from "@/lib/tenant/scoped-client";
 import { listDuesFactsForStudents, type DuesOutstandingFact } from "@/lib/dues/ledger/dues-facts";
 import { orderOldestFirst } from "@/lib/dues/settlement";
+import { todayIn } from "@/lib/dues/ledger/common";
+import type { CalendarDate } from "@/lib/dues/calendar";
 import type { LedgerDeps } from "@/lib/dues/ledger/activation";
 
 /**
@@ -49,4 +53,46 @@ export async function listPayableObligations(context: TenantContext, studentId: 
   if (!facts) return { ok: false, error: "notFound" };
   const obligations = facts.outstanding.filter((o): o is PayableObligation => o.type !== "PACKAGE" && o.settled === false);
   return { ok: true, obligations };
+}
+
+export type PaymentEntryStudent = { id: string; firstName: string; lastName: string; homeAcademyId: string; homeAcademyName: string };
+
+/**
+ * Point 6's correction: `payments/page.tsx`'s own `students` prop (fed to `RecordPaymentForm`/`PaymentsTable`) comes
+ * from `listCurrentPaymentStatus`, which filters `status: "ACTIVE"` (`list-current-status.ts:65`) — appropriate for
+ * the LEGACY current-period flow, wrong here. This writer settles real `DuesObligation`/`DuesPayment` rows, which do
+ * not depend on a student's current billing-eligibility status; an inactive or archived student can still owe real,
+ * unsettled debt. This is a DEDICATED, unfiltered (by status) tenant/branch-scoped picker query for this UI only —
+ * `listCurrentPaymentStatus`/the legacy picker are completely unchanged, since they legitimately only need active
+ * students for their own flow.
+ */
+export async function listStudentsForPaymentEntry(context: TenantContext): Promise<PaymentEntryStudent[]> {
+  const scope = branchScopeWhere(context);
+  const students = await getScopedDb(context).student.findMany({
+    where: { ...(scope.academyId ? { homeAcademyId: scope.academyId } : {}) },
+    select: { id: true, firstName: true, lastName: true, homeAcademyId: true, homeAcademy: { select: { name: true } } },
+    orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
+  });
+  return students.map((s) => ({ id: s.id, firstName: s.firstName, lastName: s.lastName, homeAcademyId: s.homeAcademyId, homeAcademyName: s.homeAcademy.name }));
+}
+
+/**
+ * Point 7's correction: the UI's default `receivedOn` and its backdated-date disclaimer must use the student's own
+ * BRANCH-local date (the same `todayIn(branch.timezone, ...)` the engine itself judges D4's 30-day limit and every
+ * fee grace-deadline against — `record-payment.ts:561`), never the owner's own browser clock, which can disagree at
+ * a local-midnight boundary if the owner is in a different timezone than the branch. Returns `null` for a student
+ * outside the caller's own tenant/branch scope — the same silent-exclusion disclosure rule `listDuesFactsForStudents`
+ * already applies, never a distinct error that would leak existence.
+ */
+export async function getStudentBranchLocalToday(context: TenantContext, studentId: string, now: Date = new Date()): Promise<CalendarDate | null> {
+  // `getScopedDb` only auto-injects `organizationId` — branch scope is a separate, OPTIONAL layer every caller
+  // composes itself (`branchScopeWhere`'s own doc comment), exactly like `listStudentsForPaymentEntry` above.
+  // Omitting it here would leak an out-of-branch DIRECTOR's target academy's timezone.
+  const scope = branchScopeWhere(context);
+  const student = await getScopedDb(context).student.findFirst({
+    where: { id: studentId, ...(scope.academyId ? { homeAcademyId: scope.academyId } : {}) },
+    select: { homeAcademy: { select: { timezone: true } } },
+  });
+  if (!student) return null;
+  return todayIn(student.homeAcademy.timezone, now);
 }

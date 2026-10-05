@@ -1265,7 +1265,8 @@
         "type": {
           "MONTHLY": "Mensualidad",
           "SIGNUP": "Inscripcion"
-        }
+        },
+        "retry": "Reintentar"
       },
       "outcome": {
         "success": "Pago registrado.",
@@ -1273,7 +1274,9 @@
         "capturedPending": "No habia un tipo de cambio disponible todavia. Este pago quedo guardado, pendiente, en la cola de tipo de cambio.",
         "capturedResolved": "Este pago estaba esperando un tipo de cambio y ya fue resuelto como un pago real.",
         "capturedCancelled": "Este pago estaba esperando un tipo de cambio y fue cancelado. No se registro ningun pago.",
-        "payloadMismatch": "Algo salio mal con la identidad de este envio. Contacte soporte antes de reintentar."
+        "payloadMismatch": "Algo salio mal con la identidad de este envio. Contacte soporte antes de reintentar.",
+        "capturedAdminLink": "Revisarlo en la cola de tipo de cambio",
+        "capturedDirectorGuidance": "Pida a un propietario que revise esto en la cola de tipo de cambio."
       },
       "recovery": {
         "inProgress": "Hay un intento de pago sin confirmar de antes.",
@@ -1284,7 +1287,10 @@
         "blockedWrite": "No podemos confirmar el estado de este pago ahora mismo ({reason}). Esto no significa que haya fallado.",
         "unreadableDraft": "Este borrador no se pudo leer completamente. Contacte soporte si falta un pago.",
         "checkAgain": "Verificar estado de nuevo",
-        "retrySafely": "Reintentar de forma segura"
+        "retrySafely": "Reintentar de forma segura",
+        "storageUnavailable": "No podemos verificar el almacenamiento de su navegador en este momento, asi que no se puede iniciar un pago nuevo de forma segura. Recargue la pagina o pruebe con otro navegador.",
+        "clearFailed": "El resultado de este pago esta confirmado, pero no pudimos terminar de borrar el borrador local. Intente de nuevo.",
+        "finishCleanup": "Terminar limpieza"
       },
       "error": {
         "notActive": "Esta funcion aun no esta activa para su organizacion.",
@@ -1302,7 +1308,9 @@
         "conflict": "Algo cambio para este estudiante. Intente de nuevo.",
         "attemptAlreadyExists": "Ya existe un intento con esta identidad. Verifique su estado antes de reintentar.",
         "storageUnavailable": "Su navegador no pudo guardar este intento de forma segura, asi que no se envio. Intente habilitar el almacenamiento o use otro navegador.",
-        "unexpected": "Ocurrio algo inesperado."
+        "unexpected": "Ocurrio algo inesperado.",
+        "alreadySettledDetail": "Ya liquidado: {ids}",
+        "selectableTotalsDetail": "Montos que serian aceptados: {totals}"
       }
     }
   },

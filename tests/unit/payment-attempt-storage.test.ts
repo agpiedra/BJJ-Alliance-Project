@@ -6,6 +6,12 @@ import { beginAttempt, readAttempt, clearAttempt, listStoredAttemptIds, type Sto
  * Ordinary payment-entry UI brief §8 tier 4: the `localStorage` persistence module, per §2.4b/§2.4c's corrected
  * rules — write-once per key, storage failure BLOCKS submission (no "proceed anyway"), a corrupted entry is
  * preserved and flagged (never auto-cleared, never "start fresh"), per-key isolation across submissionIds.
+ *
+ * Post-review (point 5): `listStoredAttemptIds`/`readAttempt`/`clearAttempt` each now return a distinct
+ * "unavailable" result when the underlying `localStorage` call itself throws — never silently identical to "missing"
+ * / "nothing stored" / "successfully removed". The stored-payload schema is also strengthened to reject a
+ * schema-valid-but-semantically-garbage value (bad method, unparseable amount, duplicate obligationIds, an
+ * impossible calendar date).
  */
 
 const ORG = "org-1";
@@ -45,7 +51,7 @@ describe("write-once per submissionId (§2.4b point 2 — edited form fields can
 
   it("clearing frees the key for reuse", () => {
     beginAttempt(ORG, USER, "sub-1", PAYLOAD);
-    clearAttempt(ORG, USER, "sub-1");
+    expect(clearAttempt(ORG, USER, "sub-1")).toEqual({ ok: true });
     expect(beginAttempt(ORG, USER, "sub-1", PAYLOAD)).toEqual({ ok: true });
   });
 });
@@ -64,7 +70,28 @@ describe("corrupted/malformed stored values: preserved and flagged, never auto-c
 
   it("the submissionId is still discoverable via a key scan even when the stored VALUE is fully corrupt", () => {
     window.localStorage.setItem(`payment-attempt:${ORG}:${USER}:sub-corrupt`, "not even json {{{");
-    expect(listStoredAttemptIds(ORG, USER)).toContain("sub-corrupt");
+    const scanned = listStoredAttemptIds(ORG, USER);
+    expect(scanned.status === "ok" && scanned.ids).toContain("sub-corrupt");
+  });
+
+  it("a schema-valid but semantically garbage value is also corrupt (point 5): bad method", () => {
+    window.localStorage.setItem(`payment-attempt:${ORG}:${USER}:sub-1`, JSON.stringify({ ...PAYLOAD, method: "BITCOIN" }));
+    expect(readAttempt(ORG, USER, "sub-1")).toEqual({ status: "corrupt" });
+  });
+
+  it("a schema-valid but semantically garbage value is also corrupt: unparseable money amount", () => {
+    window.localStorage.setItem(`payment-attempt:${ORG}:${USER}:sub-1`, JSON.stringify({ ...PAYLOAD, tender: { currency: "USD", amount: "not-money" } }));
+    expect(readAttempt(ORG, USER, "sub-1")).toEqual({ status: "corrupt" });
+  });
+
+  it("a schema-valid but semantically garbage value is also corrupt: duplicate obligationIds", () => {
+    window.localStorage.setItem(`payment-attempt:${ORG}:${USER}:sub-1`, JSON.stringify({ ...PAYLOAD, obligationIds: ["ob-1", "ob-1"] }));
+    expect(readAttempt(ORG, USER, "sub-1")).toEqual({ status: "corrupt" });
+  });
+
+  it("a schema-valid but semantically garbage value is also corrupt: an impossible calendar date", () => {
+    window.localStorage.setItem(`payment-attempt:${ORG}:${USER}:sub-1`, JSON.stringify({ ...PAYLOAD, receivedOn: { year: 2027, month: 2, day: 30 } }));
+    expect(readAttempt(ORG, USER, "sub-1")).toEqual({ status: "corrupt" });
   });
 });
 
@@ -79,6 +106,53 @@ describe("storage-write failure blocks submission entirely — no 'proceed anywa
 
   it("beginAttempt returns storageUnavailable, surfaced BEFORE any network call would happen", () => {
     expect(beginAttempt(ORG, USER, "sub-1", PAYLOAD)).toEqual({ ok: false, error: "storageUnavailable" });
+  });
+});
+
+describe("point 5: a storage-access failure is distinct from a genuinely empty/missing result, for all three read-path functions", () => {
+  it("listStoredAttemptIds: a throwing scan returns {status:'unavailable'}, never {status:'ok', ids:[]}", () => {
+    const spy = vi.spyOn(window.localStorage.__proto__, "key").mockImplementation(() => {
+      throw new Error("storage inaccessible");
+    });
+    // length must be nonzero for the loop to even reach `.key(i)`.
+    window.localStorage.setItem("irrelevant", "x");
+    try {
+      expect(listStoredAttemptIds(ORG, USER)).toEqual({ status: "unavailable" });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("listStoredAttemptIds: a genuinely empty storage still returns {status:'ok', ids:[]}, not unavailable", () => {
+    expect(listStoredAttemptIds(ORG, USER)).toEqual({ status: "ok", ids: [] });
+  });
+
+  it("readAttempt: a throwing getItem returns {status:'unavailable'}, never {status:'missing'}", () => {
+    const spy = vi.spyOn(window.localStorage.__proto__, "getItem").mockImplementation(() => {
+      throw new Error("storage inaccessible");
+    });
+    try {
+      expect(readAttempt(ORG, USER, "sub-1")).toEqual({ status: "unavailable" });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("clearAttempt: a throwing removeItem returns {ok:false, error:'unavailable'} — the caller must not assume the entry is gone", () => {
+    const spy = vi.spyOn(window.localStorage.__proto__, "removeItem").mockImplementation(() => {
+      throw new Error("storage inaccessible");
+    });
+    try {
+      expect(clearAttempt(ORG, USER, "sub-1")).toEqual({ ok: false, error: "unavailable" });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("clearAttempt: removing a genuinely-present key still returns {ok:true}", () => {
+    beginAttempt(ORG, USER, "sub-1", PAYLOAD);
+    expect(clearAttempt(ORG, USER, "sub-1")).toEqual({ ok: true });
+    expect(readAttempt(ORG, USER, "sub-1")).toEqual({ status: "missing" });
   });
 });
 
@@ -98,7 +172,7 @@ describe("per-key isolation: two different submissionIds under the same user/org
     beginAttempt(ORG, USER, "sub-1", PAYLOAD);
     beginAttempt("org-2", USER, "sub-2", PAYLOAD);
     beginAttempt(ORG, "user-2", "sub-3", PAYLOAD);
-    expect(listStoredAttemptIds(ORG, USER)).toEqual(["sub-1"]);
+    expect(listStoredAttemptIds(ORG, USER)).toEqual({ status: "ok", ids: ["sub-1"] });
   });
 });
 
@@ -107,10 +181,11 @@ describe("clearAttempt: removes exactly the targeted entry", () => {
     beginAttempt(ORG, USER, "sub-1", PAYLOAD);
     beginAttempt(ORG, USER, "sub-2", PAYLOAD);
     clearAttempt(ORG, USER, "sub-1");
-    expect(listStoredAttemptIds(ORG, USER).sort()).toEqual(["sub-2"]);
+    const scanned = listStoredAttemptIds(ORG, USER);
+    expect(scanned.status === "ok" && scanned.ids.sort()).toEqual(["sub-2"]);
   });
 
-  it("clearing a non-existent key is a safe no-op", () => {
-    expect(() => clearAttempt(ORG, USER, "never-existed")).not.toThrow();
+  it("clearing a non-existent key is a safe no-op, returning ok:true", () => {
+    expect(clearAttempt(ORG, USER, "never-existed")).toEqual({ ok: true });
   });
 });

@@ -6,7 +6,7 @@ import type { TenantContext } from "../../src/lib/tenant/types";
 import type { LedgerActivation } from "../../src/lib/dues/ledger/activation";
 import { createMonthlyObligation } from "../../src/lib/dues/ledger/create-monthly-obligation";
 import { recordDuesPayment } from "../../src/lib/dues/ledger/record-payment";
-import { listPayableObligations, orderPayableOldestFirst, isMixedCurrency } from "../../src/lib/dues/payment-entry-queries";
+import { listPayableObligations, orderPayableOldestFirst, isMixedCurrency, listStudentsForPaymentEntry, getStudentBranchLocalToday } from "../../src/lib/dues/payment-entry-queries";
 
 /**
  * Ordinary payment-entry UI brief §8 tier 1: `payment-entry-queries.ts`, proved against the REAL test database.
@@ -22,6 +22,7 @@ const deps = (extra: Record<string, unknown> = {}) => ({ activation: ACTIVE, ...
 
 let a: Fixture;
 let academy2: { id: string };
+let academyFarTz: { id: string; timezone: string };
 let usdTerms: { id: string };
 let usdPolicy: { id: string };
 let crcTerms: { id: string };
@@ -33,12 +34,12 @@ function context(over: Partial<TenantContext> = {}): TenantContext {
 }
 
 let studentCounter = 0;
-async function newStudent(academyId = a.academy.id) {
+async function newStudent(academyId = a.academy.id, status: "ACTIVE" | "INACTIVE" | "ARCHIVED" | "PENDING" = "ACTIVE") {
   const n = ++studentCounter;
   return prisma.student.create({
     data: {
       organizationId: a.org.id, homeAcademyId: academyId, firstName: "Entry", lastName: `Q${n}`, phone: "00000000",
-      email: `entryq-${n}-${suffix}@example.com`, currentRankId: await a.rankId("WHITE"), codeHash: `entryq-${n}-${suffix}`, status: "ACTIVE",
+      email: `entryq-${n}-${suffix}@example.com`, currentRankId: await a.rankId("WHITE"), codeHash: `entryq-${n}-${suffix}`, status,
     },
   });
 }
@@ -87,6 +88,10 @@ async function packageObligation(studentId: string, year: number, month: number)
 beforeAll(async () => {
   a = await makeAccountingOrg("CUMULATIVE", "entryq-a");
   academy2 = await prisma.academy.create({ data: { organizationId: a.org.id, name: "Entry Q A2", slug: `entryq-a2-${suffix}`, kioskTokenHash: `entryq-a2-${suffix}` } });
+  // Deliberately NOT the schema default ("America/Costa_Rica") and far enough away (UTC+14) that a naive
+  // browser/server-clock date would almost never agree with it by coincidence — the same anti-coincidence choice
+  // vitest.config.ts itself makes for the whole suite's own TZ.
+  academyFarTz = await prisma.academy.create({ data: { organizationId: a.org.id, name: "Entry Q Far TZ", slug: `entryq-fartz-${suffix}`, kioskTokenHash: `entryq-fartz-${suffix}`, timezone: "Pacific/Kiritimati" } });
   const planA = await prisma.paymentPlan.create({ data: { organizationId: a.org.id, academyId: a.academy.id, name: `Entry Q USD plan ${suffix}` } });
   usdTerms = await prisma.paymentPlanTerms.create({ data: { organizationId: a.org.id, planId: planA.id, effectiveYear: 2026, effectiveMonth: 1, priceAmount: "100.00", currency: "USD", monthsCovered: 1, createdById: a.admin.id } });
   usdPolicy = await prisma.duesPolicyVersion.create({ data: { organizationId: a.org.id, academyId: a.academy.id, effectiveYear: 2026, effectiveMonth: 1, dueDay: 20, graceDay: 5, lateFeeAmount: "20.00", lateFeeCurrency: "USD", createdById: a.admin.id } });
@@ -117,6 +122,10 @@ afterAll(async () => {
   if (academy2) {
     await prisma.student.deleteMany({ where: { organizationId: a.org.id, homeAcademyId: academy2.id } });
     await prisma.academy.deleteMany({ where: { id: academy2.id } });
+  }
+  if (academyFarTz) {
+    await prisma.student.deleteMany({ where: { organizationId: a.org.id, homeAcademyId: academyFarTz.id } });
+    await prisma.academy.deleteMany({ where: { id: academyFarTz.id } });
   }
   await a?.drop();
 }, 120_000);
@@ -203,5 +212,57 @@ describe("orderPayableOldestFirst — cross-checked directly against record-paym
     // engine's own eyes, not just in this UI's own comparator.
     const monthlyAlone = await recordDuesPayment({ context: context(), studentId: s.id, receivedOn: { year: 2026, month: 10, day: 1 }, tender: { currency: "USD", amount: "100.00" }, method: "EFECTIVO", obligationIds: [monthlyId], maxBackdateDays: 3660 }, deps());
     expect(monthlyAlone).toMatchObject({ ok: false, error: "notOldestFirst" });
+  });
+});
+
+describe("listStudentsForPaymentEntry (point 6 — the picker is NOT filtered to status:\"ACTIVE\")", () => {
+  it("returns an INACTIVE and an ARCHIVED student, neither of which listCurrentPaymentStatus's own ACTIVE-only filter would include", async () => {
+    const activeS = await newStudent(a.academy.id, "ACTIVE");
+    const inactiveS = await newStudent(a.academy.id, "INACTIVE");
+    const archivedS = await newStudent(a.academy.id, "ARCHIVED");
+    const result = await listStudentsForPaymentEntry(context());
+    const ids = result.map((s) => s.id);
+    expect(ids).toEqual(expect.arrayContaining([activeS.id, inactiveS.id, archivedS.id]));
+  });
+
+  it("branch-scopes exactly like every other staff-facing dues reader — excludes a student outside the caller's own branch", async () => {
+    const outOfScope = await newStudent(academy2.id, "ACTIVE");
+    const director = context({ organizationRole: "DIRECTOR", academyIds: [a.academy.id] }); // excludes academy2
+    const result = await listStudentsForPaymentEntry(director);
+    expect(result.map((s) => s.id)).not.toContain(outOfScope.id);
+  });
+
+  it("an INACTIVE student with genuine outstanding debt is selectable in the new picker AND a payment for them succeeds", async () => {
+    const inactiveS = await newStudent(a.academy.id, "INACTIVE");
+    // usdTerms/usdPolicy are effective from 2026-01 onward (`staleVersion` otherwise) — month 2 keeps this inside
+    // every other test's own already-proven-safe window in this file (up to month 10) without colliding with any.
+    const obligationId = await monthly(inactiveS.id, 2026, 2);
+
+    const picker = await listStudentsForPaymentEntry(context());
+    expect(picker.map((s) => s.id)).toContain(inactiveS.id);
+
+    const outstanding = await listPayableObligations(context(), inactiveS.id, deps());
+    if (!outstanding.ok) throw new Error(JSON.stringify(outstanding));
+    expect(outstanding.obligations.map((o) => o.obligationId)).toContain(obligationId);
+
+    const paid = await recordDuesPayment({ context: context(), studentId: inactiveS.id, receivedOn: { year: 2026, month: 2, day: 1 }, tender: { currency: "USD", amount: "100.00" }, method: "EFECTIVO", obligationIds: [obligationId], maxBackdateDays: 3660 }, deps());
+    expect(paid).toMatchObject({ ok: true });
+  });
+});
+
+describe("getStudentBranchLocalToday (point 7 — the student's own branch timezone, never the caller's clock)", () => {
+  it("resolves the real academy's own timezone, genuinely different from a naive UTC/browser read at the same instant", async () => {
+    const s = await newStudent(academyFarTz.id);
+    // A fixed instant whose UTC calendar date and Pacific/Kiritimati (UTC+14) calendar date genuinely differ.
+    const instant = new Date("2026-11-01T20:00:00.000Z"); // UTC: 2026-11-01 20:00; Kiritimati: 2026-11-02 10:00
+    const result = await getStudentBranchLocalToday(context(), s.id, instant);
+    expect(result).toEqual({ year: 2026, month: 11, day: 2 });
+    expect(result).not.toEqual({ year: instant.getUTCFullYear(), month: instant.getUTCMonth() + 1, day: instant.getUTCDate() });
+  });
+
+  it("returns null for a student outside the caller's own branch scope — the same silent-exclusion rule as every other reader here", async () => {
+    const outOfScope = await newStudent(academy2.id);
+    const director = context({ organizationRole: "DIRECTOR", academyIds: [a.academy.id] });
+    expect(await getStudentBranchLocalToday(director, outOfScope.id)).toBeNull();
   });
 });

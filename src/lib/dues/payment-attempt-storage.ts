@@ -1,5 +1,14 @@
 import { z } from "zod";
+import type { PaymentMethod } from "@/generated/prisma/client";
 import { CURRENCIES } from "@/lib/payments/format-money";
+import { parseMoney } from "@/lib/dues/config-input";
+
+/** A hardcoded literal array satisfying `PaymentMethod`, mirroring `CURRENCIES`'s own established pattern
+ * (`format-money.ts`) — NEVER `Object.values(PaymentMethod)` imported as a VALUE from `@/generated/prisma/client`:
+ * that pulls the real generated Prisma client runtime into this client-side bundle (confirmed directly — `next build`
+ * fails with "the chunking context does not support external modules (request: node:module)" the moment this file
+ * imports the enum as a value rather than a type). */
+const PAYMENT_METHODS = ["SINPE", "TRANSFERENCIA", "EFECTIVO", "TARJETA"] as const satisfies readonly PaymentMethod[];
 
 /**
  * Ordinary payment-entry UI brief §2.4b/§2.4c: the browser-side `submissionId`/payload persistence this feature's own
@@ -18,14 +27,36 @@ import { CURRENCIES } from "@/lib/payments/format-money";
  * to free a key for reuse, and clearing is gated by the recovery-state table (§2.4c), never by a bare lookup failure.
  */
 
-const calendarDateSchema = z.object({ year: z.number().int(), month: z.number().int().min(1).max(12), day: z.number().int().min(1).max(31) });
+/** A plausible calendar date — the same discipline `isRealDate` (`dues/ledger/common.ts`) applies, reimplemented
+ * locally rather than imported: that module sits under `dues/ledger/` and pulls in `@/lib/students/lock` (a
+ * prisma-touching chain) transitively, which must never reach a client bundle. Deliberately matches the ledger's own
+ * supported year range (2000-2100) so a value this module accepts is never later rejected by the server purely on
+ * range grounds. */
+function isPlausibleCalendarDate(d: { year: number; month: number; day: number }): boolean {
+  if (d.year < 2000 || d.year > 2100) return false;
+  const date = new Date(Date.UTC(d.year, d.month - 1, d.day));
+  return date.getUTCFullYear() === d.year && date.getUTCMonth() === d.month - 1 && date.getUTCDate() === d.day;
+}
 
+const calendarDateSchema = z
+  .object({ year: z.number().int(), month: z.number().int().min(1).max(12), day: z.number().int().min(1).max(31) })
+  .refine(isPlausibleCalendarDate, { message: "not a real calendar date" });
+
+/** A schema-valid-but-semantically-garbage stored value (e.g. `method: "not-a-method"`, an unparseable `amount`, a
+ * duplicate-id `obligationIds`) must classify as unusable/corrupt, not be trusted for a retry — point 5's correction.
+ * Reuses `parseMoney` (the same canonical-amount check the engine itself applies), never a bespoke regex. */
 export const storedAttemptPayloadSchema = z.object({
   studentId: z.string().min(1),
-  obligationIds: z.array(z.string().min(1)).min(1),
+  obligationIds: z
+    .array(z.string().min(1))
+    .min(1)
+    .refine((ids) => new Set(ids).size === ids.length, { message: "duplicate obligationIds" }),
   receivedOn: calendarDateSchema,
-  tender: z.object({ currency: z.enum(CURRENCIES), amount: z.string().min(1) }),
-  method: z.string().min(1),
+  tender: z.object({
+    currency: z.enum(CURRENCIES),
+    amount: z.string().refine((a) => parseMoney(a, { allowZero: false }).ok, { message: "not a valid money amount" }),
+  }),
+  method: z.enum(PAYMENT_METHODS),
   notes: z.string().optional(),
 });
 export type StoredAttemptPayload = z.infer<typeof storedAttemptPayloadSchema>;
@@ -73,7 +104,10 @@ export type ReadAttemptResult =
   /** The value failed to parse (JSON or schema) — NEVER treated as proof nothing was recorded (brief §2.4b). The
    * `submissionId` itself is still known (it came from the key, not the value), so a status check remains possible;
    * the payload for a retry is not. */
-  | { status: "corrupt" };
+  | { status: "corrupt" }
+  /** `localStorage.getItem` itself threw — point 5's correction: distinct from "missing" (a genuinely absent key).
+   * "Can't tell" is never treated as "nothing is there." */
+  | { status: "unavailable" };
 
 export function readAttempt(organizationId: string, userId: string, submissionId: string): ReadAttemptResult {
   const key = keyFor(organizationId, userId, submissionId);
@@ -81,7 +115,7 @@ export function readAttempt(organizationId: string, userId: string, submissionId
   try {
     raw = window.localStorage.getItem(key);
   } catch {
-    return { status: "missing" };
+    return { status: "unavailable" };
   }
   if (raw === null) return { status: "missing" };
   let json: unknown;
@@ -95,22 +129,29 @@ export function readAttempt(organizationId: string, userId: string, submissionId
   return { status: "ok", payload: parsed.data };
 }
 
+export type ClearAttemptResult = { ok: true } | { ok: false; error: "unavailable" };
+
 /** Removes exactly the targeted entry. Called only per the recovery-state table (§2.4c) — a definitive resolved
  * outcome, or an explicit, deliberate owner action — never on a bare lookup failure and never from a sign-out
- * handler (this module exposes no such handler on purpose: nothing here reacts to auth state). */
-export function clearAttempt(organizationId: string, userId: string, submissionId: string): void {
+ * handler (this module exposes no such handler on purpose: nothing here reacts to auth state). Returns a result the
+ * caller must check (point 5): if removal genuinely failed, the caller must NOT assume the entry is gone. */
+export function clearAttempt(organizationId: string, userId: string, submissionId: string): ClearAttemptResult {
   try {
     window.localStorage.removeItem(keyFor(organizationId, userId, submissionId));
+    return { ok: true };
   } catch {
-    // Nothing to do: if storage is unavailable for removal, it was equally unavailable for everything else this
-    // session, and there is no durable state to leave dangling.
+    return { ok: false, error: "unavailable" };
   }
 }
 
+export type ListStoredAttemptIdsResult = { status: "ok"; ids: string[] } | { status: "unavailable" };
+
 /** Every `submissionId` currently stored for this user+org (brief's reload-recovery mount check) — a plain key scan,
  * not a second index to keep in sync. Ordinarily 0 or 1 (write-once, cleared on resolution); more than one means two
- * tabs each started an attempt that is still uncertain — each is reported, none is preferred over another. */
-export function listStoredAttemptIds(organizationId: string, userId: string): string[] {
+ * tabs each started an attempt that is still uncertain — each is reported, none is preferred over another.
+ * Point 5's correction: a scan failure is `{status:"unavailable"}`, distinct from `{status:"ok", ids:[]}` (genuinely
+ * nothing stored) — the caller must treat "couldn't inspect storage" as blocking, never as "nothing to recover." */
+export function listStoredAttemptIds(organizationId: string, userId: string): ListStoredAttemptIdsResult {
   const ids: string[] = [];
   try {
     for (let i = 0; i < window.localStorage.length; i++) {
@@ -120,7 +161,7 @@ export function listStoredAttemptIds(organizationId: string, userId: string): st
       if (parsed && parsed.organizationId === organizationId && parsed.userId === userId) ids.push(parsed.submissionId);
     }
   } catch {
-    return [];
+    return { status: "unavailable" };
   }
-  return ids;
+  return { status: "ok", ids };
 }

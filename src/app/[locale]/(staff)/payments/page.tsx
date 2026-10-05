@@ -13,6 +13,7 @@ import { ensureCustomPromoPlan } from "@/lib/payments/ensure-custom-promo-plan";
 import { listSelectablePlans } from "@/lib/payments/list-plans";
 import { formatMonthYear } from "@/lib/format-month";
 import { inactiveLedgerActivation } from "@/lib/dues/ledger/activation";
+import { listStudentsForPaymentEntry } from "@/lib/dues/payment-entry-queries";
 import { PaymentEntrySection } from "./payment-entry-section";
 import { PaymentsTable } from "./payments-table";
 
@@ -77,6 +78,11 @@ export default async function PaymentsPage() {
     academyId: row.homeAcademyId,
     academyName: row.homeAcademyName,
   }));
+
+  // Point 6's correction: the ledger card's own picker is NOT `students` above (that list is `listCurrentPaymentStatus`'s
+  // own `status: "ACTIVE"`-filtered roster, correct for the legacy flow, wrong here — real ledger debt does not depend
+  // on current billing eligibility). Fetched only when the card can actually render.
+  const paymentEntryStudents = canRecordPayments && ledgerActive ? await listStudentsForPaymentEntry(context) : [];
 
   const paidRows = rows.filter((r) => r.bucket === "PAID");
   const pendingRows = rows.filter((r) => r.bucket === "PENDING");
@@ -157,7 +163,13 @@ export default async function PaymentsPage() {
             <CardTitle>{t("ledgerEntry.heading")}</CardTitle>
           </CardHeader>
           <CardContent className="pt-4">
-            <PaymentEntrySection organizationId={context.organizationId} currentUserId={context.actorUserId} students={students} />
+            <PaymentEntrySection
+              organizationId={context.organizationId}
+              currentUserId={context.actorUserId}
+              students={paymentEntryStudents.map((s) => ({ id: s.id, firstName: s.firstName, lastName: s.lastName, academyId: s.homeAcademyId, academyName: s.homeAcademyName }))}
+              organizationRole={context.organizationRole === "ADMIN" ? "ADMIN" : "DIRECTOR"}
+              plansHref={`/${locale}/payments/plans`}
+            />
           </CardContent>
         </Card>
       )}

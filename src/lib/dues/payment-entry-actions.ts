@@ -5,7 +5,13 @@ import { getLocale } from "next-intl/server";
 import { PaymentMethod, type Currency } from "@/generated/prisma/client";
 import { resolveActionContext } from "@/lib/tenant/context";
 import { recordDuesPaymentWithSubmissionIdentity, getSubmissionOutcome, type RecordDuesPaymentWithSubmissionIdentityResult, type SubmissionOutcome } from "@/lib/dues/ledger/submission-identity";
-import { listPayableObligations, orderPayableOldestFirst, isMixedCurrency, type PayableObligation } from "@/lib/dues/payment-entry-queries";
+import {
+  listPayableObligations,
+  orderPayableOldestFirst,
+  isMixedCurrency,
+  getStudentBranchLocalToday,
+  type PayableObligation,
+} from "@/lib/dues/payment-entry-queries";
 import { CURRENCIES } from "@/lib/payments/format-money";
 import type { CalendarDate } from "@/lib/dues/calendar";
 
@@ -126,7 +132,7 @@ export async function checkSubmissionOutcome(organizationId: string, submissionI
 }
 
 export type GetPayableObligationsResult =
-  | { ok: true; obligations: PayableObligation[]; mixedCurrency: boolean }
+  | { ok: true; obligations: PayableObligation[]; mixedCurrency: boolean; todayLocal: CalendarDate }
   | { ok: false; error: "notActive" | "invalid" | "notFound" };
 
 /**
@@ -140,11 +146,17 @@ export type GetPayableObligationsResult =
  * The global oldest-first ordering and the mixed-currency check (§2.1) are computed HERE, server-side, so the
  * client component never imports `payment-entry-queries.ts` directly (that module pulls in `prisma` transitively
  * through `dues-facts.ts`, which must never reach a client bundle).
+ *
+ * Point 7's correction: also resolves and returns the student's own BRANCH-local "today" (`todayIn(branch.timezone,
+ * ...)`) — the same clock every engine date check judges against — so the component never falls back to the
+ * owner's browser clock once a student/branch is actually known.
  */
 export async function getPayableObligations(organizationId: string, studentId: string): Promise<GetPayableObligationsResult> {
   const auth = await resolveActionContext(organizationId, ["ADMIN", "DIRECTOR"]);
   if (!auth.ok) return { ok: false, error: "notFound" };
   const result = await listPayableObligations(auth.context, studentId);
   if (!result.ok) return result;
-  return { ok: true, obligations: orderPayableOldestFirst(result.obligations), mixedCurrency: isMixedCurrency(result.obligations) };
+  const todayLocal = await getStudentBranchLocalToday(auth.context, studentId);
+  if (!todayLocal) return { ok: false, error: "notFound" };
+  return { ok: true, obligations: orderPayableOldestFirst(result.obligations), mixedCurrency: isMixedCurrency(result.obligations), todayLocal };
 }

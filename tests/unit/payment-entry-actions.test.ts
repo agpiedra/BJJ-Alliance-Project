@@ -15,16 +15,17 @@ const getSubmissionOutcome = vi.fn();
 const listPayableObligations = vi.fn();
 const orderPayableOldestFirst = vi.fn();
 const isMixedCurrency = vi.fn();
+const getStudentBranchLocalToday = vi.fn();
 const revalidatePath = vi.fn();
 const getLocale = vi.fn(async () => "en");
 
 vi.mock("@/lib/tenant/context", () => ({ resolveActionContext }));
 vi.mock("@/lib/dues/ledger/submission-identity", () => ({ recordDuesPaymentWithSubmissionIdentity, getSubmissionOutcome }));
 // NOT `vi.importActual` here: the real module imports `dues-facts.ts` -> `prisma`, which requires `DATABASE_URL` at
-// module load time — this test never touches a database. `orderPayableOldestFirst`/`isMixedCurrency`'s own real
-// behavior is exercised directly in `payment-entry-queries.test.ts` (tier 1, real DB); this tier only proves
-// `getPayableObligations` wires their results through correctly.
-vi.mock("@/lib/dues/payment-entry-queries", () => ({ listPayableObligations, orderPayableOldestFirst, isMixedCurrency }));
+// module load time — this test never touches a database. `orderPayableOldestFirst`/`isMixedCurrency`/
+// `getStudentBranchLocalToday`'s own real behavior is exercised directly in `payment-entry-queries.test.ts` (tier 1,
+// real DB); this tier only proves `getPayableObligations` wires their results through correctly.
+vi.mock("@/lib/dues/payment-entry-queries", () => ({ listPayableObligations, orderPayableOldestFirst, isMixedCurrency, getStudentBranchLocalToday }));
 vi.mock("next/cache", () => ({ revalidatePath }));
 vi.mock("next-intl/server", () => ({ getLocale }));
 
@@ -59,8 +60,10 @@ beforeEach(() => {
   listPayableObligations.mockReset();
   orderPayableOldestFirst.mockReset();
   isMixedCurrency.mockReset();
+  getStudentBranchLocalToday.mockReset();
   revalidatePath.mockReset();
   resolveActionContext.mockResolvedValue({ ok: true, context: OK_CONTEXT });
+  getStudentBranchLocalToday.mockResolvedValue({ year: 2027, month: 3, day: 10 });
 });
 
 describe("recordPayment: authorization", () => {
@@ -232,18 +235,20 @@ describe("getPayableObligations: authorization and oldest-first/mixed-currency c
     expect(await getPayableObligations(ORG_ID, "student-1")).toEqual({ ok: false, error: "notActive" });
   });
 
-  it("wires the reader's obligations through orderPayableOldestFirst/isMixedCurrency and returns their results", async () => {
+  it("wires the reader's obligations through orderPayableOldestFirst/isMixedCurrency and returns their results, plus the branch-local today", async () => {
     const newer = { obligationId: "newer", type: "MONTHLY", currency: "USD", coverageYear: 2027, coverageMonth: 3, settled: false, outstandingAmountMinor: 10000, outstandingFeeMinor: 0, dueOn: "2027-03-20", pastGrace: false };
     const older = { ...newer, obligationId: "older", coverageYear: 2027, coverageMonth: 2 };
     listPayableObligations.mockResolvedValue({ ok: true, obligations: [newer, older] });
     orderPayableOldestFirst.mockReturnValue([older, newer]);
     isMixedCurrency.mockReturnValue(false);
+    getStudentBranchLocalToday.mockResolvedValue({ year: 2027, month: 3, day: 15 });
 
     const result = await getPayableObligations(ORG_ID, "student-1");
 
     expect(orderPayableOldestFirst).toHaveBeenCalledWith([newer, older]);
     expect(isMixedCurrency).toHaveBeenCalledWith([newer, older]);
-    expect(result).toEqual({ ok: true, obligations: [older, newer], mixedCurrency: false });
+    expect(getStudentBranchLocalToday).toHaveBeenCalledWith(OK_CONTEXT, "student-1");
+    expect(result).toEqual({ ok: true, obligations: [older, newer], mixedCurrency: false, todayLocal: { year: 2027, month: 3, day: 15 } });
   });
 
   it("returns mixedCurrency: true when isMixedCurrency reports it", async () => {
@@ -251,6 +256,14 @@ describe("getPayableObligations: authorization and oldest-first/mixed-currency c
     orderPayableOldestFirst.mockReturnValue([]);
     isMixedCurrency.mockReturnValue(true);
     const result = await getPayableObligations(ORG_ID, "student-1");
-    expect(result).toEqual({ ok: true, obligations: [], mixedCurrency: true });
+    expect(result.ok && result.mixedCurrency).toBe(true);
+  });
+
+  it("resolves notFound if the branch-local-today lookup itself can't resolve the student (point 7)", async () => {
+    listPayableObligations.mockResolvedValue({ ok: true, obligations: [] });
+    orderPayableOldestFirst.mockReturnValue([]);
+    isMixedCurrency.mockReturnValue(false);
+    getStudentBranchLocalToday.mockResolvedValue(null);
+    expect(await getPayableObligations(ORG_ID, "student-1")).toEqual({ ok: false, error: "notFound" });
   });
 });

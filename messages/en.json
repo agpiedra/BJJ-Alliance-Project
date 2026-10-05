@@ -1265,7 +1265,8 @@
         "type": {
           "MONTHLY": "Monthly",
           "SIGNUP": "Signup"
-        }
+        },
+        "retry": "Retry"
       },
       "outcome": {
         "success": "Payment recorded.",
@@ -1273,7 +1274,9 @@
         "capturedPending": "No exchange rate was available yet. This payment is saved and waiting, pending, in the exchange-rate queue.",
         "capturedResolved": "This payment was waiting on an exchange rate and has since been resolved into a real payment.",
         "capturedCancelled": "This payment was waiting on an exchange rate and was cancelled. No payment was recorded.",
-        "payloadMismatch": "Something went wrong with this submission's identity. Please contact support before retrying."
+        "payloadMismatch": "Something went wrong with this submission's identity. Please contact support before retrying.",
+        "capturedAdminLink": "Review it in the exchange-rate queue",
+        "capturedDirectorGuidance": "Ask an owner to review this in the exchange-rate queue."
       },
       "recovery": {
         "inProgress": "There's an unconfirmed payment attempt from earlier.",
@@ -1284,7 +1287,10 @@
         "blockedWrite": "We can't confirm this payment's status right now ({reason}). This does not mean it failed.",
         "unreadableDraft": "This draft could not be read back fully. Contact support if a payment seems missing.",
         "checkAgain": "Check status again",
-        "retrySafely": "Retry safely"
+        "retrySafely": "Retry safely",
+        "storageUnavailable": "We can't verify your browser's storage right now, so a new payment can't be started safely. Reload the page or try a different browser.",
+        "clearFailed": "This payment's outcome is confirmed, but we couldn't finish clearing the local draft. Try again.",
+        "finishCleanup": "Finish cleanup"
       },
       "error": {
         "notActive": "This feature is not active for your organization yet.",
@@ -1302,7 +1308,9 @@
         "conflict": "Something changed for this student. Please try again.",
         "attemptAlreadyExists": "An attempt with this identity already exists. Please check its status before retrying.",
         "storageUnavailable": "Your browser couldn't save this attempt safely, so it wasn't sent. Try enabling storage or a different browser.",
-        "unexpected": "Something unexpected happened."
+        "unexpected": "Something unexpected happened.",
+        "alreadySettledDetail": "Already settled: {ids}",
+        "selectableTotalsDetail": "Amounts that would be accepted: {totals}"
       }
     }
   },
