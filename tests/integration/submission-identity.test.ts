@@ -238,36 +238,48 @@ describe("concurrency: genuine overlap on the identity row", () => {
         },
       }),
     );
-    expect(await waitUntil(async () => pid1 !== undefined), "the first attempt must reach the identity insert").toBe(true);
+    // release1()/draining both promises MUST run even if a setup assertion below throws — otherwise r1's transaction
+    // (holding a real row lock) is left running past this test's own lifetime, a risk to later tests' connections/locks.
+    let r2Promise: ReturnType<typeof recordDuesPaymentWithSubmissionIdentity> | undefined;
+    try {
+      expect(await waitUntil(async () => pid1 !== undefined), "the first attempt must reach the identity insert").toBe(true);
 
-    const r2Promise = recordDuesPaymentWithSubmissionIdentity(argsFor(), deps({ now: nowAt(d) }));
-    const waiterPid = await findBlockedOnInsert();
-    expect(waiterPid, "the second attempt's INSERT must genuinely block, not merely lose a timing race").not.toBeNull();
-    expect(await isBlockedBy(waiterPid!, pid1!)).toBe(true);
+      r2Promise = recordDuesPaymentWithSubmissionIdentity(argsFor(), deps({ now: nowAt(d) }));
+      const waiterPid = await findBlockedOnInsert();
+      expect(waiterPid, "the second attempt's INSERT must genuinely block, not merely lose a timing race").not.toBeNull();
+      expect(await isBlockedBy(waiterPid!, pid1!)).toBe(true);
+    } finally {
+      release1();
+      await Promise.allSettled([r1Promise, r2Promise]);
+    }
 
-    release1();
-    const [r1, r2] = await Promise.all([r1Promise, r2Promise]);
+    const r1 = await r1Promise;
     if (!r1.ok) throw new Error(`fixture: expected the first attempt to succeed, got ${JSON.stringify(r1)}`);
-    expect(r2).toEqual({ ok: true, paymentId: r1.paymentId, replay: true });
+    if (!r2Promise) throw new Error("fixture: the second attempt was never started");
+    const r2 = await r2Promise;
+    expect(r2).toEqual({ ok: true, paymentId: r1.paymentId, replay: true, currentlyReversed: false });
 
     expect(await prisma.duesPaymentAttempt.count({ where: { organizationId: a.org.id, submissionId } })).toBe(1);
     expect(await prisma.duesPayment.count({ where: { organizationId: a.org.id, studentId: s.id } })).toBe(1);
   });
 
-  it("(2) winner-rollback: the first genuinely refuses and rolls back; the second's blocked INSERT then succeeds as a genuinely fresh attempt", async () => {
+  it("(2) winner-rollback: the first genuinely refuses and rolls back; the second, genuinely blocked, then wins fresh and actually settles", async () => {
     const d = freshDate();
     const s = await newStudent(a, a.academy.id, "conc2");
-    const [, newer] = await twoOutstandingMonths(s.id, d);
+    const [older, newer] = await twoOutstandingMonths(s.id, d);
     const submissionId = freshSubmissionId("conc2");
     // Choosing only the NEWER obligation while an OLDER one remains unselected is the genuine oldest-first violation
     // (resolveMonthlyDebtItemsInTx compares the CHOSEN set against the true oldest-first prefix, not array order).
-    const wrongOrderArgs = { context: context(), studentId: s.id, receivedOn: d, tender: { currency: "USD" as const, amount: "100.00" }, method: "EFECTIVO" as const, obligationIds: [newer], maxBackdateDays: 5, submissionId };
+    const invalidArgs = { context: context(), studentId: s.id, receivedOn: d, tender: { currency: "USD" as const, amount: "100.00" }, method: "EFECTIVO" as const, obligationIds: [newer], maxBackdateDays: 5, submissionId };
+    // The SECOND, blocked request gets a genuinely VALID, corrected selection under the identical submissionId —
+    // older is two months stale as of `d`, so its own late fee (20.00) is genuinely owed alongside both tuitions.
+    const validArgs = { ...invalidArgs, obligationIds: [older, newer], tender: { currency: "USD" as const, amount: "220.00" } };
 
     let pid1: number | undefined;
     let release1!: () => void;
     const gate1 = new Promise<void>((resolve) => { release1 = resolve; });
     const r1Promise = recordDuesPaymentWithSubmissionIdentity(
-      wrongOrderArgs,
+      invalidArgs,
       deps({
         now: nowAt(d),
         afterSubmissionIdentityInsertForTest: async (tx: Tx) => {
@@ -277,20 +289,31 @@ describe("concurrency: genuine overlap on the identity row", () => {
         },
       }),
     );
-    expect(await waitUntil(async () => pid1 !== undefined), "the first attempt must reach the identity insert").toBe(true);
+    let r2Promise: ReturnType<typeof recordDuesPaymentWithSubmissionIdentity> | undefined;
+    try {
+      expect(await waitUntil(async () => pid1 !== undefined), "the first attempt must reach the identity insert").toBe(true);
 
-    const r2Promise = recordDuesPaymentWithSubmissionIdentity(wrongOrderArgs, deps({ now: nowAt(d) }));
-    const waiterPid = await findBlockedOnInsert();
-    expect(waiterPid, "the second attempt's INSERT must genuinely block on the first's uncommitted row").not.toBeNull();
-    expect(await isBlockedBy(waiterPid!, pid1!)).toBe(true);
+      r2Promise = recordDuesPaymentWithSubmissionIdentity(validArgs, deps({ now: nowAt(d) }));
+      const waiterPid = await findBlockedOnInsert();
+      expect(waiterPid, "the second attempt's INSERT must genuinely block on the first's uncommitted row").not.toBeNull();
+      expect(await isBlockedBy(waiterPid!, pid1!)).toBe(true);
+    } finally {
+      release1();
+      await Promise.allSettled([r1Promise, r2Promise]);
+    }
 
-    release1();
-    const [r1, r2] = await Promise.all([r1Promise, r2Promise]);
+    const r1 = await r1Promise;
     expect(r1).toMatchObject({ ok: false, error: "notOldestFirst" });
-    // Having waited for the first's genuine rollback, the second's own insert wins fresh — refused identically (the
-    // same skipped-older selection), never a replay of a nonexistent row.
-    expect(r2).toMatchObject({ ok: false, error: "notOldestFirst" });
-    expect(await prisma.duesPaymentAttempt.count({ where: { organizationId: a.org.id, submissionId } })).toBe(0);
+    if (!r2Promise) throw new Error("fixture: the second attempt was never started");
+    const r2 = await r2Promise;
+    if (!r2.ok) throw new Error(`fixture: expected the second, corrected attempt to genuinely succeed, got ${JSON.stringify(r2)}`);
+
+    // Exactly one row, finalized with the SECOND attempt's own real paymentId — never two rows, never the stale shape
+    // the first (rolled back) attempt would have left.
+    const attempts = await prisma.duesPaymentAttempt.findMany({ where: { organizationId: a.org.id, submissionId } });
+    expect(attempts).toHaveLength(1);
+    expect(attempts[0].paymentId).toBe(r2.paymentId);
+    expect(await prisma.duesPayment.count({ where: { id: r2.paymentId, organizationId: a.org.id, studentId: s.id } })).toBe(1);
   });
 });
 
@@ -348,13 +371,13 @@ describe("capture, resolution, cancellation and reversal replay", () => {
     expect(rate).toMatchObject({ ok: true });
 
     const r2 = await recordDuesPaymentWithSubmissionIdentity(args, deps({ now: nowAt(d) }));
-    expect(r2).toEqual({ ok: false, error: "captured", receiptId });
+    expect(r2).toEqual({ ok: false, error: "captured", receiptId, replay: true, currentStatus: "PENDING" });
 
     expect(await prisma.duesPayment.count({ where: { organizationId: a.org.id, resolvedFromReceiptId: receiptId } })).toBe(0);
     expect(await prisma.duesPaymentAttempt.count({ where: { organizationId: a.org.id, submissionId } })).toBe(1);
   });
 
-  it("(6a) a replayed receipt since RESOLVED reports its real current status via getSubmissionOutcome, never implying still-pending", async () => {
+  it("(6a) a replayed receipt since RESOLVED reports its real current status DIRECTLY from the writer's own replay result, never implying still-pending", async () => {
     const d = freshDate();
     const s = await newStudent(a, a.academy.id, "resolved6a");
     const ob = await oneMonth(context(), s.id, d, usdTerms, usdPolicy);
@@ -366,14 +389,15 @@ describe("capture, resolution, cancellation and reversal replay", () => {
     const resolved = await resolveAwaitingRateReceipt({ context: context(), receiptId: captured.receiptId! }, deps({ now: nowAt(d) }));
     expect(resolved).toMatchObject({ ok: true });
 
+    // The writer's OWN contract, not a separate reader: the replay result itself carries the fresh status.
+    const replay = await recordDuesPaymentWithSubmissionIdentity(args, deps({ now: nowAt(d) }));
+    expect(replay).toEqual({ ok: false, error: "captured", receiptId: captured.receiptId, replay: true, currentStatus: "RESOLVED" });
+
     currentSession = { user: { id: a.admin.id, role: "ADMIN" } };
     expect(await getSubmissionOutcome(a.org.id, submissionId)).toEqual({ status: "committed", outcome: { kind: "receipt", receiptId: captured.receiptId, currentStatus: "RESOLVED" } });
-
-    const replay = await recordDuesPaymentWithSubmissionIdentity(args, deps({ now: nowAt(d) }));
-    expect(replay).toEqual({ ok: false, error: "captured", receiptId: captured.receiptId });
   });
 
-  it("(6b) a replayed receipt since CANCELLED reports that via getSubmissionOutcome", async () => {
+  it("(6b) a replayed receipt since CANCELLED reports that DIRECTLY from the writer's own replay result", async () => {
     const d = freshDate();
     const s = await newStudent(a, a.academy.id, "cancelled6b");
     const ob = await oneMonth(context(), s.id, d, usdTerms, usdPolicy);
@@ -384,11 +408,14 @@ describe("capture, resolution, cancellation and reversal replay", () => {
     const cancelled = await cancelAwaitingRateReceipt({ context: context(), receiptId: captured.receiptId!, reason: "owner changed their mind" }, deps());
     expect(cancelled).toMatchObject({ ok: true });
 
+    const replay = await recordDuesPaymentWithSubmissionIdentity(args, deps({ now: nowAt(d) }));
+    expect(replay).toEqual({ ok: false, error: "captured", receiptId: captured.receiptId, replay: true, currentStatus: "CANCELLED" });
+
     currentSession = { user: { id: a.admin.id, role: "ADMIN" } };
     expect(await getSubmissionOutcome(a.org.id, submissionId)).toEqual({ status: "committed", outcome: { kind: "receipt", receiptId: captured.receiptId, currentStatus: "CANCELLED" } });
   });
 
-  it("(6c / 7) a replayed payment since reversed reports currentlyReversed:true, and the now-outstanding-again obligation is NOT re-settled", async () => {
+  it("(6c / 7) a replayed payment since reversed reports currentlyReversed:true DIRECTLY from the writer's own replay result, and the now-outstanding-again obligation is NOT re-settled", async () => {
     const d = freshDate();
     const s = await newStudent(a, a.academy.id, "reversed7");
     const ob = await oneMonth(context(), s.id, d, usdTerms, usdPolicy);
@@ -401,7 +428,7 @@ describe("capture, resolution, cancellation and reversal replay", () => {
 
     const settlementsBefore = await prisma.duesSettlement.count({ where: { organizationId: a.org.id, obligationId: ob } });
     const replay = await recordDuesPaymentWithSubmissionIdentity(args, deps({ now: nowAt(d) }));
-    expect(replay).toEqual({ ok: true, paymentId: r1.paymentId, replay: true });
+    expect(replay).toEqual({ ok: true, paymentId: r1.paymentId, replay: true, currentlyReversed: true });
     expect(await prisma.duesSettlement.count({ where: { organizationId: a.org.id, obligationId: ob } })).toBe(settlementsBefore);
 
     currentSession = { user: { id: a.admin.id, role: "ADMIN" } };
@@ -506,5 +533,266 @@ describe("database-enforced guarantees", () => {
     });
 
     expect(JSON.stringify(await prisma.duesPayment.findUniqueOrThrow({ where: { id: paid.paymentId } }))).toBe(beforePayment);
+  });
+});
+
+describe("canonical equivalence: different-looking, canonically-identical resubmissions replay", () => {
+  it("(12) reordered obligationIds replay as the identical submission", async () => {
+    const d = freshDate();
+    const s = await newStudent(a, a.academy.id, "canon-order");
+    const [older, newer] = await twoOutstandingMonths(s.id, d);
+    const submissionId = freshSubmissionId("canon-order");
+    const original = { context: context(), studentId: s.id, receivedOn: d, tender: { currency: "USD" as const, amount: "220.00" }, method: "EFECTIVO" as const, obligationIds: [older, newer], maxBackdateDays: 5, submissionId };
+    const r1 = await recordDuesPaymentWithSubmissionIdentity(original, deps({ now: nowAt(d) }));
+    if (!r1.ok) throw new Error(`fixture: expected success, got ${JSON.stringify(r1)}`);
+
+    const reordered = { ...original, obligationIds: [newer, older] };
+    const r2 = await recordDuesPaymentWithSubmissionIdentity(reordered, deps({ now: nowAt(d) }));
+    expect(r2).toEqual({ ok: true, paymentId: r1.paymentId, replay: true, currentlyReversed: false });
+    expect(await prisma.duesPaymentAttempt.count({ where: { organizationId: a.org.id, submissionId } })).toBe(1);
+  });
+
+  it("(13) a differently-formatted but numerically-equal tender.amount replays as identical", async () => {
+    const d = freshDate();
+    const s = await newStudent(a, a.academy.id, "canon-amount");
+    const ob = await oneMonth(context(), s.id, d, usdTerms, usdPolicy);
+    const submissionId = freshSubmissionId("canon-amount");
+    const original = { context: context(), studentId: s.id, receivedOn: d, tender: { currency: "USD" as const, amount: "100.00" }, method: "EFECTIVO" as const, obligationIds: [ob], maxBackdateDays: 5, submissionId };
+    const r1 = await recordDuesPaymentWithSubmissionIdentity(original, deps({ now: nowAt(d) }));
+    if (!r1.ok) throw new Error(`fixture: expected success, got ${JSON.stringify(r1)}`);
+
+    const reformatted = { ...original, tender: { currency: "USD" as const, amount: "100" } };
+    const r2 = await recordDuesPaymentWithSubmissionIdentity(reformatted, deps({ now: nowAt(d) }));
+    expect(r2).toEqual({ ok: true, paymentId: r1.paymentId, replay: true, currentlyReversed: false });
+    expect(await prisma.duesPaymentAttempt.count({ where: { organizationId: a.org.id, submissionId } })).toBe(1);
+  });
+
+  it("(14) notes with surrounding whitespace that trims to the same value replays as identical", async () => {
+    const d = freshDate();
+    const s = await newStudent(a, a.academy.id, "canon-notes");
+    const ob = await oneMonth(context(), s.id, d, usdTerms, usdPolicy);
+    const submissionId = freshSubmissionId("canon-notes");
+    const original = { context: context(), studentId: s.id, receivedOn: d, tender: { currency: "USD" as const, amount: "100.00" }, method: "EFECTIVO" as const, obligationIds: [ob], maxBackdateDays: 5, submissionId, notes: "hello" };
+    const r1 = await recordDuesPaymentWithSubmissionIdentity(original, deps({ now: nowAt(d) }));
+    if (!r1.ok) throw new Error(`fixture: expected success, got ${JSON.stringify(r1)}`);
+
+    const padded = { ...original, notes: "  hello  " };
+    const r2 = await recordDuesPaymentWithSubmissionIdentity(padded, deps({ now: nowAt(d) }));
+    expect(r2).toEqual({ ok: true, paymentId: r1.paymentId, replay: true, currentlyReversed: false });
+    expect(await prisma.duesPaymentAttempt.count({ where: { organizationId: a.org.id, submissionId } })).toBe(1);
+  });
+});
+
+describe("field-level payload mismatch regressions: each meaningful field change refuses independently", () => {
+  /** Submits `differing` under `submissionId`, asserts a clean `submissionPayloadMismatch` refusal, and asserts the
+   * ORIGINAL attempt row's own canonicalPayload/paymentId/receiptId are completely unchanged by the rejected attempt. */
+  async function assertFieldMismatchPreservesOriginal(submissionId: string, differing: Parameters<typeof recordDuesPaymentWithSubmissionIdentity>[0], now: () => Date) {
+    const before = await prisma.duesPaymentAttempt.findFirstOrThrow({ where: { organizationId: a.org.id, submissionId } });
+    const r = await recordDuesPaymentWithSubmissionIdentity(differing, deps({ now }));
+    expect(r).toEqual({ ok: false, error: "submissionPayloadMismatch" });
+    const after = await prisma.duesPaymentAttempt.findFirstOrThrow({ where: { organizationId: a.org.id, submissionId } });
+    expect(after).toEqual(before);
+  }
+
+  it("(15a) a different studentId refuses independently", async () => {
+    const d = freshDate();
+    const s1 = await newStudent(a, a.academy.id, "field-student-1");
+    const s2 = await newStudent(a, a.academy.id, "field-student-2");
+    const ob1 = await oneMonth(context(), s1.id, d, usdTerms, usdPolicy);
+    const submissionId = freshSubmissionId("field-student");
+    const original = { context: context(), studentId: s1.id, receivedOn: d, tender: { currency: "USD" as const, amount: "100.00" }, method: "EFECTIVO" as const, obligationIds: [ob1], maxBackdateDays: 5, submissionId };
+    const r1 = await recordDuesPaymentWithSubmissionIdentity(original, deps({ now: nowAt(d) }));
+    expect(r1).toMatchObject({ ok: true });
+
+    await assertFieldMismatchPreservesOriginal(submissionId, { ...original, studentId: s2.id }, nowAt(d));
+  });
+
+  it("(15b) a genuinely different obligationIds SET (not merely reordered) refuses independently", async () => {
+    const d = freshDate();
+    const s = await newStudent(a, a.academy.id, "field-obligations");
+    const [older, newer] = await twoOutstandingMonths(s.id, d);
+    const submissionId = freshSubmissionId("field-obligations");
+    // older is the single oldest outstanding item, so paying it ALONE (leaving newer unselected) is a valid
+    // oldest-first prefix; older is also two months stale as of `d`, so its own late fee is genuinely owed.
+    const original = { context: context(), studentId: s.id, receivedOn: d, tender: { currency: "USD" as const, amount: "120.00" }, method: "EFECTIVO" as const, obligationIds: [older], maxBackdateDays: 5, submissionId };
+    const r1 = await recordDuesPaymentWithSubmissionIdentity(original, deps({ now: nowAt(d) }));
+    expect(r1).toMatchObject({ ok: true });
+
+    // The replay path never re-validates obligationIds against the engine at all (a "lost" insert is a pure
+    // canonicalPayload comparison) — `newer` need not itself be a valid standalone selection for this to prove the
+    // mismatch is caught on the obligationIds SET alone.
+    await assertFieldMismatchPreservesOriginal(submissionId, { ...original, obligationIds: [newer] }, nowAt(d));
+  });
+
+  it("(15c) a different receivedOn refuses independently", async () => {
+    const d = freshDate();
+    const s = await newStudent(a, a.academy.id, "field-receivedon");
+    const ob = await oneMonth(context(), s.id, d, usdTerms, usdPolicy);
+    const submissionId = freshSubmissionId("field-receivedon");
+    const original = { context: context(), studentId: s.id, receivedOn: d, tender: { currency: "USD" as const, amount: "100.00" }, method: "EFECTIVO" as const, obligationIds: [ob], maxBackdateDays: 5, submissionId };
+    const r1 = await recordDuesPaymentWithSubmissionIdentity(original, deps({ now: nowAt(d) }));
+    expect(r1).toMatchObject({ ok: true });
+
+    const laterDay = { ...d, day: d.day + 1 };
+    await assertFieldMismatchPreservesOriginal(submissionId, { ...original, receivedOn: laterDay }, nowAt(d));
+  });
+
+  it("(15d) a different tender.currency refuses independently", async () => {
+    const d = freshDate();
+    const s = await newStudent(a, a.academy.id, "field-currency");
+    const ob = await oneMonth(context(), s.id, d, usdTerms, usdPolicy);
+    const submissionId = freshSubmissionId("field-currency");
+    const original = { context: context(), studentId: s.id, receivedOn: d, tender: { currency: "USD" as const, amount: "100.00" }, method: "EFECTIVO" as const, obligationIds: [ob], maxBackdateDays: 5, submissionId };
+    const r1 = await recordDuesPaymentWithSubmissionIdentity(original, deps({ now: nowAt(d) }));
+    expect(r1).toMatchObject({ ok: true });
+
+    await assertFieldMismatchPreservesOriginal(submissionId, { ...original, tender: { currency: "CRC" as const, amount: "100.00" } }, nowAt(d));
+  });
+
+  it("(15e) a genuinely different tender.amount refuses independently", async () => {
+    const d = freshDate();
+    const s = await newStudent(a, a.academy.id, "field-amount");
+    const ob = await oneMonth(context(), s.id, d, usdTerms, usdPolicy);
+    const submissionId = freshSubmissionId("field-amount");
+    const original = { context: context(), studentId: s.id, receivedOn: d, tender: { currency: "USD" as const, amount: "100.00" }, method: "EFECTIVO" as const, obligationIds: [ob], maxBackdateDays: 5, submissionId };
+    const r1 = await recordDuesPaymentWithSubmissionIdentity(original, deps({ now: nowAt(d) }));
+    expect(r1).toMatchObject({ ok: true });
+
+    await assertFieldMismatchPreservesOriginal(submissionId, { ...original, tender: { currency: "USD" as const, amount: "150.00" } }, nowAt(d));
+  });
+
+  it("(15f) a different method refuses independently", async () => {
+    const d = freshDate();
+    const s = await newStudent(a, a.academy.id, "field-method");
+    const ob = await oneMonth(context(), s.id, d, usdTerms, usdPolicy);
+    const submissionId = freshSubmissionId("field-method");
+    const original = { context: context(), studentId: s.id, receivedOn: d, tender: { currency: "USD" as const, amount: "100.00" }, method: "EFECTIVO" as const, obligationIds: [ob], maxBackdateDays: 5, submissionId };
+    const r1 = await recordDuesPaymentWithSubmissionIdentity(original, deps({ now: nowAt(d) }));
+    expect(r1).toMatchObject({ ok: true });
+
+    await assertFieldMismatchPreservesOriginal(submissionId, { ...original, method: "TARJETA" as const }, nowAt(d));
+  });
+
+  it("(15g) a genuinely different notes refuses independently", async () => {
+    const d = freshDate();
+    const s = await newStudent(a, a.academy.id, "field-notes");
+    const ob = await oneMonth(context(), s.id, d, usdTerms, usdPolicy);
+    const submissionId = freshSubmissionId("field-notes");
+    const original = { context: context(), studentId: s.id, receivedOn: d, tender: { currency: "USD" as const, amount: "100.00" }, method: "EFECTIVO" as const, obligationIds: [ob], maxBackdateDays: 5, submissionId, notes: "original note" };
+    const r1 = await recordDuesPaymentWithSubmissionIdentity(original, deps({ now: nowAt(d) }));
+    expect(r1).toMatchObject({ ok: true });
+
+    await assertFieldMismatchPreservesOriginal(submissionId, { ...original, notes: "a completely different note" }, nowAt(d));
+  });
+});
+
+describe("cross-tenant and cross-student outcome links fail at the database boundary", () => {
+  it("(16a) setting paymentId to a REAL payment belonging to a DIFFERENT organization is rejected by the composite foreign key", async () => {
+    const d = freshDate();
+    const sA = await newStudent(a, a.academy.id, "fk-org-a");
+    const obA = await oneMonth(context(), sA.id, d, usdTerms, usdPolicy);
+    const paidA = await recordDuesPayment({ context: context(), studentId: sA.id, receivedOn: d, tender: { currency: "USD", amount: "100.00" }, method: "EFECTIVO", obligationIds: [obA], maxBackdateDays: 5 }, deps({ now: nowAt(d) }));
+    if (!paidA.ok) throw new Error(`fixture: org A payment failed: ${JSON.stringify(paidA)}`);
+
+    const dB = freshDate();
+    const sB = await newStudent(b, b.academy.id, "fk-org-b");
+    const obB = await oneMonth(contextB(), sB.id, dB, usdTermsB, usdPolicyB);
+    const paidB = await recordDuesPayment({ context: contextB(), studentId: sB.id, receivedOn: dB, tender: { currency: "USD", amount: "100.00" }, method: "EFECTIVO", obligationIds: [obB], maxBackdateDays: 5 }, deps({ now: nowAt(dB) }));
+    if (!paidB.ok) throw new Error(`fixture: org B payment failed: ${JSON.stringify(paidB)}`);
+
+    await isolated(async (tx) => {
+      // A fresh attempt row genuinely belonging to org A / student sA.
+      const row = await tx.duesPaymentAttempt.create({
+        data: { organizationId: a.org.id, studentId: sA.id, academyId: a.academy.id, submissionId: freshSubmissionId("fk-org"), canonicalPayload: { probe: true } },
+      });
+      // org A's own attempt pointed at org B's real payment id: no (organizationId=A, id=paidB.id, studentId=sA.id)
+      // row exists in DuesPayment, so the composite FK itself must reject this — never an application-level check.
+      await refused(tx, () => tx.duesPaymentAttempt.update({ where: { id: row.id }, data: { paymentId: paidB.paymentId } }), "DuesPaymentAttempt_organizationId_paymentId_studentId_fkey");
+    });
+  });
+
+  it("(16b) setting paymentId to a REAL payment belonging to a DIFFERENT student in the SAME organization is rejected by the composite foreign key", async () => {
+    const d = freshDate();
+    const s1 = await newStudent(a, a.academy.id, "fk-student-1");
+    const s2 = await newStudent(a, a.academy.id, "fk-student-2");
+    const ob1 = await oneMonth(context(), s1.id, d, usdTerms, usdPolicy);
+    const paid1 = await recordDuesPayment({ context: context(), studentId: s1.id, receivedOn: d, tender: { currency: "USD", amount: "100.00" }, method: "EFECTIVO", obligationIds: [ob1], maxBackdateDays: 5 }, deps({ now: nowAt(d) }));
+    if (!paid1.ok) throw new Error(`fixture: student 1 payment failed: ${JSON.stringify(paid1)}`);
+
+    await isolated(async (tx) => {
+      // A fresh attempt row genuinely belonging to student 2.
+      const row = await tx.duesPaymentAttempt.create({
+        data: { organizationId: a.org.id, studentId: s2.id, academyId: a.academy.id, submissionId: freshSubmissionId("fk-student"), canonicalPayload: { probe: true } },
+      });
+      // student 2's own attempt pointed at student 1's real payment id: (organizationId=a.org.id, id=paid1.id,
+      // studentId=s2.id) does not exist in DuesPayment (its real row has studentId=s1.id) — the FK itself rejects it.
+      await refused(tx, () => tx.duesPaymentAttempt.update({ where: { id: row.id }, data: { paymentId: paid1.paymentId } }), "DuesPaymentAttempt_organizationId_paymentId_studentId_fkey");
+    });
+  });
+});
+
+describe("database-enforced guarantees, continued", () => {
+  it("(17) setting BOTH outcome columns non-null in one statement is rejected by the CHECK constraint, not a foreign key", async () => {
+    const s = await newStudent(a, a.academy.id, "check-both");
+    // Both target ids are genuinely valid for this exact (organization, student) — isolates the CHECK as the one
+    // thing that can still refuse it.
+    const payment = await prisma.duesPayment.create({
+      data: { organizationId: a.org.id, studentId: s.id, academyId: a.academy.id, receivedOn: new Date(), tenderCurrency: "USD", tenderAmount: "10.00", method: "EFECTIVO", recordedById: a.admin.id },
+    });
+    const receipt = await prisma.awaitingRateReceipt.create({
+      data: {
+        organizationId: a.org.id, studentId: s.id, academyId: a.academy.id, kind: "ORDINARY", receivedOn: new Date(), tenderCurrency: "CRC", tenderAmount: "5000.00",
+        method: "EFECTIVO", capturedAt: new Date(), capturedById: a.admin.id, snapshot: { kind: "ORDINARY", obligationIds: ["placeholder"] },
+      },
+    });
+
+    await isolated(async (tx) => {
+      const row = await tx.duesPaymentAttempt.create({
+        data: { organizationId: a.org.id, studentId: s.id, academyId: a.academy.id, submissionId: freshSubmissionId("check-both"), canonicalPayload: { probe: true } },
+      });
+      await refused(
+        tx,
+        () => tx.duesPaymentAttempt.update({ where: { id: row.id }, data: { paymentId: payment.id, receiptId: receipt.id } }),
+        "DuesPaymentAttempt_outcome_at_most_one",
+      );
+    });
+  });
+
+  it("(18) a FURTHER update changing an already-finalized outcome column is rejected by the once-marker trigger", async () => {
+    const d = freshDate();
+    const s = await newStudent(a, a.academy.id, "once-further");
+    const ob = await oneMonth(context(), s.id, d, usdTerms, usdPolicy);
+    const paid = await recordDuesPayment({ context: context(), studentId: s.id, receivedOn: d, tender: { currency: "USD", amount: "100.00" }, method: "EFECTIVO", obligationIds: [ob], maxBackdateDays: 5 }, deps({ now: nowAt(d) }));
+    if (!paid.ok) throw new Error(`fixture: payment failed: ${JSON.stringify(paid)}`);
+    const otherPayment = await prisma.duesPayment.create({
+      data: { organizationId: a.org.id, studentId: s.id, academyId: a.academy.id, receivedOn: new Date(), tenderCurrency: "USD", tenderAmount: "10.00", method: "EFECTIVO", recordedById: a.admin.id },
+    });
+
+    await isolated(async (tx) => {
+      const row = await tx.duesPaymentAttempt.create({
+        data: { organizationId: a.org.id, studentId: s.id, academyId: a.academy.id, submissionId: freshSubmissionId("once-further"), canonicalPayload: { probe: true } },
+      });
+      // The one legitimate finalizing update.
+      await tx.duesPaymentAttempt.update({ where: { id: row.id }, data: { paymentId: paid.paymentId } });
+      // A SECOND change to the now-already-set outcome column — distinct from test 10's canonicalPayload-immutability
+      // coverage: this is specifically a further change to an already-finalized MARKER column itself.
+      await refused(tx, () => tx.duesPaymentAttempt.update({ where: { id: row.id }, data: { paymentId: otherPayment.id } }), "only the outcome marker may be set, once");
+    });
+  });
+});
+
+describe("submissionId format validation", () => {
+  it("(19) a whitespace-only submissionId is refused as invalid before any lookup or write", async () => {
+    const d = freshDate();
+    const s = await newStudent(a, a.academy.id, "ws-submission");
+    const ob = await oneMonth(context(), s.id, d, usdTerms, usdPolicy);
+    const before = await prisma.duesPaymentAttempt.count({ where: { organizationId: a.org.id } });
+
+    const r = await recordDuesPaymentWithSubmissionIdentity(
+      { context: context(), studentId: s.id, receivedOn: d, tender: { currency: "USD" as const, amount: "100.00" }, method: "EFECTIVO" as const, obligationIds: [ob], maxBackdateDays: 5, submissionId: "   " },
+      deps({ now: nowAt(d) }),
+    );
+    expect(r).toEqual({ ok: false, error: "invalid" });
+    expect(await prisma.duesPaymentAttempt.count({ where: { organizationId: a.org.id } })).toBe(before);
   });
 });

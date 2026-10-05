@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { PaymentMethod, Currency } from "@/generated/prisma/client";
+import type { PaymentMethod, Currency, AwaitingRateReceiptStatus } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import type { TenantContext } from "@/lib/tenant/types";
 import { resolveActionContext } from "@/lib/tenant/context";
@@ -29,6 +29,11 @@ import {
  * `submissionId` is REQUIRED — never optional, never generated here. Minting one server-side would defeat the entire
  * point of a client-supplied retry key: the caller must present the SAME key on every resend of what it considers one
  * logical submission for this to protect anything.
+ *
+ * The separate-wrapper approach (this file, never restructuring `recordDuesPayment` in place) is a DELIBERATE
+ * compatibility choice, not an oversight or a scaled-back version of an earlier design that called for modifying
+ * `recordDuesPayment` itself: every existing caller and test of `recordDuesPayment` keeps working, byte-for-byte,
+ * whether or not a future caller ever adopts this identity-aware sibling.
  */
 
 const ymd = (d: CalendarDate) => `${d.year}-${String(d.month).padStart(2, "0")}-${String(d.day).padStart(2, "0")}`;
@@ -98,12 +103,38 @@ class SubmissionRefusedError extends Error {
   }
 }
 
+/** The minimal shape both the plain `prisma` singleton and an open transaction (`Tx`) satisfy — just enough for the
+ * two lookups below, so neither helper needs to know which one it was called with. */
+type OutcomeReadClient = {
+  duesPayment: { findFirst(args: { where: { id: string; organizationId: string }; select: { reversedAt: true } }): Promise<{ reversedAt: Date | null } | null> };
+  awaitingRateReceipt: { findFirst(args: { where: { id: string; organizationId: string }; select: { status: true } }): Promise<{ status: AwaitingRateReceiptStatus } | null> };
+};
+
+/** Shared by the writer's own replay branch (via the open `tx`, a consistent snapshot with no second round-trip) and
+ * `getSubmissionOutcome` (via the plain `prisma` client) — one lookup, never duplicated. Deliberately takes no
+ * `TenantContext`/auth of any kind: this is the ledger engine layer, which never calls `resolveActionContext` itself
+ * anywhere in this codebase: authorization is each caller's own job. */
+async function readPaymentReversalStatus(client: OutcomeReadClient, organizationId: string, paymentId: string): Promise<boolean> {
+  const payment = await client.duesPayment.findFirst({ where: { id: paymentId, organizationId }, select: { reversedAt: true } });
+  if (!payment) throw new Error(`readPaymentReversalStatus: paymentId ${paymentId} no longer resolves (organization ${organizationId})`);
+  return payment.reversedAt !== null;
+}
+
+/** See `readPaymentReversalStatus`'s own doc comment — the identical sharing for a receipt outcome's current status. */
+async function readReceiptStatus(client: OutcomeReadClient, organizationId: string, receiptId: string): Promise<AwaitingRateReceiptStatus> {
+  const receipt = await client.awaitingRateReceipt.findFirst({ where: { id: receiptId, organizationId }, select: { status: true } });
+  if (!receipt) throw new Error(`readReceiptStatus: receiptId ${receiptId} no longer resolves (organization ${organizationId})`);
+  return receipt.status;
+}
+
 export type RecordDuesPaymentWithSubmissionIdentityResult =
   | { ok: true; paymentId: string; settlementIds: string[]; feeIds: string[]; totalMinor: number }
-  /** A replay of an already-settled submission: the original outcome, not re-derived settlement detail. Call
-   * `getSubmissionOutcome` for the payment's current lifecycle state (e.g. whether it has since been reversed). */
-  | { ok: true; paymentId: string; replay: true }
+  /** A replay of an already-settled submission, carrying the payment's CURRENT lifecycle state (read fresh in the
+   * same transaction, never cached from the moment of original commit) — never just the bare original outcome. */
+  | { ok: true; paymentId: string; replay: true; currentlyReversed: boolean }
   | (RecordDuesPaymentResult & { ok: false })
+  /** A replay of an already-captured submission, carrying the receipt's CURRENT status the same way. */
+  | { ok: false; error: "captured"; receiptId: string; replay: true; currentStatus: AwaitingRateReceiptStatus }
   /** The same `submissionId` was already used for a materially different request — refused cleanly; nothing is
    * written by this call. */
   | { ok: false; error: "submissionPayloadMismatch" };
@@ -114,9 +145,10 @@ const refuse = (error: RecordDuesPaymentError): RecordDuesPaymentWithSubmissionI
  * Record ONE payment, idempotently keyed by the caller's own `submissionId`. Takes everything `recordDuesPayment`
  * takes, plus a required `submissionId`. A resend of the identical request (same `submissionId`, same canonicalized
  * payload) is always safe: it never re-settles, never double-captures, and never double-refuses — it replays the
- * original outcome, re-read fresh for its own CURRENT lifecycle state (`getSubmissionOutcome`'s own job, not this
- * function's). A resend of a DIFFERENT request under the same `submissionId` is refused (`submissionPayloadMismatch`)
- * and writes nothing.
+ * original outcome, carrying that outcome's own CURRENT lifecycle state (read fresh in this same transaction, never
+ * assumed from the moment of original commit — `getSubmissionOutcome` reuses the identical lookup for a later,
+ * out-of-band check). A resend of a DIFFERENT request under the same `submissionId` is refused
+ * (`submissionPayloadMismatch`) and writes nothing.
  *
  * LOCK ORDER: the identity insert sits AFTER `lockExchangeRateNamespaceShared` (the literal first statement, exactly
  * like `recordDuesPayment`'s own) and BEFORE the student lock `recordDuesPaymentInTx` itself takes — a losing/replay
@@ -143,7 +175,7 @@ export async function recordDuesPaymentWithSubmissionIdentity(
   if (!(await activation.isActive(organizationId))) return refuse("notActive");
 
   if (typeof studentId !== "string" || studentId === "") return refuse("invalid");
-  if (typeof submissionId !== "string" || submissionId === "") return refuse("invalid");
+  if (typeof submissionId !== "string" || submissionId.trim() === "") return refuse("invalid");
   const inputError = validatePaymentInput({ receivedOn, tender, method, obligationIds, notes, maxBackdateDays });
   if (inputError) return refuse(inputError);
 
@@ -211,8 +243,14 @@ export async function recordDuesPaymentWithSubmissionIdentity(
       if (!parsedExisting.success || !canonicalPayloadsEqual(parsedExisting.data, canonical)) {
         return { ok: false, error: "submissionPayloadMismatch" };
       }
-      if (existing.paymentId) return { ok: true, paymentId: existing.paymentId, replay: true };
-      if (existing.receiptId) return { ok: false, error: "captured", receiptId: existing.receiptId };
+      if (existing.paymentId) {
+        const currentlyReversed = await readPaymentReversalStatus(tx, organizationId, existing.paymentId);
+        return { ok: true, paymentId: existing.paymentId, replay: true, currentlyReversed };
+      }
+      if (existing.receiptId) {
+        const currentStatus = await readReceiptStatus(tx, organizationId, existing.receiptId);
+        return { ok: false, error: "captured", receiptId: existing.receiptId, replay: true, currentStatus };
+      }
       // A committed row with neither field set cannot legitimately be observed: the writer that inserted it either
       // commits with one of them set, or throws and rolls back the whole insert. Seeing this is a bug, not a case to
       // handle gracefully.
@@ -232,7 +270,7 @@ export type SubmissionOutcome =
       status: "committed";
       outcome:
         | { kind: "payment"; paymentId: string; currentlyReversed: boolean }
-        | { kind: "receipt"; receiptId: string; currentStatus: "PENDING" | "RESOLVED" | "CANCELLED" };
+        | { kind: "receipt"; receiptId: string; currentStatus: AwaitingRateReceiptStatus };
     };
 
 /**
@@ -270,14 +308,12 @@ export async function getSubmissionOutcome(organizationId: string, submissionId:
   if (!attempt || !inTenantScope(context, attempt.academyId)) return { status: "notFound" };
 
   if (attempt.paymentId) {
-    const payment = await prisma.duesPayment.findFirst({ where: { id: attempt.paymentId, organizationId }, select: { reversedAt: true } });
-    if (!payment) throw new Error(`getSubmissionOutcome: attempt for submission ${submissionId} references paymentId ${attempt.paymentId}, which no longer resolves`);
-    return { status: "committed", outcome: { kind: "payment", paymentId: attempt.paymentId, currentlyReversed: payment.reversedAt !== null } };
+    const currentlyReversed = await readPaymentReversalStatus(prisma, organizationId, attempt.paymentId);
+    return { status: "committed", outcome: { kind: "payment", paymentId: attempt.paymentId, currentlyReversed } };
   }
   if (attempt.receiptId) {
-    const receipt = await prisma.awaitingRateReceipt.findFirst({ where: { id: attempt.receiptId, organizationId }, select: { status: true } });
-    if (!receipt) throw new Error(`getSubmissionOutcome: attempt for submission ${submissionId} references receiptId ${attempt.receiptId}, which no longer resolves`);
-    return { status: "committed", outcome: { kind: "receipt", receiptId: attempt.receiptId, currentStatus: receipt.status } };
+    const currentStatus = await readReceiptStatus(prisma, organizationId, attempt.receiptId);
+    return { status: "committed", outcome: { kind: "receipt", receiptId: attempt.receiptId, currentStatus } };
   }
   throw new Error(`getSubmissionOutcome: attempt for submission ${submissionId} (organization ${organizationId}) has neither paymentId nor receiptId set`);
 }
