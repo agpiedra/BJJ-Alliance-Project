@@ -1433,7 +1433,8 @@
         "none": "No months selected yet.",
         "addNext": "Add next month",
         "removeLast": "Remove last month",
-        "priceLoading": "Loading price..."
+        "priceLoading": "Loading price...",
+        "retryAdvisory": "Retry month suggestion"
       },
       "advisory": {
         "suggestion": "Suggested first month: {month}. This is only a guess; the server's own result is final."
@@ -1453,7 +1454,12 @@
         "heading": "Estimated total",
         "line": "{amount} {currency}",
         "disclaimer": "Computed from today's outstanding debt and each selected month's current price. This is not an authoritative quote — the server's own result at submission time is final.",
-        "backdatedDisclaimer": "This total reflects today's balance and prices. The amount due, and whether this submission succeeds at all, may differ for the date you've entered; the server's own result is final."
+        "backdatedDisclaimer": "This total reflects today's balance and prices. The amount due, and whether this submission succeeds at all, may differ for the date you've entered; the server's own result is final.",
+        "loading": "Calculating...",
+        "failed": "Couldn't calculate the estimated total.",
+        "retry": "Retry price calculation",
+        "partialHeading": "Partial subtotal ({priced} of {total} months priced)",
+        "partialDisclaimer": "Not every selected month has a resolved price yet — this is a partial subtotal only, computed from today's outstanding debt and the months priced so far. Never an authoritative quote."
       },
       "outcome": {
         "success": "Prepayment recorded.",
@@ -1483,6 +1489,7 @@
         "invalid": "Some of the entered information isn't valid.",
         "notFound": "That student couldn't be found in your scope.",
         "inapplicable": "One of the selected months isn't applicable to this student's branch.",
+        "advisoryFailed": "We couldn't reach the server to suggest a first month. This does not mean prepayment is unavailable.",
         "prepaymentUnavailable": "Prepayment isn't available under this branch's current configuration.",
         "prepaymentLimitExceeded": "One of the selected months falls beyond what's currently allowed.",
         "coverageGap": "One of the selected months conflicts with existing coverage.",

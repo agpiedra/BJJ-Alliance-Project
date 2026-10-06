@@ -1433,7 +1433,8 @@
         "none": "Aun no hay meses seleccionados.",
         "addNext": "Agregar proximo mes",
         "removeLast": "Quitar ultimo mes",
-        "priceLoading": "Cargando precio..."
+        "priceLoading": "Cargando precio...",
+        "retryAdvisory": "Reintentar sugerencia de mes"
       },
       "advisory": {
         "suggestion": "Primer mes sugerido: {month}. Esto es solo una estimacion; el resultado del servidor es el definitivo."
@@ -1453,7 +1454,12 @@
         "heading": "Total estimado",
         "line": "{amount} {currency}",
         "disclaimer": "Calculado a partir de la deuda pendiente de hoy y el precio actual de cada mes seleccionado. Esto no es una cotizacion definitiva — el resultado del servidor al momento del envio es el definitivo.",
-        "backdatedDisclaimer": "Este total refleja el saldo y los precios de hoy. El monto adeudado, y si este envio tendra exito, puede ser diferente para la fecha ingresada; el resultado del servidor es el definitivo."
+        "backdatedDisclaimer": "Este total refleja el saldo y los precios de hoy. El monto adeudado, y si este envio tendra exito, puede ser diferente para la fecha ingresada; el resultado del servidor es el definitivo.",
+        "loading": "Calculando...",
+        "failed": "No pudimos calcular el total estimado.",
+        "retry": "Reintentar calculo de precio",
+        "partialHeading": "Subtotal parcial ({priced} de {total} meses con precio)",
+        "partialDisclaimer": "No todos los meses seleccionados tienen un precio resuelto todavia — esto es solo un subtotal parcial, calculado a partir de la deuda pendiente de hoy y los meses con precio hasta ahora. Nunca una cotizacion definitiva."
       },
       "outcome": {
         "success": "Pago adelantado registrado.",
@@ -1483,6 +1489,7 @@
         "invalid": "Parte de la informacion ingresada no es valida.",
         "notFound": "No se encontro a ese estudiante en su alcance.",
         "inapplicable": "Uno de los meses seleccionados no aplica a la sede de este estudiante.",
+        "advisoryFailed": "No pudimos contactar al servidor para sugerir un primer mes. Esto no significa que el pago adelantado no este disponible.",
         "prepaymentUnavailable": "El pago adelantado no esta disponible con la configuracion actual de esta sede.",
         "prepaymentLimitExceeded": "Uno de los meses seleccionados esta mas alla de lo permitido actualmente.",
         "coverageGap": "Uno de los meses seleccionados entra en conflicto con una cobertura existente.",

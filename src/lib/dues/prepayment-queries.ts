@@ -5,6 +5,7 @@ import type { YearMonth } from "@/lib/dues/calendar";
 import { addMonths, compareYearMonth } from "@/lib/dues/calendar";
 import { currentMonthIn } from "@/lib/dues/config-input";
 import { inTenantScope, latestEffective } from "@/lib/dues/ledger/common";
+import { isValidCoverageMonth } from "@/lib/dues/ledger/create-monthly-obligation";
 import { firstUncoveredFrom, SCHEMA_MAX_MONTH } from "@/lib/dues/ledger/prepay-monthly";
 
 /**
@@ -52,7 +53,11 @@ export async function firstAvailablePrepaymentMonth(context: TenantContext, stud
 
 export type MonthPrice = { month: YearMonth; priceAmount: string; currency: Currency } | { month: YearMonth; error: "inapplicable" };
 
-export type ListMonthPricesResult = { ok: true; prices: MonthPrice[] } | { ok: false; error: "notFound" };
+export type ListMonthPricesResult = { ok: true; prices: MonthPrice[] } | { ok: false; error: "notFound" | "invalid" };
+
+/** Purely a DoS/resource-exhaustion guard (this function issues one DB query per requested month) — not a business
+ * limit. Generously larger than any realistic `maxPrepaidMonths` policy horizon ever configured. */
+const MAX_MONTHS_PER_REQUEST = 60;
 
 /**
  * Corrected per the brief: NOT "today's price applied to every month." Each requested month's price is resolved
@@ -61,9 +66,20 @@ export type ListMonthPricesResult = { ok: true; prices: MonthPrice[] } | { ok: f
  * can genuinely price differently if a scheduled change falls between them. A month with no applicable
  * assignment/plan/terms at all resolves to `{error: "inapplicable"}` for that entry alone (display-only — the real
  * writer's own `inapplicable` refusal is what actually enforces this at submit time).
+ *
+ * `getMonthPrices` (`prepayment-actions.ts`) is a bare `"use server"` export — `months` is reachable from a crafted
+ * request regardless of its TS type, so it is validated here, fully, before any database access: real array shape,
+ * every entry a genuine coverage month (the same `isValidCoverageMonth` the engine itself uses), no duplicates, and
+ * bounded in size. `listMonthPrices` has exactly one real caller (`getMonthPrices`) — duplicating this check there
+ * too would be redundant surface area, not defense-in-depth, so it is not repeated.
  */
 export async function listMonthPrices(context: TenantContext, studentId: string, months: YearMonth[]): Promise<ListMonthPricesResult> {
   if (typeof studentId !== "string" || studentId.trim() === "") return { ok: false, error: "notFound" };
+  if (!Array.isArray(months)) return { ok: false, error: "invalid" };
+  if (months.length > MAX_MONTHS_PER_REQUEST) return { ok: false, error: "invalid" };
+  if (!months.every(isValidCoverageMonth)) return { ok: false, error: "invalid" };
+  if (new Set(months.map((m) => `${m.year}-${m.month}`)).size !== months.length) return { ok: false, error: "invalid" };
+
   const student = await prisma.student.findFirst({ where: { id: studentId, organizationId: context.organizationId }, select: { id: true, homeAcademyId: true } });
   if (!student || !inTenantScope(context, student.homeAcademyId)) return { ok: false, error: "notFound" };
   if (months.length === 0) return { ok: true, prices: [] };

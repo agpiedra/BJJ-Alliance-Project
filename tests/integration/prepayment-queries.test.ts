@@ -173,4 +173,43 @@ describe("listMonthPrices", () => {
     const result = await listMonthPrices(context(), s.id, [{ year: 2027, month: 7 }]);
     expect(result).toEqual({ ok: true, prices: [{ month: { year: 2027, month: 7 }, error: "inapplicable" }] });
   });
+
+  describe("issue 3: malformed `months` input is refused BEFORE any database access", () => {
+    // `"no-such-student"` never resolves to a real row — the existing test above (line 117-119) already proves that
+    // alone produces `{ok:false, error:"notFound"}`. So if a run here instead comes back `{ok:false, error:"invalid"}`,
+    // the only way that could happen is if the `months` validation rejected the call BEFORE the function ever reached
+    // the student lookup (the first real database access) — the same proof technique this file already establishes.
+
+    it("months: null is refused, never thrown", async () => {
+      expect(await listMonthPrices(context(), "no-such-student", null as unknown as { year: number; month: number }[])).toEqual({ ok: false, error: "invalid" });
+    });
+
+    it("months: a non-array (string) is refused, never thrown", async () => {
+      expect(await listMonthPrices(context(), "no-such-student", "not-an-array" as unknown as { year: number; month: number }[])).toEqual({ ok: false, error: "invalid" });
+    });
+
+    it("an entry with a wildly out-of-range year/month is refused", async () => {
+      expect(await listMonthPrices(context(), "no-such-student", [{ year: 1500, month: 999 }])).toEqual({ ok: false, error: "invalid" });
+    });
+
+    it("a non-integer / garbage-shaped entry is refused, never thrown", async () => {
+      expect(await listMonthPrices(context(), "no-such-student", [{ year: "2027", month: 7 } as unknown as { year: number; month: number }])).toEqual({ ok: false, error: "invalid" });
+      expect(await listMonthPrices(context(), "no-such-student", ["July"] as unknown as { year: number; month: number }[])).toEqual({ ok: false, error: "invalid" });
+      expect(await listMonthPrices(context(), "no-such-student", [null] as unknown as { year: number; month: number }[])).toEqual({ ok: false, error: "invalid" });
+    });
+
+    it("duplicate months in the array are refused", async () => {
+      expect(await listMonthPrices(context(), "no-such-student", [{ year: 2027, month: 7 }, { year: 2027, month: 7 }])).toEqual({ ok: false, error: "invalid" });
+    });
+
+    it("an array longer than the request-size bound is refused", async () => {
+      const tooMany = Array.from({ length: 61 }, (_, i) => ({ year: 2030 + Math.floor(i / 12), month: (i % 12) + 1 }));
+      expect(await listMonthPrices(context(), "no-such-student", tooMany)).toEqual({ ok: false, error: "invalid" });
+    });
+
+    it("a genuinely valid, real studentId with malformed months is STILL refused invalid (not notFound) — confirming the order is months-first", async () => {
+      const s = await newStudent();
+      expect(await listMonthPrices(context(), s.id, [{ year: 1500, month: 999 }])).toEqual({ ok: false, error: "invalid" });
+    });
+  });
 });

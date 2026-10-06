@@ -95,7 +95,11 @@ export function PrepaymentSection({
   const [requestedMonths, setRequestedMonths] = useState<YearMonth[]>([]);
   const [advisoryMonth, setAdvisoryMonth] = useState<YearMonth | null>(null);
   const [horizonEnd, setHorizonEnd] = useState<YearMonth | null>(null);
-  const [advisoryLoaded, setAdvisoryLoaded] = useState(false);
+  // Corrected: a genuine `{ok:true, month:null, horizonEnd:null}` response ("no policy configured") and a mere
+  // fetch REJECTION were previously indistinguishable (both just set a single `advisoryLoaded` boolean) — a network
+  // failure falsely rendered "prepayment isn't available" and left "Add next month" permanently disabled with no
+  // retry. Only the `"success"` branch below may ever write `advisoryMonth`/`horizonEnd`, including `null`.
+  const [advisoryStatus, setAdvisoryStatus] = useState<"loading" | "success" | "failed">("loading");
   const [monthPrices, setMonthPrices] = useState<MonthPrice[] | null>(null);
   const [monthPricesLoading, setMonthPricesLoading] = useState(false);
 
@@ -222,12 +226,45 @@ export function PrepaymentSection({
 
   // ---- student data fetch: advisory+horizon, existing debt ----
 
+  /** Shared by the mount/student-change effect below AND the scoped `retryAdvisory` (issue 1's own fix) — the SAME
+   * fetch-and-apply logic either way, so the two paths can never drift. Never resets `requestedMonths`/
+   * `monthsTouchedRef` itself (that's the caller's job, only on a genuine student change) — a retry must preserve
+   * whatever the owner has already deliberately built. */
+  function fetchAdvisory(requestId: number) {
+    getFirstAvailablePrepaymentMonth(organizationId, selectedStudentId)
+      .then((result) => {
+        if (studentDataRequestRef.current !== requestId) return;
+        if (result.ok) {
+          setAdvisoryStatus("success");
+          setAdvisoryMonth(result.month);
+          setHorizonEnd(result.horizonEnd);
+          if (result.month && !monthsTouchedRef.current) setRequestedMonths([result.month]);
+        } else {
+          setAdvisoryStatus("failed");
+        }
+      })
+      .catch(() => {
+        if (studentDataRequestRef.current !== requestId) return;
+        setAdvisoryStatus("failed");
+      });
+  }
+
+  /** Advisory-only retry (issue 1): re-fires JUST the advisory fetch, under the SAME `studentDataRequestRef`
+   * discriminator (so a meanwhile student-switch still correctly discards a stale response), WITHOUT touching
+   * `requestedMonths`/`monthsTouchedRef` — a deliberately-built month list must survive a retry of the suggestion
+   * that merely seeds it. */
+  function retryAdvisory() {
+    if (!selectedStudentId) return;
+    setAdvisoryStatus("loading");
+    fetchAdvisory(studentDataRequestRef.current);
+  }
+
   useEffect(() => {
     setRequestedMonths([]);
     monthsTouchedRef.current = false;
     setAdvisoryMonth(null);
     setHorizonEnd(null);
-    setAdvisoryLoaded(false);
+    setAdvisoryStatus("loading");
     setObligations(null);
     setMixedCurrency(false);
     setObligationsError(null);
@@ -237,20 +274,7 @@ export function PrepaymentSection({
     const requestId = ++studentDataRequestRef.current;
     setPhase("loadingStudentData");
 
-    getFirstAvailablePrepaymentMonth(organizationId, selectedStudentId)
-      .then((result) => {
-        if (studentDataRequestRef.current !== requestId) return;
-        setAdvisoryLoaded(true);
-        if (result.ok) {
-          setAdvisoryMonth(result.month);
-          setHorizonEnd(result.horizonEnd);
-          if (result.month && !monthsTouchedRef.current) setRequestedMonths([result.month]);
-        }
-      })
-      .catch(() => {
-        if (studentDataRequestRef.current !== requestId) return;
-        setAdvisoryLoaded(true);
-      });
+    fetchAdvisory(requestId);
 
     getPayableObligations(organizationId, selectedStudentId)
       .then((result) => {
@@ -276,11 +300,15 @@ export function PrepaymentSection({
         setObligations([]);
         setPhase((p) => (p === "loadingStudentData" ? "form" : p));
       });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fetchAdvisory is recreated every render reading current closure state; including it would re-run this effect on every render
   }, [organizationId, selectedStudentId, studentDataRetryNonce]);
 
   // ---- per-month price fetch: re-runs whenever the running month list itself changes ----
 
-  useEffect(() => {
+  /** Shared by the effect below and `retryMonthPrices` (issue 2's own fix) — re-fires for whatever `requestedMonths`
+   * currently is. Bumping `monthPricesRequestRef` here (not just in the effect) is what lets a manual retry
+   * correctly invalidate itself if the list changes again before it resolves. */
+  function runMonthPricesFetch() {
     const requestId = ++monthPricesRequestRef.current;
     if (!selectedStudentId || requestedMonths.length === 0) {
       setMonthPrices(null);
@@ -299,7 +327,16 @@ export function PrepaymentSection({
         setMonthPricesLoading(false);
         setMonthPrices(null);
       });
+  }
+
+  useEffect(() => {
+    runMonthPricesFetch();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- runMonthPricesFetch itself reads current closure state; re-running on its identity would defeat the point
   }, [organizationId, selectedStudentId, requestedMonths]);
+
+  function retryMonthPrices() {
+    runMonthPricesFetch();
+  }
 
   function addNextMonth() {
     monthsTouchedRef.current = true;
@@ -316,7 +353,9 @@ export function PrepaymentSection({
 
   const nextCandidateMonth = requestedMonths.length === 0 ? advisoryMonth : nextMonthAfter(requestedMonths[requestedMonths.length - 1]);
   const addNextDisabled = locked || !nextCandidateMonth || (horizonEnd !== null && compareYearMonth(nextCandidateMonth, horizonEnd) > 0);
-  const prepaymentUnavailable = advisoryLoaded && advisoryMonth === null && horizonEnd === null && requestedMonths.length === 0;
+  // Only a SUCCESSFUL response may ever establish "no available month" / "no configured horizon" — a FAILED fetch
+  // renders its own distinct error + retry below instead (issue 1's own fix).
+  const prepaymentUnavailable = advisoryStatus === "success" && advisoryMonth === null && horizonEnd === null && requestedMonths.length === 0;
 
   /** brief §2.9: a `debtNotFullySettled`/`coverageGap`/`alreadySettled` refusal's own re-fetch of the (forced,
    * non-deselectable) existing-debt display. Locked (`reconcilingDebt`), genuinely awaited, discriminator-protected —
@@ -358,19 +397,35 @@ export function PrepaymentSection({
     setStudentDataRetryNonce((n) => n + 1);
   }
 
-  // ---- totals (brief §2.3): per-currency, debt grouped with each resolved month's OWN price, never blended ----
+  // ---- totals (brief §2.3, corrected): per-currency, debt grouped with each resolved month's OWN price, never
+  // blended — and NEVER labeled the complete "estimated total" unless every selected month genuinely has a
+  // resolved, non-error price for the CURRENT list. Issue 2's own fix: the old version summed whatever `monthPrices`
+  // currently held regardless of whether it was still loading/stale for the list that produced it, or silently
+  // skipped an `inapplicable` month — either way it could present an incomplete number as if it were the full total.
 
-  function computeCurrencyTotals(): Array<{ currency: string; totalMinor: number }> {
+  type TotalsResult =
+    | { status: "loading" }
+    | { status: "failed" }
+    | { status: "complete"; totals: Array<{ currency: string; totalMinor: number }> }
+    | { status: "partial"; totals: Array<{ currency: string; totalMinor: number }>; pricedCount: number; totalCount: number };
+
+  function sumDebtPlus(priced: Array<{ currency: string; priceAmount: string }>): Array<{ currency: string; totalMinor: number }> {
     const totals = new Map<string, number>();
     for (const o of obligations ?? []) totals.set(o.currency, (totals.get(o.currency) ?? 0) + o.outstandingAmountMinor);
-    for (const p of monthPrices ?? []) {
-      if ("error" in p) continue;
-      const priceMinor = decimalToMinor(p.priceAmount);
-      totals.set(p.currency, (totals.get(p.currency) ?? 0) + priceMinor);
-    }
+    for (const p of priced) totals.set(p.currency, (totals.get(p.currency) ?? 0) + decimalToMinor(p.priceAmount));
     return [...totals.entries()].map(([entryCurrency, totalMinor]) => ({ currency: entryCurrency, totalMinor }));
   }
-  const currencyTotals = computeCurrencyTotals();
+
+  function computeTotalsResult(): TotalsResult {
+    if (requestedMonths.length === 0) return { status: "complete", totals: sumDebtPlus([]) };
+    if (monthPricesLoading) return { status: "loading" };
+    if (monthPrices === null) return { status: "failed" };
+    const matched = requestedMonths.map((m) => monthPrices.find((p) => monthKey(p.month) === monthKey(m)));
+    const priced = matched.filter((p): p is Extract<MonthPrice, { priceAmount: string }> => !!p && !("error" in p));
+    if (priced.length === requestedMonths.length) return { status: "complete", totals: sumDebtPlus(priced) };
+    return { status: "partial", totals: sumDebtPlus(priced), pricedCount: priced.length, totalCount: requestedMonths.length };
+  }
+  const totalsResult = computeTotalsResult();
 
   function currentPayload(): StoredPrepaymentAttemptPayload {
     const [y, m, d] = receivedOn.split("-").map(Number);
@@ -408,7 +463,7 @@ export function PrepaymentSection({
     monthsTouchedRef.current = false;
     setAdvisoryMonth(null);
     setHorizonEnd(null);
-    setAdvisoryLoaded(false);
+    setAdvisoryStatus("loading");
     setAmount("");
     receivedOnTouchedRef.current = false;
     setReceivedOn(browserTodayIso());
@@ -460,9 +515,10 @@ export function PrepaymentSection({
           if (RECONCILES_DEBT.has(classification.error)) {
             await refetchObligationsReconciling();
             if (classification.error === "coverageGap") {
-              // Discriminator-protected exactly like every other fetch in this file: a student switch, or a
-              // `resetForm()` after a meanwhile-completed submission, bumps `studentDataRequestRef` and this stale
-              // response is discarded instead of silently overwriting the advisory/horizon for whatever is now shown.
+              // Deliberately NOT `fetchAdvisory` (issue 1's fix, used by the mount/student-change effect and its own
+              // retry): that helper auto-seeds `requestedMonths` from the advisory when untouched, which would
+              // silently replace the very selection the owner just submitted — out of scope for this reconciliation
+              // path, unchanged from before. Discriminator-protected exactly like every other fetch in this file.
               const advisoryRequestId = studentDataRequestRef.current;
               void getFirstAvailablePrepaymentMonth(organizationId, selectedStudentId)
                 .then((r) => {
@@ -717,6 +773,15 @@ export function PrepaymentSection({
             <p role="alert" className="text-sm text-bad">{t("error.prepaymentUnavailable")}</p>
           )}
 
+          {selectedStudentId && !locked && advisoryStatus === "failed" && (
+            <div className="flex items-center gap-2">
+              <p role="alert" className="text-sm text-bad">{t("error.advisoryFailed")}</p>
+              <Button type="button" variant="outline" onClick={retryAdvisory}>
+                {t("months.retryAdvisory")}
+              </Button>
+            </div>
+          )}
+
           {selectedStudentId && (
             <div className="flex flex-col gap-2">
               <span className="text-sm">{t("fields.months")}</span>
@@ -782,13 +847,26 @@ export function PrepaymentSection({
             <p className="text-sm text-muted-foreground">{t("obligations.none")}</p>
           )}
 
-          {!mixedCurrency && currencyTotals.length > 0 && (
+          {!mixedCurrency && totalsResult.status === "loading" && (
+            <p className="text-sm text-muted-foreground">{t("totals.loading")}</p>
+          )}
+          {!mixedCurrency && totalsResult.status === "failed" && (
+            <div className="flex items-center gap-2">
+              <p role="alert" className="text-sm text-bad">{t("totals.failed")}</p>
+              <Button type="button" variant="outline" onClick={retryMonthPrices}>
+                {t("totals.retry")}
+              </Button>
+            </div>
+          )}
+          {!mixedCurrency && (totalsResult.status === "complete" || totalsResult.status === "partial") && totalsResult.totals.length > 0 && (
             <div className="flex flex-col gap-1">
-              <p className="text-sm font-medium">{t("totals.heading")}</p>
-              {currencyTotals.map(({ currency: c, totalMinor }) => (
+              <p className="text-sm font-medium">
+                {totalsResult.status === "partial" ? t("totals.partialHeading", { priced: totalsResult.pricedCount, total: totalsResult.totalCount }) : t("totals.heading")}
+              </p>
+              {totalsResult.totals.map(({ currency: c, totalMinor }) => (
                 <p key={c} className="text-sm">{t("totals.line", { amount: (totalMinor / 100).toFixed(2), currency: c })}</p>
               ))}
-              <p className="text-xs text-muted-foreground">{t("totals.disclaimer")}</p>
+              <p className="text-xs text-muted-foreground">{totalsResult.status === "partial" ? t("totals.partialDisclaimer") : t("totals.disclaimer")}</p>
               {branchToday && receivedOn !== calendarDateToIso(branchToday) && <p className="text-xs text-muted-foreground">{t("totals.backdatedDisclaimer")}</p>}
             </div>
           )}

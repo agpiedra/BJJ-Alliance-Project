@@ -299,6 +299,142 @@ describe("prepaymentUnavailable: no policy configured at all", () => {
   });
 });
 
+describe("issue 1: a rejected advisory fetch is distinct from a genuine successful-null response", () => {
+  it("a rejected advisory fetch never shows the 'prepaymentUnavailable' copy, offers its own retry, and a successful retry makes the month selector usable", async () => {
+    renderSection();
+    getFirstAvailablePrepaymentMonth.mockRejectedValueOnce(new Error("network down"));
+    getPayableObligations.mockResolvedValue({ ok: true, obligations: [DEBT_ITEM], mixedCurrency: false, todayLocal: TODAY_LOCAL });
+    fireEvent.change(screen.getByLabelText(/Student/i), { target: { value: "student-1" } });
+
+    await waitFor(() => expect(screen.getByText(/couldn't reach the server to suggest/i)).toBeInTheDocument());
+    // Never the false "no policy configured" claim on a mere fetch failure.
+    expect(screen.queryByText(/isn't available under this branch's current configuration/i)).toBeNull();
+    expect(screen.getByRole("button", { name: /Add next month/i })).toBeDisabled();
+
+    getFirstAvailablePrepaymentMonth.mockResolvedValueOnce({ ok: true, month: { year: 2027, month: 7 }, horizonEnd: { year: 2027, month: 12 } });
+    getMonthPrices.mockResolvedValue({ ok: true, prices: [JULY_PRICE] });
+    fireEvent.click(screen.getByRole("button", { name: /Retry month suggestion/i }));
+
+    await waitFor(() => expect(screen.getByText(/Suggested first month: 2027-07/i)).toBeInTheDocument());
+    expect(screen.queryByText(/couldn't reach the server to suggest/i)).toBeNull();
+    expect(screen.getByRole("button", { name: /Add next month/i })).not.toBeDisabled();
+  });
+
+  it("an ok:false ('notFound') advisory response is also treated as a failure, never as a successful null", async () => {
+    renderSection();
+    getFirstAvailablePrepaymentMonth.mockResolvedValueOnce({ ok: false, error: "notFound" });
+    getPayableObligations.mockResolvedValue({ ok: true, obligations: [], mixedCurrency: false, todayLocal: TODAY_LOCAL });
+    fireEvent.change(screen.getByLabelText(/Student/i), { target: { value: "student-1" } });
+
+    await waitFor(() => expect(screen.getByText(/couldn't reach the server to suggest/i)).toBeInTheDocument());
+    expect(screen.queryByText(/isn't available under this branch's current configuration/i)).toBeNull();
+  });
+
+  it("a successful retry seeds the list (untouched so far), and the owner can then manually extend it — the retry's own seed never fights with a later deliberate edit", async () => {
+    renderSection();
+    getFirstAvailablePrepaymentMonth.mockRejectedValueOnce(new Error("network down"));
+    getPayableObligations.mockResolvedValue({ ok: true, obligations: [DEBT_ITEM], mixedCurrency: false, todayLocal: TODAY_LOCAL });
+    fireEvent.change(screen.getByLabelText(/Student/i), { target: { value: "student-1" } });
+    await waitFor(() => expect(screen.getByRole("button", { name: /Retry month suggestion/i })).toBeInTheDocument());
+
+    getFirstAvailablePrepaymentMonth.mockResolvedValueOnce({ ok: true, month: { year: 2027, month: 7 }, horizonEnd: { year: 2027, month: 12 } });
+    getMonthPrices.mockResolvedValue({ ok: true, prices: [JULY_PRICE] });
+    fireEvent.click(screen.getByRole("button", { name: /Retry month suggestion/i }));
+    await waitFor(() => expect(screen.getByText("2027-07")).toBeInTheDocument());
+
+    getMonthPrices.mockResolvedValue({ ok: true, prices: [JULY_PRICE, { month: { year: 2027, month: 8 }, priceAmount: "100.00", currency: "USD" as const }] });
+    fireEvent.click(screen.getByRole("button", { name: /Add next month/i }));
+
+    await waitFor(() => expect(screen.getByText("2027-08")).toBeInTheDocument());
+    expect(screen.getByText("2027-07")).toBeInTheDocument();
+  });
+});
+
+describe("issue 2: never display an incomplete/stale price estimate as the complete total", () => {
+  it("adding then removing a month shows a loading indicator, never the stale prior total, until each new fetch resolves", async () => {
+    renderSection();
+    await selectStudentAndFillAmount();
+    expect(screen.getByText(/200\.00 USD/)).toBeInTheDocument();
+
+    const addFetch = deferred<Awaited<ReturnType<typeof getMonthPrices>>>();
+    getMonthPrices.mockReturnValueOnce(addFetch.promise);
+    fireEvent.click(screen.getByRole("button", { name: /Add next month/i }));
+
+    await waitFor(() => expect(screen.getByText(/Calculating/i)).toBeInTheDocument());
+    expect(screen.queryByText(/200\.00 USD/)).toBeNull();
+    expect(screen.queryByText(/Estimated total/i)).toBeNull();
+
+    addFetch.resolve({ ok: true, prices: [JULY_PRICE, { month: { year: 2027, month: 8 }, priceAmount: "100.00", currency: "USD" as const }] });
+    await waitFor(() => expect(screen.getByText(/300\.00 USD/)).toBeInTheDocument());
+
+    const removeFetch = deferred<Awaited<ReturnType<typeof getMonthPrices>>>();
+    getMonthPrices.mockReturnValueOnce(removeFetch.promise);
+    fireEvent.click(screen.getByRole("button", { name: /Remove last month/i }));
+
+    await waitFor(() => expect(screen.getByText(/Calculating/i)).toBeInTheDocument());
+    expect(screen.queryByText(/300\.00 USD/)).toBeNull();
+
+    removeFetch.resolve({ ok: true, prices: [JULY_PRICE] });
+    await waitFor(() => expect(screen.getByText(/200\.00 USD/)).toBeInTheDocument());
+  });
+
+  it("an earlier-fired, later-resolving price fetch never overwrites state once a later-fired, earlier-resolving one has applied", async () => {
+    renderSection();
+    await selectStudentAndFillAmount();
+
+    const first = deferred<Awaited<ReturnType<typeof getMonthPrices>>>();
+    getMonthPrices.mockReturnValueOnce(first.promise);
+    fireEvent.click(screen.getByRole("button", { name: /Add next month/i })); // -> [2027-07, 2027-08]
+    await waitFor(() => expect(screen.getByText(/Calculating/i)).toBeInTheDocument());
+
+    const second = deferred<Awaited<ReturnType<typeof getMonthPrices>>>();
+    getMonthPrices.mockReturnValueOnce(second.promise);
+    fireEvent.click(screen.getByRole("button", { name: /Add next month/i })); // -> [2027-07, 2027-08, 2027-09]
+
+    second.resolve({
+      ok: true,
+      prices: [JULY_PRICE, { month: { year: 2027, month: 8 }, priceAmount: "100.00", currency: "USD" as const }, { month: { year: 2027, month: 9 }, priceAmount: "100.00", currency: "USD" as const }],
+    });
+    await waitFor(() => expect(screen.getByText(/400\.00 USD/)).toBeInTheDocument());
+
+    // The earlier-fired, two-month response resolves LAST — it must never overwrite the already-correct three-month state.
+    first.resolve({ ok: true, prices: [JULY_PRICE, { month: { year: 2027, month: 8 }, priceAmount: "999.00", currency: "USD" as const }] });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.getByText(/400\.00 USD/)).toBeInTheDocument();
+    expect(screen.queryByText(/999\.00/)).toBeNull();
+  });
+
+  it("a rejected price fetch shows a distinct failure state with its own retry; a successful retry restores the complete total", async () => {
+    renderSection();
+    await selectStudentAndFillAmount();
+
+    getMonthPrices.mockRejectedValueOnce(new Error("network down"));
+    fireEvent.click(screen.getByRole("button", { name: /Add next month/i }));
+
+    await waitFor(() => expect(screen.getByText(/couldn't calculate the estimated total/i)).toBeInTheDocument());
+    expect(screen.queryByText(/200\.00 USD/)).toBeNull();
+
+    getMonthPrices.mockResolvedValueOnce({ ok: true, prices: [JULY_PRICE, { month: { year: 2027, month: 8 }, priceAmount: "100.00", currency: "USD" as const }] });
+    fireEvent.click(screen.getByRole("button", { name: /Retry price calculation/i }));
+
+    await waitFor(() => expect(screen.getByText(/300\.00 USD/)).toBeInTheDocument());
+  });
+
+  it("one inapplicable month among several shows a labeled partial subtotal, never the complete 'Estimated total' label", async () => {
+    renderSection();
+    await selectStudentAndFillAmount();
+
+    getMonthPrices.mockResolvedValueOnce({ ok: true, prices: [JULY_PRICE, { month: { year: 2027, month: 8 }, error: "inapplicable" as const }] });
+    fireEvent.click(screen.getByRole("button", { name: /Add next month/i }));
+
+    await waitFor(() => expect(screen.getByText(/1 of 2 months priced/i)).toBeInTheDocument());
+    expect(screen.queryByText(/^Estimated total$/)).toBeNull();
+    // Debt 100 + July's own 100 = 200.00 USD — August's inapplicable price excluded, never silently counted as if
+    // it were zero while still claiming a complete total.
+    expect(screen.getByText(/200\.00 USD/)).toBeInTheDocument();
+  });
+});
+
 describe("receivedOn race: current edit identity, never a stale response (the fix this new card builds WITH from the start, unlike the two already-shipped cards)", () => {
   it("a late obligations response never overwrites a received-on date the owner already edited", async () => {
     renderSection();
