@@ -100,6 +100,29 @@ export const storedPackageAttemptPayloadSchema = z.object({
 });
 export type StoredPackageAttemptPayload = z.infer<typeof storedPackageAttemptPayloadSchema>;
 
+/** Monthly-prepayment UI: the prepayment card's own stored payload shape — disjoint from both the ordinary and
+ * package ones (`requestedMonths` array in place of `obligationIds`/`planTermsId`+`requestedStartMonth`), mirroring
+ * `purchase-submission-identity.ts`'s own `prepaymentCanonicalPayloadSchema` exactly. */
+export const storedPrepaymentAttemptPayloadSchema = z.object({
+  operation: z.literal("PREPAYMENT"),
+  studentId: z.string().min(1),
+  requestedMonths: z
+    .array(yearMonthSchema)
+    .min(1)
+    .refine((ms) => new Set(ms.map((m) => `${m.year}-${m.month}`)).size === ms.length, { message: "duplicate requestedMonths" }),
+  existingObligationIds: z
+    .array(z.string().min(1))
+    .refine((ids) => new Set(ids).size === ids.length, { message: "duplicate existingObligationIds" }),
+  receivedOn: calendarDateSchema,
+  tender: z.object({
+    currency: z.enum(CURRENCIES),
+    amount: z.string().refine((a) => parseMoney(a, { allowZero: false }).ok, { message: "not a valid money amount" }),
+  }),
+  method: z.enum(PAYMENT_METHODS),
+  notes: z.string().optional(),
+});
+export type StoredPrepaymentAttemptPayload = z.infer<typeof storedPrepaymentAttemptPayloadSchema>;
+
 /** The `operation` discriminator alone, from ANY stored payload, without knowing in advance which schema to validate
  * against — the browser-storage mirror of `submission-identity.ts`'s own `readStoredOperation`. MUST fail closed:
  * an explicit, valid `operation` is trusted directly; failing that, `"ORDINARY"` is granted ONLY once the rest of
@@ -220,6 +243,33 @@ export function readPackageAttempt(organizationId: string, userId: string, submi
   return { status: "ok", payload: parsed.data };
 }
 
+export type ReadPrepaymentAttemptResult =
+  | { status: "missing" }
+  | { status: "ok"; payload: StoredPrepaymentAttemptPayload }
+  | { status: "corrupt" }
+  | { status: "unavailable" };
+
+/** `readPackageAttempt`'s own exact counterpart for the prepayment card. */
+export function readPrepaymentAttempt(organizationId: string, userId: string, submissionId: string): ReadPrepaymentAttemptResult {
+  const key = keyFor(organizationId, userId, submissionId);
+  let raw: string | null;
+  try {
+    raw = window.localStorage.getItem(key);
+  } catch {
+    return { status: "unavailable" };
+  }
+  if (raw === null) return { status: "missing" };
+  let json: unknown;
+  try {
+    json = JSON.parse(raw);
+  } catch {
+    return { status: "corrupt" };
+  }
+  const parsed = storedPrepaymentAttemptPayloadSchema.safeParse(json);
+  if (!parsed.success) return { status: "corrupt" };
+  return { status: "ok", payload: parsed.data };
+}
+
 export type ClearAttemptResult = { ok: true } | { ok: false; error: "unavailable" };
 
 /** Cross-card submission-blocking correction: an unclassifiable entry is the ordinary card's SOLE recovery
@@ -251,13 +301,21 @@ export function clearAttempt(organizationId: string, userId: string, submissionI
  * cards gate their OWN financial-submit action on. Fails closed: a whole-scan failure (`status: "unavailable"`)
  * counts as blocking, same as every other storage-read failure in this module. Recomputes on every successful
  * `clearAttempt` anywhere (the only way an unclassifiable entry's block can lift) and whenever `organizationId`/
- * `userId` change — no polling, no timers. */
+ * `userId` change — no polling, no timers.
+ *
+ * SSR-safe by construction (hydration-mismatch fix, found via real browser testing against a real Next.js render —
+ * `scanAttemptsByOperation` reads `window.localStorage`, which does not exist during server rendering; its own
+ * try/catch then resolves `{status:"unavailable"}` there, which this hook's fail-closed rule turns into `true` —
+ * DIFFERENT from a real browser's client-side result the moment any entry exists, a guaranteed hydration mismatch
+ * if the initial state were computed eagerly): starts at the one value server and client can always agree on
+ * (`false`, same as "nothing known yet"), and the `useEffect` below — which only ever runs client-side, after
+ * hydration — immediately corrects it to the real, storage-backed value. */
 export function useHasUnresolvedUnclassifiable(organizationId: string, userId: string): boolean {
   const compute = () => {
     const scanned = scanAttemptsByOperation(organizationId, userId, "ORDINARY");
     return scanned.status === "unavailable" || scanned.unclassifiable.length > 0;
   };
-  const [blocked, setBlocked] = useState(compute);
+  const [blocked, setBlocked] = useState(false);
   useEffect(() => {
     setBlocked(compute());
     const listener = () => setBlocked(compute());

@@ -1411,6 +1411,105 @@
         "selectableTotalsDetail": "Amounts that would be accepted: {totals}",
         "blockedByUnclassifiable": "A prior attempt needs review in the ledger-entry card above before a new package purchase can be submitted."
       }
+    },
+    "prepayment": {
+      "heading": "Pay ahead for future months",
+      "body": "Pays for one or more upcoming consecutive months in advance and settles them, together with any existing outstanding debt, in one payment.",
+      "submit": "Submit prepayment",
+      "submitting": "Submitting...",
+      "recordAnother": "Record another prepayment",
+      "fields": {
+        "student": "Student",
+        "studentPlaceholder": "Select a student",
+        "months": "Months to prepay",
+        "amount": "Amount received",
+        "currency": "Currency",
+        "receivedOn": "Date received",
+        "method": "Method",
+        "notes": "Notes"
+      },
+      "months": {
+        "loading": "Loading...",
+        "none": "No months selected yet.",
+        "addNext": "Add next month",
+        "removeLast": "Remove last month",
+        "priceLoading": "Loading price...",
+        "retryAdvisory": "Retry month suggestion"
+      },
+      "advisory": {
+        "suggestion": "Suggested first month: {month}. This is only a guess; the server's own result is final."
+      },
+      "obligations": {
+        "loading": "Loading outstanding balance...",
+        "none": "Nothing else outstanding for this student.",
+        "mixedCurrency": "This student owes in more than one currency. This cannot be settled in one payment yet. Please contact support.",
+        "allIncluded": "Every outstanding item below is included automatically and must be settled together with this prepayment.",
+        "type": {
+          "MONTHLY": "Monthly",
+          "SIGNUP": "Signup"
+        },
+        "retry": "Retry"
+      },
+      "totals": {
+        "heading": "Estimated total",
+        "line": "{amount} {currency}",
+        "disclaimer": "Computed from today's outstanding debt and each selected month's current price. This is not an authoritative quote — the server's own result at submission time is final.",
+        "backdatedDisclaimer": "This total reflects today's balance and prices. The amount due, and whether this submission succeeds at all, may differ for the date you've entered; the server's own result is final.",
+        "loading": "Calculating...",
+        "failed": "Couldn't calculate the estimated total.",
+        "retry": "Retry price calculation",
+        "partialHeading": "Partial subtotal ({priced} of {total} months priced)",
+        "partialDisclaimer": "Not every selected month has a resolved price yet — this is a partial subtotal only, computed from today's outstanding debt and the months priced so far. Never an authoritative quote."
+      },
+      "outcome": {
+        "success": "Prepayment recorded.",
+        "reversed": "This prepayment was already recorded, but has since been reversed. The student's balance no longer reflects it.",
+        "capturedPending": "No exchange rate was available yet. This prepayment is saved and waiting, pending, in the exchange-rate queue.",
+        "capturedResolved": "This prepayment was waiting on an exchange rate and has since been resolved into a real payment.",
+        "capturedCancelled": "This prepayment was waiting on an exchange rate and was cancelled. No months were recorded.",
+        "payloadMismatch": "Something went wrong with this submission's identity. Please contact support before retrying.",
+        "capturedAdminLink": "Review it in the exchange-rate queue"
+      },
+      "recovery": {
+        "inProgress": "There's an unconfirmed prepayment attempt from earlier.",
+        "checking": "Checking what happened...",
+        "blockedAuth": "You don't currently have access to check this prepayment's status.",
+        "blockedNotFound": "We couldn't find a confirmed outcome yet. This does not mean it failed.",
+        "blockedRejected": "We couldn't reach the server to check. This does not mean it failed.",
+        "blockedWrite": "We can't confirm this prepayment's status right now ({reason}). This does not mean it failed.",
+        "unreadableDraft": "This draft could not be read back fully. Contact support if a prepayment seems missing.",
+        "checkAgain": "Check status again",
+        "retrySafely": "Retry safely",
+        "storageUnavailable": "We can't verify your browser's storage right now, so a new prepayment can't be started safely. Reload the page or try a different browser.",
+        "clearFailed": "This outcome is confirmed, but we couldn't finish clearing the local draft. Try again.",
+        "finishCleanup": "Finish cleanup"
+      },
+      "error": {
+        "notActive": "This feature is not active for your organization yet.",
+        "invalid": "Some of the entered information isn't valid.",
+        "notFound": "That student couldn't be found in your scope.",
+        "inapplicable": "One of the selected months isn't applicable to this student's branch.",
+        "advisoryFailed": "We couldn't reach the server to suggest a first month. This does not mean prepayment is unavailable.",
+        "prepaymentUnavailable": "Prepayment isn't available under this branch's current configuration.",
+        "prepaymentLimitExceeded": "One of the selected months falls beyond what's currently allowed.",
+        "coverageGap": "One of the selected months conflicts with existing coverage.",
+        "coverageGapAdvisory": "Our own best guess for the next available month is {month}, but this is not confirmed by the server.",
+        "debtNotFullySettled": "All of this student's outstanding debt must be settled together with this prepayment. The list has been refreshed.",
+        "alreadySettled": "One or more outstanding items were already settled. The list has been refreshed.",
+        "futureDate": "The date received can't be in the future.",
+        "tooOld": "The date received is too far in the past.",
+        "currencyMismatch": "The tender currency doesn't match what's owed.",
+        "notASelectableTotal": "That amount doesn't match any payable total.",
+        "totalMismatch": "That amount doesn't match the selected months and items.",
+        "amountUnsupported": "This amount is too large to record.",
+        "conflict": "Something changed for this student. Please try again.",
+        "attemptAlreadyExists": "An attempt with this identity already exists. Please check its status before retrying.",
+        "storageUnavailable": "Your browser couldn't save this attempt safely, so it wasn't sent. Try enabling storage or a different browser.",
+        "unexpected": "Something unexpected happened.",
+        "alreadySettledDetail": "Already settled: {ids}",
+        "selectableTotalsDetail": "Amounts that would be accepted: {totals}",
+        "blockedByUnclassifiable": "A prior attempt needs review in the ledger-entry card above before a new prepayment can be submitted."
+      }
     }
   },
   "portal": {

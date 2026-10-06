@@ -16,6 +16,7 @@ import { inactiveLedgerActivation } from "@/lib/dues/ledger/activation";
 import { listStudentsForPaymentEntry } from "@/lib/dues/payment-entry-queries";
 import { PaymentEntrySection } from "./payment-entry-section";
 import { PackagePurchaseSection } from "./package-purchase-section";
+import { PrepaymentSection } from "./prepayment-section";
 import { PaymentsTable } from "./payments-table";
 
 // Same reasoning as the roster/dashboard pages: payment status is staff data
@@ -185,6 +186,25 @@ export default async function PaymentsPage() {
           </CardHeader>
           <CardContent className="pt-4">
             <PackagePurchaseSection
+              organizationId={context.organizationId}
+              currentUserId={context.actorUserId}
+              students={paymentEntryStudents.map((s) => ({ id: s.id, firstName: s.firstName, lastName: s.lastName, academyId: s.homeAcademyId, academyName: s.homeAcademyName }))}
+              plansHref={`/${locale}/payments/plans`}
+            />
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Monthly-prepayment UI brief §0: a NEW, separate, inactive-gated card, ADMIN-only display (matching
+          `prepayMonthlyObligationsWithSubmissionIdentity`'s own hard-coded ADMIN-only check — never DIRECTOR),
+          mounted alongside the ordinary ledger and package-purchase cards above, never on `payments/plans/page.tsx`. */}
+      {context.organizationRole === "ADMIN" && ledgerActive && (
+        <Card>
+          <CardHeader className="border-b">
+            <CardTitle>{t("prepayment.heading")}</CardTitle>
+          </CardHeader>
+          <CardContent className="pt-4">
+            <PrepaymentSection
               organizationId={context.organizationId}
               currentUserId={context.actorUserId}
               students={paymentEntryStudents.map((s) => ({ id: s.id, firstName: s.firstName, lastName: s.lastName, academyId: s.homeAcademyId, academyName: s.homeAcademyName }))}
