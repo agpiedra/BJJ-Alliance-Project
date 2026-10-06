@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { z } from "zod";
 import type { PaymentMethod } from "@/generated/prisma/client";
 import { CURRENCIES } from "@/lib/payments/format-money";
@@ -221,6 +222,16 @@ export function readPackageAttempt(organizationId: string, userId: string, submi
 
 export type ClearAttemptResult = { ok: true } | { ok: false; error: "unavailable" };
 
+/** Cross-card submission-blocking correction: an unclassifiable entry is the ordinary card's SOLE recovery
+ * responsibility (unchanged), but ITS OWN UNRESOLVED STATE must still block new financial submissions on BOTH
+ * mounted cards — the package card never processes it, it only OBSERVES this signal (`useHasUnresolvedUnclassifiable`
+ * below). `clearAttempt` is, per both cards' own design, the ONE place a stored identity is ever actually removed —
+ * notifying subscribers here (and only here, on success) is therefore sufficient to reflect every resolution path. */
+const attemptChangeListeners = new Set<() => void>();
+function notifyAttemptsChanged(): void {
+  attemptChangeListeners.forEach((listener) => listener());
+}
+
 /** Removes exactly the targeted entry. Called only per the recovery-state table (§2.4c) — a definitive resolved
  * outcome, or an explicit, deliberate owner action — never on a bare lookup failure and never from a sign-out
  * handler (this module exposes no such handler on purpose: nothing here reacts to auth state). Returns a result the
@@ -228,10 +239,35 @@ export type ClearAttemptResult = { ok: true } | { ok: false; error: "unavailable
 export function clearAttempt(organizationId: string, userId: string, submissionId: string): ClearAttemptResult {
   try {
     window.localStorage.removeItem(keyFor(organizationId, userId, submissionId));
+    notifyAttemptsChanged();
     return { ok: true };
   } catch {
     return { ok: false, error: "unavailable" };
   }
+}
+
+/** Whether ANY stored entry for this user+org is currently unclassifiable (operation unknown — corrupt JSON, an
+ * unrecognized `operation` value, or a per-entry read failure) — the shared, storage-backed source of truth both
+ * cards gate their OWN financial-submit action on. Fails closed: a whole-scan failure (`status: "unavailable"`)
+ * counts as blocking, same as every other storage-read failure in this module. Recomputes on every successful
+ * `clearAttempt` anywhere (the only way an unclassifiable entry's block can lift) and whenever `organizationId`/
+ * `userId` change — no polling, no timers. */
+export function useHasUnresolvedUnclassifiable(organizationId: string, userId: string): boolean {
+  const compute = () => {
+    const scanned = scanAttemptsByOperation(organizationId, userId, "ORDINARY");
+    return scanned.status === "unavailable" || scanned.unclassifiable.length > 0;
+  };
+  const [blocked, setBlocked] = useState(compute);
+  useEffect(() => {
+    setBlocked(compute());
+    const listener = () => setBlocked(compute());
+    attemptChangeListeners.add(listener);
+    return () => {
+      attemptChangeListeners.delete(listener);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `compute` is recreated every render on purpose; only organizationId/userId identity should re-subscribe
+  }, [organizationId, userId]);
+  return blocked;
 }
 
 export type ListStoredAttemptIdsResult = { status: "ok"; ids: string[] } | { status: "unavailable" };

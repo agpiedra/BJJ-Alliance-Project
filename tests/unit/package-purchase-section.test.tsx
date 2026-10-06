@@ -268,6 +268,94 @@ describe("coverageGap copy never claims to name which month failed, and may show
   });
 });
 
+describe("advisory-month races: current edit/request identity, never a stale response", () => {
+  it("a late advisory-month response never overwrites a start month the owner already typed", async () => {
+    renderSection();
+    const advisory = deferred<Awaited<ReturnType<typeof getFirstAvailablePackageMonth>>>();
+    getPackagePlanOptions.mockResolvedValue({ ok: true, plans: [PLAN] });
+    getFirstAvailablePackageMonth.mockReturnValueOnce(advisory.promise);
+    getPayableObligations.mockResolvedValue({ ok: true, obligations: [DEBT_ITEM], mixedCurrency: false, todayLocal: TODAY_LOCAL });
+
+    fireEvent.change(screen.getByLabelText(/Student/i), { target: { value: "student-1" } });
+    await waitFor(() => expect(screen.getByLabelText(/Package/i)).toBeInTheDocument());
+    fireEvent.change(screen.getByLabelText(/Package/i), { target: { value: PLAN.planTermsId } });
+
+    // The owner types a custom start month BEFORE the advisory fetch (still pending) resolves.
+    fireEvent.change(screen.getByLabelText(/Start month/i), { target: { value: "2027-09" } });
+
+    advisory.resolve({ ok: true, month: { year: 2027, month: 6 } });
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect((screen.getByLabelText(/Start month/i) as HTMLInputElement).value).toBe("2027-09");
+
+    fireEvent.change(screen.getByLabelText(/Amount received/i), { target: { value: "370.00" } });
+    purchasePackage.mockResolvedValueOnce({ ok: true, obligationId: "pkgob1", paymentId: "p1", settlementIds: ["s1"], totalMinor: 37000 });
+    fireEvent.click(screen.getByRole("button", { name: /Purchase package/i }));
+
+    await waitFor(() => expect(purchasePackage).toHaveBeenCalledTimes(1));
+    const formData = purchasePackage.mock.calls[0][2] as FormData;
+    expect(formData.get("requestedStartMonth")).toBe("2027-09");
+  });
+
+  it("a stale advisory-month response for student A never applies after switching to student B (initial fetch)", async () => {
+    renderSection();
+    const advisoryA = deferred<Awaited<ReturnType<typeof getFirstAvailablePackageMonth>>>();
+    getPackagePlanOptions.mockResolvedValue({ ok: true, plans: [PLAN] });
+    getFirstAvailablePackageMonth.mockReturnValueOnce(advisoryA.promise);
+    getPayableObligations.mockResolvedValue({ ok: true, obligations: [DEBT_ITEM], mixedCurrency: false, todayLocal: TODAY_LOCAL });
+
+    fireEvent.change(screen.getByLabelText(/Student/i), { target: { value: "student-1" } });
+    await waitFor(() => expect(screen.getByLabelText(/Package/i)).toBeInTheDocument());
+
+    // Switch to student B before A's advisory fetch resolves — B gets its own, different advisory.
+    getFirstAvailablePackageMonth.mockResolvedValueOnce({ ok: true, month: { year: 2027, month: 11 } });
+    fireEvent.change(screen.getByLabelText(/Student/i), { target: { value: "student-2" } });
+    await waitFor(() => expect((screen.getByLabelText(/Start month/i) as HTMLInputElement).value).toBe("2027-11"));
+
+    // A's stale advisory now resolves — must be discarded, never overwriting B's already-applied suggestion.
+    advisoryA.resolve({ ok: true, month: { year: 2027, month: 6 } });
+    await new Promise((r) => setTimeout(r, 0));
+    expect((screen.getByLabelText(/Start month/i) as HTMLInputElement).value).toBe("2027-11");
+
+    fireEvent.change(screen.getByLabelText(/Package/i), { target: { value: PLAN.planTermsId } });
+    fireEvent.change(screen.getByLabelText(/Amount received/i), { target: { value: "370.00" } });
+    purchasePackage.mockResolvedValueOnce({ ok: true, obligationId: "pkgob1", paymentId: "p1", settlementIds: ["s1"], totalMinor: 37000 });
+    fireEvent.click(screen.getByRole("button", { name: /Purchase package/i }));
+
+    await waitFor(() => expect(purchasePackage).toHaveBeenCalledTimes(1));
+    const formData = purchasePackage.mock.calls[0][2] as FormData;
+    expect(formData.get("studentId")).toBe("student-2");
+  });
+
+  it("a stale coverageGap follow-up advisory for student A never applies after switching to student B", async () => {
+    renderSection();
+    await selectStudentPlanAndFillAmount();
+
+    const followUpA = deferred<Awaited<ReturnType<typeof getFirstAvailablePackageMonth>>>();
+    // The main mount-fetch for student-1 already resolved inside selectStudentPlanAndFillAmount with month 2027-06;
+    // this is the SEPARATE follow-up fired only after a coverageGap refusal.
+    getFirstAvailablePackageMonth.mockReturnValueOnce(followUpA.promise);
+    purchasePackage.mockResolvedValueOnce({ ok: false, error: "coverageGap" });
+    getPayableObligations.mockResolvedValue({ ok: true, obligations: [DEBT_ITEM], mixedCurrency: false, todayLocal: TODAY_LOCAL });
+
+    fireEvent.click(screen.getByRole("button", { name: /Purchase package/i }));
+    await waitFor(() => expect(screen.getByText(/conflicts with existing coverage/i)).toBeInTheDocument());
+
+    // Switch to student B before A's coverageGap follow-up resolves.
+    getPackagePlanOptions.mockResolvedValueOnce({ ok: true, plans: [PLAN] });
+    getFirstAvailablePackageMonth.mockResolvedValueOnce({ ok: true, month: { year: 2027, month: 12 } });
+    getPayableObligations.mockResolvedValueOnce({ ok: true, obligations: [DEBT_ITEM], mixedCurrency: false, todayLocal: TODAY_LOCAL });
+    fireEvent.change(screen.getByLabelText(/Student/i), { target: { value: "student-2" } });
+    await waitFor(() => expect(screen.getByText(/Suggested start month: 2027-12/i)).toBeInTheDocument());
+
+    // A's stale coverageGap follow-up now resolves with a DIFFERENT month — must never overwrite B's own suggestion.
+    followUpA.resolve({ ok: true, month: { year: 2027, month: 7 } });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.getByText(/Suggested start month: 2027-12/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Suggested start month: 2027-07/i)).toBeNull();
+  });
+});
+
 describe("reload-recovery mount check (own operation only)", () => {
   it("a stored PACKAGE attempt resolving to a committed outcome on mount clears it and renders the original outcome", async () => {
     window.localStorage.setItem(

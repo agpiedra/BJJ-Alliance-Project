@@ -172,7 +172,8 @@ describe("unclassifiable-entry ownership (brief §7)", () => {
     await waitFor(() => expect(ordinaryCard.getByText(/couldn't find a confirmed outcome/i)).toBeInTheDocument());
     expect(window.localStorage.getItem(`payment-attempt:${ORG_ID}:${USER_ID}:sub-corrupt`)).toBe("not even json {{{");
 
-    // The main ordinary form is NOT blocked by this — it's a separate section, independent of `phase`/`locked`.
+    // The main ordinary form's own RENDERING/status-check/cleanup stays independent of `phase`/`locked`, as before —
+    // only the SUBMIT action is now gated on this entry's unresolved state (proven in the describe block below).
     expect(ordinaryCard.getByLabelText(/Student/i)).toBeInTheDocument();
   });
 
@@ -187,5 +188,99 @@ describe("unclassifiable-entry ownership (brief §7)", () => {
 
     await waitFor(() => expect(ordinaryCard.getByText("Payment recorded.")).toBeInTheDocument());
     expect(window.localStorage.getItem(`payment-attempt:${ORG_ID}:${USER_ID}:sub-corrupt-2`)).toBeNull();
+  });
+});
+
+describe("cross-card submission blocking while an unclassifiable entry is unresolved", () => {
+  const PLAN = { planId: "plan-1", planTermsId: "terms-1", planName: "3-Month Package", monthsCovered: 3, priceAmount: "270.00", currency: "USD" as const };
+  const DEBT_ITEM = {
+    obligationId: "ob-1",
+    type: "MONTHLY" as const,
+    currency: "USD" as const,
+    coverageYear: 2027,
+    coverageMonth: 5,
+    settled: false as const,
+    outstandingAmountMinor: 10000,
+    outstandingFeeMinor: 0,
+    dueOn: "2027-05-20",
+    pastGrace: false,
+  };
+  const TODAY_LOCAL = { year: 2027, month: 6, day: 15 };
+
+  /** Fills BOTH cards' forms to the point where each would otherwise be submittable — any remaining `disabled` on
+   * either submit button can only be this cross-card block, nothing else. */
+  async function fillBothFormsToSubmittable() {
+    getPayableObligations.mockResolvedValue({ ok: true, obligations: [DEBT_ITEM], mixedCurrency: false, todayLocal: TODAY_LOCAL });
+    getPackagePlanOptions.mockResolvedValue({ ok: true, plans: [PLAN] });
+    getFirstAvailablePackageMonth.mockResolvedValue({ ok: true, month: { year: 2027, month: 6 } });
+
+    const ordinaryCard = within(screen.getByTestId("ordinary-card"));
+    const packageCard = within(screen.getByTestId("package-card"));
+
+    fireEvent.change(ordinaryCard.getByLabelText(/Student/i), { target: { value: "student-1" } });
+    await waitFor(() => expect(ordinaryCard.getAllByRole("checkbox").length).toBeGreaterThan(0));
+    fireEvent.change(ordinaryCard.getByLabelText(/Amount received/i), { target: { value: "100.00" } });
+
+    fireEvent.change(packageCard.getByLabelText(/Student/i), { target: { value: "student-1" } });
+    await waitFor(() => expect(packageCard.getByLabelText(/Package/i)).toBeInTheDocument());
+    fireEvent.change(packageCard.getByLabelText(/Package/i), { target: { value: PLAN.planTermsId } });
+    await waitFor(() => expect(packageCard.getByLabelText(/Amount received/i)).toBeInTheDocument());
+    fireEvent.change(packageCard.getByLabelText(/Amount received/i), { target: { value: "370.00" } });
+
+    return { ordinaryCard, packageCard };
+  }
+
+  it("a corrupt entry present at mount blocks BOTH cards' submit — neither write action is ever called", async () => {
+    window.localStorage.setItem(`payment-attempt:${ORG_ID}:${USER_ID}:sub-corrupt-block`, "not even json {{{");
+    renderBothCards();
+    const { ordinaryCard, packageCard } = await fillBothFormsToSubmittable();
+
+    expect(ordinaryCard.getByRole("button", { name: /Record payment/i })).toBeDisabled();
+    expect(packageCard.getByRole("button", { name: /Purchase package/i })).toBeDisabled();
+    expect(ordinaryCard.getByText(/can't be submitted until this is resolved/i)).toBeInTheDocument();
+    expect(packageCard.getByText(/prior attempt needs review/i)).toBeInTheDocument();
+
+    fireEvent.click(ordinaryCard.getByRole("button", { name: /Record payment/i }));
+    fireEvent.click(packageCard.getByRole("button", { name: /Purchase package/i }));
+    expect(recordPayment).not.toHaveBeenCalled();
+    expect(purchasePackage).not.toHaveBeenCalled();
+  });
+
+  it("a failed/notFound status-check on the corrupt entry keeps BOTH cards still blocked", async () => {
+    window.localStorage.setItem(`payment-attempt:${ORG_ID}:${USER_ID}:sub-corrupt-block2`, "not even json {{{");
+    renderBothCards();
+    const { ordinaryCard, packageCard } = await fillBothFormsToSubmittable();
+
+    checkSubmissionOutcome.mockResolvedValueOnce({ status: "notFound" });
+    fireEvent.click(ordinaryCard.getByRole("button", { name: /Check status/i }));
+    await waitFor(() => expect(ordinaryCard.getByText(/couldn't find a confirmed outcome/i)).toBeInTheDocument());
+
+    expect(ordinaryCard.getByRole("button", { name: /Record payment/i })).toBeDisabled();
+    expect(packageCard.getByRole("button", { name: /Purchase package/i })).toBeDisabled();
+    expect(recordPayment).not.toHaveBeenCalled();
+    expect(purchasePackage).not.toHaveBeenCalled();
+  });
+
+  it("a committed outcome plus successful cleanup restores BOTH cards' availability, without either card performing a financial write", async () => {
+    window.localStorage.setItem(`payment-attempt:${ORG_ID}:${USER_ID}:sub-corrupt-resolve`, "not even json {{{");
+    renderBothCards();
+    const { ordinaryCard, packageCard } = await fillBothFormsToSubmittable();
+
+    expect(ordinaryCard.getByRole("button", { name: /Record payment/i })).toBeDisabled();
+    expect(packageCard.getByRole("button", { name: /Purchase package/i })).toBeDisabled();
+
+    checkSubmissionOutcome.mockResolvedValueOnce({ status: "committed", outcome: { kind: "payment", paymentId: "p-resolved", currentlyReversed: false } });
+    fireEvent.click(ordinaryCard.getByRole("button", { name: /Check status/i }));
+    await waitFor(() => expect(ordinaryCard.getByText("Payment recorded.")).toBeInTheDocument());
+    expect(window.localStorage.getItem(`payment-attempt:${ORG_ID}:${USER_ID}:sub-corrupt-resolve`)).toBeNull();
+
+    await waitFor(() => expect(packageCard.getByRole("button", { name: /Purchase package/i })).not.toBeDisabled());
+    expect(ordinaryCard.queryByText(/can't be submitted until this is resolved/i)).toBeNull();
+    expect(packageCard.queryByText(/prior attempt needs review/i)).toBeNull();
+
+    // Only ever a status check happened — neither card performed a financial write to get here.
+    expect(checkSubmissionOutcome).toHaveBeenCalledTimes(1);
+    expect(recordPayment).not.toHaveBeenCalled();
+    expect(purchasePackage).not.toHaveBeenCalled();
   });
 });

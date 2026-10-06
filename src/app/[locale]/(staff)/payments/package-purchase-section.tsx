@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { FIELD_CLASS, Input } from "@/components/ui/input";
 import { checkSubmissionOutcome, getPayableObligations } from "@/lib/dues/payment-entry-actions";
 import { purchasePackage, getPackagePlanOptions, getFirstAvailablePackageMonth } from "@/lib/dues/package-purchase-actions";
-import { beginAttempt, readPackageAttempt, clearAttempt, scanAttemptsByOperation, type StoredPackageAttemptPayload } from "@/lib/dues/payment-attempt-storage";
+import { beginAttempt, readPackageAttempt, clearAttempt, scanAttemptsByOperation, useHasUnresolvedUnclassifiable, type StoredPackageAttemptPayload } from "@/lib/dues/payment-attempt-storage";
 import { classifyWriteResult, classifyRecoveryCheck, shouldClearAfterRecoveryCheck, type WriteOutcomeClassification, type RecoveryCheckClassification } from "@/lib/dues/payment-entry-recovery";
 import { CURRENCIES } from "@/lib/payments/format-money";
 import { decimalToMinor } from "@/lib/dues/ledger/minor-units";
@@ -100,7 +100,6 @@ export function PackagePurchaseSection({
 
   const [advisoryMonth, setAdvisoryMonth] = useState<YearMonth | null>(null);
   const [requestedStartMonth, setRequestedStartMonth] = useState("");
-  const [requestedStartMonthTouched, setRequestedStartMonthTouched] = useState(false);
 
   const [obligations, setObligations] = useState<PayableObligation[] | null>(null);
   const [mixedCurrency, setMixedCurrency] = useState(false);
@@ -121,10 +120,15 @@ export function PackagePurchaseSection({
   const [storedPayloadReadable, setStoredPayloadReadable] = useState(true);
   const [beginError, setBeginError] = useState<"alreadyExists" | "storageUnavailable" | null>(null);
   const [clearFailed, setClearFailed] = useState(false);
+  // Cross-card submission-blocking correction: this card NEVER processes an unclassifiable entry itself (that stays
+  // the ordinary card's sole recovery responsibility) — it only OBSERVES the shared, storage-backed signal to block
+  // its own submit while one is unresolved.
+  const blockedByUnresolvedUnclassifiable = useHasUnresolvedUnclassifiable(organizationId, currentUserId);
 
   const submissionIdRef = useRef<string | null>(null);
   const recoveryQueueRef = useRef<string[]>([]);
   const studentDataRequestRef = useRef(0);
+  const requestedStartMonthTouchedRef = useRef(false);
   const pendingClearRef = useRef<{ id: string; onSuccess: () => void | Promise<void> } | null>(null);
 
   const locked =
@@ -219,7 +223,7 @@ export function PackagePurchaseSection({
     setPlansError(null);
     setAdvisoryMonth(null);
     setRequestedStartMonth("");
-    setRequestedStartMonthTouched(false);
+    requestedStartMonthTouchedRef.current = false;
     setObligations(null);
     setMixedCurrency(false);
     setObligationsError(null);
@@ -250,7 +254,10 @@ export function PackagePurchaseSection({
         if (studentDataRequestRef.current !== requestId) return;
         if (result.ok) {
           setAdvisoryMonth(result.month);
-          if (result.month && !requestedStartMonthTouched) setRequestedStartMonth(yearMonthToIso(result.month));
+          // Reads the REF, never the closed-over `requestedStartMonthTouched` state (stale by construction — this
+          // effect deliberately excludes it from its own deps, see the eslint-disable below) — otherwise a response
+          // that resolves after the owner has since typed a custom month would silently overwrite it.
+          if (result.month && !requestedStartMonthTouchedRef.current) setRequestedStartMonth(yearMonthToIso(result.month));
         }
       })
       .catch(() => {
@@ -280,7 +287,7 @@ export function PackagePurchaseSection({
         setObligations([]);
         setPhase((p) => (p === "loadingStudentData" ? "form" : p));
       });
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- receivedOnTouched/requestedStartMonthTouched intentionally not deps: re-fetching must not re-run on every edit
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- receivedOnTouched intentionally not a dep: re-fetching must not re-run on every edit (requestedStartMonthTouched is tracked via a ref now, not state, so it's not a dep candidate at all)
   }, [organizationId, selectedStudentId, studentDataRetryNonce]);
 
   /** brief §2.9: `staleTerms`'s own re-fetch — re-reads the plan/terms picker and clears the previously-selected
@@ -399,13 +406,17 @@ export function PackagePurchaseSection({
   }
 
   function resetForm() {
+    // Invalidates any student-data fetch (including the coverageGap follow-up) still in flight for the
+    // student/selection being cleared here — without this, a response that resolves after this reset could still
+    // pass its own discriminator check and apply to the now-blank form.
+    studentDataRequestRef.current++;
     setSelectedStudentId("");
     setSelectedPlanTermsId("");
     setPlans(null);
     setPlansError(null);
     setAdvisoryMonth(null);
     setRequestedStartMonth("");
-    setRequestedStartMonthTouched(false);
+    requestedStartMonthTouchedRef.current = false;
     setAmount("");
     setReceivedOnTouched(false);
     setReceivedOn(browserTodayIso());
@@ -419,6 +430,7 @@ export function PackagePurchaseSection({
 
   const canSubmit =
     !locked &&
+    !blockedByUnresolvedUnclassifiable &&
     !obligationsError &&
     !plansError &&
     !mixedCurrency &&
@@ -460,8 +472,14 @@ export function PackagePurchaseSection({
           } else if (RECONCILES_DEBT.has(classification.error)) {
             await refetchObligationsReconciling();
             if (classification.error === "coverageGap") {
+              // Discriminator-protected exactly like every other fetch in this file (previously missing here): a
+              // student switch, or a `resetForm()` after a meanwhile-completed submission, bumps
+              // `studentDataRequestRef` and this stale response is discarded instead of silently overwriting
+              // `advisoryMonth` for whatever is now displayed.
+              const advisoryRequestId = studentDataRequestRef.current;
               void getFirstAvailablePackageMonth(organizationId, selectedStudentId)
                 .then((r) => {
+                  if (studentDataRequestRef.current !== advisoryRequestId) return;
                   if (r.ok) setAdvisoryMonth(r.month);
                 })
                 .catch(() => {});
@@ -488,7 +506,7 @@ export function PackagePurchaseSection({
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (locked || submissionIdRef.current || !canSubmit) return;
+    if (locked || blockedByUnresolvedUnclassifiable || submissionIdRef.current || !canSubmit) return;
 
     const submissionId = crypto.randomUUID();
     const payload = currentPayload();
@@ -746,7 +764,7 @@ export function PackagePurchaseSection({
                 disabled={locked}
                 value={requestedStartMonth}
                 onChange={(e) => {
-                  setRequestedStartMonthTouched(true);
+                  requestedStartMonthTouchedRef.current = true;
                   setRequestedStartMonth(e.target.value);
                 }}
               />
@@ -799,6 +817,12 @@ export function PackagePurchaseSection({
               <p className="text-xs text-muted-foreground">{t("totals.disclaimer")}</p>
               {branchToday && receivedOn !== calendarDateToIso(branchToday) && <p className="text-xs text-muted-foreground">{t("totals.backdatedDisclaimer")}</p>}
             </div>
+          )}
+
+          {blockedByUnresolvedUnclassifiable && (
+            <p role="alert" className="text-sm text-bad">
+              {t("error.blockedByUnclassifiable")}
+            </p>
           )}
 
           {formError && (

@@ -1315,7 +1315,8 @@
       "unclassifiable": {
         "heading": "Intento no reconocido encontrado",
         "body": "Encontramos un intento guardado en este navegador que no pudimos leer completamente. Puede verificar si se completo.",
-        "checkStatus": "Verificar estado"
+        "checkStatus": "Verificar estado",
+        "blocksSubmission": "No se puede enviar un nuevo pago hasta que esto se resuelva."
       }
     },
     "packagePurchase": {
@@ -1407,7 +1408,8 @@
         "storageUnavailable": "Su navegador no pudo guardar este intento de forma segura, asi que no se envio. Intente habilitar el almacenamiento o use otro navegador.",
         "unexpected": "Ocurrio algo inesperado.",
         "alreadySettledDetail": "Ya liquidado: {ids}",
-        "selectableTotalsDetail": "Montos que serian aceptados: {totals}"
+        "selectableTotalsDetail": "Montos que serian aceptados: {totals}",
+        "blockedByUnclassifiable": "Un intento anterior necesita revision en la tarjeta de registro de pagos de arriba antes de poder enviar una nueva compra de paquete."
       }
     }
   },

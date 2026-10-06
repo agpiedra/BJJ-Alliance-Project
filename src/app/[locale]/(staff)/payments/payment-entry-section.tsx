@@ -5,7 +5,7 @@ import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { FIELD_CLASS, Input } from "@/components/ui/input";
 import { recordPayment, checkSubmissionOutcome, getPayableObligations } from "@/lib/dues/payment-entry-actions";
-import { beginAttempt, readAttempt, clearAttempt, scanAttemptsByOperation, type StoredAttemptPayload } from "@/lib/dues/payment-attempt-storage";
+import { beginAttempt, readAttempt, clearAttempt, scanAttemptsByOperation, useHasUnresolvedUnclassifiable, type StoredAttemptPayload } from "@/lib/dues/payment-attempt-storage";
 import { classifyWriteResult, classifyRecoveryCheck, shouldClearAfterRecoveryCheck, type WriteOutcomeClassification, type RecoveryCheckClassification } from "@/lib/dues/payment-entry-recovery";
 import { CURRENCIES } from "@/lib/payments/format-money";
 import type { PayableObligation } from "@/lib/dues/payment-entry-queries";
@@ -63,8 +63,11 @@ type OutcomeDisplay = { source: "write"; classification: WriteOutcomeClassificat
  * "outcome" screen, and never a reason to wipe the owner's typed draft (point 2). */
 type FormError = { error: string; selectableTotals?: string[]; alreadySettledIds?: string[] };
 
-/** Package-purchase UI brief §2.10: one entry in the ordinary card's own unclassifiable-attempts section — fully
- * independent of `phase`/`locked`/the main recovery queue, so a corrupt entry never blocks a fresh submission. */
+/** Package-purchase UI brief §2.10: one entry in the ordinary card's own unclassifiable-attempts section — its own
+ * rendering/status-check/cleanup stay independent of `phase`/`locked`/the main recovery queue (that was never the
+ * bug). Corrected: while ANY such entry's outcome remains unknown, it DOES block new financial submissions on both
+ * mounted cards (`useHasUnresolvedUnclassifiable`) — an uncertain, unclassified attempt is exactly the
+ * double-submission risk this whole feature exists to prevent, not an exception to it. */
 type UnclassifiableEntryState = { id: string; status: "idle" | "checking"; lastResult?: RecoveryCheckClassification; clearFailed?: boolean };
 
 const TERMINAL_WRITE_KINDS = new Set(["freshSuccess", "replaySuccess", "freshCapture", "replayCapture"]);
@@ -113,6 +116,7 @@ export function PaymentEntrySection({
   const [beginError, setBeginError] = useState<"alreadyExists" | "storageUnavailable" | null>(null);
   const [clearFailed, setClearFailed] = useState(false);
   const [unclassifiableEntries, setUnclassifiableEntries] = useState<UnclassifiableEntryState[]>([]);
+  const blockedByUnresolvedUnclassifiable = useHasUnresolvedUnclassifiable(organizationId, currentUserId);
 
   const submissionIdRef = useRef<string | null>(null);
   // The FULL set of still-unresolved stored attempt ids (point 4) — index 0 is always the one currently shown while
@@ -398,7 +402,14 @@ export function PaymentEntrySection({
     setObligationsErrorSource(null);
   }
 
-  const canSubmit = !locked && !obligationsError && !mixedCurrency && isPrefixSelection && selectedObligationIds.size > 0 && amount.trim() !== "";
+  const canSubmit =
+    !locked &&
+    !blockedByUnresolvedUnclassifiable &&
+    !obligationsError &&
+    !mixedCurrency &&
+    isPrefixSelection &&
+    selectedObligationIds.size > 0 &&
+    amount.trim() !== "";
 
   async function runWrite(submissionId: string, formData: FormData, isRecoveryRetry: boolean) {
     setPhase("submitting");
@@ -467,9 +478,9 @@ export function PaymentEntrySection({
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     // Defense-in-depth beyond the submit button's own `disabled` (point 3/1): never reachable while locked, while
-    // an unresolved stored attempt exists, or while the selection is not a genuine, complete, single-currency
-    // oldest-first prefix.
-    if (locked || submissionIdRef.current || !canSubmit) return;
+    // an unresolved stored attempt exists (this card's own queue OR any still-unclassified entry — either card),
+    // or while the selection is not a genuine, complete, single-currency oldest-first prefix.
+    if (locked || blockedByUnresolvedUnclassifiable || submissionIdRef.current || !canSubmit) return;
 
     const submissionId = crypto.randomUUID();
     const payload = currentPayload();
@@ -596,12 +607,18 @@ export function PaymentEntrySection({
       )}
 
       {/* Package-purchase UI brief §2.10: the ordinary card's own sole-owner section for an unclassifiable stored
-          attempt — status-check ONLY, never a retry (there is no validated payload to resend), and fully
-          independent of the main form's own phase/locking. */}
+          attempt — status-check/cleanup rendering stays independent of the main form's own phase/locking, but (per
+          the uncertain-attempt recovery rule) its UNRESOLVED presence blocks new financial submissions on both
+          mounted cards until a confirmed outcome is cleared — see `canSubmit`/`handleSubmit` above. */}
       {unclassifiableEntries.length > 0 && (
         <div className="flex flex-col gap-2 rounded-lg border border-border p-3">
           <p className="text-sm font-medium">{t("unclassifiable.heading")}</p>
           <p className="text-xs text-muted-foreground">{t("unclassifiable.body")}</p>
+          {blockedByUnresolvedUnclassifiable && (
+            <p role="alert" className="text-xs text-bad">
+              {t("unclassifiable.blocksSubmission")}
+            </p>
+          )}
           {unclassifiableEntries.map((entry) => (
             <div key={entry.id} className="flex flex-col gap-1 border-t border-border pt-2 first:border-t-0 first:pt-0">
               {entry.clearFailed && (

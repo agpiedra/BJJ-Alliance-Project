@@ -1315,7 +1315,8 @@
       "unclassifiable": {
         "heading": "Unrecognized attempt found",
         "body": "We found a saved attempt from this browser that we couldn't fully read. You can check whether it went through.",
-        "checkStatus": "Check status"
+        "checkStatus": "Check status",
+        "blocksSubmission": "A new payment can't be submitted until this is resolved."
       }
     },
     "packagePurchase": {
@@ -1407,7 +1408,8 @@
         "storageUnavailable": "Your browser couldn't save this attempt safely, so it wasn't sent. Try enabling storage or a different browser.",
         "unexpected": "Something unexpected happened.",
         "alreadySettledDetail": "Already settled: {ids}",
-        "selectableTotalsDetail": "Amounts that would be accepted: {totals}"
+        "selectableTotalsDetail": "Amounts that would be accepted: {totals}",
+        "blockedByUnclassifiable": "A prior attempt needs review in the ledger-entry card above before a new package purchase can be submitted."
       }
     }
   },
