@@ -351,11 +351,14 @@ export function LateFeeRow({
 
   const needsRefresh = transportFailure || error?.code === "alreadyRemoved";
 
-  useEffect(() => {
-    onUncertainChange?.(fee.id, needsRefresh);
-    return () => onUncertainChange?.(fee.id, false);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- reports only this row's own id/needsRefresh pair
-  }, [needsRefresh]);
+  // Correction round 2, issue 1 (CI-caught race, fixed): reporting this transition via a `useEffect` watching
+  // `needsRefresh` is NOT guaranteed to have flushed before the very next synchronous test/user interaction (a
+  // `useEffect` runs in React's own passive-effect phase, a tick after the triggering commit is visible) — this
+  // raced and failed intermittently in CI. `onUncertainChange` is now called IMPERATIVELY at each exact mutation
+  // point below, in the same synchronous handler/callback that sets the underlying state — never derived.
+  // onUncertainChange is a fresh inline function every parent render; only fee.id identity should re-arm this cleanup.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => () => onUncertainChange?.(fee.id, false), [fee.id]); // unmount-only safety net
 
   useEffect(() => {
     if (!needsRefresh) return;
@@ -377,8 +380,10 @@ export function LateFeeRow({
           setError(null);
           setCurrentRevision(current.expectedRevision);
           setConfirmedState({ kind: "unchanged" });
+          onUncertainChange?.(fee.id, false); // imperative — see the mount-effect's own doc comment above
         } else {
           setConfirmedState({ kind: "removed", removalKind: current.removalKind!, source: "recovery" });
+          onUncertainChange?.(fee.id, false);
           onResolved();
         }
       })
@@ -441,9 +446,13 @@ export function LateFeeRow({
         // never commit from here, and no other row needs to care, but the parent's own lists ARE stale (something
         // changed) — now safe to refresh in place (issue 1's own fix removed the old unmount-everything hazard).
         if (result.error === "alreadySettled") onResolved();
+        // alreadyRemoved specifically is the one error here that enters the needsRefresh/recovery flow — imperative,
+        // same reasoning as the mount-effect's own doc comment above.
+        if (result.error === "alreadyRemoved") onUncertainChange?.(fee.id, true);
       }
     } catch {
       setTransportFailure(true);
+      onUncertainChange?.(fee.id, true);
     } finally {
       setBusy(false);
     }
@@ -464,9 +473,11 @@ export function LateFeeRow({
         onResolved();
       } else {
         setError({ code: result.error });
+        if (result.error === "alreadyRemoved") onUncertainChange?.(fee.id, true);
       }
     } catch {
       setTransportFailure(true);
+      onUncertainChange?.(fee.id, true);
     } finally {
       setBusy(false);
     }
@@ -627,11 +638,11 @@ export function PaymentRow({
 
   const needsRefresh = transportFailure || error?.code === "alreadyReversed";
 
-  useEffect(() => {
-    onUncertainChange?.(payment.id, needsRefresh);
-    return () => onUncertainChange?.(payment.id, false);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- reports only this row's own id/needsRefresh pair
-  }, [needsRefresh]);
+  // Correction round 2, issue 1 (CI-caught race, fixed) — same reasoning as `LateFeeRow`'s own identical comment:
+  // reported imperatively at each exact mutation point below, never derived via a `useEffect` watching `needsRefresh`.
+  // Same reasoning as LateFeeRow's own identical comment above.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => () => onUncertainChange?.(payment.id, false), [payment.id]); // unmount-only safety net
 
   useEffect(() => {
     if (!needsRefresh) return;
@@ -649,8 +660,10 @@ export function PaymentRow({
           setTransportFailure(false);
           setError(null);
           setConfirmedState({ kind: "unchanged" });
+          onUncertainChange?.(payment.id, false);
         } else {
           setConfirmedState({ kind: "reversed", source: "recovery" });
+          onUncertainChange?.(payment.id, false);
           onResolved();
         }
       })
@@ -677,9 +690,11 @@ export function PaymentRow({
         onResolved();
       } else {
         setError({ code: result.error });
+        if (result.error === "alreadyReversed") onUncertainChange?.(payment.id, true);
       }
     } catch {
       setTransportFailure(true);
+      onUncertainChange?.(payment.id, true);
     } finally {
       setBusy(false);
     }
