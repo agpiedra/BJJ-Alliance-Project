@@ -1,37 +1,37 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState, useEffect } from "react";
 import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { FIELD_CLASS, Input } from "@/components/ui/input";
-import { recordPayment, checkSubmissionOutcome, getPayableObligations } from "@/lib/dues/payment-entry-actions";
-import { beginAttempt, readAttempt, clearAttempt, scanAttemptsByOperation, useHasUnresolvedUnclassifiable, type StoredAttemptPayload } from "@/lib/dues/payment-attempt-storage";
+import { checkSubmissionOutcome, getPayableObligations } from "@/lib/dues/payment-entry-actions";
+import { purchasePackage, getPackagePlanOptions, getFirstAvailablePackageMonth } from "@/lib/dues/package-purchase-actions";
+import { beginAttempt, readPackageAttempt, clearAttempt, scanAttemptsByOperation, useHasUnresolvedUnclassifiable, type StoredPackageAttemptPayload } from "@/lib/dues/payment-attempt-storage";
 import { classifyWriteResult, classifyRecoveryCheck, shouldClearAfterRecoveryCheck, type WriteOutcomeClassification, type RecoveryCheckClassification } from "@/lib/dues/payment-entry-recovery";
 import { CURRENCIES } from "@/lib/payments/format-money";
+import { decimalToMinor } from "@/lib/dues/ledger/minor-units";
 import type { PayableObligation } from "@/lib/dues/payment-entry-queries";
-import type { CalendarDate } from "@/lib/dues/calendar";
+import type { PackagePlanOption } from "@/lib/dues/package-purchase-queries";
+import type { CalendarDate, YearMonth } from "@/lib/dues/calendar";
 import type { Currency, PaymentMethod } from "@/generated/prisma/client";
 
 /**
- * Ordinary payment-entry UI brief §2/§8/§10: the new, functionally-integrated ledger payment card for
- * `payments/page.tsx` (§0 — never `payments/plans/page.tsx`). Deliberately does NOT reuse `useDuesAction`
- * (`dues-config-forms.tsx:27-41` has no rejected-promise handling and resets the form on any truthy `result.ok`,
- * including a reversed-payment replay) — this component owns its own submit/recovery state machine.
+ * Package-purchase UI brief §2/§5: the new, SEPARATE package-purchase card for `payments/page.tsx` (never
+ * `payments/plans/page.tsx`) — ADMIN only (matching `purchasePackageWithSubmissionIdentity`'s own hard-coded
+ * ADMIN-only check), mounted alongside (never replacing) the ordinary ledger card. Deliberately mirrors
+ * `payment-entry-section.tsx`'s own submit/recovery state machine structure (the same corrected 8 points that file's
+ * own doc comment lists) rather than inventing a new one — this is the SAME architecture, applied to a second
+ * operation. Reuses `classifyWriteResult`/`classifyRecoveryCheck`/`shouldClearAfterRecoveryCheck`
+ * (`payment-entry-recovery.ts`) directly against `purchasePackageWithSubmissionIdentity`'s own result shape (now
+ * typed generically for exactly this reuse) and `checkSubmissionOutcome`/`getPayableObligations`
+ * (`payment-entry-actions.ts`) directly, rather than duplicating either.
  *
- * Corrected (post-review, 8 points): the write-result CLASSIFICATION now genuinely controls `phase` (a
- * `recoveryBlocked`/`payloadMismatch` classification never falls through to the terminal "outcome" screen); an
- * ordinary business refusal clears only the stored IDENTITY, never the owner's typed draft; the student-change
- * obligations fetch clears its own stale selection synchronously and the loading phase is itself locked; EVERY
- * stored attempt (not just the first) is processed before the form ever unlocks; a storage-access failure is
- * treated as blocking, never as "nothing stored"; the student picker is not filtered to `status: "ACTIVE"`; the
- * default `receivedOn`/disclaimer use the student's own branch-local date, never the browser's; a capture outcome's
- * guidance is role-aware (a `DIRECTOR` is never shown a link into a page section only an `ADMIN` can see there).
+ * Since this card renders for ADMIN only (the page-level gate below), it carries no `organizationRole` prop at all —
+ * the capture-outcome guidance always links into the exchange-rate queue directly.
  */
 
 const METHODS: PaymentMethod[] = ["EFECTIVO", "SINPE", "TRANSFERENCIA", "TARJETA"];
 
-/** Used only before any student/branch is known — the moment a student is selected, the branch-local date from
- * `getPayableObligations` takes over (point 7). */
 function browserTodayIso(): string {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -39,68 +39,73 @@ function browserTodayIso(): string {
 function calendarDateToIso(d: CalendarDate): string {
   return `${d.year}-${String(d.month).padStart(2, "0")}-${String(d.day).padStart(2, "0")}`;
 }
+function yearMonthToIso(m: YearMonth): string {
+  return `${m.year}-${String(m.month).padStart(2, "0")}`;
+}
+function parseYearMonthIso(iso: string): YearMonth | null {
+  const match = /^(\d{4})-(\d{2})$/.exec(iso);
+  if (!match) return null;
+  return { year: Number(match[1]), month: Number(match[2]) };
+}
 
 type Student = { id: string; firstName: string; lastName: string; academyId: string; academyName: string };
 
 type Phase =
   | "form"
-  | "loadingObligations"
+  | "loadingStudentData"
   | "submitting"
   | "recoveryChecking"
   | "recoveryBlocked"
   | "outcome"
-  /** Point 5: `listStoredAttemptIds`/`readAttempt` itself couldn't be inspected — never silently treated as
-   * "nothing stored." The whole form stays blocked: starting a new entry while unable to verify an existing
-   * uncertain one would be exactly the double-submission risk this feature exists to prevent. */
   | "storageUnavailable"
-  /** Round-3 point 3: an `alreadySettled` refusal's own re-fetch-and-reconcile — locked the same way
-   * `loadingObligations` is, so a submit can never race a selection the server has already told us is stale. */
-  | "reconcilingObligations";
+  /** A `staleTerms` refusal's own re-fetch of the plan/terms read — locked for its duration, exactly like
+   * `reconcilingObligations` in the ordinary card. */
+  | "reconcilingTerms"
+  /** A `debtNotFullySettled`/`coverageGap`/`alreadySettled` refusal's own re-fetch-and-reconcile of the existing-debt
+   * display — the package's own equivalent of the ordinary card's `reconcilingObligations`. */
+  | "reconcilingDebt";
 
 type OutcomeDisplay = { source: "write"; classification: WriteOutcomeClassification | { kind: "rejected" } } | { source: "recovery"; classification: RecoveryCheckClassification };
 
-/** A business refusal (brief §2.3 case 6) shown INLINE in the still-editable form — never the separate terminal
- * "outcome" screen, and never a reason to wipe the owner's typed draft (point 2). */
 type FormError = { error: string; selectableTotals?: string[]; alreadySettledIds?: string[] };
-
-/** Package-purchase UI brief §2.10: one entry in the ordinary card's own unclassifiable-attempts section — its own
- * rendering/status-check/cleanup stay independent of `phase`/`locked`/the main recovery queue (that was never the
- * bug). Corrected: while ANY such entry's outcome remains unknown, it DOES block new financial submissions on both
- * mounted cards (`useHasUnresolvedUnclassifiable`) — an uncertain, unclassified attempt is exactly the
- * double-submission risk this whole feature exists to prevent, not an exception to it. */
-type UnclassifiableEntryState = { id: string; status: "idle" | "checking"; lastResult?: RecoveryCheckClassification; clearFailed?: boolean };
 
 const TERMINAL_WRITE_KINDS = new Set(["freshSuccess", "replaySuccess", "freshCapture", "replayCapture"]);
 
-export function PaymentEntrySection({
+/** Business refusals whose own stale-selection is reconciled by re-fetching something, rather than just shown
+ * inline (brief §2.9) — `staleTerms` re-fetches the plan/terms picker, the other two re-fetch the existing-debt
+ * display (and, for `coverageGap`, the first-available-month advisory too). */
+const RECONCILES_TERMS = new Set(["staleTerms"]);
+const RECONCILES_DEBT = new Set(["debtNotFullySettled", "coverageGap", "alreadySettled"]);
+
+export function PackagePurchaseSection({
   organizationId,
   currentUserId,
   students,
-  organizationRole,
   plansHref,
 }: {
   organizationId: string;
   currentUserId: string;
   students: Student[];
-  /** Point 8: a capture outcome's own guidance is role-aware — only an `ADMIN` can see the receipt queue section on
-   * `payments/plans/page.tsx` (that page gates it to `organizationRole === "ADMIN"` even though a `DIRECTOR` can
-   * load the page itself); a `DIRECTOR` is never shown a link implying access they don't have. */
-  organizationRole: "ADMIN" | "DIRECTOR";
   plansHref: string;
 }) {
-  const t = useTranslations("payments.ledgerEntry");
+  const t = useTranslations("payments.packagePurchase");
   const tMethod = useTranslations("payments.method");
 
   const [phase, setPhase] = useState<Phase>("form");
   const [selectedStudentId, setSelectedStudentId] = useState("");
+
+  const [plans, setPlans] = useState<PackagePlanOption[] | null>(null);
+  const [plansError, setPlansError] = useState<string | null>(null);
+  const [selectedPlanTermsId, setSelectedPlanTermsId] = useState("");
+
+  const [advisoryMonth, setAdvisoryMonth] = useState<YearMonth | null>(null);
+  const [requestedStartMonth, setRequestedStartMonth] = useState("");
+
   const [obligations, setObligations] = useState<PayableObligation[] | null>(null);
   const [mixedCurrency, setMixedCurrency] = useState(false);
   const [obligationsError, setObligationsError] = useState<string | null>(null);
-  // Round-3 point 3: which path produced the current obligationsError — so "Retry" re-runs the RIGHT fetch (a plain
-  // re-fetch for the main effect, vs. a reconciling re-fetch that must not reset the selection to just-the-oldest).
   const [obligationsErrorSource, setObligationsErrorSource] = useState<"fetch" | "reconcile" | null>(null);
-  const [selectedObligationIds, setSelectedObligationIds] = useState<Set<string>>(new Set());
-  const [obligationsRetryNonce, setObligationsRetryNonce] = useState(0);
+  const [studentDataRetryNonce, setStudentDataRetryNonce] = useState(0);
 
   const [amount, setAmount] = useState("");
   const [currency, setCurrency] = useState<Currency>("USD");
@@ -115,34 +120,26 @@ export function PaymentEntrySection({
   const [storedPayloadReadable, setStoredPayloadReadable] = useState(true);
   const [beginError, setBeginError] = useState<"alreadyExists" | "storageUnavailable" | null>(null);
   const [clearFailed, setClearFailed] = useState(false);
-  const [unclassifiableEntries, setUnclassifiableEntries] = useState<UnclassifiableEntryState[]>([]);
+  // Cross-card submission-blocking correction: this card NEVER processes an unclassifiable entry itself (that stays
+  // the ordinary card's sole recovery responsibility) — it only OBSERVES the shared, storage-backed signal to block
+  // its own submit while one is unresolved.
   const blockedByUnresolvedUnclassifiable = useHasUnresolvedUnclassifiable(organizationId, currentUserId);
 
   const submissionIdRef = useRef<string | null>(null);
-  // The FULL set of still-unresolved stored attempt ids (point 4) — index 0 is always the one currently shown while
-  // phase is recoveryChecking/recoveryBlocked. Never just "the first one found."
   const recoveryQueueRef = useRef<string[]>([]);
-  // Guards a stale fetch (a student change while a prior fetch is in flight) from overwriting newer state —
-  // the same discriminator-based discard `ReceiptQueueList` already uses for its own tab-switch race.
-  const obligationsRequestRef = useRef(0);
-  // Round-3 point 1: a `clearAttempt` that genuinely failed, and what to do once a LATER retry (via "Finish cleanup")
-  // finally succeeds — the single shared mechanism every clear-then-advance call site below uses, so the
-  // write path and the recovery-read path can no longer drift (the write path previously discarded this result
-  // entirely and advanced as if cleanup had succeeded).
+  const studentDataRequestRef = useRef(0);
+  const requestedStartMonthTouchedRef = useRef(false);
   const pendingClearRef = useRef<{ id: string; onSuccess: () => void | Promise<void> } | null>(null);
 
   const locked =
     phase === "recoveryChecking" ||
     phase === "recoveryBlocked" ||
     phase === "submitting" ||
-    phase === "loadingObligations" ||
+    phase === "loadingStudentData" ||
     phase === "storageUnavailable" ||
-    phase === "reconcilingObligations";
+    phase === "reconcilingTerms" ||
+    phase === "reconcilingDebt";
 
-  /** The ONE place a stored identity is ever cleared (point 1). On success, runs `onSuccess` immediately. On
-   * failure, preserves exactly what `onSuccess` would have needed (never assumes the entry is gone, never advances
-   * the queue, never resets any draft) and offers "Finish cleanup", which retries the SAME clear and — only once it
-   * genuinely succeeds — runs the SAME `onSuccess` the original call would have run. */
   function attemptClear(id: string, onSuccess: () => void | Promise<void>) {
     const cleared = clearAttempt(organizationId, currentUserId, id);
     if (!cleared.ok) {
@@ -158,15 +155,12 @@ export function PaymentEntrySection({
     const pending = pendingClearRef.current;
     if (!pending) return;
     const cleared = clearAttempt(organizationId, currentUserId, pending.id);
-    if (!cleared.ok) return; // still failing — stay exactly as-is, the button remains
+    if (!cleared.ok) return;
     pendingClearRef.current = null;
     setClearFailed(false);
     void pending.onSuccess();
   }
 
-  /** Pops `id` off the front of the queue if it's still there, then either continues to the next queued id or runs
-   * `otherwise` (the genuinely-nothing-left-uncertain case). Shared by every "an attempt just finished resolving"
-   * call site so queue-advancement logic lives in exactly one place. */
   function popQueueAndContinueOrElse(id: string, otherwise: () => void | Promise<void>) {
     if (recoveryQueueRef.current[0] === id) recoveryQueueRef.current = recoveryQueueRef.current.slice(1);
     if (recoveryQueueRef.current.length > 0) {
@@ -176,14 +170,12 @@ export function PaymentEntrySection({
     void otherwise();
   }
 
-  // ---- recovery: process EVERY stored attempt, one at a time, never just the first (point 4) ----
-
   async function resolveQueueHead(): Promise<void> {
     const id = recoveryQueueRef.current[0];
     if (!id) return;
     submissionIdRef.current = id;
     setClearFailed(false);
-    const read = readAttempt(organizationId, currentUserId, id);
+    const read = readPackageAttempt(organizationId, currentUserId, id);
     setStoredPayloadReadable(read.status === "ok");
     setPhase("recoveryChecking");
     const settled = (await Promise.allSettled([checkSubmissionOutcome(organizationId, id)]))[0];
@@ -195,9 +187,6 @@ export function PaymentEntrySection({
     }
     setOutcome({ source: "recovery", classification });
     attemptClear(id, () => {
-      // Round-3 point 2: a definitive, confirmed outcome reached via the RECOVERY path resets the draft exactly
-      // like a fresh write success already did — otherwise a filled-in-then-lost submission's own student/amount/
-      // selection stays sitting in the form, one click from a genuine duplicate under a brand-new submissionId.
       popQueueAndContinueOrElse(id, () => {
         submissionIdRef.current = null;
         resetForm();
@@ -207,17 +196,13 @@ export function PaymentEntrySection({
   }
 
   useEffect(() => {
-    // Package-purchase UI brief §2.10: this is the FIRST PR with two mounted cards, so the ordinary card's own
-    // mount scan is now operation-aware — `otherOperations` (a PACKAGE/PREPAYMENT entry) belongs to a different
-    // card and is never read, cleared, or acted on here; `unclassifiable` (corrupt JSON, an unrecognized operation
-    // value, or a per-entry read failure) is this card's own sole responsibility, rendered separately below.
-    const scanned = scanAttemptsByOperation(organizationId, currentUserId, "ORDINARY");
+    // Package-purchase UI brief §2.10: this card scans for ITS OWN operation only — `otherOperations` (the
+    // ordinary card's own entries) is never read or acted on here, and `unclassifiable` is the ordinary card's
+    // SOLE responsibility — never referenced here either.
+    const scanned = scanAttemptsByOperation(organizationId, currentUserId, "PACKAGE");
     if (scanned.status === "unavailable") {
       setPhase("storageUnavailable");
       return;
-    }
-    if (scanned.unclassifiable.length > 0) {
-      setUnclassifiableEntries(scanned.unclassifiable.map((id) => ({ id, status: "idle" })));
     }
     if (scanned.matching.length === 0) return;
     recoveryQueueRef.current = scanned.matching;
@@ -230,51 +215,58 @@ export function PaymentEntrySection({
     void resolveQueueHead();
   }
 
-  // ---- unclassifiable entries (brief §2.10): a visually separate section, status-check ONLY, never a retry ----
-
-  function updateUnclassifiable(id: string, patch: Partial<UnclassifiableEntryState>) {
-    setUnclassifiableEntries((prev) => prev.map((e) => (e.id === id ? { ...e, ...patch } : e)));
-  }
-
-  async function checkUnclassifiableStatus(id: string) {
-    updateUnclassifiable(id, { status: "checking" });
-    const settled = (await Promise.allSettled([checkSubmissionOutcome(organizationId, id)]))[0];
-    const classification = classifyRecoveryCheck(settled);
-    if (shouldClearAfterRecoveryCheck(classification)) {
-      const cleared = clearAttempt(organizationId, currentUserId, id);
-      // Never assume the entry is gone on failure (point 5's discipline, applied here too) — preserved, with its
-      // own inline retry, independent of the main form's own `phase`/locking. Either way the real outcome is shown
-      // (brief §2.10: "a committed result clears it and renders the real outcome") — the entry stays visible with
-      // its resolved classification; only its storage-clear retry affordance differs.
-      updateUnclassifiable(id, { status: "idle", lastResult: classification, clearFailed: !cleared.ok });
-      return;
-    }
-    // notFound/rejected/authFailure: byte-identical, never auto-cleared, never license to mint a replacement id.
-    updateUnclassifiable(id, { status: "idle", lastResult: classification, clearFailed: false });
-  }
-
-  function retryClearUnclassifiable(id: string) {
-    const cleared = clearAttempt(organizationId, currentUserId, id);
-    if (!cleared.ok) return;
-    updateUnclassifiable(id, { clearFailed: false });
-  }
-
-  // ---- obligations fetch (point 3: synchronous clear, loading is locked, mixed-currency never pre-selects) ----
+  // ---- student data fetch: plan/terms picker, first-available-month advisory, existing debt ----
 
   useEffect(() => {
-    // Synchronous, same render as the student change — no stale selection survives into the fetch window.
-    setSelectedObligationIds(new Set());
+    setSelectedPlanTermsId("");
+    setPlans(null);
+    setPlansError(null);
+    setAdvisoryMonth(null);
+    setRequestedStartMonth("");
+    requestedStartMonthTouchedRef.current = false;
     setObligations(null);
     setMixedCurrency(false);
     setObligationsError(null);
     setObligationsErrorSource(null);
     setFormError(null);
     if (!selectedStudentId) return;
-    const requestId = ++obligationsRequestRef.current;
-    setPhase("loadingObligations");
+    const requestId = ++studentDataRequestRef.current;
+    setPhase("loadingStudentData");
+
+    getPackagePlanOptions(organizationId, selectedStudentId)
+      .then((result) => {
+        if (studentDataRequestRef.current !== requestId) return;
+        if (!result.ok) {
+          setPlansError(result.error);
+          setPlans([]);
+        } else {
+          setPlans(result.plans);
+        }
+      })
+      .catch(() => {
+        if (studentDataRequestRef.current !== requestId) return;
+        setPlansError("transportFailure");
+        setPlans([]);
+      });
+
+    getFirstAvailablePackageMonth(organizationId, selectedStudentId)
+      .then((result) => {
+        if (studentDataRequestRef.current !== requestId) return;
+        if (result.ok) {
+          setAdvisoryMonth(result.month);
+          // Reads the REF, never the closed-over `requestedStartMonthTouched` state (stale by construction — this
+          // effect deliberately excludes it from its own deps, see the eslint-disable below) — otherwise a response
+          // that resolves after the owner has since typed a custom month would silently overwrite it.
+          if (result.month && !requestedStartMonthTouchedRef.current) setRequestedStartMonth(yearMonthToIso(result.month));
+        }
+      })
+      .catch(() => {
+        // Advisory-only — a failure here just means no suggestion, never surfaced as a blocking error.
+      });
+
     getPayableObligations(organizationId, selectedStudentId)
       .then((result) => {
-        if (obligationsRequestRef.current !== requestId) return;
+        if (studentDataRequestRef.current !== requestId) return;
         if (!result.ok) {
           setObligationsError(result.error);
           setObligationsErrorSource("fetch");
@@ -285,40 +277,61 @@ export function PaymentEntrySection({
           setMixedCurrency(result.mixedCurrency);
           setBranchToday(result.todayLocal);
           if (!receivedOnTouched) setReceivedOn(calendarDateToIso(result.todayLocal));
-          // Default-check the oldest unselected run (§2.1) — never when mixed-currency (no selectable set exists).
-          setSelectedObligationIds(!result.mixedCurrency && result.obligations.length > 0 ? new Set([result.obligations[0].obligationId]) : new Set());
         }
-        setPhase((p) => (p === "loadingObligations" ? "form" : p));
+        setPhase((p) => (p === "loadingStudentData" ? "form" : p));
       })
       .catch(() => {
-        if (obligationsRequestRef.current !== requestId) return;
+        if (studentDataRequestRef.current !== requestId) return;
         setObligationsError("transportFailure");
         setObligationsErrorSource("fetch");
         setObligations([]);
-        setPhase((p) => (p === "loadingObligations" ? "form" : p));
+        setPhase((p) => (p === "loadingStudentData" ? "form" : p));
       });
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- receivedOnTouched intentionally not a dep: re-fetching must not re-run on every date edit
-  }, [organizationId, selectedStudentId, obligationsRetryNonce]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- receivedOnTouched intentionally not a dep: re-fetching must not re-run on every edit (requestedStartMonthTouched is tracked via a ref now, not state, so it's not a dep candidate at all)
+  }, [organizationId, selectedStudentId, studentDataRetryNonce]);
 
-  /**
-   * Round-3 point 3: `alreadySettled`'s own re-fetch-and-reconcile — LOCKED (`reconcilingObligations`, included in
-   * `locked`) for its entire duration so a submit can never race a selection the server has already told us is
-   * stale, genuinely `await`ed (not fire-and-forgotten) by every caller, and its own rejection is caught here —
-   * never an unhandled promise rejection. Never resets the selection to just-the-oldest (unlike the main fetch
-   * above): it drops ids no longer present and keeps the rest, exactly what "reconcile" means here. The same
-   * `obligationsRequestRef` discriminator the main fetch already uses discards a lagging response, including one for
-   * a student the owner has since changed away from.
-   */
+  /** brief §2.9: `staleTerms`'s own re-fetch — re-reads the plan/terms picker and clears the previously-selected
+   * terms id so the owner must explicitly confirm the (possibly new) price before resubmitting, never silently
+   * resubmitting under the old one. Locked (`reconcilingTerms`) for its whole duration, genuinely awaited. */
+  async function refetchPlansReconciling(): Promise<void> {
+    if (!selectedStudentId) {
+      setPhase("form");
+      return;
+    }
+    const requestId = ++studentDataRequestRef.current;
+    setPhase("reconcilingTerms");
+    try {
+      const result = await getPackagePlanOptions(organizationId, selectedStudentId);
+      if (studentDataRequestRef.current !== requestId) return;
+      if (!result.ok) {
+        setPlansError(result.error);
+        setPhase("form");
+        return;
+      }
+      setPlans(result.plans);
+      setPlansError(null);
+      setSelectedPlanTermsId("");
+      setPhase("form");
+    } catch {
+      if (studentDataRequestRef.current !== requestId) return;
+      setPlansError("transportFailure");
+      setPhase("form");
+    }
+  }
+
+  /** brief §2.9: the package's own equivalent of the ordinary card's `refetchObligationsReconciling` — a
+   * `debtNotFullySettled`/`coverageGap`/`alreadySettled` refusal's own re-fetch of the (forced, non-deselectable)
+   * existing-debt display. Locked (`reconcilingDebt`), genuinely awaited, discriminator-protected. */
   async function refetchObligationsReconciling(): Promise<void> {
     if (!selectedStudentId) {
       setPhase("form");
       return;
     }
-    const requestId = ++obligationsRequestRef.current;
-    setPhase("reconcilingObligations");
+    const requestId = ++studentDataRequestRef.current;
+    setPhase("reconcilingDebt");
     try {
       const result = await getPayableObligations(organizationId, selectedStudentId);
-      if (obligationsRequestRef.current !== requestId) return; // a newer fetch (or student change) has since started
+      if (studentDataRequestRef.current !== requestId) return;
       if (!result.ok) {
         setObligationsError(result.error);
         setObligationsErrorSource("reconcile");
@@ -327,44 +340,49 @@ export function PaymentEntrySection({
       }
       setObligations(result.obligations);
       setMixedCurrency(result.mixedCurrency);
-      const validIds = new Set(result.obligations.map((o) => o.obligationId));
-      setSelectedObligationIds((prev) => new Set([...prev].filter((id) => validIds.has(id))));
       setObligationsError(null);
       setObligationsErrorSource(null);
       setPhase("form");
     } catch {
-      if (obligationsRequestRef.current !== requestId) return;
+      if (studentDataRequestRef.current !== requestId) return;
       setObligationsError("transportFailure");
       setObligationsErrorSource("reconcile");
       setPhase("form");
     }
   }
 
-  function toggleObligation(id: string) {
-    setSelectedObligationIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
+  function retryStudentData() {
+    if (obligationsErrorSource === "reconcile") {
+      void refetchObligationsReconciling();
+      return;
+    }
+    setStudentDataRetryNonce((n) => n + 1);
   }
 
-  // A non-prefix selection is flagged client-side (§2.1) — the server enforces `notOldestFirst` regardless; this is
-  // advisory, never the authoritative check.
-  const orderedObligationIds = obligations?.map((o) => o.obligationId) ?? [];
-  const selectedCount = selectedObligationIds.size;
-  const isPrefixSelection = orderedObligationIds.slice(0, selectedCount).every((id) => selectedObligationIds.has(id));
+  // ---- totals (brief §2.5): per-currency, debt grouped with the package's own single current price, never blended ----
 
-  const todaysTotalMinor = (obligations ?? [])
-    .filter((o) => selectedObligationIds.has(o.obligationId))
-    .reduce((sum, o) => sum + o.outstandingAmountMinor, 0);
+  const selectedPlan = plans?.find((p) => p.planTermsId === selectedPlanTermsId);
 
-  function currentPayload(): StoredAttemptPayload {
+  function computeCurrencyTotals(): Array<{ currency: string; totalMinor: number }> {
+    const totals = new Map<string, number>();
+    for (const o of obligations ?? []) totals.set(o.currency, (totals.get(o.currency) ?? 0) + o.outstandingAmountMinor);
+    if (selectedPlan) {
+      const priceMinor = decimalToMinor(selectedPlan.priceAmount);
+      totals.set(selectedPlan.currency, (totals.get(selectedPlan.currency) ?? 0) + priceMinor);
+    }
+    return [...totals.entries()].map(([entryCurrency, totalMinor]) => ({ currency: entryCurrency, totalMinor }));
+  }
+  const currencyTotals = computeCurrencyTotals();
+
+  function currentPayload(): StoredPackageAttemptPayload {
     const [y, m, d] = receivedOn.split("-").map(Number);
+    const startMonth = parseYearMonthIso(requestedStartMonth) ?? { year: 0, month: 1 };
     return {
-      operation: "ORDINARY",
+      operation: "PACKAGE",
       studentId: selectedStudentId,
-      obligationIds: [...selectedObligationIds],
+      planTermsId: selectedPlanTermsId,
+      requestedStartMonth: startMonth,
+      existingObligationIds: (obligations ?? []).map((o) => o.obligationId),
       receivedOn: { year: y, month: m, day: d },
       tender: { currency, amount },
       method,
@@ -372,10 +390,12 @@ export function PaymentEntrySection({
     };
   }
 
-  function buildFormData(payload: StoredAttemptPayload, submissionId: string): FormData {
+  function buildFormData(payload: StoredPackageAttemptPayload, submissionId: string): FormData {
     const fd = new FormData();
     fd.set("studentId", payload.studentId);
-    for (const id of payload.obligationIds) fd.append("obligationIds", id);
+    fd.set("planTermsId", payload.planTermsId);
+    fd.set("requestedStartMonth", yearMonthToIso(payload.requestedStartMonth));
+    for (const id of payload.existingObligationIds) fd.append("existingObligationIds", id);
     fd.set("receivedOn", `${payload.receivedOn.year}-${String(payload.receivedOn.month).padStart(2, "0")}-${String(payload.receivedOn.day).padStart(2, "0")}`);
     fd.set("tenderCurrency", payload.tender.currency);
     fd.set("tenderAmount", payload.tender.amount);
@@ -385,18 +405,24 @@ export function PaymentEntrySection({
     return fd;
   }
 
-  /** The CONFIRMED-SLATE reset (point 2) — only ever called for a terminal, genuinely confirmed outcome
-   * (freshSuccess/replaySuccess/freshCapture/replayCapture). An ordinary business refusal never calls this: the
-   * owner's typed draft survives so they can fix one field and resubmit. */
   function resetForm() {
+    // Invalidates any student-data fetch (including the coverageGap follow-up) still in flight for the
+    // student/selection being cleared here — without this, a response that resolves after this reset could still
+    // pass its own discriminator check and apply to the now-blank form.
+    studentDataRequestRef.current++;
     setSelectedStudentId("");
+    setSelectedPlanTermsId("");
+    setPlans(null);
+    setPlansError(null);
+    setAdvisoryMonth(null);
+    setRequestedStartMonth("");
+    requestedStartMonthTouchedRef.current = false;
     setAmount("");
     setReceivedOnTouched(false);
     setReceivedOn(browserTodayIso());
     setBranchToday(null);
     setNotes("");
     setObligations(null);
-    setSelectedObligationIds(new Set());
     setFormError(null);
     setObligationsError(null);
     setObligationsErrorSource(null);
@@ -406,23 +432,23 @@ export function PaymentEntrySection({
     !locked &&
     !blockedByUnresolvedUnclassifiable &&
     !obligationsError &&
+    !plansError &&
     !mixedCurrency &&
-    isPrefixSelection &&
-    selectedObligationIds.size > 0 &&
+    selectedPlanTermsId !== "" &&
+    requestedStartMonth.trim() !== "" &&
     amount.trim() !== "";
 
   async function runWrite(submissionId: string, formData: FormData, isRecoveryRetry: boolean) {
     setPhase("submitting");
     setBeginError(null);
-    let settled: { status: "fulfilled"; value: Awaited<ReturnType<typeof recordPayment>> } | { status: "rejected"; reason: unknown };
+    let settled: { status: "fulfilled"; value: Awaited<ReturnType<typeof purchasePackage>> } | { status: "rejected"; reason: unknown };
     try {
-      const value = await recordPayment(organizationId, {}, formData);
+      const value = await purchasePackage(organizationId, {}, formData);
       settled = { status: "fulfilled", value };
     } catch (reason) {
       settled = { status: "rejected", reason };
     }
     if (settled.status === "rejected") {
-      // Uncertain — never claimed as safe to retry automatically. Preserved, locked, routed to recovery.
       setOutcome({ source: "write", classification: { kind: "rejected" } });
       setPhase("recoveryBlocked");
       return;
@@ -430,29 +456,34 @@ export function PaymentEntrySection({
 
     const classification = classifyWriteResult(settled.value, { isRecoveryRetry });
 
-    // Point 1 (the core bug): the classification genuinely controls phase. A recoveryBlocked/payloadMismatch
-    // classification NEVER reaches the terminal "outcome" screen — it stays locked, in the SAME recoveryBlocked
-    // rendering the recovery-check path already uses.
     if (classification.kind === "recoveryBlocked" || classification.kind === "payloadMismatch") {
       setOutcome({ source: "write", classification });
       setPhase("recoveryBlocked");
       return;
     }
 
-    // Every remaining classification (businessRefusal or a TERMINAL_WRITE_KINDS member) clears the stored identity
-    // (round-3 point 1: via the SAME `attemptClear` the recovery-read path uses — a `clearAttempt` failure here used
-    // to be silently discarded, advancing as if cleanup had succeeded while the stale entry stayed in `localStorage`
-    // under the old key).
     if (classification.kind === "businessRefusal") {
-      // Point 2 (prior round): clears only the IDENTITY — the draft (amount/currency/receivedOn/notes/selection) is
-      // preserved so the owner can fix one field and resubmit, never retype everything.
       setFormError({ error: classification.error, selectableTotals: classification.selectableTotals, alreadySettledIds: classification.alreadySettledIds });
       attemptClear(submissionId, () => {
-        // Another stored attempt may still be queued (rare multi-tab case) — recheck it before unlocking the form.
         popQueueAndContinueOrElse(submissionId, async () => {
           submissionIdRef.current = null;
-          if (classification.error === "alreadySettled") {
-            await refetchObligationsReconciling(); // round-3 point 3: locked for its own duration, genuinely awaited
+          if (RECONCILES_TERMS.has(classification.error)) {
+            await refetchPlansReconciling();
+          } else if (RECONCILES_DEBT.has(classification.error)) {
+            await refetchObligationsReconciling();
+            if (classification.error === "coverageGap") {
+              // Discriminator-protected exactly like every other fetch in this file (previously missing here): a
+              // student switch, or a `resetForm()` after a meanwhile-completed submission, bumps
+              // `studentDataRequestRef` and this stale response is discarded instead of silently overwriting
+              // `advisoryMonth` for whatever is now displayed.
+              const advisoryRequestId = studentDataRequestRef.current;
+              void getFirstAvailablePackageMonth(organizationId, selectedStudentId)
+                .then((r) => {
+                  if (studentDataRequestRef.current !== advisoryRequestId) return;
+                  if (r.ok) setAdvisoryMonth(r.month);
+                })
+                .catch(() => {});
+            }
           } else {
             setPhase("form");
           }
@@ -465,8 +496,6 @@ export function PaymentEntrySection({
       setOutcome({ source: "write", classification });
       attemptClear(submissionId, () => {
         popQueueAndContinueOrElse(submissionId, () => {
-          // Round-3 point 2: the draft is reset only once the identity is CONFIRMED cleared (or, if clearing
-          // failed, only once "Finish cleanup" confirms it) — never unconditionally beforehand.
           submissionIdRef.current = null;
           resetForm();
           setPhase("outcome");
@@ -477,24 +506,16 @@ export function PaymentEntrySection({
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    // Defense-in-depth beyond the submit button's own `disabled` (point 3/1): never reachable while locked, while
-    // an unresolved stored attempt exists (this card's own queue OR any still-unclassified entry — either card),
-    // or while the selection is not a genuine, complete, single-currency oldest-first prefix.
     if (locked || blockedByUnresolvedUnclassifiable || submissionIdRef.current || !canSubmit) return;
 
     const submissionId = crypto.randomUUID();
     const payload = currentPayload();
     const begin = beginAttempt(organizationId, currentUserId, submissionId, payload);
     if (!begin.ok) {
-      // Durable persistence is a hard precondition for submission (§2.4b, corrected) — never "warn then submit
-      // anyway". Nothing was sent.
       setBeginError(begin.error);
       return;
     }
     submissionIdRef.current = submissionId;
-    // A fresh submission is its own one-item recovery queue (point 4's queue is what handleRetrySafely/
-    // handleCheckStatusAgain read from) — without this, a rejected promise from THIS call would have nothing for
-    // either handler to act on.
     recoveryQueueRef.current = [submissionId];
     await runWrite(submissionId, buildFormData(payload, submissionId), false);
   }
@@ -502,8 +523,8 @@ export function PaymentEntrySection({
   function handleRetrySafely() {
     const submissionId = recoveryQueueRef.current[0];
     if (!submissionId) return;
-    const read = readAttempt(organizationId, currentUserId, submissionId);
-    if (read.status !== "ok") return; // no payload to resend — only the status check remains available
+    const read = readPackageAttempt(organizationId, currentUserId, submissionId);
+    if (read.status !== "ok") return;
     void runWrite(submissionId, buildFormData(read.payload, submissionId), true);
   }
 
@@ -512,29 +533,13 @@ export function PaymentEntrySection({
     setPhase("form");
   }
 
-  function retryObligations() {
-    // Round-3 point 3: a reconciliation-sourced error retries the RECONCILING fetch (preserving the current
-    // selection, filtered to whatever is still valid) — never the plain fetch, which would reset the selection
-    // back to just-the-oldest and discard the very reconciliation this error interrupted.
-    if (obligationsErrorSource === "reconcile") {
-      void refetchObligationsReconciling();
-      return;
-    }
-    setObligationsRetryNonce((n) => n + 1);
-  }
-
-  // ---- outcome copy (brief §2.3/§2.4c) ----
+  // ---- outcome copy ----
   function renderCaptureGuidance(): React.ReactNode {
-    // Point 8: role-aware — a DIRECTOR cannot see the receipt queue section on payments/plans/page.tsx (gated there
-    // to ADMIN even though the page itself admits DIRECTOR), so they are never shown a link implying otherwise.
-    if (organizationRole === "ADMIN") {
-      return (
-        <a href={plansHref} className="text-xs underline">
-          {t("outcome.capturedAdminLink")}
-        </a>
-      );
-    }
-    return <p className="text-xs text-muted-foreground">{t("outcome.capturedDirectorGuidance")}</p>;
+    return (
+      <a href={plansHref} className="text-xs underline">
+        {t("outcome.capturedAdminLink")}
+      </a>
+    );
   }
 
   function renderOutcome(display: OutcomeDisplay): React.ReactNode {
@@ -561,7 +566,7 @@ export function PaymentEntrySection({
           </>
         );
       }
-      return null; // notFound/authFailure/rejected — handled by the "recoveryBlocked" phase render below
+      return null;
     }
     const c = display.classification;
     switch (c.kind) {
@@ -583,9 +588,8 @@ export function PaymentEntrySection({
       case "payloadMismatch":
       case "recoveryBlocked":
       case "rejected":
-        return null; // handled by the "recoveryBlocked" phase render below
+        return null;
       case "businessRefusal":
-        // businessRefusal no longer reaches phase "outcome" (point 1/2) — kept only so this switch stays exhaustive.
         return null;
     }
   }
@@ -604,56 +608,6 @@ export function PaymentEntrySection({
         <p role="alert" className="text-sm text-bad">
           {beginError === "alreadyExists" ? t("error.attemptAlreadyExists") : t("error.storageUnavailable")}
         </p>
-      )}
-
-      {/* Package-purchase UI brief §2.10: the ordinary card's own sole-owner section for an unclassifiable stored
-          attempt — status-check/cleanup rendering stays independent of the main form's own phase/locking, but (per
-          the uncertain-attempt recovery rule) its UNRESOLVED presence blocks new financial submissions on both
-          mounted cards until a confirmed outcome is cleared — see `canSubmit`/`handleSubmit` above. */}
-      {unclassifiableEntries.length > 0 && (
-        <div className="flex flex-col gap-2 rounded-lg border border-border p-3">
-          <p className="text-sm font-medium">{t("unclassifiable.heading")}</p>
-          <p className="text-xs text-muted-foreground">{t("unclassifiable.body")}</p>
-          {blockedByUnresolvedUnclassifiable && (
-            <p role="alert" className="text-xs text-bad">
-              {t("unclassifiable.blocksSubmission")}
-            </p>
-          )}
-          {unclassifiableEntries.map((entry) => (
-            <div key={entry.id} className="flex flex-col gap-1 border-t border-border pt-2 first:border-t-0 first:pt-0">
-              {entry.clearFailed && (
-                <>
-                  <p role="alert" className="text-sm text-bad">{t("recovery.clearFailed")}</p>
-                  <div>
-                    <Button type="button" variant="outline" onClick={() => retryClearUnclassifiable(entry.id)}>
-                      {t("recovery.finishCleanup")}
-                    </Button>
-                  </div>
-                </>
-              )}
-              {!entry.clearFailed && entry.lastResult && entry.lastResult.kind === "committed" && renderOutcome({ source: "recovery", classification: entry.lastResult })}
-              {!entry.clearFailed && entry.lastResult && entry.lastResult.kind !== "committed" && (
-                <>
-                  <p role="alert" className="text-sm text-bad">
-                    {entry.lastResult.kind === "authFailure" ? t("recovery.blockedAuth") : entry.lastResult.kind === "notFound" ? t("recovery.blockedNotFound") : t("recovery.blockedRejected")}
-                  </p>
-                  <div>
-                    <Button type="button" variant="outline" onClick={() => void checkUnclassifiableStatus(entry.id)}>
-                      {t("recovery.checkAgain")}
-                    </Button>
-                  </div>
-                </>
-              )}
-              {!entry.clearFailed && !entry.lastResult && (
-                <div>
-                  <Button type="button" variant="outline" disabled={entry.status === "checking"} onClick={() => void checkUnclassifiableStatus(entry.id)}>
-                    {entry.status === "checking" ? t("recovery.checking") : t("unclassifiable.checkStatus")}
-                  </Button>
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
       )}
 
       {(phase === "recoveryChecking" || phase === "recoveryBlocked") && (
@@ -704,8 +658,6 @@ export function PaymentEntrySection({
             </>
           )}
           {phase === "recoveryBlocked" && !clearFailed && outcome?.source === "write" && outcome.classification.kind === "payloadMismatch" && (
-            // Never offered a "retry safely" affordance (point 1): retrying would resend the identical payload that
-            // already mismatched, reproducing the same refusal. Only the read-only status check remains useful.
             <>
               <p role="alert" className="text-sm text-bad">
                 {t("outcome.payloadMismatch")}
@@ -746,7 +698,7 @@ export function PaymentEntrySection({
         </div>
       )}
 
-      {(phase === "form" || phase === "loadingObligations" || phase === "submitting" || phase === "reconcilingObligations") && (
+      {(phase === "form" || phase === "loadingStudentData" || phase === "submitting" || phase === "reconcilingTerms" || phase === "reconcilingDebt") && (
         <form onSubmit={handleSubmit} className="flex flex-col gap-3">
           <label className="flex flex-col gap-1 text-sm">
             <span>{t("fields.student")}</span>
@@ -769,11 +721,63 @@ export function PaymentEntrySection({
             </select>
           </label>
 
-          {phase === "loadingObligations" && <p className="text-sm text-muted-foreground">{t("obligations.loading")}</p>}
+          {phase === "loadingStudentData" && <p className="text-sm text-muted-foreground">{t("plan.loading")}</p>}
+
+          {selectedStudentId && plansError && (
+            <div className="flex items-center gap-2">
+              <p role="alert" className="text-sm text-bad">{t(`error.${plansError}`, { defaultValue: t("error.unexpected") })}</p>
+              <Button type="button" variant="outline" onClick={retryStudentData}>
+                {t("obligations.retry")}
+              </Button>
+            </div>
+          )}
+
+          {selectedStudentId && plans && !plansError && (
+            <label className="flex flex-col gap-1 text-sm">
+              <span>{t("fields.plan")}</span>
+              <select
+                required
+                disabled={locked}
+                value={selectedPlanTermsId}
+                onChange={(e) => setSelectedPlanTermsId(e.target.value)}
+                className={FIELD_CLASS}
+              >
+                <option value="" disabled>
+                  {t("fields.planPlaceholder")}
+                </option>
+                {plans.map((p) => (
+                  <option key={p.planTermsId} value={p.planTermsId}>
+                    {p.planName} — {t("plan.priceNote", { months: p.monthsCovered, price: p.priceAmount, currency: p.currency })}
+                  </option>
+                ))}
+              </select>
+              {plans.length === 0 && <p className="text-sm text-muted-foreground">{t("plan.none")}</p>}
+            </label>
+          )}
+
+          {selectedStudentId && (
+            <label className="flex flex-col gap-1 text-sm">
+              <span>{t("fields.startMonth")}</span>
+              <Input
+                type="month"
+                required
+                disabled={locked}
+                value={requestedStartMonth}
+                onChange={(e) => {
+                  requestedStartMonthTouchedRef.current = true;
+                  setRequestedStartMonth(e.target.value);
+                }}
+              />
+              {advisoryMonth && (
+                <span className="text-xs text-muted-foreground">{t("advisory.suggestion", { month: yearMonthToIso(advisoryMonth) })}</span>
+              )}
+            </label>
+          )}
+
           {obligationsError && (
             <div className="flex items-center gap-2">
               <p role="alert" className="text-sm text-bad">{t(`error.${obligationsError}`, { defaultValue: t("error.unexpected") })}</p>
-              <Button type="button" variant="outline" onClick={retryObligations}>
+              <Button type="button" variant="outline" onClick={retryStudentData}>
                 {t("obligations.retry")}
               </Button>
             </div>
@@ -787,40 +791,46 @@ export function PaymentEntrySection({
 
           {!mixedCurrency && obligations && obligations.length > 0 && (
             <div className="flex flex-col gap-2">
+              <p className="text-xs text-muted-foreground">{t("obligations.allIncluded")}</p>
               <ul className="flex flex-col gap-2">
                 {obligations.map((o) => (
                   <li key={o.obligationId} className="flex items-center justify-between gap-2 rounded-lg border border-border p-2 text-sm">
-                    <label className="flex items-center gap-2">
-                      <input
-                        type="checkbox"
-                        checked={selectedObligationIds.has(o.obligationId)}
-                        disabled={locked}
-                        onChange={() => toggleObligation(o.obligationId)}
-                      />
-                      <span>
-                        {o.coverageYear}-{String(o.coverageMonth).padStart(2, "0")} ({t(`obligations.type.${o.type}`)})
-                      </span>
-                    </label>
+                    <span>
+                      {o.coverageYear}-{String(o.coverageMonth).padStart(2, "0")} ({t(`obligations.type.${o.type}`)})
+                    </span>
                     <span>{o.outstandingAmountMinor / 100} {o.currency}</span>
                   </li>
                 ))}
               </ul>
-              {!isPrefixSelection && (
-                <p role="alert" className="text-sm text-bad">
-                  {t("obligations.notOldestFirst")}
-                </p>
-              )}
-              <p className="text-sm font-medium">{t("obligations.todaysTotal", { amount: (todaysTotalMinor / 100).toFixed(2) })}</p>
-              {branchToday && receivedOn !== calendarDateToIso(branchToday) && <p className="text-xs text-muted-foreground">{t("obligations.backdatedDisclaimer")}</p>}
             </div>
           )}
           {!mixedCurrency && obligations && obligations.length === 0 && selectedStudentId && (
             <p className="text-sm text-muted-foreground">{t("obligations.none")}</p>
           )}
 
+          {!mixedCurrency && currencyTotals.length > 0 && (
+            <div className="flex flex-col gap-1">
+              <p className="text-sm font-medium">{t("totals.heading")}</p>
+              {currencyTotals.map(({ currency: c, totalMinor }) => (
+                <p key={c} className="text-sm">{t("totals.line", { amount: (totalMinor / 100).toFixed(2), currency: c })}</p>
+              ))}
+              <p className="text-xs text-muted-foreground">{t("totals.disclaimer")}</p>
+              {branchToday && receivedOn !== calendarDateToIso(branchToday) && <p className="text-xs text-muted-foreground">{t("totals.backdatedDisclaimer")}</p>}
+            </div>
+          )}
+
+          {blockedByUnresolvedUnclassifiable && (
+            <p role="alert" className="text-sm text-bad">
+              {t("error.blockedByUnclassifiable")}
+            </p>
+          )}
+
           {formError && (
             <div className="flex flex-col gap-1">
               <p role="alert" className="text-sm text-bad">{t(`error.${formError.error}`, { defaultValue: t("error.unexpected") })}</p>
+              {formError.error === "coverageGap" && advisoryMonth && (
+                <p className="text-xs text-muted-foreground">{t("error.coverageGapAdvisory", { month: yearMonthToIso(advisoryMonth) })}</p>
+              )}
               {formError.alreadySettledIds && formError.alreadySettledIds.length > 0 && (
                 <p className="text-xs text-muted-foreground">{t("error.alreadySettledDetail", { ids: formError.alreadySettledIds.join(", ") })}</p>
               )}

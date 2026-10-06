@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { z } from "zod";
 import type { PaymentMethod } from "@/generated/prisma/client";
 import { CURRENCIES } from "@/lib/payments/format-money";
@@ -25,6 +26,14 @@ const PAYMENT_METHODS = ["SINPE", "TRANSFERENCIA", "EFECTIVO", "TARJETA"] as con
  * WRITE-ONCE: `beginAttempt` refuses to overwrite an existing, still-present entry for the same key (brief §2.4b
  * point 2 — edited form fields can never clobber an uncertain attempt's own stored payload). Clearing is the only way
  * to free a key for reuse, and clearing is gated by the recovery-state table (§2.4c), never by a bare lookup failure.
+ *
+ * Package-purchase UI brief §2.6/§2.10: the KEY FORMAT is unchanged and shared across every operation (ORDINARY,
+ * PACKAGE, and later PREPAYMENT) — there is no per-writer namespace at the storage layer, mirroring the single
+ * `DuesPaymentAttempt` table's own global `submissionId` uniqueness. The stored VALUE now carries an explicit
+ * `operation` discriminator, the identical fail-closed discipline `submission-identity.ts`'s own `readStoredOperation`
+ * already applies on the database side: an explicit, valid `operation` is trusted directly; failing that, the legacy
+ * `"ORDINARY"` default is granted ONLY once the REST of the payload independently validates as a genuine legacy
+ * ordinary payload; anything else classifies as unclassifiable, never silently coerced to `"ORDINARY"`.
  */
 
 /** A plausible calendar date — the same discipline `isRealDate` (`dues/ledger/common.ts`) applies, reimplemented
@@ -42,10 +51,17 @@ const calendarDateSchema = z
   .object({ year: z.number().int(), month: z.number().int().min(1).max(12), day: z.number().int().min(1).max(31) })
   .refine(isPlausibleCalendarDate, { message: "not a real calendar date" });
 
+const yearMonthSchema = z.object({ year: z.number().int(), month: z.number().int().min(1).max(12) });
+
 /** A schema-valid-but-semantically-garbage stored value (e.g. `method: "not-a-method"`, an unparseable `amount`, a
  * duplicate-id `obligationIds`) must classify as unusable/corrupt, not be trusted for a retry — point 5's correction.
- * Reuses `parseMoney` (the same canonical-amount check the engine itself applies), never a bespoke regex. */
+ * Reuses `parseMoney` (the same canonical-amount check the engine itself applies), never a bespoke regex.
+ *
+ * Package-purchase UI brief §2.10: `operation` is a literal `"ORDINARY"`, defaulted ONLY for a key-absent (legacy,
+ * pre-this-PR) entry — never widened to accept `"PACKAGE"`/`"PREPAYMENT"`, so this schema itself is what makes a
+ * foreign-operation entry fail to parse as an ordinary attempt (the exact-match half of the 3-way partition below). */
 export const storedAttemptPayloadSchema = z.object({
+  operation: z.literal("ORDINARY").default("ORDINARY"),
   studentId: z.string().min(1),
   obligationIds: z
     .array(z.string().min(1))
@@ -60,6 +76,46 @@ export const storedAttemptPayloadSchema = z.object({
   notes: z.string().optional(),
 });
 export type StoredAttemptPayload = z.infer<typeof storedAttemptPayloadSchema>;
+
+/** Package-purchase UI brief §2.10: the package card's own stored payload shape — disjoint fields from the ordinary
+ * one above (`planTermsId`/`requestedStartMonth` in place of a bare `obligationIds` list), mirroring
+ * `purchase-submission-identity.ts`'s own `packageCanonicalPayloadSchema` exactly (never a drifting second copy of
+ * its validation rules; `existingObligationIds` here is optional-defaulting-to-empty since the package card's own
+ * draft may have none selected yet, unlike the engine's canonical payload which always has the array present). */
+export const storedPackageAttemptPayloadSchema = z.object({
+  operation: z.literal("PACKAGE"),
+  studentId: z.string().min(1),
+  planTermsId: z.string().min(1),
+  requestedStartMonth: yearMonthSchema,
+  existingObligationIds: z
+    .array(z.string().min(1))
+    .refine((ids) => new Set(ids).size === ids.length, { message: "duplicate existingObligationIds" }),
+  receivedOn: calendarDateSchema,
+  tender: z.object({
+    currency: z.enum(CURRENCIES),
+    amount: z.string().refine((a) => parseMoney(a, { allowZero: false }).ok, { message: "not a valid money amount" }),
+  }),
+  method: z.enum(PAYMENT_METHODS),
+  notes: z.string().optional(),
+});
+export type StoredPackageAttemptPayload = z.infer<typeof storedPackageAttemptPayloadSchema>;
+
+/** The `operation` discriminator alone, from ANY stored payload, without knowing in advance which schema to validate
+ * against — the browser-storage mirror of `submission-identity.ts`'s own `readStoredOperation`. MUST fail closed:
+ * an explicit, valid `operation` is trusted directly; failing that, `"ORDINARY"` is granted ONLY once the rest of
+ * the payload independently validates as a genuine legacy ordinary attempt (reusing `storedAttemptPayloadSchema`
+ * itself, whose own `.default("ORDINARY")` is exactly what lets a key-absent-but-otherwise-valid payload parse as
+ * that); anything else — a non-object, an invalid `operation` value, or a payload broken on some OTHER field —
+ * resolves `"UNKNOWN"`, never `"ORDINARY"`. */
+const operationFieldSchema = z.object({ operation: z.enum(["ORDINARY", "PACKAGE", "PREPAYMENT"]) }).passthrough();
+export type AttemptOperation = "ORDINARY" | "PACKAGE" | "PREPAYMENT";
+export function readStoredOperation(json: unknown): AttemptOperation | "UNKNOWN" {
+  const explicit = operationFieldSchema.safeParse(json);
+  if (explicit.success) return explicit.data.operation;
+  const asLegacyOrdinary = storedAttemptPayloadSchema.safeParse(json);
+  if (asLegacyOrdinary.success && asLegacyOrdinary.data.operation === "ORDINARY") return "ORDINARY";
+  return "UNKNOWN";
+}
 
 const PREFIX = "payment-attempt:";
 
@@ -86,8 +142,12 @@ export type BeginAttemptResult =
    * rule: this BLOCKS submission entirely. There is no "warn and proceed anyway" path. */
   | { ok: false; error: "storageUnavailable" };
 
-/** Durable persistence BEFORE the network request (brief §2.4b) — call this first; only submit if it returns `ok`. */
-export function beginAttempt(organizationId: string, userId: string, submissionId: string, payload: StoredAttemptPayload): BeginAttemptResult {
+/** Durable persistence BEFORE the network request (brief §2.4b) — call this first; only submit if it returns `ok`.
+ * Package-purchase UI brief §2.10: genericized over the payload TYPE (was `StoredAttemptPayload` only) — this
+ * function never validated its argument against any schema to begin with (it only `JSON.stringify`s whatever is
+ * given), so widening the parameter is a type-level change only, zero behavior change for the ordinary card's own
+ * existing calls. Shared by both cards rather than a duplicate "beginPackageAttempt" with identical logic. */
+export function beginAttempt<T>(organizationId: string, userId: string, submissionId: string, payload: T): BeginAttemptResult {
   const key = keyFor(organizationId, userId, submissionId);
   try {
     if (window.localStorage.getItem(key) !== null) return { ok: false, error: "alreadyExists" };
@@ -129,7 +189,48 @@ export function readAttempt(organizationId: string, userId: string, submissionId
   return { status: "ok", payload: parsed.data };
 }
 
+export type ReadPackageAttemptResult =
+  | { status: "missing" }
+  | { status: "ok"; payload: StoredPackageAttemptPayload }
+  | { status: "corrupt" }
+  | { status: "unavailable" };
+
+/** `readAttempt`'s own exact counterpart for the package card — identical control flow, validated against
+ * `storedPackageAttemptPayloadSchema` instead. A row written by the ORDINARY card (or any other operation) fails
+ * this schema (disjoint required fields, and `operation` is the literal `"PACKAGE"` with no default) and reads as
+ * `"corrupt"` here — correct: this function is only ever called by the package card for an id it already knows, via
+ * `scanAttemptsByOperation`, is its OWN entry; a foreign entry reaching it would itself be the bug. */
+export function readPackageAttempt(organizationId: string, userId: string, submissionId: string): ReadPackageAttemptResult {
+  const key = keyFor(organizationId, userId, submissionId);
+  let raw: string | null;
+  try {
+    raw = window.localStorage.getItem(key);
+  } catch {
+    return { status: "unavailable" };
+  }
+  if (raw === null) return { status: "missing" };
+  let json: unknown;
+  try {
+    json = JSON.parse(raw);
+  } catch {
+    return { status: "corrupt" };
+  }
+  const parsed = storedPackageAttemptPayloadSchema.safeParse(json);
+  if (!parsed.success) return { status: "corrupt" };
+  return { status: "ok", payload: parsed.data };
+}
+
 export type ClearAttemptResult = { ok: true } | { ok: false; error: "unavailable" };
+
+/** Cross-card submission-blocking correction: an unclassifiable entry is the ordinary card's SOLE recovery
+ * responsibility (unchanged), but ITS OWN UNRESOLVED STATE must still block new financial submissions on BOTH
+ * mounted cards — the package card never processes it, it only OBSERVES this signal (`useHasUnresolvedUnclassifiable`
+ * below). `clearAttempt` is, per both cards' own design, the ONE place a stored identity is ever actually removed —
+ * notifying subscribers here (and only here, on success) is therefore sufficient to reflect every resolution path. */
+const attemptChangeListeners = new Set<() => void>();
+function notifyAttemptsChanged(): void {
+  attemptChangeListeners.forEach((listener) => listener());
+}
 
 /** Removes exactly the targeted entry. Called only per the recovery-state table (§2.4c) — a definitive resolved
  * outcome, or an explicit, deliberate owner action — never on a bare lookup failure and never from a sign-out
@@ -138,10 +239,35 @@ export type ClearAttemptResult = { ok: true } | { ok: false; error: "unavailable
 export function clearAttempt(organizationId: string, userId: string, submissionId: string): ClearAttemptResult {
   try {
     window.localStorage.removeItem(keyFor(organizationId, userId, submissionId));
+    notifyAttemptsChanged();
     return { ok: true };
   } catch {
     return { ok: false, error: "unavailable" };
   }
+}
+
+/** Whether ANY stored entry for this user+org is currently unclassifiable (operation unknown — corrupt JSON, an
+ * unrecognized `operation` value, or a per-entry read failure) — the shared, storage-backed source of truth both
+ * cards gate their OWN financial-submit action on. Fails closed: a whole-scan failure (`status: "unavailable"`)
+ * counts as blocking, same as every other storage-read failure in this module. Recomputes on every successful
+ * `clearAttempt` anywhere (the only way an unclassifiable entry's block can lift) and whenever `organizationId`/
+ * `userId` change — no polling, no timers. */
+export function useHasUnresolvedUnclassifiable(organizationId: string, userId: string): boolean {
+  const compute = () => {
+    const scanned = scanAttemptsByOperation(organizationId, userId, "ORDINARY");
+    return scanned.status === "unavailable" || scanned.unclassifiable.length > 0;
+  };
+  const [blocked, setBlocked] = useState(compute);
+  useEffect(() => {
+    setBlocked(compute());
+    const listener = () => setBlocked(compute());
+    attemptChangeListeners.add(listener);
+    return () => {
+      attemptChangeListeners.delete(listener);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `compute` is recreated every render on purpose; only organizationId/userId identity should re-subscribe
+  }, [organizationId, userId]);
+  return blocked;
 }
 
 export type ListStoredAttemptIdsResult = { status: "ok"; ids: string[] } | { status: "unavailable" };
@@ -164,4 +290,77 @@ export function listStoredAttemptIds(organizationId: string, userId: string): Li
     return { status: "unavailable" };
   }
   return { status: "ok", ids };
+}
+
+export type ScanAttemptsByOperationResult =
+  | {
+      status: "ok";
+      /** This card's own operation — process exactly like `listStoredAttemptIds` used to for every id. */
+      matching: string[];
+      /** A different, KNOWN operation — another card owns it; never read, cleared, or acted on here. */
+      otherOperations: string[];
+      /** Malformed JSON, an unrecognized `operation` value, or a per-entry `getItem` throw during an otherwise-
+       * successful enumeration — owned SOLELY by the ordinary card (brief §2.10), offered only a status check. */
+      unclassifiable: string[];
+    }
+  | { status: "unavailable" };
+
+/**
+ * Package-purchase UI brief §2.6/§2.10: the operation-aware scan — every stored entry for this user+org lands in
+ * EXACTLY ONE of three buckets, none ever silently dropped (the corrected design: a binary "filter by operation"
+ * scan would silently drop any entry whose operation can't be determined, making it invisible to every card; this
+ * scan has an explicit third bucket for exactly that). `listStoredAttemptIds` above is unaffected and kept for its
+ * own simpler callers/tests; this is a superset classification, not a replacement of that primitive.
+ *
+ * A key-enumeration failure (the whole `localStorage.length`/`.key(i)` loop itself throwing) is `{status:
+ * "unavailable"}`, identical to `listStoredAttemptIds`'s own rule — "can't verify storage at all" is distinct from
+ * "verified, and this one entry's value couldn't be read" (which instead lands the SPECIFIC entry in
+ * `unclassifiable`, per brief point 10's "a per-entry `getItem` throw" case, since every OTHER entry's own scan can
+ * still proceed normally).
+ */
+export function scanAttemptsByOperation(organizationId: string, userId: string, operation: AttemptOperation): ScanAttemptsByOperationResult {
+  const keys: string[] = [];
+  try {
+    for (let i = 0; i < window.localStorage.length; i++) {
+      const key = window.localStorage.key(i);
+      if (key) keys.push(key);
+    }
+  } catch {
+    return { status: "unavailable" };
+  }
+
+  const matching: string[] = [];
+  const otherOperations: string[] = [];
+  const unclassifiable: string[] = [];
+  for (const key of keys) {
+    const parsed = parseKey(key);
+    if (!parsed || parsed.organizationId !== organizationId || parsed.userId !== userId) continue;
+
+    let raw: string | null;
+    try {
+      raw = window.localStorage.getItem(key);
+    } catch {
+      unclassifiable.push(parsed.submissionId);
+      continue;
+    }
+    if (raw === null) continue; // vanished between key enumeration and read — genuinely nothing to report
+
+    let json: unknown;
+    try {
+      json = JSON.parse(raw);
+    } catch {
+      unclassifiable.push(parsed.submissionId);
+      continue;
+    }
+
+    const entryOperation = readStoredOperation(json);
+    if (entryOperation === "UNKNOWN") {
+      unclassifiable.push(parsed.submissionId);
+    } else if (entryOperation === operation) {
+      matching.push(parsed.submissionId);
+    } else {
+      otherOperations.push(parsed.submissionId);
+    }
+  }
+  return { status: "ok", matching, otherOperations, unclassifiable };
 }

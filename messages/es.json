@@ -1311,6 +1311,105 @@
         "unexpected": "Ocurrio algo inesperado.",
         "alreadySettledDetail": "Ya liquidado: {ids}",
         "selectableTotalsDetail": "Montos que serian aceptados: {totals}"
+      },
+      "unclassifiable": {
+        "heading": "Intento no reconocido encontrado",
+        "body": "Encontramos un intento guardado en este navegador que no pudimos leer completamente. Puede verificar si se completo.",
+        "checkStatus": "Verificar estado",
+        "blocksSubmission": "No se puede enviar un nuevo pago hasta que esto se resuelva."
+      }
+    },
+    "packagePurchase": {
+      "heading": "Vender un paquete",
+      "body": "Crea un paquete de varios meses para un estudiante y lo liquida, junto con cualquier deuda pendiente, en un solo pago.",
+      "submit": "Comprar paquete",
+      "submitting": "Comprando...",
+      "recordAnother": "Registrar otro paquete",
+      "fields": {
+        "student": "Estudiante",
+        "studentPlaceholder": "Seleccione un estudiante",
+        "plan": "Paquete",
+        "planPlaceholder": "Seleccione un paquete",
+        "startMonth": "Mes de inicio",
+        "amount": "Monto recibido",
+        "currency": "Moneda",
+        "receivedOn": "Fecha de recibo",
+        "method": "Metodo",
+        "notes": "Notas"
+      },
+      "plan": {
+        "loading": "Cargando paquetes...",
+        "none": "No hay paquetes activos configurados para esta sede.",
+        "priceNote": "{months} meses, {price} {currency}"
+      },
+      "advisory": {
+        "suggestion": "Mes de inicio sugerido: {month}. Esto es solo una estimacion; el resultado del servidor es el definitivo."
+      },
+      "obligations": {
+        "loading": "Cargando saldo pendiente...",
+        "none": "No hay nada mas pendiente para este estudiante.",
+        "mixedCurrency": "Este estudiante debe en mas de una moneda. Esto no se puede liquidar en un solo pago todavia. Contacte soporte.",
+        "allIncluded": "Cada elemento pendiente a continuacion se incluye automaticamente y debe liquidarse junto con este paquete.",
+        "type": {
+          "MONTHLY": "Mensualidad",
+          "SIGNUP": "Inscripcion"
+        },
+        "retry": "Reintentar"
+      },
+      "totals": {
+        "heading": "Total estimado",
+        "line": "{amount} {currency}",
+        "disclaimer": "Calculado a partir de la deuda pendiente de hoy y el precio actual del paquete. Esto no es una cotizacion definitiva — el resultado del servidor al momento del envio es el definitivo.",
+        "backdatedDisclaimer": "Este total refleja el saldo y el precio de hoy. El monto adeudado, y si este envio tendra exito, puede ser diferente para la fecha ingresada; el resultado del servidor es el definitivo."
+      },
+      "outcome": {
+        "success": "Paquete comprado.",
+        "reversed": "Esta compra de paquete ya habia sido registrada, pero desde entonces fue revertida. El saldo del estudiante ya no lo refleja.",
+        "capturedPending": "No habia un tipo de cambio disponible todavia. Este paquete quedo guardado, pendiente, en la cola de tipo de cambio.",
+        "capturedResolved": "Este paquete estaba esperando un tipo de cambio y ya fue resuelto como un pago real.",
+        "capturedCancelled": "Este paquete estaba esperando un tipo de cambio y fue cancelado. No se registro ningun paquete.",
+        "payloadMismatch": "Algo salio mal con la identidad de este envio. Contacte soporte antes de reintentar.",
+        "capturedAdminLink": "Revisarlo en la cola de tipo de cambio"
+      },
+      "recovery": {
+        "inProgress": "Hay un intento de compra de paquete sin confirmar de antes.",
+        "checking": "Verificando que paso...",
+        "blockedAuth": "Actualmente no tiene acceso para verificar el estado de este paquete.",
+        "blockedNotFound": "Todavia no encontramos un resultado confirmado. Esto no significa que haya fallado.",
+        "blockedRejected": "No pudimos contactar al servidor para verificar. Esto no significa que haya fallado.",
+        "blockedWrite": "No podemos confirmar el estado de este paquete ahora mismo ({reason}). Esto no significa que haya fallado.",
+        "unreadableDraft": "Este borrador no se pudo leer completamente. Contacte soporte si falta un paquete.",
+        "checkAgain": "Verificar estado de nuevo",
+        "retrySafely": "Reintentar de forma segura",
+        "storageUnavailable": "No podemos verificar el almacenamiento de su navegador en este momento, asi que no se puede iniciar una compra nueva de forma segura. Recargue la pagina o pruebe con otro navegador.",
+        "clearFailed": "Este resultado esta confirmado, pero no pudimos terminar de borrar el borrador local. Intente de nuevo.",
+        "finishCleanup": "Terminar limpieza"
+      },
+      "error": {
+        "notActive": "Esta funcion aun no esta activa para su organizacion.",
+        "invalid": "Parte de la informacion ingresada no es valida.",
+        "notFound": "No se encontro a ese estudiante en su alcance.",
+        "inapplicable": "Este paquete no aplica a la sede de este estudiante.",
+        "staleTerms": "El precio de este paquete cambio desde que lo seleccione. Confirme el nuevo precio y reenvie.",
+        "prepaymentUnavailable": "Las compras de paquetes no estan disponibles con la configuracion actual de esta sede.",
+        "prepaymentLimitExceeded": "La cobertura de este paquete se extenderia mas alla de lo permitido actualmente.",
+        "coverageGap": "Uno de los meses seleccionados entra en conflicto con una cobertura existente.",
+        "coverageGapAdvisory": "Nuestra propia mejor estimacion para el proximo mes disponible es {month}, pero esto no esta confirmado por el servidor.",
+        "debtNotFullySettled": "Toda la deuda pendiente de este estudiante debe liquidarse junto con este paquete. La lista se actualizo.",
+        "alreadySettled": "Uno o mas elementos pendientes ya estaban liquidados. La lista se actualizo.",
+        "futureDate": "La fecha de recibo no puede ser futura.",
+        "tooOld": "La fecha de recibo es demasiado antigua.",
+        "currencyMismatch": "La moneda del pago no coincide con lo adeudado.",
+        "notASelectableTotal": "Ese monto no coincide con ningun total pagable.",
+        "totalMismatch": "Ese monto no coincide con el paquete y los elementos seleccionados.",
+        "amountUnsupported": "Este monto es demasiado grande para registrarse.",
+        "conflict": "Algo cambio para este estudiante. Intente de nuevo.",
+        "attemptAlreadyExists": "Ya existe un intento con esta identidad. Verifique su estado antes de reintentar.",
+        "storageUnavailable": "Su navegador no pudo guardar este intento de forma segura, asi que no se envio. Intente habilitar el almacenamiento o use otro navegador.",
+        "unexpected": "Ocurrio algo inesperado.",
+        "alreadySettledDetail": "Ya liquidado: {ids}",
+        "selectableTotalsDetail": "Montos que serian aceptados: {totals}",
+        "blockedByUnclassifiable": "Un intento anterior necesita revision en la tarjeta de registro de pagos de arriba antes de poder enviar una nueva compra de paquete."
       }
     }
   },
