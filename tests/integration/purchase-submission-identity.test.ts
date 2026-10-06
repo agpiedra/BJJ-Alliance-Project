@@ -1,12 +1,14 @@
 import "dotenv/config";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { getTestPrismaClient } from "../helpers/test-db";
+import { Prisma } from "../../src/generated/prisma/client";
 import { makeAccountingOrg } from "../helpers/accounting-org";
 import { hashSecret } from "../../src/lib/crypto";
 import type { TenantContext } from "../../src/lib/tenant/types";
 import { createMonthlyObligation } from "../../src/lib/dues/ledger/create-monthly-obligation";
 import { recordDuesPaymentWithSubmissionIdentity } from "../../src/lib/dues/ledger/submission-identity";
 import { enterExchangeRateQuote } from "../../src/lib/dues/ledger/exchange-rate";
+import { resolveAwaitingRateReceipt, cancelAwaitingRateReceipt } from "../../src/lib/dues/ledger/awaiting-rate-receipt";
 import { reversePayment } from "../../src/lib/dues/ledger/reverse-payment";
 import { recordDuesPayment } from "../../src/lib/dues/ledger/record-payment";
 import type { LedgerActivation } from "../../src/lib/dues/ledger/activation";
@@ -44,6 +46,10 @@ let monthlyPlanId: string;
 let monthlyTerms: { id: string };
 let policyBase: { id: string };
 let packageTerms: { id: string };
+/** A second, genuinely different PACKAGE terms row (own plan, own id) — used only as a well-formed ALTERNATE
+ * `planTermsId` value in the payload-mismatch field table; the losing side of an identity race never actually
+ * resolves it for real, so it need not itself be a currently-valid purchase, only well-formed. */
+let packageTerms2: { id: string };
 let packageTermsB: { id: string };
 
 function context(over: Partial<TenantContext> = {}): TenantContext {
@@ -168,6 +174,10 @@ beforeAll(async () => {
   const packagePlan = await prisma.paymentPlan.create({ data: { organizationId: a.org.id, academyId: a.academy.id, name: `PSub package plan ${suffix}` } });
   packageTerms = await prisma.paymentPlanTerms.create({
     data: { organizationId: a.org.id, planId: packagePlan.id, effectiveYear: 2000, effectiveMonth: 1, priceAmount: "270.00", currency: "USD", monthsCovered: 3, createdById: a.admin.id },
+  });
+  const packagePlan2 = await prisma.paymentPlan.create({ data: { organizationId: a.org.id, academyId: a.academy.id, name: `PSub package plan 2 ${suffix}` } });
+  packageTerms2 = await prisma.paymentPlanTerms.create({
+    data: { organizationId: a.org.id, planId: packagePlan2.id, effectiveYear: 2000, effectiveMonth: 1, priceAmount: "300.00", currency: "USD", monthsCovered: 3, createdById: a.admin.id },
   });
 
   // Org B needs its own policy version (validatePackageSpanInTx reads maxPrepaidMonths from it) for the
@@ -409,6 +419,62 @@ describe("payload identity and genuine-refusal rollback", () => {
     const fresh = await prepayMonthlyObligationsWithSubmissionIdentity(prepayArgs(s.id, d, submissionId), deps({ now: nowAt(d) }));
     expect(fresh).toMatchObject({ ok: true });
   });
+
+  it("(P12) package: every OTHER meaningful canonical field, independently varied to a genuinely different well-formed value, refuses submissionPayloadMismatch and leaves the original row untouched", async () => {
+    const d = freshDate();
+    const s1 = await newStudent(a, "pfield1");
+    const s2 = await newStudent(a, "pfield2");
+    const ob1 = await oneMonth(s1.id, d);
+    const submissionId = freshSubmissionId("pfield");
+    const original = packageArgs(s1.id, d, submissionId, { existingObligationIds: [ob1], tender: { currency: "USD" as const, amount: "370.00" }, notes: "original note" });
+    const r1 = await purchasePackageWithSubmissionIdentity(original, deps({ now: nowAt(d) }));
+    if (!r1.ok) throw new Error(`fixture: expected success, got ${JSON.stringify(r1)}`);
+
+    const cases: Array<[string, Record<string, unknown>]> = [
+      ["a different planTermsId", { planTermsId: packageTerms2.id }],
+      ["a different requestedStartMonth", { requestedStartMonth: nextMonth(d) }],
+      ["a genuinely different existingObligationIds set (not merely reordered)", { existingObligationIds: [] }],
+      ["a different studentId", { studentId: s2.id }],
+      ["a different receivedOn", { receivedOn: { ...d, day: d.day + 1 } }],
+      ["a different tender.currency", { tender: { currency: "CRC" as const, amount: "370.00" } }],
+      ["a different method", { method: "TARJETA" as const }],
+      ["a genuinely different notes", { notes: "a completely different note" }],
+    ];
+    for (const [label, override] of cases) {
+      const before = await prisma.duesPaymentAttempt.findFirstOrThrow({ where: { organizationId: a.org.id, submissionId } });
+      const r = await purchasePackageWithSubmissionIdentity({ ...original, ...override }, deps({ now: nowAt(d) }));
+      expect(r, label).toEqual({ ok: false, error: "submissionPayloadMismatch" });
+      expect(await prisma.duesPaymentAttempt.findFirstOrThrow({ where: { organizationId: a.org.id, submissionId } }), label).toEqual(before);
+    }
+  });
+
+  it("(Q12) prepayment: every OTHER meaningful canonical field, independently varied to a genuinely different well-formed value, refuses submissionPayloadMismatch and leaves the original row untouched", async () => {
+    const d = freshDate();
+    const s1 = await newStudent(a, "qfield1");
+    const s2 = await newStudent(a, "qfield2");
+    await assign(s1.id);
+    const submissionId = freshSubmissionId("qfield");
+    const original = prepayArgs(s1.id, d, submissionId, { existingObligationIds: [], notes: "original note" });
+    const r1 = await prepayMonthlyObligationsWithSubmissionIdentity(original, deps({ now: nowAt(d) }));
+    if (!r1.ok) throw new Error(`fixture: expected success, got ${JSON.stringify(r1)}`);
+
+    const ob2 = await oneMonth(s1.id, { ...d, day: d.day + 1 });
+    const cases: Array<[string, Record<string, unknown>]> = [
+      ["a different requestedMonths run", { requestedMonths: [nextMonth(nextMonth(d))] }],
+      ["a genuinely different existingObligationIds set", { existingObligationIds: [ob2] }],
+      ["a different studentId", { studentId: s2.id }],
+      ["a different receivedOn", { receivedOn: { ...d, day: d.day + 2 } }],
+      ["a different tender.currency", { tender: { currency: "CRC" as const, amount: "100.00" } }],
+      ["a different method", { method: "TARJETA" as const }],
+      ["a genuinely different notes", { notes: "a completely different note" }],
+    ];
+    for (const [label, override] of cases) {
+      const before = await prisma.duesPaymentAttempt.findFirstOrThrow({ where: { organizationId: a.org.id, submissionId } });
+      const r = await prepayMonthlyObligationsWithSubmissionIdentity({ ...original, ...override }, deps({ now: nowAt(d) }));
+      expect(r, label).toEqual({ ok: false, error: "submissionPayloadMismatch" });
+      expect(await prisma.duesPaymentAttempt.findFirstOrThrow({ where: { organizationId: a.org.id, submissionId } }), label).toEqual(before);
+    }
+  });
 });
 
 describe("capture and replay", () => {
@@ -482,6 +548,98 @@ describe("capture and replay", () => {
 
     currentSession = { user: { id: a.admin.id, role: "ADMIN" } };
     expect(await getSubmissionOutcome(a.org.id, submissionId)).toEqual({ status: "committed", outcome: { kind: "payment", paymentId: r1.paymentId, currentlyReversed: false } });
+  });
+
+  it("(P10) package: a replayed capture since RESOLVED (via the REAL resolveAwaitingRateReceipt, which genuinely creates the package and settles it) reports the original receiptId with currentStatus RESOLVED; the retry itself creates nothing new", async () => {
+    const d = freshDate();
+    const s = await newStudent(a, "presolved");
+    const submissionId = freshSubmissionId("presolved");
+    const args = packageArgs(s.id, d, submissionId, { tender: { currency: "CRC" as const, amount: "135000.00" } });
+    const captured = await purchasePackageWithSubmissionIdentity(args, deps({ now: nowAt(d) }));
+    if (captured.ok || captured.error !== "captured") throw new Error(`fixture: expected capture, got ${JSON.stringify(captured)}`);
+    const receiptId = captured.receiptId!;
+    expect(await enterExchangeRateQuote({ context: context(), quoteDate: d, value: "500.00", expectedCurrentRevision: 0 }, deps())).toMatchObject({ ok: true });
+    const resolved = await resolveAwaitingRateReceipt({ context: context(), receiptId }, deps({ now: nowAt(d) }));
+    expect(resolved).toMatchObject({ ok: true });
+
+    const countsBefore = {
+      obligations: await prisma.duesObligation.count({ where: { organizationId: a.org.id, studentId: s.id } }),
+      payments: await prisma.duesPayment.count({ where: { organizationId: a.org.id, studentId: s.id } }),
+      settlements: await prisma.duesSettlement.count({ where: { organizationId: a.org.id, studentId: s.id } }),
+    };
+    const replay = await purchasePackageWithSubmissionIdentity(args, deps({ now: nowAt(d) }));
+    expect(replay).toEqual({ ok: false, error: "captured", receiptId, replay: true, currentStatus: "RESOLVED" });
+    expect({
+      obligations: await prisma.duesObligation.count({ where: { organizationId: a.org.id, studentId: s.id } }),
+      payments: await prisma.duesPayment.count({ where: { organizationId: a.org.id, studentId: s.id } }),
+      settlements: await prisma.duesSettlement.count({ where: { organizationId: a.org.id, studentId: s.id } }),
+    }).toEqual(countsBefore);
+    expect(await prisma.duesPaymentAttempt.count({ where: { organizationId: a.org.id, submissionId } })).toBe(1);
+  });
+
+  it("(P11) package: a replayed capture since CANCELLED reports the original receiptId with currentStatus CANCELLED; the retry creates nothing", async () => {
+    const d = freshDate();
+    const s = await newStudent(a, "pcancelled");
+    const submissionId = freshSubmissionId("pcancelled");
+    const args = packageArgs(s.id, d, submissionId, { tender: { currency: "CRC" as const, amount: "135000.00" } });
+    const captured = await purchasePackageWithSubmissionIdentity(args, deps({ now: nowAt(d) }));
+    if (captured.ok || captured.error !== "captured") throw new Error(`fixture: expected capture, got ${JSON.stringify(captured)}`);
+    const receiptId = captured.receiptId!;
+    const cancelled = await cancelAwaitingRateReceipt({ context: context(), receiptId, reason: "owner changed their mind" }, deps());
+    expect(cancelled).toMatchObject({ ok: true });
+
+    const obligationsBefore = await prisma.duesObligation.count({ where: { organizationId: a.org.id, studentId: s.id } });
+    const replay = await purchasePackageWithSubmissionIdentity(args, deps({ now: nowAt(d) }));
+    expect(replay).toEqual({ ok: false, error: "captured", receiptId, replay: true, currentStatus: "CANCELLED" });
+    expect(await prisma.duesObligation.count({ where: { organizationId: a.org.id, studentId: s.id } })).toBe(obligationsBefore);
+    expect(await prisma.duesPaymentAttempt.count({ where: { organizationId: a.org.id, submissionId } })).toBe(1);
+  });
+
+  it("(Q10) prepayment: a replayed capture since RESOLVED (via the REAL resolveAwaitingRateReceipt, which genuinely creates the months and settles them) reports the original receiptId with currentStatus RESOLVED; the retry itself creates nothing new", async () => {
+    const d = freshDate();
+    const s = await newStudent(a, "qresolved");
+    await assign(s.id);
+    const submissionId = freshSubmissionId("qresolved");
+    const args = prepayArgs(s.id, d, submissionId, { tender: { currency: "CRC" as const, amount: "50000.00" } });
+    const captured = await prepayMonthlyObligationsWithSubmissionIdentity(args, deps({ now: nowAt(d) }));
+    if (captured.ok || captured.error !== "captured") throw new Error(`fixture: expected capture, got ${JSON.stringify(captured)}`);
+    const receiptId = captured.receiptId!;
+    expect(await enterExchangeRateQuote({ context: context(), quoteDate: d, value: "500.00", expectedCurrentRevision: 0 }, deps())).toMatchObject({ ok: true });
+    const resolved = await resolveAwaitingRateReceipt({ context: context(), receiptId }, deps({ now: nowAt(d) }));
+    expect(resolved).toMatchObject({ ok: true });
+
+    const countsBefore = {
+      obligations: await prisma.duesObligation.count({ where: { organizationId: a.org.id, studentId: s.id } }),
+      payments: await prisma.duesPayment.count({ where: { organizationId: a.org.id, studentId: s.id } }),
+      settlements: await prisma.duesSettlement.count({ where: { organizationId: a.org.id, studentId: s.id } }),
+    };
+    const replay = await prepayMonthlyObligationsWithSubmissionIdentity(args, deps({ now: nowAt(d) }));
+    expect(replay).toEqual({ ok: false, error: "captured", receiptId, replay: true, currentStatus: "RESOLVED" });
+    expect({
+      obligations: await prisma.duesObligation.count({ where: { organizationId: a.org.id, studentId: s.id } }),
+      payments: await prisma.duesPayment.count({ where: { organizationId: a.org.id, studentId: s.id } }),
+      settlements: await prisma.duesSettlement.count({ where: { organizationId: a.org.id, studentId: s.id } }),
+    }).toEqual(countsBefore);
+    expect(await prisma.duesPaymentAttempt.count({ where: { organizationId: a.org.id, submissionId } })).toBe(1);
+  });
+
+  it("(Q11) prepayment: a replayed capture since CANCELLED reports the original receiptId with currentStatus CANCELLED; the retry creates nothing", async () => {
+    const d = freshDate();
+    const s = await newStudent(a, "qcancelled");
+    await assign(s.id);
+    const submissionId = freshSubmissionId("qcancelled");
+    const args = prepayArgs(s.id, d, submissionId, { tender: { currency: "CRC" as const, amount: "50000.00" } });
+    const captured = await prepayMonthlyObligationsWithSubmissionIdentity(args, deps({ now: nowAt(d) }));
+    if (captured.ok || captured.error !== "captured") throw new Error(`fixture: expected capture, got ${JSON.stringify(captured)}`);
+    const receiptId = captured.receiptId!;
+    const cancelled = await cancelAwaitingRateReceipt({ context: context(), receiptId, reason: "owner changed their mind" }, deps());
+    expect(cancelled).toMatchObject({ ok: true });
+
+    const obligationsBefore = await prisma.duesObligation.count({ where: { organizationId: a.org.id, studentId: s.id } });
+    const replay = await prepayMonthlyObligationsWithSubmissionIdentity(args, deps({ now: nowAt(d) }));
+    expect(replay).toEqual({ ok: false, error: "captured", receiptId, replay: true, currentStatus: "CANCELLED" });
+    expect(await prisma.duesObligation.count({ where: { organizationId: a.org.id, studentId: s.id } })).toBe(obligationsBefore);
+    expect(await prisma.duesPaymentAttempt.count({ where: { organizationId: a.org.id, submissionId } })).toBe(1);
   });
 });
 
@@ -722,6 +880,46 @@ describe("legacy database-row compatibility", () => {
   });
 });
 
+describe("readStoredOperation fails closed, never open", () => {
+  it("(X10a) a genuine legacy ordinary row (operation key absent, every OTHER field genuinely valid) remains readable by an authorized DIRECTOR", async () => {
+    const d = freshDate();
+    const s = await newStudent(a, "x10a");
+    const ob = await oneMonth(s.id, d);
+    const paid = await recordDuesPayment({ context: context(), studentId: s.id, receivedOn: d, tender: { currency: "USD", amount: "100.00" }, method: "EFECTIVO", obligationIds: [ob], maxBackdateDays: 5 }, deps({ now: nowAt(d) }));
+    if (!paid.ok) throw new Error(`fixture: payment failed: ${JSON.stringify(paid)}`);
+    const submissionId = freshSubmissionId("x10a");
+    // No "operation" key at all — a genuinely legacy-shaped row, every OTHER field valid against the full ordinary schema.
+    const legacyPayload = { studentId: s.id, obligationIds: [ob], receivedOn: `${d.year}-${String(d.month).padStart(2, "0")}-${String(d.day).padStart(2, "0")}`, tenderCurrency: "USD", tenderAmount: "100.00", method: "EFECTIVO", notes: "" };
+    await prisma.duesPaymentAttempt.create({ data: { organizationId: a.org.id, studentId: s.id, academyId: a.academy.id, submissionId, canonicalPayload: legacyPayload, paymentId: paid.paymentId } });
+
+    currentSession = { user: { id: director.id, role: "DIRECTOR" } };
+    expect(await getSubmissionOutcome(a.org.id, submissionId)).toEqual({ status: "committed", outcome: { kind: "payment", paymentId: paid.paymentId, currentlyReversed: false } });
+  });
+
+  it("(X10b) an entry whose canonicalPayload is NOT cleanly classifiable as ORDINARY — an unrecognized operation value, or a missing operation key combined with another broken field — is NOT readable by a DIRECTOR (resolves notFound, never fails open); ADMIN still sees it", async () => {
+    const cases: Array<[string, Record<string, unknown>]> = [
+      ["an unrecognized operation value", { operation: "GARBAGE", studentId: "irrelevant", obligationIds: ["irrelevant"], receivedOn: "2000-01-01", tenderCurrency: "USD", tenderAmount: "10.00", method: "EFECTIVO", notes: "" }],
+      // No "operation" key AND missing tenderAmount — fails the full ordinary schema on a field other than operation,
+      // so the legacy-default rescue must NOT apply either.
+      ["no operation key, and fails the full ordinary schema on another field (missing tenderAmount)", { studentId: "irrelevant", obligationIds: ["irrelevant"], receivedOn: "2000-01-01", tenderCurrency: "USD", method: "EFECTIVO", notes: "" }],
+    ];
+    for (const [label, canonicalPayload] of cases) {
+      const s = await newStudent(a, "x10b");
+      const paid = await prisma.duesPayment.create({
+        data: { organizationId: a.org.id, studentId: s.id, academyId: a.academy.id, receivedOn: new Date(), tenderCurrency: "USD", tenderAmount: "10.00", method: "EFECTIVO", recordedById: a.admin.id },
+      });
+      const submissionId = freshSubmissionId("x10b");
+      await prisma.duesPaymentAttempt.create({ data: { organizationId: a.org.id, studentId: s.id, academyId: a.academy.id, submissionId, canonicalPayload: canonicalPayload as Prisma.InputJsonValue, paymentId: paid.id } });
+
+      currentSession = { user: { id: director.id, role: "DIRECTOR" } };
+      expect(await getSubmissionOutcome(a.org.id, submissionId), label).toEqual({ status: "notFound" });
+
+      currentSession = { user: { id: a.admin.id, role: "ADMIN" } };
+      expect(await getSubmissionOutcome(a.org.id, submissionId), label).toEqual({ status: "committed", outcome: { kind: "payment", paymentId: paid.id, currentlyReversed: false } });
+    }
+  });
+});
+
 describe("database-enforced guarantees, re-proved against a package-shaped row", () => {
   it("(X7) setting BOTH outcome columns non-null in one statement is rejected by the CHECK constraint", async () => {
     const s = await newStudent(a, "xcheck");
@@ -770,6 +968,21 @@ describe("database-enforced guarantees, re-proved against a package-shaped row",
     await isolated(async (tx) => {
       const row = await tx.duesPaymentAttempt.create({ data: { organizationId: a.org.id, studentId: sA.id, academyId: a.academy.id, submissionId: freshSubmissionId("xfk-a2"), canonicalPayload: { operation: "PACKAGE" } } });
       await refused(tx, () => tx.duesPaymentAttempt.update({ where: { id: row.id }, data: { paymentId: paidB.id } }), "DuesPaymentAttempt_organizationId_paymentId_studentId_fkey");
+    });
+  });
+
+  it("(X11) setting paymentId to a REAL payment belonging to a DIFFERENT student in the SAME organization is rejected by the composite foreign key", async () => {
+    const s1 = await newStudent(a, "xfk-student-1");
+    const s2 = await newStudent(a, "xfk-student-2");
+    const paid1 = await prisma.duesPayment.create({
+      data: { organizationId: a.org.id, studentId: s1.id, academyId: a.academy.id, receivedOn: new Date(), tenderCurrency: "USD", tenderAmount: "10.00", method: "EFECTIVO", recordedById: a.admin.id },
+    });
+
+    await isolated(async (tx) => {
+      // A fresh attempt row genuinely belonging to student 2 — student 2's own attempt pointed at student 1's real
+      // payment id has no (organizationId, paymentId, studentId=s2.id) match in DuesPayment, so the FK itself rejects it.
+      const row = await tx.duesPaymentAttempt.create({ data: { organizationId: a.org.id, studentId: s2.id, academyId: a.academy.id, submissionId: freshSubmissionId("xfk-student"), canonicalPayload: { operation: "PACKAGE" } } });
+      await refused(tx, () => tx.duesPaymentAttempt.update({ where: { id: row.id }, data: { paymentId: paid1.id } }), "DuesPaymentAttempt_organizationId_paymentId_studentId_fkey");
     });
   });
 });

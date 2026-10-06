@@ -62,12 +62,23 @@ export type CanonicalPaymentPayload = z.infer<typeof canonicalPaymentPayloadSche
  * operation gate below (brief §2.6 point 1), never by a writer's own payload-comparison (which always uses its own
  * specific schema directly — the package/prepayment writers' own disjoint field shapes already make a foreign
  * payload fail THEIR OWN schema naturally, with `operation` compared explicitly too as a second, independent
- * layer of protection, never relying on shape alone). Defaults an absent/legacy key to `"ORDINARY"`, identically
- * to the schema above. */
-const operationDiscriminatorSchema = z.object({ operation: z.enum(["ORDINARY", "PACKAGE", "PREPAYMENT"]).default("ORDINARY") }).passthrough();
-export function readStoredOperation(canonicalPayload: unknown): "ORDINARY" | "PACKAGE" | "PREPAYMENT" {
-  const parsed = operationDiscriminatorSchema.safeParse(canonicalPayload);
-  return parsed.success ? parsed.data.operation : "ORDINARY";
+ * layer of protection, never relying on shape alone).
+ *
+ * MUST FAIL CLOSED, never open: an explicit, valid `operation` field is trusted directly; failing that, the legacy
+ * `"ORDINARY"` default is granted ONLY after the payload is independently confirmed to genuinely be a valid legacy
+ * ordinary payload (reusing `canonicalPaymentPayloadSchema` itself, whose own `.default("ORDINARY")` is exactly
+ * what lets a key-absent-but-otherwise-valid payload parse as that). Anything else — a non-object, an invalid
+ * `operation` value, or a payload that fails the full ordinary schema on some OTHER field — resolves `"UNKNOWN"`,
+ * never `"ORDINARY"`. `getSubmissionOutcome`'s own gate (`!== "ORDINARY" && role !== "ADMIN"` -> notFound) already
+ * treats `"UNKNOWN"` as non-ORDINARY with no further change: an unclassifiable row is never disclosed to a
+ * DIRECTOR, matching the same non-disclosure shape as a genuine PACKAGE/PREPAYMENT row. */
+const operationFieldSchema = z.object({ operation: z.enum(["ORDINARY", "PACKAGE", "PREPAYMENT"]) }).passthrough();
+export function readStoredOperation(canonicalPayload: unknown): "ORDINARY" | "PACKAGE" | "PREPAYMENT" | "UNKNOWN" {
+  const explicit = operationFieldSchema.safeParse(canonicalPayload);
+  if (explicit.success) return explicit.data.operation;
+  const asLegacyOrdinary = canonicalPaymentPayloadSchema.safeParse(canonicalPayload);
+  if (asLegacyOrdinary.success && asLegacyOrdinary.data.operation === "ORDINARY") return "ORDINARY";
+  return "UNKNOWN";
 }
 
 /** Assumes `tender.amount` already passed `validatePaymentInput`'s own `parseMoney` check (every caller below calls it
