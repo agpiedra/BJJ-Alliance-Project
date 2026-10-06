@@ -4,12 +4,14 @@ import {
   beginAttempt,
   readAttempt,
   readPackageAttempt,
+  readPrepaymentAttempt,
   clearAttempt,
   listStoredAttemptIds,
   scanAttemptsByOperation,
   readStoredOperation,
   type StoredAttemptPayload,
   type StoredPackageAttemptPayload,
+  type StoredPrepaymentAttemptPayload,
 } from "../../src/lib/dues/payment-attempt-storage";
 
 /**
@@ -49,6 +51,17 @@ const PACKAGE_PAYLOAD: StoredPackageAttemptPayload = {
   existingObligationIds: ["ob-1"],
   receivedOn: { year: 2027, month: 3, day: 10 },
   tender: { currency: "USD", amount: "250.00" },
+  method: "EFECTIVO",
+  notes: "a note",
+};
+
+const PREPAYMENT_PAYLOAD: StoredPrepaymentAttemptPayload = {
+  operation: "PREPAYMENT",
+  studentId: "student-1",
+  requestedMonths: [{ year: 2027, month: 4 }, { year: 2027, month: 5 }],
+  existingObligationIds: ["ob-1"],
+  receivedOn: { year: 2027, month: 3, day: 10 },
+  tender: { currency: "USD", amount: "200.00" },
   method: "EFECTIVO",
   notes: "a note",
 };
@@ -267,6 +280,32 @@ describe("readPackageAttempt: the package card's own counterpart to readAttempt"
   });
 });
 
+describe("readPrepaymentAttempt: the prepayment card's own counterpart to readAttempt/readPackageAttempt", () => {
+  it("writes then reads back the identical prepayment payload", () => {
+    expect(beginAttempt(ORG, USER, "sub-prepay-1", PREPAYMENT_PAYLOAD)).toEqual({ ok: true });
+    expect(readPrepaymentAttempt(ORG, USER, "sub-prepay-1")).toEqual({ status: "ok", payload: PREPAYMENT_PAYLOAD });
+  });
+
+  it("a missing key reads as missing", () => {
+    expect(readPrepaymentAttempt(ORG, USER, "no-such-sub")).toEqual({ status: "missing" });
+  });
+
+  it("a PACKAGE entry (disjoint shape) reads as corrupt through readPrepaymentAttempt — never cross-read", () => {
+    beginAttempt(ORG, USER, "sub-pkg-3", PACKAGE_PAYLOAD);
+    expect(readPrepaymentAttempt(ORG, USER, "sub-pkg-3")).toEqual({ status: "corrupt" });
+  });
+
+  it("a PREPAYMENT entry (disjoint shape) reads as corrupt through readPackageAttempt — never cross-read", () => {
+    beginAttempt(ORG, USER, "sub-prepay-2", PREPAYMENT_PAYLOAD);
+    expect(readPackageAttempt(ORG, USER, "sub-prepay-2")).toEqual({ status: "corrupt" });
+  });
+
+  it("duplicate requestedMonths entries are rejected as corrupt, mirroring duplicate obligationIds elsewhere", () => {
+    window.localStorage.setItem(`payment-attempt:${ORG}:${USER}:sub-dup-months`, JSON.stringify({ ...PREPAYMENT_PAYLOAD, requestedMonths: [{ year: 2027, month: 4 }, { year: 2027, month: 4 }] }));
+    expect(readPrepaymentAttempt(ORG, USER, "sub-dup-months")).toEqual({ status: "corrupt" });
+  });
+});
+
 describe("scanAttemptsByOperation: the 3-way partition (package-purchase UI brief §2.10)", () => {
   it("an ORDINARY entry is 'matching' for operation ORDINARY, and 'otherOperations' for operation PACKAGE", () => {
     beginAttempt(ORG, USER, "sub-ord", PAYLOAD);
@@ -334,6 +373,22 @@ describe("scanAttemptsByOperation: the 3-way partition (package-purchase UI brie
     } finally {
       spy.mockRestore();
     }
+  });
+
+  it("a PREPAYMENT entry is 'matching' for operation PREPAYMENT, and 'otherOperations' for both ORDINARY and PACKAGE", () => {
+    beginAttempt(ORG, USER, "sub-prepay", PREPAYMENT_PAYLOAD);
+    expect(scanAttemptsByOperation(ORG, USER, "PREPAYMENT")).toEqual({ status: "ok", matching: ["sub-prepay"], otherOperations: [], unclassifiable: [] });
+    expect(scanAttemptsByOperation(ORG, USER, "ORDINARY")).toEqual({ status: "ok", matching: [], otherOperations: ["sub-prepay"], unclassifiable: [] });
+    expect(scanAttemptsByOperation(ORG, USER, "PACKAGE")).toEqual({ status: "ok", matching: [], otherOperations: ["sub-prepay"], unclassifiable: [] });
+  });
+
+  it("all three operations present simultaneously each land in their own 'matching' bucket and nowhere else", () => {
+    beginAttempt(ORG, USER, "sub-ord-3", PAYLOAD);
+    beginAttempt(ORG, USER, "sub-pkg-3b", PACKAGE_PAYLOAD);
+    beginAttempt(ORG, USER, "sub-prepay-3", PREPAYMENT_PAYLOAD);
+    expect(scanAttemptsByOperation(ORG, USER, "ORDINARY")).toEqual({ status: "ok", matching: ["sub-ord-3"], otherOperations: ["sub-pkg-3b", "sub-prepay-3"], unclassifiable: [] });
+    expect(scanAttemptsByOperation(ORG, USER, "PACKAGE")).toEqual({ status: "ok", matching: ["sub-pkg-3b"], otherOperations: ["sub-ord-3", "sub-prepay-3"], unclassifiable: [] });
+    expect(scanAttemptsByOperation(ORG, USER, "PREPAYMENT")).toEqual({ status: "ok", matching: ["sub-prepay-3"], otherOperations: ["sub-ord-3", "sub-pkg-3b"], unclassifiable: [] });
   });
 
   it("different users/orgs are excluded, exactly like listStoredAttemptIds", () => {

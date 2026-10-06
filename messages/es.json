@@ -1411,6 +1411,98 @@
         "selectableTotalsDetail": "Montos que serian aceptados: {totals}",
         "blockedByUnclassifiable": "Un intento anterior necesita revision en la tarjeta de registro de pagos de arriba antes de poder enviar una nueva compra de paquete."
       }
+    },
+    "prepayment": {
+      "heading": "Pagar por adelantado meses futuros",
+      "body": "Paga por adelantado uno o mas meses consecutivos proximos y los liquida, junto con cualquier deuda pendiente, en un solo pago.",
+      "submit": "Enviar pago adelantado",
+      "submitting": "Enviando...",
+      "recordAnother": "Registrar otro pago adelantado",
+      "fields": {
+        "student": "Estudiante",
+        "studentPlaceholder": "Seleccione un estudiante",
+        "months": "Meses a pagar por adelantado",
+        "amount": "Monto recibido",
+        "currency": "Moneda",
+        "receivedOn": "Fecha de recibo",
+        "method": "Metodo",
+        "notes": "Notas"
+      },
+      "months": {
+        "loading": "Cargando...",
+        "none": "Aun no hay meses seleccionados.",
+        "addNext": "Agregar proximo mes",
+        "removeLast": "Quitar ultimo mes",
+        "priceLoading": "Cargando precio..."
+      },
+      "advisory": {
+        "suggestion": "Primer mes sugerido: {month}. Esto es solo una estimacion; el resultado del servidor es el definitivo."
+      },
+      "obligations": {
+        "loading": "Cargando saldo pendiente...",
+        "none": "No hay nada mas pendiente para este estudiante.",
+        "mixedCurrency": "Este estudiante debe en mas de una moneda. Esto no se puede liquidar en un solo pago todavia. Contacte soporte.",
+        "allIncluded": "Cada elemento pendiente a continuacion se incluye automaticamente y debe liquidarse junto con este pago adelantado.",
+        "type": {
+          "MONTHLY": "Mensualidad",
+          "SIGNUP": "Inscripcion"
+        },
+        "retry": "Reintentar"
+      },
+      "totals": {
+        "heading": "Total estimado",
+        "line": "{amount} {currency}",
+        "disclaimer": "Calculado a partir de la deuda pendiente de hoy y el precio actual de cada mes seleccionado. Esto no es una cotizacion definitiva — el resultado del servidor al momento del envio es el definitivo.",
+        "backdatedDisclaimer": "Este total refleja el saldo y los precios de hoy. El monto adeudado, y si este envio tendra exito, puede ser diferente para la fecha ingresada; el resultado del servidor es el definitivo."
+      },
+      "outcome": {
+        "success": "Pago adelantado registrado.",
+        "reversed": "Este pago adelantado ya habia sido registrado, pero desde entonces fue revertido. El saldo del estudiante ya no lo refleja.",
+        "capturedPending": "No habia un tipo de cambio disponible todavia. Este pago adelantado quedo guardado, pendiente, en la cola de tipo de cambio.",
+        "capturedResolved": "Este pago adelantado estaba esperando un tipo de cambio y ya fue resuelto como un pago real.",
+        "capturedCancelled": "Este pago adelantado estaba esperando un tipo de cambio y fue cancelado. No se registro ningun mes.",
+        "payloadMismatch": "Algo salio mal con la identidad de este envio. Contacte soporte antes de reintentar.",
+        "capturedAdminLink": "Revisarlo en la cola de tipo de cambio"
+      },
+      "recovery": {
+        "inProgress": "Hay un intento de pago adelantado sin confirmar de antes.",
+        "checking": "Verificando que paso...",
+        "blockedAuth": "Actualmente no tiene acceso para verificar el estado de este pago adelantado.",
+        "blockedNotFound": "Todavia no encontramos un resultado confirmado. Esto no significa que haya fallado.",
+        "blockedRejected": "No pudimos contactar al servidor para verificar. Esto no significa que haya fallado.",
+        "blockedWrite": "No podemos confirmar el estado de este pago adelantado ahora mismo ({reason}). Esto no significa que haya fallado.",
+        "unreadableDraft": "Este borrador no se pudo leer completamente. Contacte soporte si falta un pago adelantado.",
+        "checkAgain": "Verificar estado de nuevo",
+        "retrySafely": "Reintentar de forma segura",
+        "storageUnavailable": "No podemos verificar el almacenamiento de su navegador en este momento, asi que no se puede iniciar un pago adelantado nuevo de forma segura. Recargue la pagina o pruebe con otro navegador.",
+        "clearFailed": "Este resultado esta confirmado, pero no pudimos terminar de borrar el borrador local. Intente de nuevo.",
+        "finishCleanup": "Terminar limpieza"
+      },
+      "error": {
+        "notActive": "Esta funcion aun no esta activa para su organizacion.",
+        "invalid": "Parte de la informacion ingresada no es valida.",
+        "notFound": "No se encontro a ese estudiante en su alcance.",
+        "inapplicable": "Uno de los meses seleccionados no aplica a la sede de este estudiante.",
+        "prepaymentUnavailable": "El pago adelantado no esta disponible con la configuracion actual de esta sede.",
+        "prepaymentLimitExceeded": "Uno de los meses seleccionados esta mas alla de lo permitido actualmente.",
+        "coverageGap": "Uno de los meses seleccionados entra en conflicto con una cobertura existente.",
+        "coverageGapAdvisory": "Nuestra propia mejor estimacion para el proximo mes disponible es {month}, pero esto no esta confirmado por el servidor.",
+        "debtNotFullySettled": "Toda la deuda pendiente de este estudiante debe liquidarse junto con este pago adelantado. La lista se actualizo.",
+        "alreadySettled": "Uno o mas elementos pendientes ya estaban liquidados. La lista se actualizo.",
+        "futureDate": "La fecha de recibo no puede ser futura.",
+        "tooOld": "La fecha de recibo es demasiado antigua.",
+        "currencyMismatch": "La moneda del pago no coincide con lo adeudado.",
+        "notASelectableTotal": "Ese monto no coincide con ningun total pagable.",
+        "totalMismatch": "Ese monto no coincide con los meses y elementos seleccionados.",
+        "amountUnsupported": "Este monto es demasiado grande para registrarse.",
+        "conflict": "Algo cambio para este estudiante. Intente de nuevo.",
+        "attemptAlreadyExists": "Ya existe un intento con esta identidad. Verifique su estado antes de reintentar.",
+        "storageUnavailable": "Su navegador no pudo guardar este intento de forma segura, asi que no se envio. Intente habilitar el almacenamiento o use otro navegador.",
+        "unexpected": "Ocurrio algo inesperado.",
+        "alreadySettledDetail": "Ya liquidado: {ids}",
+        "selectableTotalsDetail": "Montos que serian aceptados: {totals}",
+        "blockedByUnclassifiable": "Un intento anterior necesita revision en la tarjeta de registro de pagos de arriba antes de poder enviar un nuevo pago adelantado."
+      }
     }
   },
   "portal": {

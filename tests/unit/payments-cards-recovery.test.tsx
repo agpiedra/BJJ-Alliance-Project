@@ -27,8 +27,14 @@ const getPackagePlanOptions = vi.fn();
 const getFirstAvailablePackageMonth = vi.fn();
 vi.mock("@/lib/dues/package-purchase-actions", () => ({ purchasePackage, getPackagePlanOptions, getFirstAvailablePackageMonth }));
 
+const prepayMonths = vi.fn();
+const getFirstAvailablePrepaymentMonth = vi.fn();
+const getMonthPrices = vi.fn();
+vi.mock("@/lib/dues/prepayment-actions", () => ({ prepayMonths, getFirstAvailablePrepaymentMonth, getMonthPrices }));
+
 const { PaymentEntrySection } = await import("../../src/app/[locale]/(staff)/payments/payment-entry-section");
 const { PackagePurchaseSection } = await import("../../src/app/[locale]/(staff)/payments/package-purchase-section");
+const { PrepaymentSection } = await import("../../src/app/[locale]/(staff)/payments/prepayment-section");
 
 const ORG_ID = "org-1";
 const USER_ID = "user-1";
@@ -42,6 +48,25 @@ function renderBothCards() {
       </div>
       <div data-testid="package-card">
         <PackagePurchaseSection organizationId={ORG_ID} currentUserId={USER_ID} students={STUDENTS} plansHref="/en/payments/plans" />
+      </div>
+    </NextIntlClientProvider>,
+  );
+}
+
+/** Monthly-prepayment UI brief §7: "PR 3 extends the three-operation routing test to all three operations
+ * simultaneously" — all three real cards mounted together, in ADDITION to (never replacing) `renderBothCards()`'s
+ * own two-card tests above. */
+function renderAllThreeCards() {
+  return render(
+    <NextIntlClientProvider locale="en" messages={enMessages}>
+      <div data-testid="ordinary-card">
+        <PaymentEntrySection organizationId={ORG_ID} currentUserId={USER_ID} students={STUDENTS} organizationRole="ADMIN" plansHref="/en/payments/plans" />
+      </div>
+      <div data-testid="package-card">
+        <PackagePurchaseSection organizationId={ORG_ID} currentUserId={USER_ID} students={STUDENTS} plansHref="/en/payments/plans" />
+      </div>
+      <div data-testid="prepayment-card">
+        <PrepaymentSection organizationId={ORG_ID} currentUserId={USER_ID} students={STUDENTS} plansHref="/en/payments/plans" />
       </div>
     </NextIntlClientProvider>,
   );
@@ -67,6 +92,16 @@ const PACKAGE_PAYLOAD = {
   method: "EFECTIVO",
 };
 
+const PREPAYMENT_PAYLOAD = {
+  operation: "PREPAYMENT",
+  studentId: "student-1",
+  requestedMonths: [{ year: 2027, month: 7 }],
+  existingObligationIds: ["ob-1"],
+  receivedOn: { year: 2027, month: 6, day: 10 },
+  tender: { currency: "USD", amount: "200.00" },
+  method: "EFECTIVO",
+};
+
 beforeEach(() => {
   window.localStorage.clear();
   recordPayment.mockReset();
@@ -75,6 +110,9 @@ beforeEach(() => {
   purchasePackage.mockReset();
   getPackagePlanOptions.mockReset();
   getFirstAvailablePackageMonth.mockReset();
+  prepayMonths.mockReset();
+  getFirstAvailablePrepaymentMonth.mockReset();
+  getMonthPrices.mockReset();
 });
 
 afterEach(() => {
@@ -282,5 +320,124 @@ describe("cross-card submission blocking while an unclassifiable entry is unreso
     expect(checkSubmissionOutcome).toHaveBeenCalledTimes(1);
     expect(recordPayment).not.toHaveBeenCalled();
     expect(purchasePackage).not.toHaveBeenCalled();
+  });
+});
+
+describe("three-card simultaneous recovery (monthly-prepayment UI brief §7)", () => {
+  it("all three stored attempts (ORDINARY/PACKAGE/PREPAYMENT) each land in only their own card's recovery queue, calls hit only each card's own mocked action module", async () => {
+    window.localStorage.setItem(`payment-attempt:${ORG_ID}:${USER_ID}:sub-ordinary`, JSON.stringify(ORDINARY_PAYLOAD));
+    window.localStorage.setItem(`payment-attempt:${ORG_ID}:${USER_ID}:sub-package`, JSON.stringify(PACKAGE_PAYLOAD));
+    window.localStorage.setItem(`payment-attempt:${ORG_ID}:${USER_ID}:sub-prepayment`, JSON.stringify(PREPAYMENT_PAYLOAD));
+    checkSubmissionOutcome.mockResolvedValue({ status: "notFound" });
+
+    renderAllThreeCards();
+
+    await waitFor(() => expect(checkSubmissionOutcome).toHaveBeenCalledTimes(3));
+    const calledWith = checkSubmissionOutcome.mock.calls.map((c) => c[1]).sort();
+    expect(calledWith).toEqual(["sub-ordinary", "sub-package", "sub-prepayment"]);
+
+    // All three entries survive untouched — every one resolved notFound, which preserves, never clears.
+    expect(window.localStorage.getItem(`payment-attempt:${ORG_ID}:${USER_ID}:sub-ordinary`)).toBe(JSON.stringify(ORDINARY_PAYLOAD));
+    expect(window.localStorage.getItem(`payment-attempt:${ORG_ID}:${USER_ID}:sub-package`)).toBe(JSON.stringify(PACKAGE_PAYLOAD));
+    expect(window.localStorage.getItem(`payment-attempt:${ORG_ID}:${USER_ID}:sub-prepayment`)).toBe(JSON.stringify(PREPAYMENT_PAYLOAD));
+
+    const ordinaryCard = within(screen.getByTestId("ordinary-card"));
+    const packageCard = within(screen.getByTestId("package-card"));
+    const prepaymentCard = within(screen.getByTestId("prepayment-card"));
+    await waitFor(() => expect(ordinaryCard.getByText(/couldn't find a confirmed outcome/i)).toBeInTheDocument());
+    await waitFor(() => expect(packageCard.getByText(/couldn't find a confirmed outcome/i)).toBeInTheDocument());
+    await waitFor(() => expect(prepaymentCard.getByText(/couldn't find a confirmed outcome/i)).toBeInTheDocument());
+
+    // Each card's own "Retry safely" hits ONLY its own action module.
+    recordPayment.mockResolvedValueOnce({ ok: false, error: "notActive" });
+    fireEvent.click(ordinaryCard.getByRole("button", { name: /Retry safely/i }));
+    await waitFor(() => expect(recordPayment).toHaveBeenCalledTimes(1));
+    expect(purchasePackage).not.toHaveBeenCalled();
+    expect(prepayMonths).not.toHaveBeenCalled();
+
+    purchasePackage.mockResolvedValueOnce({ ok: false, error: "notActive" });
+    fireEvent.click(packageCard.getByRole("button", { name: /Retry safely/i }));
+    await waitFor(() => expect(purchasePackage).toHaveBeenCalledTimes(1));
+    expect(prepayMonths).not.toHaveBeenCalled();
+
+    prepayMonths.mockResolvedValueOnce({ ok: false, error: "notActive" });
+    fireEvent.click(prepaymentCard.getByRole("button", { name: /Retry safely/i }));
+    await waitFor(() => expect(prepayMonths).toHaveBeenCalledTimes(1));
+    expect(recordPayment).toHaveBeenCalledTimes(1); // unchanged by the other two cards' own retries
+    expect(purchasePackage).toHaveBeenCalledTimes(1);
+  });
+
+  it("a legacy entry with no 'operation' key at all is picked up ONLY by the ordinary card, even with all three cards mounted", async () => {
+    const { operation, ...legacyPayload } = ORDINARY_PAYLOAD;
+    void operation;
+    window.localStorage.setItem(`payment-attempt:${ORG_ID}:${USER_ID}:sub-legacy`, JSON.stringify(legacyPayload));
+    checkSubmissionOutcome.mockResolvedValue({ status: "notFound" });
+
+    renderAllThreeCards();
+
+    await waitFor(() => expect(checkSubmissionOutcome).toHaveBeenCalledTimes(1));
+    expect(checkSubmissionOutcome).toHaveBeenCalledWith(ORG_ID, "sub-legacy");
+
+    // Package and prepayment cards have nothing of their own — both render their normal, unblocked forms.
+    const packageCard = within(screen.getByTestId("package-card"));
+    const prepaymentCard = within(screen.getByTestId("prepayment-card"));
+    await waitFor(() => expect(packageCard.getByLabelText(/Student/i)).toBeInTheDocument());
+    expect(prepaymentCard.getByLabelText(/Student/i)).toBeInTheDocument();
+  });
+
+  it("an unclassifiable entry stays ordinary-card-owned and blocks ALL THREE cards' submit actions, even with three cards mounted; a committed resolution restores all three", async () => {
+    const PLAN = { planId: "plan-1", planTermsId: "terms-1", planName: "3-Month Package", monthsCovered: 3, priceAmount: "270.00", currency: "USD" as const };
+    const DEBT_ITEM = {
+      obligationId: "ob-1", type: "MONTHLY" as const, currency: "USD" as const, coverageYear: 2027, coverageMonth: 5,
+      settled: false as const, outstandingAmountMinor: 10000, outstandingFeeMinor: 0, dueOn: "2027-05-20", pastGrace: false,
+    };
+    const TODAY_LOCAL = { year: 2027, month: 6, day: 15 };
+    window.localStorage.setItem(`payment-attempt:${ORG_ID}:${USER_ID}:sub-corrupt-three`, "not even json {{{");
+
+    getPayableObligations.mockResolvedValue({ ok: true, obligations: [DEBT_ITEM], mixedCurrency: false, todayLocal: TODAY_LOCAL });
+    getPackagePlanOptions.mockResolvedValue({ ok: true, plans: [PLAN] });
+    getFirstAvailablePackageMonth.mockResolvedValue({ ok: true, month: { year: 2027, month: 6 } });
+    getFirstAvailablePrepaymentMonth.mockResolvedValue({ ok: true, month: { year: 2027, month: 7 }, horizonEnd: { year: 2027, month: 12 } });
+    getMonthPrices.mockResolvedValue({ ok: true, prices: [{ month: { year: 2027, month: 7 }, priceAmount: "100.00", currency: "USD" as const }] });
+
+    renderAllThreeCards();
+    const ordinaryCard = within(screen.getByTestId("ordinary-card"));
+    const packageCard = within(screen.getByTestId("package-card"));
+    const prepaymentCard = within(screen.getByTestId("prepayment-card"));
+
+    fireEvent.change(ordinaryCard.getByLabelText(/Student/i), { target: { value: "student-1" } });
+    await waitFor(() => expect(ordinaryCard.getAllByRole("checkbox").length).toBeGreaterThan(0));
+    fireEvent.change(ordinaryCard.getByLabelText(/Amount received/i), { target: { value: "100.00" } });
+
+    fireEvent.change(packageCard.getByLabelText(/Student/i), { target: { value: "student-1" } });
+    await waitFor(() => expect(packageCard.getByLabelText(/Package/i)).toBeInTheDocument());
+    fireEvent.change(packageCard.getByLabelText(/Package/i), { target: { value: PLAN.planTermsId } });
+    fireEvent.change(packageCard.getByLabelText(/Amount received/i), { target: { value: "370.00" } });
+
+    fireEvent.change(prepaymentCard.getByLabelText(/Student/i), { target: { value: "student-1" } });
+    await waitFor(() => expect(prepaymentCard.getByLabelText(/Amount received/i)).toBeInTheDocument());
+    fireEvent.change(prepaymentCard.getByLabelText(/Amount received/i), { target: { value: "200.00" } });
+
+    expect(ordinaryCard.getByRole("button", { name: /Record payment/i })).toBeDisabled();
+    expect(packageCard.getByRole("button", { name: /Purchase package/i })).toBeDisabled();
+    expect(prepaymentCard.getByRole("button", { name: /Submit prepayment/i })).toBeDisabled();
+
+    fireEvent.click(ordinaryCard.getByRole("button", { name: /Record payment/i }));
+    fireEvent.click(packageCard.getByRole("button", { name: /Purchase package/i }));
+    fireEvent.click(prepaymentCard.getByRole("button", { name: /Submit prepayment/i }));
+    expect(recordPayment).not.toHaveBeenCalled();
+    expect(purchasePackage).not.toHaveBeenCalled();
+    expect(prepayMonths).not.toHaveBeenCalled();
+
+    checkSubmissionOutcome.mockResolvedValueOnce({ status: "committed", outcome: { kind: "payment", paymentId: "p-resolved", currentlyReversed: false } });
+    fireEvent.click(ordinaryCard.getByRole("button", { name: /Check status/i }));
+    await waitFor(() => expect(ordinaryCard.getByText("Payment recorded.")).toBeInTheDocument());
+    expect(window.localStorage.getItem(`payment-attempt:${ORG_ID}:${USER_ID}:sub-corrupt-three`)).toBeNull();
+
+    await waitFor(() => expect(packageCard.getByRole("button", { name: /Purchase package/i })).not.toBeDisabled());
+    expect(prepaymentCard.getByRole("button", { name: /Submit prepayment/i })).not.toBeDisabled();
+    expect(recordPayment).not.toHaveBeenCalled();
+    expect(purchasePackage).not.toHaveBeenCalled();
+    expect(prepayMonths).not.toHaveBeenCalled();
   });
 });

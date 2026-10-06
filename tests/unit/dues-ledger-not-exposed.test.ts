@@ -71,6 +71,9 @@ const AUTHORIZED_CALLERS = [
   "src/lib/dues/package-purchase-queries.ts",
   "src/lib/dues/package-purchase-actions.ts",
   "src/app/[locale]/(staff)/payments/package-purchase-section.tsx",
+  "src/lib/dues/prepayment-queries.ts",
+  "src/lib/dues/prepayment-actions.ts",
+  "src/app/[locale]/(staff)/payments/prepayment-section.tsx",
 ];
 
 describe("the ledger writers are not reachable from production code", () => {
