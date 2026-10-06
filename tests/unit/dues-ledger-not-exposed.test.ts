@@ -38,6 +38,13 @@ import { productionSourceFiles, stripComments } from "../helpers/source-files";
  *     result the action layer already returned; erased at compile time, no runtime dependency on the ledger), and
  *     `src/app/[locale]/(staff)/payments/page.tsx` (the same read-only `inactiveLedgerActivation.isActive` pre-check
  *     pattern, advisory only) are the four new importers the ordinary payment-entry UI brief adds.
+ *     `src/lib/dues/package-purchase-queries.ts` (plain reads; imports `firstUncoveredFrom`/`SCHEMA_MAX_MONTH` from
+ *     `prepay-monthly.ts` read-only, and `inTenantScope`/`latestEffective` from `common.ts`, never a writer),
+ *     `src/lib/dues/package-purchase-actions.ts` (a thin "use server" wrapper around
+ *     `purchasePackageWithSubmissionIdentity`, never passing a `deps` override), and
+ *     `src/app/[locale]/(staff)/payments/package-purchase-section.tsx` (imports only `decimalToMinor` from
+ *     `ledger/minor-units.ts` — pure, prisma-free arithmetic, never a writer call) are the three new importers the
+ *     package-purchase UI brief adds.
  *  2. They are plain library functions: no `"use server"` (which would make an exported function an invocable endpoint), no route, no
  *     client component.
  *  3. They are registered in `scripts/pending-callers.ts`, the repo's list of code built ahead of its caller.
@@ -61,6 +68,9 @@ const AUTHORIZED_CALLERS = [
   "src/lib/dues/payment-entry-queries.ts",
   "src/lib/dues/payment-entry-recovery.ts",
   "src/app/[locale]/(staff)/payments/page.tsx",
+  "src/lib/dues/package-purchase-queries.ts",
+  "src/lib/dues/package-purchase-actions.ts",
+  "src/app/[locale]/(staff)/payments/package-purchase-section.tsx",
 ];
 
 describe("the ledger writers are not reachable from production code", () => {

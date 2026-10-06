@@ -6,6 +6,7 @@ import {
   shouldClearAfterRecoveryCheck,
 } from "../../src/lib/dues/payment-entry-recovery";
 import type { RecordDuesPaymentWithSubmissionIdentityResult, SubmissionOutcome } from "../../src/lib/dues/ledger/submission-identity";
+import type { PurchasePackageWithSubmissionIdentityResult } from "../../src/lib/dues/ledger/purchase-submission-identity";
 
 /**
  * Ordinary payment-entry UI brief §2.4c: the recovery-state table's own decision logic, tested directly against the
@@ -147,5 +148,87 @@ describe("the three named regression scenarios (brief §2.4c/§8)", () => {
     const c = classifyRecoveryCheck({ status: "fulfilled", value: outcome });
     expect(c).toEqual({ kind: "committed", outcome: { kind: "payment", paymentId: "original-payment", currentlyReversed: false } });
     expect(shouldClearAfterRecoveryCheck(c)).toBe(true);
+  });
+});
+
+describe("classifyWriteResult genuinely REUSED against PurchasePackageWithSubmissionIdentityResult (package-purchase UI brief §2.8/§2.9) — the same classifier, a different writer's own result shape, never a thin duplicate sibling", () => {
+  it("row: fresh package purchase (ok:true, no replay) — clears", () => {
+    const result: PurchasePackageWithSubmissionIdentityResult = { ok: true, obligationId: "ob1", paymentId: "p1", settlementIds: ["s1"], totalMinor: 27000 };
+    const c = classifyWriteResult(result, { isRecoveryRetry: false });
+    expect(c).toEqual({ kind: "freshSuccess" });
+    expect(shouldClearAfterWrite(c)).toBe(true);
+  });
+
+  it("row: replay, currentlyReversed:false — clears, ordinary success", () => {
+    const result: PurchasePackageWithSubmissionIdentityResult = { ok: true, paymentId: "p1", replay: true, currentlyReversed: false };
+    const c = classifyWriteResult(result, { isRecoveryRetry: true });
+    expect(c).toEqual({ kind: "replaySuccess", currentlyReversed: false });
+    expect(shouldClearAfterWrite(c)).toBe(true);
+  });
+
+  it("row: replay, currentlyReversed:true — a DISTINCT reversed classification (package reversal is refused unconditionally by reverse-payment.ts in practice, but the field remains meaningful in the type)", () => {
+    const result: PurchasePackageWithSubmissionIdentityResult = { ok: true, paymentId: "p1", replay: true, currentlyReversed: true };
+    const c = classifyWriteResult(result, { isRecoveryRetry: true });
+    expect(c).toEqual({ kind: "replaySuccess", currentlyReversed: true });
+    expect(shouldClearAfterWrite(c)).toBe(true);
+  });
+
+  it("row: fresh capture (captured, no replay) — clears, outcome now known", () => {
+    const result: PurchasePackageWithSubmissionIdentityResult = { ok: false, error: "captured", receiptId: "r1" };
+    const c = classifyWriteResult(result, { isRecoveryRetry: false });
+    expect(c).toEqual({ kind: "freshCapture", receiptId: "r1" });
+    expect(shouldClearAfterWrite(c)).toBe(true);
+  });
+
+  it("row: replay capture, any currentStatus — clears, per-status classification", () => {
+    for (const currentStatus of ["PENDING", "RESOLVED", "CANCELLED"] as const) {
+      const result: PurchasePackageWithSubmissionIdentityResult = { ok: false, error: "captured", receiptId: "r1", replay: true, currentStatus };
+      const c = classifyWriteResult(result, { isRecoveryRetry: true });
+      expect(c).toEqual({ kind: "replayCapture", receiptId: "r1", currentStatus });
+      expect(shouldClearAfterWrite(c)).toBe(true);
+    }
+  });
+
+  it("row: submissionPayloadMismatch — PRESERVED, never cleared", () => {
+    const result: PurchasePackageWithSubmissionIdentityResult = { ok: false, error: "submissionPayloadMismatch" };
+    const c = classifyWriteResult(result, { isRecoveryRetry: true });
+    expect(c).toEqual({ kind: "payloadMismatch" });
+    expect(shouldClearAfterWrite(c)).toBe(false);
+  });
+
+  it("row: pre-arbitration refusal (notActive/invalid/notFound) on a GENUINELY FRESH submission — definitive, clears", () => {
+    for (const error of ["notActive", "invalid", "notFound"] as const) {
+      const result: PurchasePackageWithSubmissionIdentityResult = { ok: false, error };
+      const c = classifyWriteResult(result, { isRecoveryRetry: false });
+      expect(c).toEqual({ kind: "businessRefusal", error, selectableTotals: undefined, alreadySettledIds: undefined });
+      expect(shouldClearAfterWrite(c)).toBe(true);
+    }
+  });
+
+  it("row: the SAME pre-arbitration codes DURING a recovery retry — PRESERVED, never cleared", () => {
+    for (const error of ["notActive", "invalid", "notFound"] as const) {
+      const result: PurchasePackageWithSubmissionIdentityResult = { ok: false, error };
+      const c = classifyWriteResult(result, { isRecoveryRetry: true });
+      expect(c).toEqual({ kind: "recoveryBlocked", error });
+      expect(shouldClearAfterWrite(c)).toBe(false);
+    }
+  });
+
+  it("package-specific business refusals — staleTerms/coverageGap/debtNotFullySettled/prepaymentLimitExceeded/prepaymentUnavailable/inapplicable — ALWAYS definitive, clears, fresh OR recovery alike (never confused with the ordinary writer's own disjoint refusal codes)", () => {
+    const packageBusinessErrors = ["staleTerms", "coverageGap", "debtNotFullySettled", "prepaymentLimitExceeded", "prepaymentUnavailable", "inapplicable"] as const;
+    for (const error of packageBusinessErrors) {
+      for (const isRecoveryRetry of [false, true]) {
+        const result: PurchasePackageWithSubmissionIdentityResult = { ok: false, error };
+        const c = classifyWriteResult(result, { isRecoveryRetry });
+        expect(c).toEqual({ kind: "businessRefusal", error, selectableTotals: undefined, alreadySettledIds: undefined });
+        expect(shouldClearAfterWrite(c)).toBe(true);
+      }
+    }
+  });
+
+  it("alreadySettled (reused from resolveMonthlyDebtItemsInTx — the package card's own existing-debt selection can go stale too) carries alreadySettledIds through to the classification", () => {
+    const result: PurchasePackageWithSubmissionIdentityResult = { ok: false, error: "alreadySettled", alreadySettledIds: ["ob-1", "ob-2"] };
+    const c = classifyWriteResult(result, { isRecoveryRetry: false });
+    expect(c).toEqual({ kind: "businessRefusal", error: "alreadySettled", selectableTotals: undefined, alreadySettledIds: ["ob-1", "ob-2"] });
   });
 });

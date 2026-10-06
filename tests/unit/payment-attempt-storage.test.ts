@@ -1,6 +1,16 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { beginAttempt, readAttempt, clearAttempt, listStoredAttemptIds, type StoredAttemptPayload } from "../../src/lib/dues/payment-attempt-storage";
+import {
+  beginAttempt,
+  readAttempt,
+  readPackageAttempt,
+  clearAttempt,
+  listStoredAttemptIds,
+  scanAttemptsByOperation,
+  readStoredOperation,
+  type StoredAttemptPayload,
+  type StoredPackageAttemptPayload,
+} from "../../src/lib/dues/payment-attempt-storage";
 
 /**
  * Ordinary payment-entry UI brief §8 tier 4: the `localStorage` persistence module, per §2.4b/§2.4c's corrected
@@ -12,16 +22,33 @@ import { beginAttempt, readAttempt, clearAttempt, listStoredAttemptIds, type Sto
  * / "nothing stored" / "successfully removed". The stored-payload schema is also strengthened to reject a
  * schema-valid-but-semantically-garbage value (bad method, unparseable amount, duplicate obligationIds, an
  * impossible calendar date).
+ *
+ * Package-purchase UI brief §2.6/§2.10: `operation` is now part of the stored payload (defaulted to `"ORDINARY"`
+ * only for a key-absent, otherwise-valid legacy entry), and `scanAttemptsByOperation` is the new 3-way partition —
+ * tested in full below alongside the pre-existing round-trip/corruption/isolation coverage above, unchanged.
  */
 
 const ORG = "org-1";
 const USER = "user-1";
 
 const PAYLOAD: StoredAttemptPayload = {
+  operation: "ORDINARY",
   studentId: "student-1",
   obligationIds: ["ob-1"],
   receivedOn: { year: 2027, month: 3, day: 10 },
   tender: { currency: "USD", amount: "100.00" },
+  method: "EFECTIVO",
+  notes: "a note",
+};
+
+const PACKAGE_PAYLOAD: StoredPackageAttemptPayload = {
+  operation: "PACKAGE",
+  studentId: "student-1",
+  planTermsId: "terms-1",
+  requestedStartMonth: { year: 2027, month: 4 },
+  existingObligationIds: ["ob-1"],
+  receivedOn: { year: 2027, month: 3, day: 10 },
+  tender: { currency: "USD", amount: "250.00" },
   method: "EFECTIVO",
   notes: "a note",
 };
@@ -187,5 +214,132 @@ describe("clearAttempt: removes exactly the targeted entry", () => {
 
   it("clearing a non-existent key is a safe no-op, returning ok:true", () => {
     expect(clearAttempt(ORG, USER, "never-existed")).toEqual({ ok: true });
+  });
+});
+
+describe("operation discriminator: a legacy entry (no operation key, otherwise valid) defaults to ORDINARY", () => {
+  it("readAttempt defaults a key-absent operation to ORDINARY", () => {
+    const { operation, ...legacyPayload } = PAYLOAD;
+    void operation;
+    window.localStorage.setItem(`payment-attempt:${ORG}:${USER}:sub-legacy`, JSON.stringify(legacyPayload));
+    expect(readAttempt(ORG, USER, "sub-legacy")).toEqual({ status: "ok", payload: PAYLOAD });
+  });
+
+  it("readStoredOperation: explicit operation trusted directly", () => {
+    expect(readStoredOperation({ operation: "PACKAGE" })).toBe("PACKAGE");
+    expect(readStoredOperation({ operation: "PREPAYMENT" })).toBe("PREPAYMENT");
+  });
+
+  it("readStoredOperation: a key-absent but otherwise-valid ordinary payload defaults to ORDINARY", () => {
+    const { operation, ...legacyPayload } = PAYLOAD;
+    void operation;
+    expect(readStoredOperation(legacyPayload)).toBe("ORDINARY");
+  });
+
+  it("readStoredOperation: an invalid operation value, or a payload broken on any other field, is UNKNOWN — never silently ORDINARY (fail closed)", () => {
+    expect(readStoredOperation({ operation: "BITCOIN" })).toBe("UNKNOWN");
+    expect(readStoredOperation("not an object")).toBe("UNKNOWN");
+    expect(readStoredOperation(null)).toBe("UNKNOWN");
+    const { operation, ...legacyPayload } = PAYLOAD;
+    void operation;
+    expect(readStoredOperation({ ...legacyPayload, method: "BITCOIN" })).toBe("UNKNOWN");
+  });
+});
+
+describe("readPackageAttempt: the package card's own counterpart to readAttempt", () => {
+  it("writes then reads back the identical package payload", () => {
+    expect(beginAttempt(ORG, USER, "sub-pkg-1", PACKAGE_PAYLOAD)).toEqual({ ok: true });
+    expect(readPackageAttempt(ORG, USER, "sub-pkg-1")).toEqual({ status: "ok", payload: PACKAGE_PAYLOAD });
+  });
+
+  it("a missing key reads as missing", () => {
+    expect(readPackageAttempt(ORG, USER, "no-such-sub")).toEqual({ status: "missing" });
+  });
+
+  it("an ORDINARY entry (disjoint shape, no PACKAGE literal match) reads as corrupt through readPackageAttempt — never cross-read", () => {
+    beginAttempt(ORG, USER, "sub-ordinary", PAYLOAD);
+    expect(readPackageAttempt(ORG, USER, "sub-ordinary")).toEqual({ status: "corrupt" });
+  });
+
+  it("a PACKAGE entry (disjoint shape) reads as corrupt through readAttempt — never cross-read", () => {
+    beginAttempt(ORG, USER, "sub-pkg-2", PACKAGE_PAYLOAD);
+    expect(readAttempt(ORG, USER, "sub-pkg-2")).toEqual({ status: "corrupt" });
+  });
+});
+
+describe("scanAttemptsByOperation: the 3-way partition (package-purchase UI brief §2.10)", () => {
+  it("an ORDINARY entry is 'matching' for operation ORDINARY, and 'otherOperations' for operation PACKAGE", () => {
+    beginAttempt(ORG, USER, "sub-ord", PAYLOAD);
+    expect(scanAttemptsByOperation(ORG, USER, "ORDINARY")).toEqual({ status: "ok", matching: ["sub-ord"], otherOperations: [], unclassifiable: [] });
+    expect(scanAttemptsByOperation(ORG, USER, "PACKAGE")).toEqual({ status: "ok", matching: [], otherOperations: ["sub-ord"], unclassifiable: [] });
+  });
+
+  it("a PACKAGE entry is 'matching' for operation PACKAGE, and 'otherOperations' for operation ORDINARY", () => {
+    beginAttempt(ORG, USER, "sub-pkg", PACKAGE_PAYLOAD);
+    expect(scanAttemptsByOperation(ORG, USER, "PACKAGE")).toEqual({ status: "ok", matching: ["sub-pkg"], otherOperations: [], unclassifiable: [] });
+    expect(scanAttemptsByOperation(ORG, USER, "ORDINARY")).toEqual({ status: "ok", matching: [], otherOperations: ["sub-pkg"], unclassifiable: [] });
+  });
+
+  it("a legacy entry (no operation key, otherwise genuinely a valid ordinary payload) is picked up ONLY by the ORDINARY filter, never by PACKAGE's exact-match filter", () => {
+    const { operation, ...legacyPayload } = PAYLOAD;
+    void operation;
+    window.localStorage.setItem(`payment-attempt:${ORG}:${USER}:sub-legacy`, JSON.stringify(legacyPayload));
+    expect(scanAttemptsByOperation(ORG, USER, "ORDINARY")).toEqual({ status: "ok", matching: ["sub-legacy"], otherOperations: [], unclassifiable: [] });
+    expect(scanAttemptsByOperation(ORG, USER, "PACKAGE")).toEqual({ status: "ok", matching: [], otherOperations: ["sub-legacy"], unclassifiable: [] });
+  });
+
+  it("corrupt JSON lands in 'unclassifiable', regardless of which operation is being scanned for", () => {
+    window.localStorage.setItem(`payment-attempt:${ORG}:${USER}:sub-corrupt`, "not even json {{{");
+    expect(scanAttemptsByOperation(ORG, USER, "ORDINARY")).toEqual({ status: "ok", matching: [], otherOperations: [], unclassifiable: ["sub-corrupt"] });
+    expect(scanAttemptsByOperation(ORG, USER, "PACKAGE")).toEqual({ status: "ok", matching: [], otherOperations: [], unclassifiable: ["sub-corrupt"] });
+  });
+
+  it("a well-formed JSON value with an unrecognized operation value lands in 'unclassifiable' — never silently coerced to ORDINARY", () => {
+    window.localStorage.setItem(`payment-attempt:${ORG}:${USER}:sub-badop`, JSON.stringify({ ...PACKAGE_PAYLOAD, operation: "BITCOIN" }));
+    expect(scanAttemptsByOperation(ORG, USER, "ORDINARY")).toEqual({ status: "ok", matching: [], otherOperations: [], unclassifiable: ["sub-badop"] });
+  });
+
+  it("a well-formed JSON value missing operation AND otherwise broken on another field lands in 'unclassifiable', never defaulted to ORDINARY", () => {
+    const { operation, ...legacyPayload } = PAYLOAD;
+    void operation;
+    window.localStorage.setItem(`payment-attempt:${ORG}:${USER}:sub-broken`, JSON.stringify({ ...legacyPayload, method: "BITCOIN" }));
+    expect(scanAttemptsByOperation(ORG, USER, "ORDINARY")).toEqual({ status: "ok", matching: [], otherOperations: [], unclassifiable: ["sub-broken"] });
+  });
+
+  it("a per-entry getItem throw during an otherwise-successful enumeration lands THAT entry in 'unclassifiable', never aborting the whole scan", () => {
+    beginAttempt(ORG, USER, "sub-ok", PAYLOAD);
+    const key = (organizationId: string, userId: string, submissionId: string) => `payment-attempt:${organizationId}:${userId}:${submissionId}`;
+    window.localStorage.setItem(key(ORG, USER, "sub-throws"), JSON.stringify(PAYLOAD));
+    const realGetItem = window.localStorage.getItem.bind(window.localStorage);
+    const spy = vi.spyOn(window.localStorage.__proto__, "getItem").mockImplementation((...args: unknown[]) => {
+      const k = args[0] as string;
+      if (k === key(ORG, USER, "sub-throws")) throw new Error("storage inaccessible for this one key");
+      return realGetItem(k);
+    });
+    try {
+      const result = scanAttemptsByOperation(ORG, USER, "ORDINARY");
+      expect(result).toEqual({ status: "ok", matching: ["sub-ok"], otherOperations: [], unclassifiable: ["sub-throws"] });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("a whole-scan key-enumeration failure is {status:'unavailable'}, identical to listStoredAttemptIds's own rule", () => {
+    const spy = vi.spyOn(window.localStorage.__proto__, "key").mockImplementation(() => {
+      throw new Error("storage inaccessible");
+    });
+    window.localStorage.setItem("irrelevant", "x");
+    try {
+      expect(scanAttemptsByOperation(ORG, USER, "ORDINARY")).toEqual({ status: "unavailable" });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("different users/orgs are excluded, exactly like listStoredAttemptIds", () => {
+    beginAttempt(ORG, USER, "sub-mine", PAYLOAD);
+    beginAttempt("org-2", USER, "sub-other-org", PAYLOAD);
+    beginAttempt(ORG, "user-2", "sub-other-user", PAYLOAD);
+    expect(scanAttemptsByOperation(ORG, USER, "ORDINARY")).toEqual({ status: "ok", matching: ["sub-mine"], otherOperations: [], unclassifiable: [] });
   });
 });

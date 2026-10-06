@@ -1,4 +1,4 @@
-import type { RecordDuesPaymentWithSubmissionIdentityResult, SubmissionOutcome } from "@/lib/dues/ledger/submission-identity";
+import type { SubmissionOutcome } from "@/lib/dues/ledger/submission-identity";
 
 /**
  * Ordinary payment-entry UI brief §2.4c: the recovery-state table's own decision logic, as pure functions — kept
@@ -7,7 +7,38 @@ import type { RecordDuesPaymentWithSubmissionIdentityResult, SubmissionOutcome }
  *
  * Deliberately NOT exported from the engine layer: this is UI-side classification of results the engine already
  * returns — it changes no engine behavior, and the engine itself has no notion of "was this a recovery retry."
+ *
+ * Package-purchase UI brief §2.8/§2.9: `classifyWriteResult` is now typed against `GenericSubmissionWriteResult`
+ * (below) instead of the ordinary writer's own nominal `RecordDuesPaymentWithSubmissionIdentityResult` — its body
+ * reads nothing but `ok`/`error`/`replay`/`currentlyReversed`/`receiptId`/`currentStatus`/`selectableTotals`/
+ * `alreadySettledIds`, every one of which `PurchasePackageWithSubmissionIdentityResult` (purchase-submission-
+ * identity.ts) carries with the identical name and meaning — the SAME six-shape structure the brief itself
+ * confirms (fresh success / replay success / fresh capture / replay capture / submissionPayloadMismatch / ordinary
+ * refusal). Genuine reuse of this classifier, not a thin package-specific sibling duplicating its logic: only the
+ * TYPE is widened, matching the brief's own "prefer reuse" instruction. `PRE_ARBITRATION_ERRORS` below is already
+ * generic (plain strings), so it classifies `purchasePackageWithSubmissionIdentity`'s own `notActive`/`invalid`/
+ * `notFound` pre-arbitration codes identically, with no change needed.
  */
+
+/**
+ * The minimal structural shape both `RecordDuesPaymentWithSubmissionIdentityResult` and
+ * `PurchasePackageWithSubmissionIdentityResult` satisfy — every field this module's classifiers actually read,
+ * nothing else. `error` is widened to `string` (rather than either writer's own narrower literal-union) so EITHER
+ * writer's refusal codes type-check here without this module needing to know the full set from either one; the
+ * classifiers below never switch on specific literal values beyond the few named explicitly
+ * (`"captured"`/`"submissionPayloadMismatch"`/the three pre-arbitration codes), so nothing is lost by widening it.
+ */
+export type GenericSubmissionWriteResult =
+  | { ok: true; replay?: boolean; currentlyReversed?: boolean }
+  | {
+      ok: false;
+      error: string;
+      replay?: boolean;
+      currentStatus?: "PENDING" | "RESOLVED" | "CANCELLED";
+      receiptId?: string;
+      selectableTotals?: string[];
+      alreadySettledIds?: string[];
+    };
 
 /** `notActive`/`invalid`/`notFound` — the three pre-arbitration codes `recordDuesPaymentWithSubmissionIdentity`'s own
  * read order (§2.4c) evaluates BEFORE its identity-row INSERT. Definitive on a genuinely fresh submission; silent
@@ -34,15 +65,18 @@ export type WriteOutcomeClassification =
  * the caller's own knowledge of which kind of call just happened — the engine itself has no such concept, and the
  * distinction only matters for pre-arbitration codes (§2.4c's correction).
  */
-export function classifyWriteResult(result: RecordDuesPaymentWithSubmissionIdentityResult, context: { isRecoveryRetry: boolean }): WriteOutcomeClassification {
+export function classifyWriteResult(result: GenericSubmissionWriteResult, context: { isRecoveryRetry: boolean }): WriteOutcomeClassification {
   if (result.ok) {
-    if ("replay" in result && result.replay) return { kind: "replaySuccess", currentlyReversed: result.currentlyReversed };
+    // `currentlyReversed` is optional on the widened generic shape but always present when `replay` is true (both
+    // writers' own invariant — never constructed without it); asserted here rather than narrowing the shared type.
+    if ("replay" in result && result.replay) return { kind: "replaySuccess", currentlyReversed: result.currentlyReversed! };
     return { kind: "freshSuccess" };
   }
   if (result.error === "captured") {
-    // `receiptId` is optional on the shared refusal shape but always present for "captured" (the engine's own
-    // invariant — never constructed without one); asserted here rather than widening this classifier's own type.
-    if ("replay" in result && result.replay) return { kind: "replayCapture", receiptId: result.receiptId!, currentStatus: result.currentStatus };
+    // `receiptId`/`currentStatus` are optional on the shared refusal shape but always present for "captured" (the
+    // engine's own invariant — never constructed without them); asserted here rather than widening this
+    // classifier's own type.
+    if ("replay" in result && result.replay) return { kind: "replayCapture", receiptId: result.receiptId!, currentStatus: result.currentStatus! };
     return { kind: "freshCapture", receiptId: result.receiptId! };
   }
   if (result.error === "submissionPayloadMismatch") return { kind: "payloadMismatch" };

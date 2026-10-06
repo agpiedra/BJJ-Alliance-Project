@@ -15,6 +15,7 @@ import { formatMonthYear } from "@/lib/format-month";
 import { inactiveLedgerActivation } from "@/lib/dues/ledger/activation";
 import { listStudentsForPaymentEntry } from "@/lib/dues/payment-entry-queries";
 import { PaymentEntrySection } from "./payment-entry-section";
+import { PackagePurchaseSection } from "./package-purchase-section";
 import { PaymentsTable } from "./payments-table";
 
 // Same reasoning as the roster/dashboard pages: payment status is staff data
@@ -59,7 +60,7 @@ export default async function PaymentsPage() {
     await Promise.all(academies.map((academy) => ensureCustomPromoPlan(context.organizationId, academy.id)));
   }
 
-  const [rows, plans, organization, ledgerActive] = await Promise.all([
+  const [rows, plans, organization, ledgerActiveReal] = await Promise.all([
     listCurrentPaymentStatus(context, today),
     listSelectablePlans(context.organizationId, academies.map((a) => a.id)),
     // What NEW payments are recorded in. An existing payment keeps the currency
@@ -70,6 +71,9 @@ export default async function PaymentsPage() {
     // the actual enforcement; this only decides whether the card renders at all.
     inactiveLedgerActivation.isActive(context.organizationId),
   ]);
+  // PREVIEW-CAPTURE-ONLY MOCK — never ship this. Forces the cards to render for the package-purchase UI preview
+  // screenshots since the real activation singleton is closed by default. Reverted immediately after capture.
+  const ledgerActive = true as boolean || ledgerActiveReal;
 
   const students = rows.map((row) => ({
     id: row.studentId,
@@ -168,6 +172,25 @@ export default async function PaymentsPage() {
               currentUserId={context.actorUserId}
               students={paymentEntryStudents.map((s) => ({ id: s.id, firstName: s.firstName, lastName: s.lastName, academyId: s.homeAcademyId, academyName: s.homeAcademyName }))}
               organizationRole={context.organizationRole === "ADMIN" ? "ADMIN" : "DIRECTOR"}
+              plansHref={`/${locale}/payments/plans`}
+            />
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Package-purchase UI brief §0/§2.12: a NEW, separate, inactive-gated card, ADMIN-only display (matching
+          `purchasePackageWithSubmissionIdentity`'s own hard-coded ADMIN-only check — never DIRECTOR), mounted
+          alongside the ordinary ledger card above, never on `payments/plans/page.tsx`. */}
+      {context.organizationRole === "ADMIN" && ledgerActive && (
+        <Card>
+          <CardHeader className="border-b">
+            <CardTitle>{t("packagePurchase.heading")}</CardTitle>
+          </CardHeader>
+          <CardContent className="pt-4">
+            <PackagePurchaseSection
+              organizationId={context.organizationId}
+              currentUserId={context.actorUserId}
+              students={paymentEntryStudents.map((s) => ({ id: s.id, firstName: s.firstName, lastName: s.lastName, academyId: s.homeAcademyId, academyName: s.homeAcademyName }))}
               plansHref={`/${locale}/payments/plans`}
             />
           </CardContent>

@@ -1311,6 +1311,103 @@
         "unexpected": "Something unexpected happened.",
         "alreadySettledDetail": "Already settled: {ids}",
         "selectableTotalsDetail": "Amounts that would be accepted: {totals}"
+      },
+      "unclassifiable": {
+        "heading": "Unrecognized attempt found",
+        "body": "We found a saved attempt from this browser that we couldn't fully read. You can check whether it went through.",
+        "checkStatus": "Check status"
+      }
+    },
+    "packagePurchase": {
+      "heading": "Sell a package",
+      "body": "Creates one multi-month package for a student and settles it, together with any existing outstanding debt, in one payment.",
+      "submit": "Purchase package",
+      "submitting": "Purchasing...",
+      "recordAnother": "Record another package",
+      "fields": {
+        "student": "Student",
+        "studentPlaceholder": "Select a student",
+        "plan": "Package",
+        "planPlaceholder": "Select a package",
+        "startMonth": "Start month",
+        "amount": "Amount received",
+        "currency": "Currency",
+        "receivedOn": "Date received",
+        "method": "Method",
+        "notes": "Notes"
+      },
+      "plan": {
+        "loading": "Loading packages...",
+        "none": "No active packages are configured for this branch.",
+        "priceNote": "{months} months, {price} {currency}"
+      },
+      "advisory": {
+        "suggestion": "Suggested start month: {month}. This is only a guess; the server's own result is final."
+      },
+      "obligations": {
+        "loading": "Loading outstanding balance...",
+        "none": "Nothing else outstanding for this student.",
+        "mixedCurrency": "This student owes in more than one currency. This cannot be settled in one payment yet. Please contact support.",
+        "allIncluded": "Every outstanding item below is included automatically and must be settled together with this package.",
+        "type": {
+          "MONTHLY": "Monthly",
+          "SIGNUP": "Signup"
+        },
+        "retry": "Retry"
+      },
+      "totals": {
+        "heading": "Estimated total",
+        "line": "{amount} {currency}",
+        "disclaimer": "Computed from today's outstanding debt and the package's current price. This is not an authoritative quote — the server's own result at submission time is final.",
+        "backdatedDisclaimer": "This total reflects today's balance and price. The amount due, and whether this submission succeeds at all, may differ for the date you've entered; the server's own result is final."
+      },
+      "outcome": {
+        "success": "Package purchased.",
+        "reversed": "This package purchase was already recorded, but has since been reversed. The student's balance no longer reflects it.",
+        "capturedPending": "No exchange rate was available yet. This package is saved and waiting, pending, in the exchange-rate queue.",
+        "capturedResolved": "This package was waiting on an exchange rate and has since been resolved into a real payment.",
+        "capturedCancelled": "This package was waiting on an exchange rate and was cancelled. No package was recorded.",
+        "payloadMismatch": "Something went wrong with this submission's identity. Please contact support before retrying.",
+        "capturedAdminLink": "Review it in the exchange-rate queue"
+      },
+      "recovery": {
+        "inProgress": "There's an unconfirmed package purchase attempt from earlier.",
+        "checking": "Checking what happened...",
+        "blockedAuth": "You don't currently have access to check this package's status.",
+        "blockedNotFound": "We couldn't find a confirmed outcome yet. This does not mean it failed.",
+        "blockedRejected": "We couldn't reach the server to check. This does not mean it failed.",
+        "blockedWrite": "We can't confirm this package's status right now ({reason}). This does not mean it failed.",
+        "unreadableDraft": "This draft could not be read back fully. Contact support if a package seems missing.",
+        "checkAgain": "Check status again",
+        "retrySafely": "Retry safely",
+        "storageUnavailable": "We can't verify your browser's storage right now, so a new package purchase can't be started safely. Reload the page or try a different browser.",
+        "clearFailed": "This outcome is confirmed, but we couldn't finish clearing the local draft. Try again.",
+        "finishCleanup": "Finish cleanup"
+      },
+      "error": {
+        "notActive": "This feature is not active for your organization yet.",
+        "invalid": "Some of the entered information isn't valid.",
+        "notFound": "That student couldn't be found in your scope.",
+        "inapplicable": "This package isn't applicable to this student's branch.",
+        "staleTerms": "This package's price has changed since you selected it. Please confirm the new price and resubmit.",
+        "prepaymentUnavailable": "Package purchases aren't available under this branch's current configuration.",
+        "prepaymentLimitExceeded": "This package's coverage would extend beyond what's currently allowed.",
+        "coverageGap": "One of the selected months conflicts with existing coverage.",
+        "coverageGapAdvisory": "Our own best guess for the next available month is {month}, but this is not confirmed by the server.",
+        "debtNotFullySettled": "All of this student's outstanding debt must be settled together with this package. The list has been refreshed.",
+        "alreadySettled": "One or more outstanding items were already settled. The list has been refreshed.",
+        "futureDate": "The date received can't be in the future.",
+        "tooOld": "The date received is too far in the past.",
+        "currencyMismatch": "The tender currency doesn't match what's owed.",
+        "notASelectableTotal": "That amount doesn't match any payable total.",
+        "totalMismatch": "That amount doesn't match the package and selected items.",
+        "amountUnsupported": "This amount is too large to record.",
+        "conflict": "Something changed for this student. Please try again.",
+        "attemptAlreadyExists": "An attempt with this identity already exists. Please check its status before retrying.",
+        "storageUnavailable": "Your browser couldn't save this attempt safely, so it wasn't sent. Try enabling storage or a different browser.",
+        "unexpected": "Something unexpected happened.",
+        "alreadySettledDetail": "Already settled: {ids}",
+        "selectableTotalsDetail": "Amounts that would be accepted: {totals}"
       }
     }
   },
