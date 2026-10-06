@@ -60,7 +60,7 @@ export default async function PaymentsPage() {
     await Promise.all(academies.map((academy) => ensureCustomPromoPlan(context.organizationId, academy.id)));
   }
 
-  const [rows, plans, organization, ledgerActiveReal] = await Promise.all([
+  const [rows, plans, organization, ledgerActive] = await Promise.all([
     listCurrentPaymentStatus(context, today),
     listSelectablePlans(context.organizationId, academies.map((a) => a.id)),
     // What NEW payments are recorded in. An existing payment keeps the currency
@@ -71,9 +71,6 @@ export default async function PaymentsPage() {
     // the actual enforcement; this only decides whether the card renders at all.
     inactiveLedgerActivation.isActive(context.organizationId),
   ]);
-  // PREVIEW-CAPTURE-ONLY MOCK — never ship this. Forces the cards to render for the package-purchase UI preview
-  // screenshots since the real activation singleton is closed by default. Reverted immediately after capture.
-  const ledgerActive = true as boolean || ledgerActiveReal;
 
   const students = rows.map((row) => ({
     id: row.studentId,
