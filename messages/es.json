@@ -1520,7 +1520,7 @@
       "submitting": "Enviando...",
       "loadOlder": "Cargar mas antiguos",
       "loadingMore": "Cargando...",
-      "confirmDiscardUncertain": "Una correccion, condonacion o reversion aqui todavia se esta confirmando. Cambiar de estudiante ahora deja de rastrearla en esta pagina — puede buscar el mismo registro de nuevo mas tarde. Continuar?",
+      "loadMoreFailed": "No se pudieron cargar mas registros.",
       "fields": {
         "student": "Estudiante",
         "studentPlaceholder": "Seleccione un estudiante",

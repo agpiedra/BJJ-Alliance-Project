@@ -1520,7 +1520,7 @@
       "submitting": "Submitting...",
       "loadOlder": "Load older",
       "loadingMore": "Loading...",
-      "confirmDiscardUncertain": "A correction, waiver, or reversal here is still being confirmed. Switching students now stops tracking it on this page — you can look the same record up again later. Continue?",
+      "loadMoreFailed": "Couldn't load more records.",
       "fields": {
         "student": "Student",
         "studentPlaceholder": "Select a student",

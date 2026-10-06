@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
-import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import { describe, expect, it, vi, beforeEach } from "vitest";
 import enMessages from "../../messages/en.json";
 
 /**
@@ -382,73 +382,238 @@ describe("FinancialCorrectionsSection: loads, paginates, and refreshes without d
     // FEE A's own row is gone (it left the candidate list) — only FEE2's row remains.
     expect(screen.queryByText(/2030-10/)).toBeNull();
   });
-});
 
-describe("FinancialCorrectionsSection: switching students warns before discarding uncertain (recovery-pending) work (correction round 2, issue 1)", () => {
-  afterEach(() => {
-    vi.restoreAllMocks();
+  const FEE3 = {
+    id: "fee-3", expectedRevision: "rev-3", obligationId: "ob-3", coverageYear: 2030, coverageMonth: 12,
+    amount: "20.00", currency: "USD", obligationAmount: "100.00", graceDeadline: { year: 2031, month: 1, day: 5 },
+  };
+
+  it("correction round 3, issue 1: a page-2 draft survives a DIFFERENT row's successful operation and the refresh it triggers", async () => {
+    // Page 1: FEE + FEE2. Load older: FEE3. Then FEE (unrelated to either draft) is corrected, triggering a
+    // background refresh whose own fresh page-1 fetch returns only FEE2 (FEE left the candidate set).
+    getCorrectableLateFees
+      .mockResolvedValueOnce({ rows: [FEE, FEE2], nextCursor: "fee-2" })
+      .mockResolvedValueOnce({ rows: [FEE3], nextCursor: null })
+      .mockResolvedValueOnce({ rows: [FEE2], nextCursor: null }); // the refresh's own fresh page 1
+    getReversiblePayments.mockResolvedValue({ rows: [], nextCursor: null });
+    correctLateFee.mockResolvedValue({ ok: true, feeId: FEE.id, paymentId: "p1", settlementIds: ["s1"], totalMinor: 12000 });
+
+    render(withMessages(<FinancialCorrectionsSection organizationId="org-1" students={STUDENTS} />));
+    fireEvent.change(screen.getByLabelText(/Student/i), { target: { value: "s1" } });
+    await waitFor(() => expect(screen.getByText(/2030-10/)).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: /Load older/i }));
+    await waitFor(() => expect(screen.getByText(/2030-12/)).toBeInTheDocument()); // FEE3, page 2
+
+    // Type a draft into FEE3's own (page-2) waiver form — never submitted.
+    const fee3Row = within(screen.getByText(/2030-12/).closest("li")!);
+    fireEvent.click(fee3Row.getByRole("button", { name: /Waive/i }));
+    fireEvent.change(fee3Row.getByLabelText(/Reason/i), { target: { value: "page-2 draft, never submitted" } });
+
+    // FEE (page 1, unrelated) is corrected successfully — triggers refresh().
+    const feeARow = within(screen.getByText(/2030-10/).closest("li")!);
+    fireEvent.click(feeARow.getByRole("button", { name: /Correct/i }));
+    fireEvent.change(feeARow.getByLabelText(/Reason/i), { target: { value: "row A reason" } });
+    fireEvent.change(feeARow.getByLabelText(/Amount received/i), { target: { value: "97.50" } });
+    fireEvent.click(feeARow.getByRole("button", { name: /Correct and settle/i }));
+    await waitFor(() => expect(getCorrectableLateFees).toHaveBeenCalledTimes(3)); // the background refresh fired
+
+    // FEE3's own row (page 2) is still present, with its draft intact — never truncated back to page 1.
+    const fee3RowAfter = within(screen.getByText(/2030-12/).closest("li")!);
+    expect((fee3RowAfter.getByLabelText(/Reason/i) as HTMLInputElement).value).toBe("page-2 draft, never submitted");
+    expect(waiveFee).not.toHaveBeenCalled();
   });
 
-  it("confirms before switching away from a student with a row mid-recovery; declining keeps the current student selected", async () => {
+  it("correction round 3, issue 1: an uncertain row stays mounted and recoverable even when a sibling's refresh fetches a fresh candidate list that excludes it", async () => {
+    // FEE2 goes uncertain (transport failure) first. Then FEE is corrected — the refresh's own fresh fetch returns
+    // ONLY FEE (simulating that FEE2's own lost write actually succeeded server-side, so it's no longer a
+    // candidate) — FEE2's own row must still be mounted, still showing its recovery UI, not vanished.
+    getCorrectableLateFees
+      .mockResolvedValueOnce({ rows: [FEE, FEE2], nextCursor: null })
+      .mockResolvedValueOnce({ rows: [], nextCursor: null }); // refresh's fresh fetch excludes BOTH (FEE already explicitly removed; FEE2 excluded too)
+    getReversiblePayments.mockResolvedValue({ rows: [], nextCursor: null });
+    waiveFee.mockRejectedValueOnce(new Error("network down"));
+    const statusRead = deferred<Awaited<ReturnType<typeof getLateFeeStatus>>>();
+    getLateFeeStatus.mockReturnValueOnce(statusRead.promise); // never resolves during this test — stays locked
+    correctLateFee.mockResolvedValue({ ok: true, feeId: FEE.id, paymentId: "p1", settlementIds: ["s1"], totalMinor: 12000 });
+
+    render(withMessages(<FinancialCorrectionsSection organizationId="org-1" students={STUDENTS} />));
+    fireEvent.change(screen.getByLabelText(/Student/i), { target: { value: "s1" } });
+    await waitFor(() => expect(screen.getByText(/2030-11/)).toBeInTheDocument());
+
+    const feeBRow = within(screen.getByText(/2030-11/).closest("li")!);
+    fireEvent.click(feeBRow.getByRole("button", { name: /Waive/i }));
+    fireEvent.change(feeBRow.getByLabelText(/Reason/i), { target: { value: "reason" } });
+    fireEvent.click(feeBRow.getByRole("button", { name: /Waive fee/i }));
+    await waitFor(() => expect(feeBRow.getByRole("button", { name: /Waive fee/i })).toBeDisabled());
+
+    const feeARow = within(screen.getByText(/2030-10/).closest("li")!);
+    fireEvent.click(feeARow.getByRole("button", { name: /Correct/i }));
+    fireEvent.change(feeARow.getByLabelText(/Reason/i), { target: { value: "row A reason" } });
+    fireEvent.change(feeARow.getByLabelText(/Amount received/i), { target: { value: "97.50" } });
+    fireEvent.click(feeARow.getByRole("button", { name: /Correct and settle/i }));
+    await waitFor(() => expect(getCorrectableLateFees).toHaveBeenCalledTimes(2));
+
+    // FEE2's own row is STILL mounted (not dropped by the sibling's refresh) and still shows its own recovery UI
+    // (the recovery effect's own status-check fetch is already in flight — it never resolves during this test).
+    expect(screen.getByText(/2030-11/)).toBeInTheDocument();
+    expect(screen.getByText(/Checking the current status/i)).toBeInTheDocument();
+
+    // Its own recovery now resolves to WAIVED — consistent with the established direct-success precedent (the
+    // existing "FEE A's own row is gone" test above), a resolved row is explicitly removed from the list the
+    // instant ITS OWN resolution confirms it, same mechanism either way (`onResolved(id, true)`). The point this
+    // test actually proves: removal came from FEE2's OWN recovery, not from FEE A's earlier, unrelated refresh —
+    // which had already run once and genuinely left FEE2 mounted and checking, not auto-dropped.
+    getCorrectableLateFees.mockResolvedValueOnce({ rows: [], nextCursor: null }); // the removal's own follow-up refresh
+    statusRead.resolve({ id: FEE2.id, removedAt: "2030-12-01T00:00:00.000Z", removalKind: "WAIVED", expectedRevision: "rev-9" });
+    await waitFor(() => expect(screen.queryByText(/2030-11/)).toBeNull());
+    expect(screen.getByText(/No correctable late fees/i)).toBeInTheDocument();
+  });
+});
+
+describe("FinancialCorrectionsSection: 'Load older' is request-safe and recoverable (correction round 3, issue 2)", () => {
+  it("fees: a deferred 'Load older' response for student A is discarded after switching to student B — A's rows never appear under B", async () => {
+    getCorrectableLateFees.mockResolvedValueOnce({ rows: [FEE], nextCursor: "fee-1" });
+    const loadMore = deferred<Awaited<ReturnType<typeof getCorrectableLateFees>>>();
+    getCorrectableLateFees.mockReturnValueOnce(loadMore.promise); // student A's own "Load older"
+    getReversiblePayments.mockResolvedValue({ rows: [], nextCursor: null });
+
+    const students = [...STUDENTS, { id: "s2", firstName: "Beto", lastName: "Mora", academyId: "a1", academyName: "Alliance" }];
+    render(withMessages(<FinancialCorrectionsSection organizationId="org-1" students={students} />));
+    fireEvent.change(screen.getByLabelText(/Student/i), { target: { value: "s1" } });
+    await waitFor(() => expect(screen.getByText(/2030-10/)).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: /Load older/i }));
+    await waitFor(() => expect(getCorrectableLateFees).toHaveBeenCalledTimes(2));
+
+    // Switch to student B BEFORE student A's own "Load older" response lands.
+    getCorrectableLateFees.mockResolvedValueOnce({ rows: [], nextCursor: null });
+    fireEvent.change(screen.getByLabelText(/Student/i), { target: { value: "s2" } });
+    await waitFor(() => expect((screen.getByLabelText(/Student/i) as HTMLSelectElement).value).toBe("s2"));
+    expect(screen.queryByText(/2030-10/)).toBeNull();
+
+    // A's own late-arriving page now resolves — must never apply to student B's own displayed list.
+    loadMore.resolve({ rows: [FEE2], nextCursor: null });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.queryByText(/2030-11/)).toBeNull();
+    expect(screen.queryByText(/2030-10/)).toBeNull();
+  });
+
+  it("payments: the identical discard applies to the payment list's own 'Load older'", async () => {
+    getCorrectableLateFees.mockResolvedValue({ rows: [], nextCursor: null });
+    getReversiblePayments.mockResolvedValueOnce({ rows: [PAYMENT], nextCursor: "pay-1" });
+    const loadMore = deferred<Awaited<ReturnType<typeof getReversiblePayments>>>();
+    getReversiblePayments.mockReturnValueOnce(loadMore.promise);
+
+    const OTHER_PAYMENT = { ...PAYMENT, id: "pay-2", receivedOn: { year: 2029, month: 1, day: 1 } };
+    const students = [...STUDENTS, { id: "s2", firstName: "Beto", lastName: "Mora", academyId: "a1", academyName: "Alliance" }];
+    render(withMessages(<FinancialCorrectionsSection organizationId="org-1" students={students} />));
+    fireEvent.change(screen.getByLabelText(/Student/i), { target: { value: "s1" } });
+    await waitFor(() => expect(screen.getByText(/2030-03-20/)).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: /Load older/i }));
+    await waitFor(() => expect(getReversiblePayments).toHaveBeenCalledTimes(2));
+
+    getReversiblePayments.mockResolvedValueOnce({ rows: [], nextCursor: null });
+    fireEvent.change(screen.getByLabelText(/Student/i), { target: { value: "s2" } });
+    await waitFor(() => expect((screen.getByLabelText(/Student/i) as HTMLSelectElement).value).toBe("s2"));
+
+    loadMore.resolve({ rows: [OTHER_PAYMENT], nextCursor: null });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.queryByText(/2029-01-01/)).toBeNull();
+  });
+
+  it("a rejected 'Load older' shows a dedicated error with its own retry; the already-loaded rows are untouched, and a successful retry appends correctly", async () => {
+    getCorrectableLateFees
+      .mockResolvedValueOnce({ rows: [FEE], nextCursor: "fee-1" })
+      .mockRejectedValueOnce(new Error("network down"))
+      .mockResolvedValueOnce({ rows: [FEE2], nextCursor: null });
+    getReversiblePayments.mockResolvedValue({ rows: [], nextCursor: null });
+
+    render(withMessages(<FinancialCorrectionsSection organizationId="org-1" students={STUDENTS} />));
+    fireEvent.change(screen.getByLabelText(/Student/i), { target: { value: "s1" } });
+    await waitFor(() => expect(screen.getByText(/2030-10/)).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: /Load older/i }));
+    await waitFor(() => expect(screen.getByText(/Couldn't load more records/i)).toBeInTheDocument());
+    expect(screen.getByText(/2030-10/)).toBeInTheDocument(); // untouched
+
+    fireEvent.click(screen.getByRole("button", { name: /Retry/i }));
+    await waitFor(() => expect(screen.getByText(/2030-11/)).toBeInTheDocument());
+    expect(screen.getByText(/2030-10/)).toBeInTheDocument();
+    expect(screen.queryByText(/Couldn't load more records/i)).toBeNull();
+  });
+});
+
+describe("FinancialCorrectionsSection: switching students is HARD-BLOCKED (never a dismissable confirm) while any row is writing or awaiting recovery (correction round 3, issue 3)", () => {
+  const STUDENTS2 = [...STUDENTS, { id: "s2", firstName: "Beto", lastName: "Mora", academyId: "a1", academyName: "Alliance" }];
+
+  it("the student selector is disabled while a row's own write is genuinely pending, and the attempted switch has no effect", async () => {
+    getCorrectableLateFees.mockResolvedValue({ rows: [FEE], nextCursor: null });
+    getReversiblePayments.mockResolvedValue({ rows: [], nextCursor: null });
+    const write = deferred<Awaited<ReturnType<typeof correctLateFee>>>();
+    correctLateFee.mockReturnValueOnce(write.promise);
+
+    render(withMessages(<FinancialCorrectionsSection organizationId="org-1" students={STUDENTS2} />));
+    fireEvent.change(screen.getByLabelText(/Student/i), { target: { value: "s1" } });
+    await waitFor(() => expect(screen.getByText(/2030-10/)).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: /Correct/i }));
+    fireEvent.change(screen.getByLabelText(/Reason/i), { target: { value: "reason" } });
+    fireEvent.change(screen.getByLabelText(/Amount received/i), { target: { value: "97.50" } });
+    fireEvent.click(screen.getByRole("button", { name: /Correct and settle/i }));
+
+    // Still mid-flight (the deferred write promise has not resolved) — the selector is disabled right now.
+    await waitFor(() => expect(screen.getByLabelText(/Student/i)).toBeDisabled());
+    fireEvent.change(screen.getByLabelText(/Student/i), { target: { value: "s2" } });
+    expect((screen.getByLabelText(/Student/i) as HTMLSelectElement).value).toBe("s1"); // unchanged
+    expect(screen.getByText(/2030-10/)).toBeInTheDocument();
+
+    write.resolve({ ok: true, feeId: FEE.id, paymentId: "p1", settlementIds: ["s1"], totalMinor: 12000 });
+    await waitFor(() => expect(screen.getByLabelText(/Student/i)).not.toBeDisabled());
+  });
+
+  it("stays blocked after a rejected write (recovery-pending); only once recovery resolves to a confirmed/unchanged state does switching become available", async () => {
     getCorrectableLateFees.mockResolvedValue({ rows: [FEE], nextCursor: null });
     getReversiblePayments.mockResolvedValue({ rows: [], nextCursor: null });
     correctLateFee.mockRejectedValueOnce(new Error("network down"));
-    getLateFeeStatus.mockReturnValueOnce(new Promise(() => {})); // never resolves during this test — stays locked
+    const statusRead = deferred<Awaited<ReturnType<typeof getLateFeeStatus>>>();
+    getLateFeeStatus.mockReturnValueOnce(statusRead.promise);
 
-    const students = [...STUDENTS, { id: "s2", firstName: "Beto", lastName: "Mora", academyId: "a1", academyName: "Alliance" }];
-    render(withMessages(<FinancialCorrectionsSection organizationId="org-1" students={students} />));
+    render(withMessages(<FinancialCorrectionsSection organizationId="org-1" students={STUDENTS2} />));
     fireEvent.change(screen.getByLabelText(/Student/i), { target: { value: "s1" } });
     await waitFor(() => expect(screen.getByText(/2030-10/)).toBeInTheDocument());
 
     fireEvent.click(screen.getByRole("button", { name: /Correct/i }));
-    fireEvent.change(screen.getByLabelText(/Reason/i), { target: { value: "reason" } });
+    fireEvent.change(screen.getByLabelText(/Reason/i), { target: { value: "my draft" } });
     fireEvent.change(screen.getByLabelText(/Amount received/i), { target: { value: "97.50" } });
     fireEvent.click(screen.getByRole("button", { name: /Correct and settle/i }));
-    await waitFor(() => expect(screen.getByRole("button", { name: /Correct and settle/i })).toBeDisabled());
 
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    // The write itself has already rejected (busy=false now), but the row is in recovery-pending — still blocked.
+    await waitFor(() => expect(screen.getByRole("button", { name: /Correct and settle/i })).toBeDisabled());
+    expect(screen.getByLabelText(/Student/i)).toBeDisabled();
     fireEvent.change(screen.getByLabelText(/Student/i), { target: { value: "s2" } });
-    expect(confirmSpy).toHaveBeenCalled();
-    // Declined — still showing student 1's own data, never silently switched.
-    expect((screen.getByLabelText(/Student/i) as HTMLSelectElement).value).toBe("s1");
-    expect(screen.getByText(/2030-10/)).toBeInTheDocument();
-  });
+    expect((screen.getByLabelText(/Student/i) as HTMLSelectElement).value).toBe("s1"); // still blocked, no effect
 
-  it("confirming the switch proceeds to the new student", async () => {
-    getCorrectableLateFees
-      .mockResolvedValueOnce({ rows: [FEE], nextCursor: null })
-      .mockResolvedValueOnce({ rows: [], nextCursor: null });
-    getReversiblePayments.mockResolvedValue({ rows: [], nextCursor: null });
-    correctLateFee.mockRejectedValueOnce(new Error("network down"));
-    getLateFeeStatus.mockReturnValueOnce(new Promise(() => {}));
+    getCorrectableLateFees.mockResolvedValueOnce({ rows: [], nextCursor: null });
+    statusRead.resolve({ id: FEE.id, removedAt: null, removalKind: null, expectedRevision: FEE.expectedRevision }); // unchanged
+    await waitFor(() => expect(screen.getByLabelText(/Student/i)).not.toBeDisabled());
 
-    const students = [...STUDENTS, { id: "s2", firstName: "Beto", lastName: "Mora", academyId: "a1", academyName: "Alliance" }];
-    render(withMessages(<FinancialCorrectionsSection organizationId="org-1" students={students} />));
-    fireEvent.change(screen.getByLabelText(/Student/i), { target: { value: "s1" } });
-    await waitFor(() => expect(screen.getByText(/2030-10/)).toBeInTheDocument());
-
-    fireEvent.click(screen.getByRole("button", { name: /Correct/i }));
-    fireEvent.change(screen.getByLabelText(/Reason/i), { target: { value: "reason" } });
-    fireEvent.change(screen.getByLabelText(/Amount received/i), { target: { value: "97.50" } });
-    fireEvent.click(screen.getByRole("button", { name: /Correct and settle/i }));
-    await waitFor(() => expect(screen.getByRole("button", { name: /Correct and settle/i })).toBeDisabled());
-
-    vi.spyOn(window, "confirm").mockReturnValue(true);
+    // Now genuinely available.
     fireEvent.change(screen.getByLabelText(/Student/i), { target: { value: "s2" } });
     await waitFor(() => expect((screen.getByLabelText(/Student/i) as HTMLSelectElement).value).toBe("s2"));
-    await waitFor(() => expect(screen.queryByText(/2030-10/)).toBeNull());
+
+    // The draft survived the entire blocked window (never discarded, never auto-resubmitted).
+    expect(correctLateFee).toHaveBeenCalledTimes(1);
   });
 
-  it("switching students with no uncertain work never prompts", async () => {
+  it("switching students with nothing busy or uncertain is never blocked", async () => {
     getCorrectableLateFees.mockResolvedValue({ rows: [], nextCursor: null });
     getReversiblePayments.mockResolvedValue({ rows: [], nextCursor: null });
-    const students = [...STUDENTS, { id: "s2", firstName: "Beto", lastName: "Mora", academyId: "a1", academyName: "Alliance" }];
-    render(withMessages(<FinancialCorrectionsSection organizationId="org-1" students={students} />));
+    render(withMessages(<FinancialCorrectionsSection organizationId="org-1" students={STUDENTS2} />));
 
-    const confirmSpy = vi.spyOn(window, "confirm");
     fireEvent.change(screen.getByLabelText(/Student/i), { target: { value: "s1" } });
     await waitFor(() => expect(getCorrectableLateFees).toHaveBeenCalled());
+    expect(screen.getByLabelText(/Student/i)).not.toBeDisabled();
     fireEvent.change(screen.getByLabelText(/Student/i), { target: { value: "s2" } });
-    expect(confirmSpy).not.toHaveBeenCalled();
+    await waitFor(() => expect((screen.getByLabelText(/Student/i) as HTMLSelectElement).value).toBe("s2"));
   });
 });
