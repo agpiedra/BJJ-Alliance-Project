@@ -17,6 +17,7 @@ import { listStudentsForPaymentEntry } from "@/lib/dues/payment-entry-queries";
 import { PaymentEntrySection } from "./payment-entry-section";
 import { PackagePurchaseSection } from "./package-purchase-section";
 import { PrepaymentSection } from "./prepayment-section";
+import { FinancialCorrectionsSection } from "./financial-corrections-section";
 import { PaymentsTable } from "./payments-table";
 
 // Same reasoning as the roster/dashboard pages: payment status is staff data
@@ -209,6 +210,23 @@ export default async function PaymentsPage() {
               currentUserId={context.actorUserId}
               students={paymentEntryStudents.map((s) => ({ id: s.id, firstName: s.firstName, lastName: s.lastName, academyId: s.homeAcademyId, academyName: s.homeAcademyName }))}
               plansHref={`/${locale}/payments/plans`}
+            />
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Owner financial-corrections UI brief §0: a NEW, separate, inactive-gated card, ADMIN-only display (all three
+          composed writers — correctLateFeeAndSettle/reversePayment/waiveLateFee — are hard-coded ADMIN-only
+          themselves), mounted alongside the three ledger-writing cards above, never on `payments/plans/page.tsx`. */}
+      {context.organizationRole === "ADMIN" && ledgerActive && (
+        <Card>
+          <CardHeader className="border-b">
+            <CardTitle>{t("financialCorrections.heading")}</CardTitle>
+          </CardHeader>
+          <CardContent className="pt-4">
+            <FinancialCorrectionsSection
+              organizationId={context.organizationId}
+              students={paymentEntryStudents.map((s) => ({ id: s.id, firstName: s.firstName, lastName: s.lastName, academyId: s.homeAcademyId, academyName: s.homeAcademyName }))}
             />
           </CardContent>
         </Card>
