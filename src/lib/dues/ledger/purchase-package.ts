@@ -101,14 +101,14 @@ const refuse = (
 // MAX_SELECTED - 1 (not the full MAX_SELECTED) is what keeps debt-plus-package from ever exceeding the same 60-per-receipt
 // ceiling recordDuesPaymentInTx's own MAX_SELECTED already enforces for an ordinary, all-MONTHLY receipt.
 const MAX_SELECTED = 60;
-const MAX_EXISTING_DEBT = MAX_SELECTED - 1;
-const MAX_BACKDATE_DAYS = 3660;
-const MAX_NOTES = 500;
+export const MAX_EXISTING_DEBT = MAX_SELECTED - 1;
+export const MAX_BACKDATE_DAYS = 3660;
+export const MAX_NOTES = 500;
 
 /** Tags a mid-transaction refusal so it can be thrown — forcing Prisma to roll back the package obligation, every one of
  * its coverage rows, and anything else already written — and converted back to a plain result only after that rollback.
  * Mirrors `correctLateFeeAndSettle`'s and `prepayMonthlyObligations`'s own mechanism. */
-class PackagePurchaseRefusedError extends Error {
+export class PackagePurchaseRefusedError extends Error {
   constructor(public readonly result: PurchasePackageResult & { ok: false }) {
     super(`package purchase refused mid-transaction: ${result.error}`);
   }
@@ -273,15 +273,26 @@ export async function writePackageObligationInTx(
   return { obligationId: obligation.id };
 }
 
-export async function purchasePackage(
+/**
+ * Purchase-submission-identity prerequisite: the narrow transaction-aware extraction of `purchasePackage`'s own
+ * body, everything from AFTER the shared exchange-rate lock onward (the identical "pull the transaction-opening
+ * wrapper's inner body into an `...InTx` sibling taking an already-open `tx`" pattern already used four times in
+ * this codebase — `createMonthlyObligationInTx`, `assessLateFeeInTx`, `recordDuesPaymentInTx` twice over its own
+ * history — applied here for a fifth time, not a new technique). `purchasePackage` itself becomes a thin wrapper
+ * below: open the transaction, take the lock, call this, catch `PackagePurchaseRefusedError` exactly as it always
+ * has — zero behavior change to its own existing public signature or test suite. `student` arrives PRE-RESOLVED
+ * (the original code already resolved it before ever opening the transaction) and every other argument is exactly
+ * what the original transaction body already received — nothing re-shaped, nothing re-validated here that the
+ * original callback did not already skip (activation/input-shape validation happens before the transaction opens,
+ * in `purchasePackage` below, exactly as it always has — this function picks up precisely where the lock left off).
+ */
+export async function purchasePackageInTx(
+  tx: Tx,
   args: {
     context: TenantContext;
-    studentId: string;
-    /** The exact terms/version id the caller quoted — never re-resolved silently on a stale name (see the doc comment above). */
+    student: { id: string; homeAcademyId: string };
     planTermsId: string;
-    /** Explicit, caller-selected start month — never computed inside this writer. */
     requestedStartMonth: YearMonth;
-    /** Explicit current-debt obligation ids to combine in the same receipt, if any. */
     existingObligationIds?: string[];
     receivedOn: CalendarDate;
     tender: { currency: Currency; amount: string };
@@ -291,52 +302,15 @@ export async function purchasePackage(
   },
   deps: LedgerDeps = {},
 ): Promise<PurchasePackageResult> {
-  const { context, studentId, planTermsId, requestedStartMonth, existingObligationIds, receivedOn, tender, method, notes, maxBackdateDays } = args;
+  const { context, student, planTermsId, requestedStartMonth, existingObligationIds, receivedOn, tender, method, notes, maxBackdateDays } = args;
   const organizationId = context.organizationId;
-  const activation = deps.activation ?? inactiveLedgerActivation;
-  if (!(await activation.isActive(organizationId))) return refuse("notActive");
-  // Owner-only, checked here rather than trusted from whatever eventually calls this — the same discipline
-  // correctLateFeeAndSettle/reversePayment/waiveLateFee/prepayMonthlyObligations already apply to their own role requirement.
-  if (context.organizationRole !== "ADMIN") return refuse("notFound");
-
-  if (typeof studentId !== "string" || studentId === "") return refuse("invalid");
-  if (typeof planTermsId !== "string" || planTermsId === "") return refuse("invalid");
-  if (!requestedStartMonth || !isValidCoverageMonth(requestedStartMonth)) return refuse("invalid");
-  if (
-    existingObligationIds !== undefined &&
-    (!Array.isArray(existingObligationIds) ||
-      existingObligationIds.length > MAX_EXISTING_DEBT ||
-      existingObligationIds.some((id) => typeof id !== "string" || id === "") ||
-      new Set(existingObligationIds).size !== existingObligationIds.length)
-  ) {
-    return refuse("invalid");
-  }
-  if (!receivedOn || !isRealDate(receivedOn)) return refuse("invalid");
-  if (!(CURRENCIES as readonly string[]).includes(tender?.currency)) return refuse("invalid");
-  const parsedAmount = parseMoney(tender?.amount, { allowZero: false });
-  if (!parsedAmount.ok) return refuse("invalid");
-  if (!(Object.values(PaymentMethod) as string[]).includes(method)) return refuse("invalid");
-  if (notes !== undefined && (typeof notes !== "string" || notes.length > MAX_NOTES)) return refuse("invalid");
-  if (!Number.isInteger(maxBackdateDays) || maxBackdateDays < 0 || maxBackdateDays > MAX_BACKDATE_DAYS) return refuse("invalid");
-
+  // The caller (purchasePackage, or the identity wrapper) already validated tender.amount — re-parsed here only
+  // because this function's own split point starts after that validation, mirroring prepay-monthly.ts's own
+  // `parsedAmount` helper's identical "assert, don't re-validate" discipline.
+  const parsedAmount = parseMoney(tender.amount, { allowZero: false });
+  if (!parsedAmount.ok) throw new Error(`purchasePackageInTx called with an amount that failed the caller's own validation: ${tender.amount}`);
   const tenderMinor = decimalToMinor(parsedAmount.value);
-
-  // Re-read the student scoped to the organization; a forged or foreign id is notFound, never trusted. Checked as a plain
-  // string before this read (above) — an undefined/null id would otherwise be silently dropped from Prisma's `where` and
-  // match an arbitrary student, the exact gap PR #76's own review found and fixed for prepayMonthlyObligations.
-  const student = await prisma.student.findFirst({ where: { id: studentId, organizationId }, select: { id: true, homeAcademyId: true } });
-  if (!student || !inTenantScope(context, student.homeAcademyId)) return refuse("notFound");
-
-  try {
-    return await prisma.$transaction(async (tx): Promise<PurchasePackageResult> => {
-      // The literal first statement, SHARED, before the branch lock. See lockExchangeRateNamespaceShared's own doc
-      // comment: every true outermost transaction this ledger opens takes it unconditionally, before any row lock. This
-      // writer never composes recordDuesPaymentInTx (a package obligation fails that function's own type:"MONTHLY"
-      // filter), but it does its own cross-currency resolution below, which needs the identical ordering guarantee.
-      // Shared, not exclusive: this settlement only ever READS a quote, never writes one.
-      await lockExchangeRateNamespaceShared(tx, organizationId);
-      if (deps.afterExchangeRateLockForTest) await deps.afterExchangeRateLockForTest();
-
+  {
       const branch = await lockBranchShared(tx, organizationId, student.homeAcademyId);
       if (!branch) return refuse("notFound");
       const locked = await lockStudent(tx, organizationId, student.id);
@@ -474,6 +448,74 @@ export async function purchasePackage(
 
       const written = await writeSettlementInTx(tx, { context, student, receivedOn, tender, method, notes, settledItems: finalItems, rateEvidence }, frozenDeps);
       return { ok: true, obligationId: obligation.obligationId, paymentId: written.paymentId, settlementIds: written.settlementIds, totalMinor: tenderMinor };
+  }
+}
+
+/**
+ * Package-purchase brief §5: `purchasePackage`'s own public entry point — now a thin wrapper around
+ * `purchasePackageInTx` (above). Owns the transaction, the shared exchange-rate lock, and the catch for
+ * `PackagePurchaseRefusedError` exactly as this function always has. Every pre-transaction check (activation, input
+ * shape, the student lookup/tenant-scope check) is UNCHANGED, byte-for-byte, from before this extraction — this
+ * function's own existing test suite (`purchase-package.test.ts`) proves zero behavior change.
+ */
+export async function purchasePackage(
+  args: {
+    context: TenantContext;
+    studentId: string;
+    /** The exact terms/version id the caller quoted — never re-resolved silently on a stale name (see the doc comment above). */
+    planTermsId: string;
+    /** Explicit, caller-selected start month — never computed inside this writer. */
+    requestedStartMonth: YearMonth;
+    /** Explicit current-debt obligation ids to combine in the same receipt, if any. */
+    existingObligationIds?: string[];
+    receivedOn: CalendarDate;
+    tender: { currency: Currency; amount: string };
+    method: PaymentMethod;
+    notes?: string;
+    maxBackdateDays: number;
+  },
+  deps: LedgerDeps = {},
+): Promise<PurchasePackageResult> {
+  const { context, studentId, planTermsId, requestedStartMonth, existingObligationIds, receivedOn, tender, method, notes, maxBackdateDays } = args;
+  const organizationId = context.organizationId;
+  const activation = deps.activation ?? inactiveLedgerActivation;
+  if (!(await activation.isActive(organizationId))) return refuse("notActive");
+  // Owner-only, checked here rather than trusted from whatever eventually calls this — the same discipline
+  // correctLateFeeAndSettle/reversePayment/waiveLateFee/prepayMonthlyObligations already apply to their own role requirement.
+  if (context.organizationRole !== "ADMIN") return refuse("notFound");
+
+  if (typeof studentId !== "string" || studentId === "") return refuse("invalid");
+  if (typeof planTermsId !== "string" || planTermsId === "") return refuse("invalid");
+  if (!requestedStartMonth || !isValidCoverageMonth(requestedStartMonth)) return refuse("invalid");
+  if (
+    existingObligationIds !== undefined &&
+    (!Array.isArray(existingObligationIds) ||
+      existingObligationIds.length > MAX_EXISTING_DEBT ||
+      existingObligationIds.some((id) => typeof id !== "string" || id === "") ||
+      new Set(existingObligationIds).size !== existingObligationIds.length)
+  ) {
+    return refuse("invalid");
+  }
+  if (!receivedOn || !isRealDate(receivedOn)) return refuse("invalid");
+  if (!(CURRENCIES as readonly string[]).includes(tender?.currency)) return refuse("invalid");
+  if (!parseMoney(tender?.amount, { allowZero: false }).ok) return refuse("invalid");
+  if (!(Object.values(PaymentMethod) as string[]).includes(method)) return refuse("invalid");
+  if (notes !== undefined && (typeof notes !== "string" || notes.length > MAX_NOTES)) return refuse("invalid");
+  if (!Number.isInteger(maxBackdateDays) || maxBackdateDays < 0 || maxBackdateDays > MAX_BACKDATE_DAYS) return refuse("invalid");
+
+  // Re-read the student scoped to the organization; a forged or foreign id is notFound, never trusted. Checked as a plain
+  // string before this read (above) — an undefined/null id would otherwise be silently dropped from Prisma's `where` and
+  // match an arbitrary student, the exact gap PR #76's own review found and fixed for prepayMonthlyObligations.
+  const student = await prisma.student.findFirst({ where: { id: studentId, organizationId }, select: { id: true, homeAcademyId: true } });
+  if (!student || !inTenantScope(context, student.homeAcademyId)) return refuse("notFound");
+
+  try {
+    return await prisma.$transaction(async (tx): Promise<PurchasePackageResult> => {
+      // The literal first statement, SHARED, before the branch lock. See lockExchangeRateNamespaceShared's own doc
+      // comment: every true outermost transaction this ledger opens takes it unconditionally, before any row lock.
+      await lockExchangeRateNamespaceShared(tx, organizationId);
+      if (deps.afterExchangeRateLockForTest) await deps.afterExchangeRateLockForTest();
+      return purchasePackageInTx(tx, { context, student, planTermsId, requestedStartMonth, existingObligationIds, receivedOn, tender, method, notes, maxBackdateDays }, deps);
     });
   } catch (error) {
     if (error instanceof PackagePurchaseRefusedError) return error.result; // AFTER rollback, never before

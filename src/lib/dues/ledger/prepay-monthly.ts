@@ -70,8 +70,8 @@ const refuse = (
   extra: { selectableTotals?: string[]; alreadySettledIds?: string[] } = {},
 ): Extract<PrepayMonthlyObligationsResult, { ok: false }> => ({ ok: false, error, ...extra });
 
-const MAX_BACKDATE_DAYS = 3660;
-const MAX_NOTES = 500;
+export const MAX_BACKDATE_DAYS = 3660;
+export const MAX_NOTES = 500;
 
 /** The canonical two-decimal tender amount — re-parsed here only because this writer's own top-level validation already
  * proved it parses; narrows the type for the hypothetical-total check and the capture-evidence write. */
@@ -84,7 +84,7 @@ function parsedAmount(tender: { amount: string }): string {
 /** Tags a mid-transaction refusal (an obligation write, or the final settlement) so it can be thrown — forcing Prisma to roll
  * back every provisional obligation/coverage/audit row already written — and converted back to a plain result only after that
  * rollback, never returned directly from inside the transaction callback. Mirrors `correctLateFeeAndSettle`'s own mechanism. */
-class PrepaymentRefusedError extends Error {
+export class PrepaymentRefusedError extends Error {
   constructor(public readonly result: PrepayMonthlyObligationsResult & { ok: false }) {
     super(`prepayment refused mid-transaction: ${result.error}`);
   }
@@ -124,13 +124,22 @@ export async function firstUncoveredFrom(tx: Tx, organizationId: string, student
   return null;
 }
 
-export async function prepayMonthlyObligations(
+/**
+ * Purchase-submission-identity prerequisite: the narrow transaction-aware extraction of `prepayMonthlyObligations`'s
+ * own body, everything from AFTER the shared exchange-rate lock onward — the SAME pattern `purchasePackageInTx`
+ * applies to its own sibling writer (see that function's own doc comment for the full precedent list).
+ * `prepayMonthlyObligations` itself becomes a thin wrapper below: open the transaction, take the lock, call this,
+ * catch `PrepaymentRefusedError` exactly as it always has. `student` arrives PRE-RESOLVED and `requestedMonths`
+ * arrives UNSORTED (this function re-sorts and re-checks consecutiveness itself, trusting nothing — the original
+ * code's own consecutive-months check ran before the transaction opened; this function restores that check as its
+ * own first step so a caller — including the identity wrapper — need not duplicate it).
+ */
+export async function prepayMonthlyObligationsInTx(
+  tx: Tx,
   args: {
     context: TenantContext;
-    studentId: string;
-    /** Explicit, caller-selected future months — never recomputed inside this writer (see the doc comment above). */
+    student: { id: string; homeAcademyId: string };
     requestedMonths: YearMonth[];
-    /** Explicit current-debt obligation ids to combine in the same receipt, if any. */
     existingObligationIds?: string[];
     receivedOn: CalendarDate;
     tender: { currency: Currency; amount: string };
@@ -140,54 +149,13 @@ export async function prepayMonthlyObligations(
   },
   deps: LedgerDeps = {},
 ): Promise<PrepayMonthlyObligationsResult> {
-  const { context, studentId, requestedMonths, existingObligationIds, receivedOn, tender, method, notes, maxBackdateDays } = args;
+  const { context, student, requestedMonths, existingObligationIds, receivedOn, tender, method, notes, maxBackdateDays } = args;
   const organizationId = context.organizationId;
-  const activation = deps.activation ?? inactiveLedgerActivation;
-  if (!(await activation.isActive(organizationId))) return refuse("notActive");
-  // Owner-only, checked here rather than trusted from whatever eventually calls this — the same discipline
-  // `correctLateFeeAndSettle`/`reversePayment`/`waiveLateFee` already apply to their own role requirement.
-  if (context.organizationRole !== "ADMIN") return refuse("notFound");
-
-  // Verified, not a style nit: an `undefined` studentId reaching the lookup below does not throw — Prisma drops an
-  // `undefined` field from `where` entirely, so `findFirst({ where: { id: undefined, organizationId } })` silently matches
-  // an ARBITRARY student in the organization instead of refusing. Checked here, before any DB read, the same discipline
-  // `correctLateFeeAndSettle`/`reversePayment`/`waiveLateFee` already apply to their own id-shaped argument.
-  if (typeof studentId !== "string" || studentId === "") return refuse("invalid");
-  if (!Array.isArray(requestedMonths) || requestedMonths.length === 0 || !requestedMonths.every(isValidCoverageMonth)) return refuse("invalid");
-  if (
-    existingObligationIds !== undefined &&
-    (!Array.isArray(existingObligationIds) || existingObligationIds.some((id) => typeof id !== "string" || id === ""))
-  ) {
-    return refuse("invalid");
-  }
-  if (!receivedOn || !isRealDate(receivedOn)) return refuse("invalid");
-  // Currency-conversion brief PR 3: this writer now settles via `settleObligationsInTx` directly on its success path
-  // (never `recordDuesPaymentInTx`, whose own `validatePaymentInput` used to cover these fields) — so it validates its
-  // own tender/method/notes/backdating shape here, the same checks `purchasePackage` already runs for the identical
-  // reason (it never routed through `recordDuesPaymentInTx` either).
-  if (!(CURRENCIES as readonly string[]).includes(tender?.currency)) return refuse("invalid");
-  if (!parseMoney(tender?.amount, { allowZero: false }).ok) return refuse("invalid");
-  if (!(Object.values(PaymentMethod) as string[]).includes(method)) return refuse("invalid");
-  if (notes !== undefined && (typeof notes !== "string" || notes.length > MAX_NOTES)) return refuse("invalid");
-  if (!Number.isInteger(maxBackdateDays) || maxBackdateDays < 0 || maxBackdateDays > MAX_BACKDATE_DAYS) return refuse("invalid");
-
-  // Re-read the student scoped to the organization; a forged or foreign id is `notFound`, never trusted.
-  const student = await prisma.student.findFirst({ where: { id: studentId, organizationId }, select: { id: true, homeAcademyId: true } });
-  if (!student || !inTenantScope(context, student.homeAcademyId)) return refuse("notFound");
-
   const sorted = [...requestedMonths].sort((a, b) => compareYearMonth(a, b));
   for (let i = 1; i < sorted.length; i++) {
     if (!sameYearMonth(addMonths(sorted[i - 1], 1), sorted[i])) return refuse("coverageGap");
   }
-
-  try {
-    return await prisma.$transaction(async (tx): Promise<PrepayMonthlyObligationsResult> => {
-      // The literal first statement, SHARED, before the branch lock. See lockExchangeRateNamespaceShared's own doc
-      // comment: every true outermost transaction this ledger opens takes it unconditionally, before any row lock, since
-      // this writer composes recordDuesPaymentInTx (an INNER call that never takes this lock itself). Shared, not
-      // exclusive: this settlement only ever READS a quote, never writes one — many settlements hold this simultaneously.
-      await lockExchangeRateNamespaceShared(tx, organizationId);
-
+  {
       const branch = await lockBranchShared(tx, organizationId, student.homeAcademyId);
       if (!branch) return refuse("notFound");
       const locked = await lockStudent(tx, organizationId, student.id);
@@ -400,6 +368,78 @@ export async function prepayMonthlyObligations(
       if (!settled.ok) throw new PrepaymentRefusedError(refuse(settled.error, { selectableTotals: settled.selectableTotals, alreadySettledIds: settled.alreadySettledIds }));
 
       return { ok: true, obligationIds, paymentId: settled.paymentId, settlementIds: settled.settlementIds, totalMinor: settled.totalMinor };
+  }
+}
+
+/**
+ * Monthly-prepayment brief §9: `prepayMonthlyObligations`'s own public entry point — now a thin wrapper around
+ * `prepayMonthlyObligationsInTx` (above). Owns the transaction, the shared exchange-rate lock, and the catch for
+ * `PrepaymentRefusedError` exactly as this function always has. Every pre-transaction check (activation, input
+ * shape, the student lookup/tenant-scope check) is UNCHANGED, byte-for-byte, from before this extraction — this
+ * function's own existing test suite (`prepay-monthly.test.ts`) proves zero behavior change.
+ */
+export async function prepayMonthlyObligations(
+  args: {
+    context: TenantContext;
+    studentId: string;
+    /** Explicit, caller-selected future months — never recomputed inside this writer (see the doc comment above). */
+    requestedMonths: YearMonth[];
+    /** Explicit current-debt obligation ids to combine in the same receipt, if any. */
+    existingObligationIds?: string[];
+    receivedOn: CalendarDate;
+    tender: { currency: Currency; amount: string };
+    method: PaymentMethod;
+    notes?: string;
+    maxBackdateDays: number;
+  },
+  deps: LedgerDeps = {},
+): Promise<PrepayMonthlyObligationsResult> {
+  const { context, studentId, requestedMonths, existingObligationIds, receivedOn, tender, method, notes, maxBackdateDays } = args;
+  const organizationId = context.organizationId;
+  const activation = deps.activation ?? inactiveLedgerActivation;
+  if (!(await activation.isActive(organizationId))) return refuse("notActive");
+  // Owner-only, checked here rather than trusted from whatever eventually calls this — the same discipline
+  // `correctLateFeeAndSettle`/`reversePayment`/`waiveLateFee` already apply to their own role requirement.
+  if (context.organizationRole !== "ADMIN") return refuse("notFound");
+
+  // Verified, not a style nit: an `undefined` studentId reaching the lookup below does not throw — Prisma drops an
+  // `undefined` field from `where` entirely, so `findFirst({ where: { id: undefined, organizationId } })` silently matches
+  // an ARBITRARY student in the organization instead of refusing. Checked here, before any DB read, the same discipline
+  // `correctLateFeeAndSettle`/`reversePayment`/`waiveLateFee` already apply to their own id-shaped argument.
+  if (typeof studentId !== "string" || studentId === "") return refuse("invalid");
+  if (!Array.isArray(requestedMonths) || requestedMonths.length === 0 || !requestedMonths.every(isValidCoverageMonth)) return refuse("invalid");
+  if (
+    existingObligationIds !== undefined &&
+    (!Array.isArray(existingObligationIds) || existingObligationIds.some((id) => typeof id !== "string" || id === ""))
+  ) {
+    return refuse("invalid");
+  }
+  if (!receivedOn || !isRealDate(receivedOn)) return refuse("invalid");
+  // Currency-conversion brief PR 3: this writer now settles via `settleObligationsInTx` directly on its success path
+  // (never `recordDuesPaymentInTx`, whose own `validatePaymentInput` used to cover these fields) — so it validates its
+  // own tender/method/notes/backdating shape here, the same checks `purchasePackage` already runs for the identical
+  // reason (it never routed through `recordDuesPaymentInTx` either).
+  if (!(CURRENCIES as readonly string[]).includes(tender?.currency)) return refuse("invalid");
+  if (!parseMoney(tender?.amount, { allowZero: false }).ok) return refuse("invalid");
+  if (!(Object.values(PaymentMethod) as string[]).includes(method)) return refuse("invalid");
+  if (notes !== undefined && (typeof notes !== "string" || notes.length > MAX_NOTES)) return refuse("invalid");
+  if (!Number.isInteger(maxBackdateDays) || maxBackdateDays < 0 || maxBackdateDays > MAX_BACKDATE_DAYS) return refuse("invalid");
+
+  // Re-read the student scoped to the organization; a forged or foreign id is `notFound`, never trusted.
+  const student = await prisma.student.findFirst({ where: { id: studentId, organizationId }, select: { id: true, homeAcademyId: true } });
+  if (!student || !inTenantScope(context, student.homeAcademyId)) return refuse("notFound");
+
+  const sortedCheck = [...requestedMonths].sort((a, b) => compareYearMonth(a, b));
+  for (let i = 1; i < sortedCheck.length; i++) {
+    if (!sameYearMonth(addMonths(sortedCheck[i - 1], 1), sortedCheck[i])) return refuse("coverageGap");
+  }
+
+  try {
+    return await prisma.$transaction(async (tx): Promise<PrepayMonthlyObligationsResult> => {
+      // The literal first statement, SHARED, before the branch lock. See lockExchangeRateNamespaceShared's own doc
+      // comment: every true outermost transaction this ledger opens takes it unconditionally, before any row lock.
+      await lockExchangeRateNamespaceShared(tx, organizationId);
+      return prepayMonthlyObligationsInTx(tx, { context, student, requestedMonths, existingObligationIds, receivedOn, tender, method, notes, maxBackdateDays }, deps);
     });
   } catch (error) {
     if (error instanceof PrepaymentRefusedError) return error.result; // AFTER rollback, never before
