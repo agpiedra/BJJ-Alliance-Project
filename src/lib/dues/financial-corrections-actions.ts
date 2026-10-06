@@ -12,6 +12,7 @@ import {
   listReversiblePayments,
   getLateFeeById,
   getPaymentById,
+  type ListPage,
   type CorrectableLateFeeRow,
   type ReversiblePaymentRow,
   type LateFeeStatus,
@@ -161,18 +162,19 @@ export async function waiveFee(
 }
 
 /** The shared fee-selection list read (brief §2.2/§3 decision 3), bridged to the client. ADMIN only, matching this
- * card's own display gate (never DIRECTOR). */
-export async function getCorrectableLateFees(organizationId: string, studentId: string): Promise<CorrectableLateFeeRow[]> {
+ * card's own display gate (never DIRECTOR). Correction round 2: cursor-paginated — `cursor` is validated
+ * tenant/student-bound inside the read itself, never trusted blindly here. */
+export async function getCorrectableLateFees(organizationId: string, studentId: string, cursor?: string): Promise<ListPage<CorrectableLateFeeRow>> {
   const auth = await resolveActionContext(organizationId, ["ADMIN"]);
-  if (!auth.ok) return [];
-  return listCorrectableLateFees(auth.context, studentId);
+  if (!auth.ok) return { rows: [], nextCursor: null };
+  return listCorrectableLateFees(auth.context, studentId, { cursor });
 }
 
-/** The payment-selection list read, bridged the same way. ADMIN only. */
-export async function getReversiblePayments(organizationId: string, studentId: string): Promise<ReversiblePaymentRow[]> {
+/** The payment-selection list read, bridged the same way. ADMIN only. Cursor-paginated, same discipline. */
+export async function getReversiblePayments(organizationId: string, studentId: string, cursor?: string): Promise<ListPage<ReversiblePaymentRow>> {
   const auth = await resolveActionContext(organizationId, ["ADMIN"]);
-  if (!auth.ok) return [];
-  return listReversiblePayments(auth.context, studentId);
+  if (!auth.ok) return { rows: [], nextCursor: null };
+  return listReversiblePayments(auth.context, studentId, { cursor });
 }
 
 /** The recovery read for a late fee (brief §2.5) — never filtered by `removedAt`, so it finds the exact target even

@@ -136,24 +136,24 @@ describe("waiveFee: authorization, under the real unmodified activation default"
 });
 
 describe("the four read bridges: authorization (no activation gate — bare reads, matching getReceiptStatus's own shape)", () => {
-  it("getCorrectableLateFees: unauthenticated resolves empty, genuine DIRECTOR/INSTRUCTOR throw FORBIDDEN, genuine ADMIN resolves (empty for a nonexistent student)", async () => {
+  it("getCorrectableLateFees: unauthenticated resolves an empty page, genuine DIRECTOR/INSTRUCTOR throw FORBIDDEN, genuine ADMIN resolves (empty for a nonexistent student)", async () => {
     actAs(null);
-    expect(await getCorrectableLateFees(a.org.id, "whatever")).toEqual([]);
+    expect(await getCorrectableLateFees(a.org.id, "whatever")).toEqual({ rows: [], nextCursor: null });
     actAs(director.id, a.org.id, "DIRECTOR");
     await expect(getCorrectableLateFees(a.org.id, "whatever")).rejects.toThrow("FORBIDDEN");
     actAs(instructor.id, a.org.id, "INSTRUCTOR");
     await expect(getCorrectableLateFees(a.org.id, "whatever")).rejects.toThrow("FORBIDDEN");
     actAs(a.admin.id, a.org.id, "ADMIN");
-    expect(await getCorrectableLateFees(a.org.id, "no-such-student")).toEqual([]);
+    expect(await getCorrectableLateFees(a.org.id, "no-such-student")).toEqual({ rows: [], nextCursor: null });
   });
 
   it("getReversiblePayments: same shape", async () => {
     actAs(null);
-    expect(await getReversiblePayments(a.org.id, "whatever")).toEqual([]);
+    expect(await getReversiblePayments(a.org.id, "whatever")).toEqual({ rows: [], nextCursor: null });
     actAs(director.id, a.org.id, "DIRECTOR");
     await expect(getReversiblePayments(a.org.id, "whatever")).rejects.toThrow("FORBIDDEN");
     actAs(a.admin.id, a.org.id, "ADMIN");
-    expect(await getReversiblePayments(a.org.id, "no-such-student")).toEqual([]);
+    expect(await getReversiblePayments(a.org.id, "no-such-student")).toEqual({ rows: [], nextCursor: null });
   });
 
   it("getLateFeeStatus: same shape", async () => {

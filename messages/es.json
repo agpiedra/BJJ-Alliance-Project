@@ -1518,6 +1518,9 @@
       "loadFailed": "No se pudieron cargar los registros de este estudiante.",
       "retry": "Reintentar",
       "submitting": "Enviando...",
+      "loadOlder": "Cargar mas antiguos",
+      "loadingMore": "Cargando...",
+      "confirmDiscardUncertain": "Una correccion, condonacion o reversion aqui todavia se esta confirmando. Cambiar de estudiante ahora deja de rastrearla en esta pagina — puede buscar el mismo registro de nuevo mas tarde. Continuar?",
       "fields": {
         "student": "Estudiante",
         "studentPlaceholder": "Seleccione un estudiante",
@@ -1542,21 +1545,30 @@
         "correctSubmit": "Corregir y liquidar",
         "waiveSubmit": "Condonar multa",
         "olderDebt": "Este estudiante tiene deuda mas antigua sin pagar que debe liquidarse primero — la correccion no puede continuar hasta que esa deuda se resuelva de otra forma.",
+        "feeAmountLabel": "Multa por mora: {amount} {currency}",
+        "obligationAmountLabel": "Monto de la obligacion (solo referencia — no es lo que recibira): {amount} {currency}",
+        "correctConfirmCopy": "Al enviar se anula esta multa Y se registra una liquidacion para su obligacion, usando el monto, fecha y metodo ingresados abajo.",
+        "waiveConfirmCopy": "Al enviar se condona unicamente esta multa impaga. Nada mas cambia — no se registra ninguna liquidacion ni se crea ningun pago.",
+        "reconcileRevision": "Actualizar e intentar de nuevo",
         "outcome": {
-          "voided": "Esta multa fue anulada y la obligacion que bloqueaba ya esta liquidada.",
-          "waived": "Esta multa fue condonada."
+          "voidedDirect": "Esta multa fue anulada y la obligacion que bloqueaba fue liquidada con el monto y fecha ingresados.",
+          "voidedObserved": "Esta multa ahora aparece como anulada.",
+          "waivedDirect": "Esta multa fue condonada.",
+          "waivedObserved": "Esta multa ahora aparece como condonada."
         }
       },
       "payment": {
         "reverseAction": "Revertir",
         "reverseSubmit": "Revertir pago",
+        "reverseConfirmCopy": "Al enviar se revierte TODO el pago seleccionado y todas sus liquidaciones. Esto nunca es un reembolso ni libera cobertura.",
         "restriction": {
           "unsupportedObligationType": "Este pago incluye un paquete o una matricula y no puede revertirse.",
           "prepaymentOrigin": "Este pago incluye un mes futuro prepagado. Nunca puede revertirse, incluyendo sus otros elementos.",
           "voidedFee": "Este pago esta detras de una multa anulada y no puede revertirse."
         },
         "outcome": {
-          "reversed": "Este pago fue revertido."
+          "reversedDirect": "Este pago fue revertido.",
+          "reversedObserved": "Este pago ahora aparece como revertido."
         }
       },
       "recovery": {
@@ -1564,15 +1576,15 @@
         "checking": "Verificando el estado actual...",
         "checkFailed": "No se pudo verificar el estado actual.",
         "checkAgain": "Verificar estado de nuevo",
-        "unchanged": "El intento anterior no parece haber surtido efecto. Puede intentar de nuevo."
+        "unchanged": "El intento anterior aun no parece haber surtido efecto. Una solicitud anterior todavia podria estar en curso. Puede intentar de nuevo."
       },
       "error": {
         "notActive": "Esta funcion aun no esta activa para su organizacion.",
         "invalid": "Parte de la informacion ingresada no es valida.",
         "notFound": "Ese registro no se encontro en su alcance.",
-        "stale": "Este registro ha cambiado desde que se cargo. La lista se ha actualizado — intente de nuevo.",
+        "stale": "Este registro ha cambiado desde que se cargo.",
         "alreadyRemoved": "Esta multa ya fue anulada o condonada.",
-        "notOnTime": "Dada la fecha ingresada, esta multa habria sido a tiempo. No puede corregirse como mal calculada.",
+        "notOnTime": "Dada la fecha ingresada, este pago todavia estaba atrasado segun el periodo de gracia — la multa no fue mal calculada y no puede corregirse por ese motivo.",
         "alreadyPaid": "Esta multa ya fue pagada y no puede condonarse.",
         "alreadyReversed": "Este pago ya fue revertido.",
         "unsupportedObligationType": "Este pago incluye un elemento que no puede revertirse.",
@@ -1580,10 +1592,14 @@
         "prepaymentBlocksReversal": "Este pago incluye un mes futuro prepagado y nunca puede revertirse.",
         "notOldestFirst": "Existe deuda mas antigua sin pagar para este estudiante que debe liquidarse primero.",
         "rateUnavailable": "No hay tipo de cambio disponible actualmente. Esta correccion no se completo; no se guardo nada.",
-        "alreadySettled": "Esta obligacion ya fue liquidada. La lista se ha actualizado.",
+        "alreadySettled": "Esta obligacion ya fue liquidada de otra forma. La lista se ha actualizado.",
         "futureDate": "La fecha de recibo no puede ser en el futuro.",
         "tooOld": "La fecha de recibo es demasiado antigua.",
         "currencyMismatch": "La moneda del pago no coincide con lo adeudado.",
+        "notASelectableTotal": "El monto ingresado no coincide con ningun total valido para esta liquidacion.",
+        "totalMismatch": "El monto ingresado no coincide con las obligaciones realmente seleccionadas.",
+        "ambiguousTotal": "El monto ingresado coincide con mas de un total posible — verifique el monto exacto de la obligacion de esta multa.",
+        "selectableTotalsDetail": "Totales validos en esta moneda: {totals}",
         "unexpected": "Ocurrio algo inesperado."
       }
     }

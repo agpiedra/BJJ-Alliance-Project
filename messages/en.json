@@ -1518,6 +1518,9 @@
       "loadFailed": "Couldn't load this student's records.",
       "retry": "Retry",
       "submitting": "Submitting...",
+      "loadOlder": "Load older",
+      "loadingMore": "Loading...",
+      "confirmDiscardUncertain": "A correction, waiver, or reversal here is still being confirmed. Switching students now stops tracking it on this page — you can look the same record up again later. Continue?",
       "fields": {
         "student": "Student",
         "studentPlaceholder": "Select a student",
@@ -1542,21 +1545,30 @@
         "correctSubmit": "Correct and settle",
         "waiveSubmit": "Waive fee",
         "olderDebt": "This student has older unpaid debt that must be settled first — the correction cannot proceed until that debt is cleared another way.",
+        "feeAmountLabel": "Late fee: {amount} {currency}",
+        "obligationAmountLabel": "Obligation amount (reference only — not what you'll receive): {amount} {currency}",
+        "correctConfirmCopy": "Submitting voids this fee AND records a settlement for its obligation, using the amount, date, and method entered below.",
+        "waiveConfirmCopy": "Submitting forgives only this unpaid fee. Nothing else changes — no settlement is recorded, no payment is created.",
+        "reconcileRevision": "Refresh and try again",
         "outcome": {
-          "voided": "This fee was voided and the obligation it was blocking is now settled.",
-          "waived": "This fee was waived."
+          "voidedDirect": "This fee was voided and the obligation it was blocking was settled using the entered amount and date.",
+          "voidedObserved": "This fee is now shown as voided.",
+          "waivedDirect": "This fee was waived.",
+          "waivedObserved": "This fee is now shown as waived."
         }
       },
       "payment": {
         "reverseAction": "Reverse",
         "reverseSubmit": "Reverse payment",
+        "reverseConfirmCopy": "Submitting reverses the WHOLE selected payment and all of its settlements. This is never a refund and never releases coverage back.",
         "restriction": {
           "unsupportedObligationType": "This payment includes a package or signup-type item and cannot be reversed.",
           "prepaymentOrigin": "This payment includes a prepaid future month. It can never be reversed, including its other items.",
           "voidedFee": "This payment is behind a voided late fee and cannot be reversed."
         },
         "outcome": {
-          "reversed": "This payment was reversed."
+          "reversedDirect": "This payment was reversed.",
+          "reversedObserved": "This payment is now shown as reversed."
         }
       },
       "recovery": {
@@ -1564,15 +1576,15 @@
         "checking": "Checking the current status...",
         "checkFailed": "Couldn't check the current status.",
         "checkAgain": "Check status again",
-        "unchanged": "The earlier attempt does not appear to have taken effect. You may try again."
+        "unchanged": "The earlier attempt does not appear to have taken effect yet. An earlier request may still be in progress. You may try again."
       },
       "error": {
         "notActive": "This feature is not active for your organization yet.",
         "invalid": "Some of the entered information isn't valid.",
         "notFound": "That record couldn't be found in your scope.",
-        "stale": "This record has changed since it was loaded. The list has been refreshed — please try again.",
+        "stale": "This record has changed since it was loaded.",
         "alreadyRemoved": "This fee was already voided or waived.",
-        "notOnTime": "Given the date entered, this fee would still have been on time. It cannot be corrected as wrongly assessed.",
+        "notOnTime": "Given the date entered, this payment was still late under the grace period — the fee was not wrongly assessed and cannot be corrected on that basis.",
         "alreadyPaid": "This fee has already been paid and cannot be waived.",
         "alreadyReversed": "This payment was already reversed.",
         "unsupportedObligationType": "This payment includes an item that cannot be reversed.",
@@ -1580,10 +1592,14 @@
         "prepaymentBlocksReversal": "This payment includes a prepaid future month and can never be reversed.",
         "notOldestFirst": "Older unpaid debt exists for this student and must be settled first.",
         "rateUnavailable": "No exchange rate is currently available. This correction was not completed; nothing was saved.",
-        "alreadySettled": "This obligation was already settled. The list has been refreshed.",
+        "alreadySettled": "This obligation was already settled another way. The list has been refreshed.",
         "futureDate": "The date received can't be in the future.",
         "tooOld": "The date received is too far in the past.",
         "currencyMismatch": "The tender currency doesn't match what's owed.",
+        "notASelectableTotal": "The amount entered doesn't match any valid total for this settlement.",
+        "totalMismatch": "The amount entered doesn't match the obligations actually selected.",
+        "ambiguousTotal": "The amount entered matches more than one possible total — check the exact amount for this fee's own obligation.",
+        "selectableTotalsDetail": "Valid totals in this currency: {totals}",
         "unexpected": "Something unexpected happened."
       }
     }

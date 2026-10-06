@@ -111,17 +111,22 @@ afterAll(async () => {
 }, 120_000);
 
 describe("listCorrectableLateFees", () => {
-  it("returns only this student's own unremoved fees, scoped to the organization, with a server-computed revision token", async () => {
+  it("returns only this student's own unremoved fees, scoped to the organization, with a server-computed revision token and the obligation's own (distinct) amount", async () => {
     const student = await newStudent(a);
     const obligationId = await newObligation(a, student.id, 10);
     const outcomes = await assessAsOf(a, student.id, 11, 10);
     const feeId = feeIdFor(outcomes, obligationId);
     const fee = await prisma.duesLateFee.findUniqueOrThrow({ where: { id: feeId } });
+    const obligation = await prisma.duesObligation.findUniqueOrThrow({ where: { id: obligationId } });
 
-    const rows = await listCorrectableLateFees(context(a), student.id);
+    const { rows } = await listCorrectableLateFees(context(a), student.id);
     expect(rows).toHaveLength(1);
     expect(rows[0].id).toBe(feeId);
     expect(rows[0].expectedRevision).toBe(feeRevision(fee));
+    // Correction round 2: `obligationAmount` is the obligation's own amount, genuinely different from `amount`
+    // (the late fee itself) — this is the exact distinction issue 2 required exposing.
+    expect(rows[0].obligationAmount).toBe(obligation.amount.toFixed(2));
+    expect(rows[0].obligationAmount).not.toBe(rows[0].amount);
   });
 
   it("excludes an already-removed (waived) fee from the candidate list", async () => {
@@ -133,14 +138,60 @@ describe("listCorrectableLateFees", () => {
     const waived = await waiveLateFee({ context: context(a), lateFeeId: feeId, expectedRevision: feeRevision(fee), removalReason: "owner forgave it" }, deps());
     expect(waived.ok).toBe(true);
 
-    const rows = await listCorrectableLateFees(context(a), student.id);
+    const { rows } = await listCorrectableLateFees(context(a), student.id);
     expect(rows.find((r) => r.id === feeId)).toBeUndefined();
   });
 
   it("never returns a different organization's fee, even for the same studentId pattern (tenant scoping)", async () => {
     const student = await newStudent(b);
-    const rows = await listCorrectableLateFees(context(a), student.id);
+    const { rows } = await listCorrectableLateFees(context(a), student.id);
     expect(rows).toEqual([]);
+  });
+
+  it("correction round 2, issue 4: cursor pagination reaches an older fee beyond the first page, with no duplicates or omissions", async () => {
+    const student = await newStudent(a);
+    const feeIds: string[] = [];
+    for (let m = 1; m <= 5; m++) {
+      const obligationId = await newObligation(a, student.id, m);
+      const outcomes = await assessAsOf(a, student.id, m + 1, 10);
+      feeIds.push(feeIdFor(outcomes, obligationId));
+    }
+
+    const page1 = await listCorrectableLateFees(context(a), student.id, { limit: 2 });
+    expect(page1.rows).toHaveLength(2);
+    expect(page1.nextCursor).not.toBeNull();
+
+    const page2 = await listCorrectableLateFees(context(a), student.id, { limit: 2, cursor: page1.nextCursor! });
+    expect(page2.rows).toHaveLength(2);
+    // No overlap between pages (no duplicates).
+    const page1Ids = page1.rows.map((r) => r.id);
+    const page2Ids = page2.rows.map((r) => r.id);
+    expect(page1Ids.some((id) => page2Ids.includes(id))).toBe(false);
+
+    const page3 = await listCorrectableLateFees(context(a), student.id, { limit: 2, cursor: page2.nextCursor! });
+    // The specific oldest target is reachable, and nothing was skipped: all 5 seeded fees appear exactly once
+    // across the three pages combined.
+    const allSeen = [...page1Ids, ...page2Ids, ...page3.rows.map((r) => r.id)];
+    expect(new Set(allSeen).size).toBe(5);
+    for (const id of feeIds) expect(allSeen).toContain(id);
+  });
+
+  it("correction round 2, issue 4: a cursor that does not belong to this student is ignored, never used to peek into another student's page", async () => {
+    const studentA = await newStudent(a);
+    const studentC = await newStudent(a);
+    const obligationIdA = await newObligation(a, studentA.id, 7);
+    const outcomesA = await assessAsOf(a, studentA.id, 8, 10);
+    const feeIdA = feeIdFor(outcomesA, obligationIdA);
+
+    const obligationIdC = await newObligation(a, studentC.id, 7);
+    const outcomesC = await assessAsOf(a, studentC.id, 8, 10);
+    const feeIdC = feeIdFor(outcomesC, obligationIdC);
+
+    // A cursor pointing at studentC's own fee, passed while listing studentA's fees — must be ignored (treated as
+    // no cursor at all), never used to paginate past or into studentC's row.
+    const result = await listCorrectableLateFees(context(a), studentA.id, { cursor: feeIdC });
+    expect(result.rows.map((r) => r.id)).toContain(feeIdA);
+    expect(result.rows.map((r) => r.id)).not.toContain(feeIdC);
   });
 });
 
@@ -179,7 +230,7 @@ describe("listReversiblePayments / getPaymentById (recovery read)", () => {
     if (!recorded.ok) throw new Error(`fixture payment failed: ${recorded.error}`);
 
     const before = await listReversiblePayments(context(a), student.id);
-    const row = before.find((p) => p.id === recorded.paymentId);
+    const row = before.rows.find((p) => p.id === recorded.paymentId);
     expect(row).toBeDefined();
     expect(row!.restrictions).toEqual({ hasUnsupportedObligationType: false, hasPrepaymentOrigin: false, hasVoidedFee: false });
 
@@ -187,7 +238,7 @@ describe("listReversiblePayments / getPaymentById (recovery read)", () => {
     expect(reversed.ok).toBe(true);
 
     const after = await listReversiblePayments(context(a), student.id);
-    expect(after.find((p) => p.id === recorded.paymentId)).toBeUndefined();
+    expect(after.rows.find((p) => p.id === recorded.paymentId)).toBeUndefined();
 
     // Recovery read: still finds it, unlike the filtered list above.
     const status = await getPaymentById(context(a), recorded.paymentId);
@@ -209,13 +260,13 @@ describe("listReversiblePayments / getPaymentById (recovery read)", () => {
     );
     if (!corrected.ok) throw new Error(`fixture correction failed: ${corrected.error}`);
 
-    const rows = await listReversiblePayments(context(a), student.id);
+    const { rows } = await listReversiblePayments(context(a), student.id);
     const row = rows.find((p) => p.id === corrected.paymentId);
     expect(row).toBeDefined();
     expect(row!.restrictions.hasVoidedFee).toBe(true);
   });
 
-  it("bounds the list to the requested limit", async () => {
+  it("bounds the list to the requested limit and reports a next cursor", async () => {
     const student = await newStudent(a);
     for (let m = 6; m <= 9; m++) {
       const obligationId = await newObligation(a, student.id, m);
@@ -225,7 +276,12 @@ describe("listReversiblePayments / getPaymentById (recovery read)", () => {
       );
       if (!recorded.ok) throw new Error(`fixture payment failed: ${recorded.error}`);
     }
-    const rows = await listReversiblePayments(context(a), student.id, 2);
-    expect(rows).toHaveLength(2);
+    const page1 = await listReversiblePayments(context(a), student.id, { limit: 2 });
+    expect(page1.rows).toHaveLength(2);
+    expect(page1.nextCursor).not.toBeNull();
+
+    const page2 = await listReversiblePayments(context(a), student.id, { limit: 2, cursor: page1.nextCursor! });
+    expect(page2.rows).toHaveLength(2);
+    expect(page1.rows.map((r) => r.id)).not.toEqual(expect.arrayContaining(page2.rows.map((r) => r.id)));
   });
 });
