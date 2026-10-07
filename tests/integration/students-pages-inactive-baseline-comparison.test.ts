@@ -26,14 +26,32 @@ import enMessages from "../../messages/en.json";
  * for the duration of this file's test run, not production code.
  */
 const prisma = getTestPrismaClient();
-const BASELINE_REF = "83fed6f";
+// The FULL sha, not the abbreviated "83fed6f" — CI's checkout step (actions/checkout@v4, default fetch-depth: 1)
+// is a SHALLOW clone that doesn't have this commit's object locally at all, and an unreachable short SHA is not
+// safe to assume is unambiguous against the remote's full object space. `ensureCommitFetched` below fetches it
+// explicitly first, so this works under both a full local clone and CI's shallow one.
+const BASELINE_REF = "83fed6fb4a6219b6282c907d523f06d3b9e1b964";
 const ROSTER_DIR = "src/app/[locale]/(staff)/students";
 const DETAIL_DIR = "src/app/[locale]/(staff)/students/[id]";
 const ROSTER_BASELINE_FILE = `${ROSTER_DIR}/__pr2_baseline_83fed6f_page.tsx`;
 const DETAIL_BASELINE_FILE = `${DETAIL_DIR}/__pr2_baseline_83fed6f_page.tsx`;
 
+function ensureCommitFetched(ref: string) {
+  try {
+    execFileSync("git", ["cat-file", "-e", `${ref}^{commit}`], { stdio: "ignore" });
+  } catch {
+    // Not present locally (a shallow CI clone) — fetch exactly this one commit from origin.
+    execFileSync("git", ["fetch", "--depth=1", "origin", ref], { stdio: "ignore" });
+  }
+}
+
 function writeBaseline(gitPath: string, diskPath: string) {
   const content = execFileSync("git", ["show", `${BASELINE_REF}:${gitPath}`], { encoding: "utf8" });
+  // Fail loudly here, not with a cryptic downstream bundler parse error, if git ever again returns something
+  // that isn't the expected TSX source (e.g. a commit/diff dump instead of a blob).
+  if (!content.includes("export default")) {
+    throw new Error(`Baseline extraction for ${gitPath} looks wrong — first 200 chars:\n${content.slice(0, 200)}`);
+  }
   writeFileSync(diskPath, content, "utf8");
 }
 
@@ -72,6 +90,7 @@ beforeAll(async () => {
   vi.useFakeTimers();
   vi.setSystemTime(FROZEN_NOW);
 
+  ensureCommitFetched(BASELINE_REF);
   writeBaseline(`${ROSTER_DIR}/page.tsx`, ROSTER_BASELINE_FILE);
   writeBaseline(`${DETAIL_DIR}/page.tsx`, DETAIL_BASELINE_FILE);
 
