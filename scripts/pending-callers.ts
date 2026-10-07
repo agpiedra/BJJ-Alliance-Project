@@ -322,26 +322,17 @@ const PENDING_CALLERS: PendingCaller[] = [
     reason:
       "Implements the approved genuine-return rule (D20-D22): an ARCHIVED student whose statusBeforeArchive was ACTIVE or INACTIVE returns to ACTIVE unconditionally (never the stored statusBeforeArchive value, unlike restoreStudent, which stays completely unchanged and is never composed here), atomically with membership, status history and the return-month charge (dueOn = max(normal due date, return date) via writeMonthlyObligationInTx's existing minimumDueOn parameter, no proration, no new SIGNUP, existing coverage/debt untouched). The request is bound to a SPECIFIC archive event (the student's latest EVENT-sourced StudentStatusChange, ordered by sequence desc, never createdAt) via a hidden archiveEventId field, re-verified fresh under the student lock before any write — a mismatch (the earlier attempt already committed, or a later archive-and-return cycle has since produced its own event) refuses, zero writes; a BASELINE-sourced or missing archive event refuses explicitly (noTrustworthyArchiveEvent), never a status-only fallback, never a fabricated event. A genuine configuration gap refuses the WHOLE attempt with zero writes, leaving the same archive event current for a legitimate later retry. The existing-coverage check and the candidate assignment/terms/policy pre-check are shared helpers (monthly-config-resolution.ts) extracted from, and now also used by, resumeChargeInTx — enrollmentChargeInTx stays excluded, its package-refusal/due-day-branch logic needs the resolved values firsthand under its own lock for decisions resume and return never make.",
   },
-  // PAYMENT-UI-CONSUMER-INTEGRATION-BRIEF.md §6 (the read-model PR). UNLIKE every other entry in this list, this one
-  // has ZERO callers of any kind today — not even a gated action composes it (no UI integration in this PR at all,
-  // brief §7 is later work). Listed anyway for the same reason every ledger reader/writer is: built ahead of its
-  // caller, closed by the same LedgerActivation default.
+  // PAYMENT-UI-CONSUMER-INTEGRATION-BRIEF.md §6 (the read-model PR). `listDuesFactsForStudents` (staff mode) got its
+  // first real caller in ROSTER-STUDENT-DETAIL-INTEGRATION-BRIEF.md PR 2 (roster-payment-facts-queries.ts); only
+  // `getOwnDuesFacts` (self/portal mode) still has zero callers — portal balance is explicitly out of scope for that
+  // brief (§6). Listed for the same reason every ledger reader/writer is: built ahead of its caller, closed by the
+  // same LedgerActivation default.
   {
-    symbol: "listDuesFactsForStudents / getOwnDuesFacts",
-    file: "src/lib/dues/ledger/dues-facts.ts (no callers yet — a read-only model with no UI integration in this PR)",
-    dueBy: "whenever the roster/dashboard/student-detail/portal read surfaces (brief §7) are built",
+    symbol: "getOwnDuesFacts",
+    file: "src/lib/dues/ledger/dues-facts.ts (no callers yet — portal balance is out of scope for the roster/student-detail brief)",
+    dueBy: "whenever the portal read surface (payment-UI-consumer brief §3 item 4) is built",
     reason:
-      "A shared, batched, tenant-scoped READ model over the dues ledger — never a writer, never a transaction, never a lock. Separates three independent facts this ledger's own data conflates if read naively: coverage claimed (written at obligation-creation time, proves nothing about payment), an active settlement (the only real 'paid' fact), and outstanding debt (independent of current-period eligibility — an ARCHIVED/unassigned student's old unpaid obligations stay visible). A pending AwaitingRateReceipt decomposes into two independent components: referenced existing debt (already counted in `outstanding`, unmodified) and proposed-but-not-yet-created coverage (never merged into `outstanding`). Late-fee/grace facts are type-aware (MONTHLY only) and reuse `lateFeeToAssessMinor`'s own pure calculation directly — critically, NEVER called on a settled obligation (it would return the historical fee paid at settlement time, not a currently-owed figure). Two distinct function signatures, not one with a mode flag: `listDuesFactsForStudents` (staff, branch-scoped, a foreign-branch id silently excluded) and `getOwnDuesFacts` (self, no `studentIds` parameter at all — structurally cannot name another student). Gated by the identical `LedgerActivation` default every other ledger function uses; production returns `notActive`/`null` for every organization today.",
-  },
-  // ROSTER-STUDENT-DETAIL-INTEGRATION-BRIEF.md PR 1. Like listDuesFactsForStudents/getOwnDuesFacts above, this one has
-  // ZERO callers of any kind today — no page, no action, no UI integration in this PR (the brief's later PRs wire it
-  // in). Listed anyway for the same reason every ledger reader/writer is: built ahead of its caller.
-  {
-    symbol: "listPaymentHistoryForStudent",
-    file: "src/lib/dues/payment-history-queries.ts (no callers yet — a read-only model with no UI integration in this PR)",
-    dueBy: "whenever the student-detail ledger-history section (the brief's later PRs) is built",
-    reason:
-      "A narrow, authorized, paginated ledger payment-history reader for one student. Self-validates tenant/branch scope internally (unlike get-payment-history.ts's trust-the-caller contract). Settlements are never filtered by reversedAt, unlike listReversiblePayments's own candidate list — a reversed payment keeps its full original settlement detail (obligation breakdown, which late fee it included, if any, by that settlement's own lateFeeId) exactly as it was at settlement time, reported alongside that fee's CURRENT removalKind (a separate, later-mutable fact). Cross-currency evidence is read directly off the DuesPayment row's own snapshotted fields, never re-joined against a possibly-since-corrected live quote. Amounts are derived via exact minor-unit arithmetic (columnToMinor/minorToDecimal), never lateFeeToAssessMinor (a different, present-tense question) and never floating-point Number() addition. Gated by the identical LedgerActivation default every other ledger function uses; production returns notActive for every organization today.",
+      "Student-self mode (brief §6): takes no studentIds parameter at all — the caller's own linked student id is implicit, never a request parameter, so a caller holding a foreign id has no parameter to put it in. Shares computeDuesFactsForStudents with listDuesFactsForStudents (now live via roster-payment-facts-queries.ts) but returns a bare DuesFactsForStudent | null rather than a discriminated result, a known shape divergence noted in ROSTER-STUDENT-DETAIL-INTEGRATION-BRIEF.md §7. Gated by the identical LedgerActivation default every other ledger function uses; production returns null for every organization today.",
   },
 ];
 

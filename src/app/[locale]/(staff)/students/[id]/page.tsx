@@ -17,6 +17,10 @@ import { getStudentForStaff } from "./get-student";
 import { getPromotionHistory } from "./get-promotion-history";
 import { getPromotionCreditHistory } from "./get-promotion-credit-history";
 import { getPaymentHistory } from "./get-payment-history";
+import { isLedgerActiveForOrg, listRosterPaymentFacts, toRosterLedgerDisplay, type DuesPendingReceiptFact } from "@/lib/dues/roster-payment-facts-queries";
+import { listPaymentHistoryForStudent, type PaymentHistoryRow } from "@/lib/dues/payment-history-queries";
+import { StudentBalanceSummary } from "./student-balance-summary";
+import { PaymentHistorySection } from "./payment-history-section";
 import { EditStudentForm } from "./edit-student-form";
 import { ArchiveStudentButton } from "./archive-student-button";
 import { ArchivedStudentActions } from "./archived-student-actions";
@@ -86,6 +90,38 @@ export default async function StudentDetailPage({
   const creditHistoryRaw = await getPromotionCreditHistory(student.id, context.organizationId, student.beltAwardedAt);
   const paymentHistory = await getPaymentHistory(student.id, context.organizationId);
   const attendanceEntries = await getRecentAttendanceEntries(student.id, context.organizationId);
+
+  // ROSTER-STUDENT-DETAIL-INTEGRATION-BRIEF.md §2.4: ONE captured instant, read ONCE per page load. `ledgerActive:
+  // false` (the real production default) leaves `legacyHistory` as the page's one and only payment-history content,
+  // byte-identical to this page's pre-integration output — `paymentHistory` above is computed unconditionally either
+  // way, so nothing about the legacy path changes shape or timing.
+  const ledgerActive = await isLedgerActiveForOrg(context.organizationId);
+  let balanceDisplay: ReturnType<typeof toRosterLedgerDisplay> | null = null;
+  let pendingReceipts: DuesPendingReceiptFact[] = [];
+  let historyInitial: { rows: PaymentHistoryRow[]; cursor: string | null; failed: boolean } = {
+    rows: [],
+    cursor: null,
+    failed: false,
+  };
+  if (ledgerActive) {
+    const now = new Date();
+    const { byStudentId } = await listRosterPaymentFacts(context, [student.id], now);
+    const fact = byStudentId.get(student.id);
+    if (fact?.ok) {
+      balanceDisplay = toRosterLedgerDisplay(fact.facts, fact.todayIso);
+      pendingReceipts = fact.facts.pendingReceipts;
+    }
+    try {
+      const historyResult = await listPaymentHistoryForStudent(context, student.id);
+      if (historyResult.ok) {
+        historyInitial = { rows: historyResult.rows, cursor: historyResult.nextCursor, failed: false };
+      } else {
+        historyInitial = { rows: [], cursor: null, failed: true };
+      }
+    } catch {
+      historyInitial = { rows: [], cursor: null, failed: true };
+    }
+  }
 
   const t = await getTranslations("students");
   const tDetail = await getTranslations("students.detail");
@@ -379,6 +415,22 @@ export default async function StudentDetailPage({
           )}
         </CardContent>
       </Card>
+
+      {/* §3 decision 2/3 (approved): a NEW current-balance summary + a SEPARATE ledger-history section, alongside
+          the legacy table above, never interleaved into it — only rendered once the ledger is active for this org. */}
+      {ledgerActive && (
+        <>
+          <StudentBalanceSummary display={balanceDisplay} pendingReceipts={pendingReceipts} locale={locale} t={t} />
+          <PaymentHistorySection
+            organizationId={context.organizationId}
+            studentId={student.id}
+            initialRows={historyInitial.rows}
+            initialCursor={historyInitial.cursor}
+            initialFailed={historyInitial.failed}
+            locale={locale}
+          />
+        </>
+      )}
 
       <RegenerateCodeButton organizationId={context.organizationId} studentId={student.id} />
 

@@ -844,6 +844,44 @@
         "statusActive": "Cinturón actual",
         "statusOutOfScope": "Cinturón anterior"
       }
+    },
+    "ledger": {
+      "unavailable": "No se pudo cargar el estado de pago",
+      "totalWithFee": "{total} (incluye {fee} de recargo)",
+      "filters": {
+        "debt": "Tiene saldo pendiente",
+        "noDebt": "Sin saldo pendiente",
+        "monthlyPastGrace": "Mensualidad fuera de gracia",
+        "signupPastDue": "Inscripción vencida",
+        "pendingConversion": "Conversión pendiente",
+        "configIssue": "Problema de configuración",
+        "apply": "Aplicar filtros",
+        "legacyUnavailable": "Este filtro guardado no está disponible después de la migración al libro mayor. Mostrando todos los estudiantes."
+      },
+      "balanceSummary": {
+        "heading": "Saldo actual",
+        "noDebt": "Sin saldo pendiente.",
+        "unavailable": "No se pudo cargar el saldo actual."
+      },
+      "pendingReceipt": {
+        "heading": "Recibo pendiente",
+        "notice": "Se reportó un pago recibido y está en espera de liquidación — no es un pago completado.",
+        "referencesExisting": "Hace referencia a saldo existente",
+        "proposesCoverage": "Propone nueva cobertura"
+      },
+      "history": {
+        "heading": "Historial de pagos del libro mayor",
+        "empty": "Aún no hay pagos en el libro mayor.",
+        "unavailable": "No se pudo cargar el historial de pagos del libro mayor.",
+        "retry": "Reintentar",
+        "loadMore": "Cargar más",
+        "loading": "Cargando…",
+        "reversed": "Revertido",
+        "columnDate": "Fecha",
+        "columnAmount": "Monto",
+        "columnMethod": "Método",
+        "columnSettlements": "Cubre"
+      }
     }
   },
   "onboarding": {
