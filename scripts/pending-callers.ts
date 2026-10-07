@@ -333,6 +333,16 @@ const PENDING_CALLERS: PendingCaller[] = [
     reason:
       "A shared, batched, tenant-scoped READ model over the dues ledger — never a writer, never a transaction, never a lock. Separates three independent facts this ledger's own data conflates if read naively: coverage claimed (written at obligation-creation time, proves nothing about payment), an active settlement (the only real 'paid' fact), and outstanding debt (independent of current-period eligibility — an ARCHIVED/unassigned student's old unpaid obligations stay visible). A pending AwaitingRateReceipt decomposes into two independent components: referenced existing debt (already counted in `outstanding`, unmodified) and proposed-but-not-yet-created coverage (never merged into `outstanding`). Late-fee/grace facts are type-aware (MONTHLY only) and reuse `lateFeeToAssessMinor`'s own pure calculation directly — critically, NEVER called on a settled obligation (it would return the historical fee paid at settlement time, not a currently-owed figure). Two distinct function signatures, not one with a mode flag: `listDuesFactsForStudents` (staff, branch-scoped, a foreign-branch id silently excluded) and `getOwnDuesFacts` (self, no `studentIds` parameter at all — structurally cannot name another student). Gated by the identical `LedgerActivation` default every other ledger function uses; production returns `notActive`/`null` for every organization today.",
   },
+  // ROSTER-STUDENT-DETAIL-INTEGRATION-BRIEF.md PR 1. Like listDuesFactsForStudents/getOwnDuesFacts above, this one has
+  // ZERO callers of any kind today — no page, no action, no UI integration in this PR (the brief's later PRs wire it
+  // in). Listed anyway for the same reason every ledger reader/writer is: built ahead of its caller.
+  {
+    symbol: "listPaymentHistoryForStudent",
+    file: "src/lib/dues/payment-history-queries.ts (no callers yet — a read-only model with no UI integration in this PR)",
+    dueBy: "whenever the student-detail ledger-history section (the brief's later PRs) is built",
+    reason:
+      "A narrow, authorized, paginated ledger payment-history reader for one student. Self-validates tenant/branch scope internally (unlike get-payment-history.ts's trust-the-caller contract). Settlements are never filtered by reversedAt, unlike listReversiblePayments's own candidate list — a reversed payment keeps its full original settlement detail (obligation breakdown, which late fee it included, if any, by that settlement's own lateFeeId) exactly as it was at settlement time, reported alongside that fee's CURRENT removalKind (a separate, later-mutable fact). Cross-currency evidence is read directly off the DuesPayment row's own snapshotted fields, never re-joined against a possibly-since-corrected live quote. Amounts are derived via exact minor-unit arithmetic (columnToMinor/minorToDecimal), never lateFeeToAssessMinor (a different, present-tense question) and never floating-point Number() addition. Gated by the identical LedgerActivation default every other ledger function uses; production returns notActive for every organization today.",
+  },
 ];
 
 function main() {
