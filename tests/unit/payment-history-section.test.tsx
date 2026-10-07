@@ -45,6 +45,10 @@ const ROW_1 = {
 };
 const ROW_2 = { ...ROW_1, id: "pay-2", receivedOn: { year: 2030, month: 2, day: 15 } };
 const ROW_3 = { ...ROW_1, id: "pay-3", tenderAmount: "300.00", receivedOn: { year: 2030, month: 3, day: 15 } };
+// Unmistakably distinct from every other fixture row's own amount/date (never "100.00"/"200.00"/"300.00" and never
+// Jan/Feb/Mar 2030) — review fix: the stale row must be identifiable on its OWN content, not by a string ("$
+// 200.00") that no fixture row actually contains, which would pass vacuously regardless of whether the guard works.
+const STALE_ROW = { ...ROW_1, id: "pay-stale", tenderAmount: "275.00", receivedOn: { year: 2030, month: 5, day: 5 } };
 
 function sectionElement(props: Partial<React.ComponentProps<typeof PaymentHistorySection>> = {}) {
   return (
@@ -122,7 +126,7 @@ describe("PaymentHistorySection: props reconciliation (review fix)", () => {
   });
 
   it("a pending old load-more request cannot append after refreshed initial data replaces it", async () => {
-    const stale = deferred<{ ok: true; rows: typeof ROW_2[]; nextCursor: string | null }>();
+    const stale = deferred<{ ok: true; rows: typeof STALE_ROW[]; nextCursor: string | null }>();
     getPaymentHistoryPage.mockReturnValueOnce(stale.promise);
     const { rerender } = renderSection({ initialRows: [ROW_1], initialCursor: "cursor-1" });
 
@@ -136,11 +140,13 @@ describe("PaymentHistorySection: props reconciliation (review fix)", () => {
     expect(screen.queryByText("$ 100.00")).toBeNull();
     expect(screen.queryByText("Load more")).toBeNull(); // the refreshed cursor is null — nothing more to load
 
-    // The stale request finally resolves — its rows must never be appended onto the now-superseded snapshot.
-    stale.resolve({ ok: true, rows: [ROW_2], nextCursor: null });
+    // The stale request finally resolves — its own distinctly-identifiable row (never "100.00"/"200.00"/"300.00",
+    // never Jan/Feb/Mar 2030) must never append onto the now-superseded snapshot.
+    stale.resolve({ ok: true, rows: [STALE_ROW], nextCursor: null });
     await new Promise((r) => setTimeout(r, 0));
-    expect(screen.getByText("$ 300.00")).toBeTruthy();
-    expect(screen.queryByText("$ 200.00")).toBeNull();
+    expect(screen.getByText("$ 300.00")).toBeTruthy(); // the fresh row is still there
+    expect(screen.queryByText("$ 275.00")).toBeNull(); // the stale row's own amount never appeared
+    expect(screen.queryByText("2030-05-05")).toBeNull(); // nor its own date
     expect(screen.queryByText("Load more")).toBeNull();
   });
 
