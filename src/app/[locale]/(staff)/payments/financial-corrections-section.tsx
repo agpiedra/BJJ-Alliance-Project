@@ -81,6 +81,26 @@ import type { Currency, PaymentMethod } from "@/generated/prisma/client";
  *    discipline as round 2's own CI-caught `onUncertainChange` race fix (never derived via an effect watching
  *    `needsRefresh`, which is not guaranteed to flush before the next synchronous interaction). The student
  *    `<select>` itself is now `disabled` while `blockingCount > 0` — no confirm dialog, no abandon-uncertainty path.
+ *
+ * CORRECTION ROUND 4 (2 issues):
+ * 1. `reconcileStale` (the ONE write/recovery path round 3 missed) never reported itself blocking — a student switch
+ *    attempted while a `stale` reconciliation was in flight was never prevented. Its late-resolving `onResolved`
+ *    call then ran inside a STALE `handleRowResolved`/`refresh` closure pair (captured from the render where the OLD
+ *    student was still selected), merging the old student's own records into whatever the NEW student's lists had
+ *    since become. Fixed in three layers: (a) `reconcileStale` now reports blocking from its own start, same
+ *    discipline as every other path; (b) it also gained `mountedRef`-guarded cancellation (it has no `useEffect` of
+ *    its own to lean on, unlike the `needsRefresh` recovery effect, which already tracked a local `cancelled` flag);
+ *    (c) `handleRowResolved` itself now takes the student id the resolving row was rendered under and compares it
+ *    against `selectedStudentIdRef.current` (a `ref` — the SAME mutable object across every render, so even a STALE
+ *    closure reads the REAL current value) — a mismatch is silently ignored. Layer (c) is the actual structural
+ *    fix: it makes the cross-student merge impossible regardless of whether some future path reintroduces a gap
+ *    like (a)'s own.
+ * 2. `setConfirmedState(...)` followed immediately by `onResolved(id, true)` removed the resolving row from its list
+ *    in the SAME render cycle the confirmation was meant to paint in — the owner never actually saw "this fee was
+ *    voided and settled" before the row vanished. The outcome now also travels to the PARENT as `recentOutcomes`
+ *    (appended, never overwritten, so several resolutions each keep their own line), rendered OUTSIDE the
+ *    removed row, student-scoped (cleared on a student switch), surviving `refresh()` untouched. Reuses the exact
+ *    same direct-vs-observed, VOIDED-vs-WAIVED translation keys already established — only WHERE they render moved.
  */
 
 type Student = { id: string; firstName: string; lastName: string; academyId: string; academyName: string };
@@ -145,6 +165,17 @@ function mergePage<T extends { id: string }>(existing: T[], fresh: T[], blocking
  * component actually reads. Both settlement-total codes above populate it (`record-payment.ts`); nothing else does. */
 type RowError = { code: string; selectableTotals?: string[] };
 
+/** Correction round 4, issue 2: what a resolved row tells the parent about ITS OWN outcome, so the parent can render
+ * the exact same already-established copy (direct vs. recovery-observed, VOIDED vs. WAIVED) as persistent,
+ * student-scoped feedback AFTER the row itself has been removed from the list — never recomputed, just relocated. */
+type RowOutcome =
+  | { kind: "fee"; removalKind: "VOIDED" | "WAIVED"; source: "direct" | "recovery" }
+  | { kind: "payment"; source: "direct" | "recovery" };
+
+/** One entry in the parent's own `recentOutcomes` list — `rowId` keys it for React, everything else is `RowOutcome`
+ * verbatim. */
+type RecentOutcome = { rowId: string } & RowOutcome;
+
 export function FinancialCorrectionsSection({ organizationId, students }: { organizationId: string; students: Student[] }) {
   const t = useTranslations("payments.financialCorrections");
   const [selectedStudentId, setSelectedStudentId] = useState("");
@@ -165,6 +196,17 @@ export function FinancialCorrectionsSection({ organizationId, students }: { orga
   // as every other state-transition report in this file (never derived via an effect).
   const blockingIdsRef = useRef<Set<string>>(new Set());
   const [blockingCount, setBlockingCount] = useState(0);
+  // Correction round 4, issue 1: the CURRENT student, readable from inside a STALE closure. `selectedStudentId`
+  // itself is only correct from the render that captured it — a row's own async callback (e.g. `reconcileStale`)
+  // may still be holding a reference to an OLD `handleRowResolved`/`refresh` pair from a render where this was a
+  // DIFFERENT student. A `ref` is the same mutable object across every render, so reading `.current` from inside
+  // even a stale closure always sees the live value. Kept in sync in the ONE place `selectedStudentId` ever
+  // changes (`handleStudentChange`), not via an effect — no render-cycle lag.
+  const selectedStudentIdRef = useRef(selectedStudentId);
+  // Correction round 4, issue 2: persistent, student-scoped feedback for a row's own outcome — rendered OUTSIDE the
+  // row (which `handleRowResolved` removes from `fees`/`payments` in the same tick a direct success/observed-removal
+  // sets its own `confirmedState`, so the row's own in-row message never actually paints before it unmounts).
+  const [recentOutcomes, setRecentOutcomes] = useState<RecentOutcome[]>([]);
 
   function reportBlocking(id: string, blocking: boolean) {
     const had = blockingIdsRef.current.has(id);
@@ -266,6 +308,7 @@ export function FinancialCorrectionsSection({ organizationId, students }: { orga
    * `<select>` itself; this is defense-in-depth against a change event that somehow still fires. */
   function handleStudentChange(next: string) {
     if (blockingIdsRef.current.size > 0) return;
+    selectedStudentIdRef.current = next; // synchronous — see the ref's own doc comment above
     setSelectedStudentId(next);
   }
 
@@ -279,6 +322,7 @@ export function FinancialCorrectionsSection({ organizationId, students }: { orga
     setLoadingMorePayments(false);
     setLoadMoreFeesError(false);
     setLoadMorePaymentsError(false);
+    setRecentOutcomes([]); // correction round 4, issue 2: student-scoped — never carries over to a different student
     if (selectedStudentId) loadForStudent(selectedStudentId);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- re-fires only on an actual student change
   }, [selectedStudentId]);
@@ -288,11 +332,23 @@ export function FinancialCorrectionsSection({ organizationId, students }: { orga
    * synchronously here — no need to wait for or infer anything from a fresh fetch, and `refresh()`'s own merge never
    * drops a row by design (that's precisely what used to destroy sibling state, correction round 3's own fix) so
    * nothing else would ever remove it otherwise. `removed=false` (e.g. `alreadySettled` — this row's own operation
-   * did NOT commit, something else just changed) only triggers the background reconciliation below. */
-  function handleRowResolved(id: string, removed: boolean) {
+   * did NOT commit, something else just changed) only triggers the background reconciliation below.
+   *
+   * Correction round 4, issue 1: `forStudentId` is the student THIS ROW was rendered under (captured at its own
+   * render time, passed back verbatim) — compared against `selectedStudentIdRef.current` (the REAL current student,
+   * readable even from inside a stale closure). A mismatch means this callback is obsolete — the owner switched
+   * students after this row fired its own request but before the response landed — and is silently ignored: there
+   * is nothing in the CURRENT view that corresponds to a different student's row, no refresh, no removal.
+   *
+   * Correction round 4, issue 2: `outcome` (present only when `removed` is true) is what actually happened, in the
+   * exact shape the parent-level `recentOutcomes` feedback needs — appended, never replacing a prior entry, so
+   * several consecutive resolutions each keep their own visible confirmation. */
+  function handleRowResolved(id: string, removed: boolean, forStudentId: string | undefined, outcome?: RowOutcome) {
+    if (forStudentId !== selectedStudentIdRef.current) return;
     if (removed) {
       setFees((prev) => (prev ? prev.filter((f) => f.id !== id) : prev));
       setPayments((prev) => (prev ? prev.filter((p) => p.id !== id) : prev));
+      if (outcome) setRecentOutcomes((prev) => [...prev, { rowId: id, ...outcome }]);
     }
     refresh();
   }
@@ -325,6 +381,20 @@ export function FinancialCorrectionsSection({ organizationId, students }: { orga
         </div>
       )}
 
+      {/* Correction round 4, issue 2: persistent, student-scoped outcome feedback — survives the resolved row's own
+          removal. Reuses the exact same translation keys the row itself used to render inline, just relocated. */}
+      {recentOutcomes.length > 0 && (
+        <div className="flex flex-col gap-1">
+          {recentOutcomes.map((o) => (
+            <p key={o.rowId} role="status" className="text-sm text-ok">
+              {o.kind === "fee" && o.removalKind === "VOIDED" && t(o.source === "direct" ? "fee.outcome.voidedDirect" : "fee.outcome.voidedObserved")}
+              {o.kind === "fee" && o.removalKind === "WAIVED" && t(o.source === "direct" ? "fee.outcome.waivedDirect" : "fee.outcome.waivedObserved")}
+              {o.kind === "payment" && t(o.source === "direct" ? "payment.outcome.reversedDirect" : "payment.outcome.reversedObserved")}
+            </p>
+          ))}
+        </div>
+      )}
+
       {selectedStudentId && fees !== null && payments !== null && (
         <>
           <div className="flex flex-col gap-2">
@@ -333,7 +403,7 @@ export function FinancialCorrectionsSection({ organizationId, students }: { orga
             {fees.length > 0 && (
               <ul className="flex flex-col gap-3">
                 {fees.map((fee) => (
-                  <LateFeeRow key={fee.id} organizationId={organizationId} fee={fee} onResolved={handleRowResolved} onBlockingChange={reportBlocking} />
+                  <LateFeeRow key={fee.id} organizationId={organizationId} studentId={selectedStudentId} fee={fee} onResolved={handleRowResolved} onBlockingChange={reportBlocking} />
                 ))}
               </ul>
             )}
@@ -358,7 +428,7 @@ export function FinancialCorrectionsSection({ organizationId, students }: { orga
             {payments.length > 0 && (
               <ul className="flex flex-col gap-3">
                 {payments.map((payment) => (
-                  <PaymentRow key={payment.id} organizationId={organizationId} payment={payment} onResolved={handleRowResolved} onBlockingChange={reportBlocking} />
+                  <PaymentRow key={payment.id} organizationId={organizationId} studentId={selectedStudentId} payment={payment} onResolved={handleRowResolved} onBlockingChange={reportBlocking} />
                 ))}
               </ul>
             )}
@@ -399,17 +469,25 @@ type ConfirmedState = { kind: "removed"; removalKind: "VOIDED" | "WAIVED"; sourc
  * precedent), applied to a late fee's own two operations (correct, waive). */
 export function LateFeeRow({
   organizationId,
+  studentId,
   fee,
   onResolved,
   onBlockingChange,
 }: {
   organizationId: string;
+  /** Correction round 4, issue 1: the student this row was rendered under — captured at render time, passed back
+   * verbatim with every `onResolved` call so the parent can detect and ignore an obsolete callback (one firing after
+   * the owner has since switched to a different student). Optional for standalone row tests that don't care. */
+  studentId?: string;
   fee: CorrectableLateFeeRow;
   /** Correction round 3, issue 1: reports this row's own id and whether it was genuinely removed (voided/waived),
    * so the parent can drop it explicitly rather than inferring removal from a sibling's own background refresh
    * (which never drops a row itself, by design — see `refresh()`'s own doc comment). `removed=false` for a
-   * discovered-but-not-this-row's-doing change (e.g. `alreadySettled`) — only a background reconcile is warranted. */
-  onResolved: (id: string, removed: boolean) => void;
+   * discovered-but-not-this-row's-doing change (e.g. `alreadySettled`) — only a background reconcile is warranted.
+   * Correction round 4: `forStudentId` is this row's own `studentId` prop, echoed back (see that prop's own doc
+   * comment); `outcome` (present only when `removed` is true) is what the parent's persistent feedback needs to
+   * render the right copy after this row is gone (round 4, issue 2). */
+  onResolved: (id: string, removed: boolean, forStudentId: string | undefined, outcome?: RowOutcome) => void;
   /** Correction round 3, issue 3: reports this row's own blocking/not-blocking transitions to the parent — blocking
    * from the moment a write begins through either definitive completion or recovery resolution — so the parent can
    * disable the student selector and `refresh()` can freeze this row instead of dropping it. Optional — standalone
@@ -449,8 +527,20 @@ export function LateFeeRow({
   // raced and failed intermittently in CI. `onBlockingChange` is now called IMPERATIVELY at each exact mutation
   // point below, in the same synchronous handler/callback that sets the underlying state — never derived.
   // onBlockingChange is a fresh inline function every parent render; only fee.id identity should re-arm this cleanup.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => () => onBlockingChange?.(fee.id, false), [fee.id]); // unmount-only safety net
+  //
+  // Correction round 4, issue 1: `mountedRef` added to the SAME cleanup — `reconcileStale` (below) is a plain async
+  // function with no `useEffect` of its own to lean on for cancellation (unlike the `needsRefresh` effect, which
+  // already tracks its own local `cancelled` flag). If this row unmounts while `reconcileStale`'s own `await` is
+  // still pending, its late resolution must not call `setState`/`onResolved` on a component that's gone.
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      onBlockingChange?.(fee.id, false);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- onBlockingChange is a fresh inline function every parent render; only fee.id identity should re-arm this cleanup
+  }, [fee.id]); // unmount-only safety net
 
   useEffect(() => {
     if (!needsRefresh) return;
@@ -476,7 +566,7 @@ export function LateFeeRow({
         } else {
           setConfirmedState({ kind: "removed", removalKind: current.removalKind!, source: "recovery" });
           onBlockingChange?.(fee.id, false);
-          onResolved(fee.id, true);
+          onResolved(fee.id, true, studentId, { kind: "fee", removalKind: current.removalKind!, source: "recovery" });
         }
       })
       .catch(() => {
@@ -491,11 +581,20 @@ export function LateFeeRow({
   /** Correction round 2, issue 5: the promised "stale → safe refresh" reconciliation, actually implemented — an
    * explicit, owner-initiated re-fetch of THIS fee's own current revision (never automatic). Draft fields
    * (reason/amount/etc.) and `mode` are untouched; only `currentRevision` and `error` change. If the fee turns out
-   * to have been removed by someone else in the meantime, that's reported the same way `alreadyRemoved` already is. */
+   * to have been removed by someone else in the meantime, that's reported the same way `alreadyRemoved` already is.
+   *
+   * Correction round 4, issue 1: this used to be the ONE write/recovery path in the file that never reported itself
+   * blocking — a student switch attempted while this `await` was still pending was never prevented. Now reports
+   * blocking at the exact start (imperative, same discipline as every other path) and clears it on every exit.
+   * `mountedRef` guards every `setState`/`onResolved` call against a late resolution firing after this row has
+   * already unmounted (e.g. a future path that unmounts it some other way) — defense-in-depth alongside the
+   * blocking report and the parent's own `forStudentId` check in `handleRowResolved`. */
   async function reconcileStale() {
     setReconcilingStale(true);
+    onBlockingChange?.(fee.id, true);
     try {
       const current = await getLateFeeStatus(organizationId, fee.id);
+      if (!mountedRef.current) return;
       if (!current) {
         setError({ code: "notFound" });
         return;
@@ -505,12 +604,13 @@ export function LateFeeRow({
         setError(null);
       } else {
         setConfirmedState({ kind: "removed", removalKind: current.removalKind!, source: "recovery" });
-        onResolved(fee.id, true);
+        onResolved(fee.id, true, studentId, { kind: "fee", removalKind: current.removalKind!, source: "recovery" });
       }
     } catch {
       // Reconcile itself failed — leave the stale error exactly as shown; the same button remains to retry it.
     } finally {
-      setReconcilingStale(false);
+      onBlockingChange?.(fee.id, false);
+      if (mountedRef.current) setReconcilingStale(false);
     }
   }
 
@@ -536,13 +636,13 @@ export function LateFeeRow({
       if (result.ok) {
         setConfirmedState({ kind: "removed", removalKind: "VOIDED", source: "direct" });
         onBlockingChange?.(fee.id, false);
-        onResolved(fee.id, true);
+        onResolved(fee.id, true, studentId, { kind: "fee", removalKind: "VOIDED", source: "direct" });
       } else {
         setError({ code: result.error, selectableTotals: "selectableTotals" in result ? result.selectableTotals : undefined });
         // alreadySettled: the obligation this fee was blocking is now settled some other way — the correction never
         // committed (the whole transaction, including the provisional void, rolled back) — THIS fee is NOT removed,
         // but something else changed, so a background reconcile is still warranted.
-        if (result.error === "alreadySettled") onResolved(fee.id, false);
+        if (result.error === "alreadySettled") onResolved(fee.id, false, studentId);
         // alreadyRemoved is the one refusal here that enters the needsRefresh/recovery flow — stays blocking (its
         // own recovery resolution clears it); every OTHER refusal is definitive and known right now, so it's safe
         // to unblock immediately.
@@ -570,7 +670,7 @@ export function LateFeeRow({
       if (result.ok) {
         setConfirmedState({ kind: "removed", removalKind: "WAIVED", source: "direct" });
         onBlockingChange?.(fee.id, false);
-        onResolved(fee.id, true);
+        onResolved(fee.id, true, studentId, { kind: "fee", removalKind: "WAIVED", source: "direct" });
       } else {
         setError({ code: result.error });
         if (result.error !== "alreadyRemoved") onBlockingChange?.(fee.id, false);
@@ -717,14 +817,18 @@ type PaymentConfirmedState = { kind: "reversed"; source: "direct" | "recovery" }
  * with a specific named explanation, never hidden. */
 export function PaymentRow({
   organizationId,
+  studentId,
   payment,
   onResolved,
   onBlockingChange,
 }: {
   organizationId: string;
+  /** Correction round 4, issue 1 — `LateFeeRow`'s own exact counterpart. */
+  studentId?: string;
   payment: ReversiblePaymentRow;
-  /** Correction round 3, issue 1 — `LateFeeRow`'s own exact counterpart. */
-  onResolved: (id: string, removed: boolean) => void;
+  /** Correction round 3, issue 1 — `LateFeeRow`'s own exact counterpart. Correction round 4 — same `forStudentId`/
+   * `outcome` extension. */
+  onResolved: (id: string, removed: boolean, forStudentId: string | undefined, outcome?: RowOutcome) => void;
   onBlockingChange?: (id: string, blocking: boolean) => void;
 }) {
   const t = useTranslations("payments.financialCorrections");
@@ -764,7 +868,7 @@ export function PaymentRow({
         } else {
           setConfirmedState({ kind: "reversed", source: "recovery" });
           onBlockingChange?.(payment.id, false);
-          onResolved(payment.id, true);
+          onResolved(payment.id, true, studentId, { kind: "payment", source: "recovery" });
         }
       })
       .catch(() => {
@@ -789,7 +893,7 @@ export function PaymentRow({
       if (result.ok) {
         setConfirmedState({ kind: "reversed", source: "direct" });
         onBlockingChange?.(payment.id, false);
-        onResolved(payment.id, true);
+        onResolved(payment.id, true, studentId, { kind: "payment", source: "direct" });
       } else {
         setError({ code: result.error });
         if (result.error !== "alreadyReversed") onBlockingChange?.(payment.id, false);
