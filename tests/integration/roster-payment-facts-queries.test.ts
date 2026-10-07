@@ -183,8 +183,11 @@ describe("listRosterPaymentFacts: batching", () => {
     expect(cleanFact).toEqual({ ok: false });
   });
 
-  it("a genuinely successful chunk distinguishes real debt from a clean student", async () => {
+  it("a genuinely successful chunk distinguishes real debt from a clean student, and surfaces overlapping flags together", async () => {
     const debtStudent = await newStudent(a);
+    // Coverage month 2 of 2030, grace deadline ~2030-02-25 — NOW (2030-12-15) is long past it, so this single
+    // unsettled obligation is simultaneously "has debt" AND "a MONTHLY obligation past grace" — two independently
+    // true, overlapping flags from ONE fact, exactly as brief §3 decision 5 specifies (never mutually exclusive).
     await newObligation(debtStudent.id, 2);
     const cleanStudent = await newStudent(a);
 
@@ -197,8 +200,30 @@ describe("listRosterPaymentFacts: batching", () => {
     const cleanDisplay = toRosterLedgerDisplay(cleanFact.facts, cleanFact.todayIso);
     expect(debtDisplay.flags.debt).toBe(true);
     expect(debtDisplay.flags.noDebt).toBe(false);
+    expect(debtDisplay.flags.monthlyPastGrace).toBe(true); // the overlap: both flags true for the same student
     expect(cleanDisplay.flags.debt).toBe(false);
     expect(cleanDisplay.flags.noDebt).toBe(true);
+    expect(cleanDisplay.flags.monthlyPastGrace).toBe(false);
+  });
+
+  it("a settled obligation (even one that would otherwise be past grace) contributes no debt and no past-grace flag", async () => {
+    const student = await newStudent(a);
+    const obligationId = await newObligation(student.id, 3); // same far-past-grace shape as the test above
+    const { recordDuesPayment } = await import("../../src/lib/dues/ledger/record-payment");
+    const recorded = await recordDuesPayment(
+      { context: context(a), studentId: student.id, receivedOn: { year: 2030, month: 3, day: 20 }, tender: { currency: "USD", amount: "100.00" }, method: "EFECTIVO", obligationIds: [obligationId], maxBackdateDays: 365 },
+      deps(),
+    );
+    if (!recorded.ok) throw new Error("fixture payment failed");
+
+    const { byStudentId } = await listRosterPaymentFacts(context(a), [student.id], NOW, deps());
+    const fact = byStudentId.get(student.id);
+    if (!fact?.ok) throw new Error("expected ok fact");
+    const display = toRosterLedgerDisplay(fact.facts, fact.todayIso);
+    expect(display.flags.debt).toBe(false);
+    expect(display.flags.noDebt).toBe(true);
+    expect(display.flags.monthlyPastGrace).toBe(false);
+    expect(display.totals).toEqual([]);
   });
 });
 
