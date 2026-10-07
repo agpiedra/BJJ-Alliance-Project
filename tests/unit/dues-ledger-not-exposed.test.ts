@@ -44,7 +44,13 @@ import { productionSourceFiles, stripComments } from "../helpers/source-files";
  *     `purchasePackageWithSubmissionIdentity`, never passing a `deps` override), and
  *     `src/app/[locale]/(staff)/payments/package-purchase-section.tsx` (imports only `decimalToMinor` from
  *     `ledger/minor-units.ts` — pure, prisma-free arithmetic, never a writer call) are the three new importers the
- *     package-purchase UI brief adds.
+ *     package-purchase UI brief adds. `src/lib/dues/financial-corrections-queries.ts` (plain reads; imports
+ *     `versionRevision` from `config-input.ts` and `inTenantScope` from `ledger/common.ts`, never a writer — the
+ *     late-fee/payment selection and recovery reads) and `src/lib/dues/financial-corrections-actions.ts` (a thin
+ *     "use server" wrapper around `correctLateFeeAndSettle`/`reversePayment`/`waiveLateFee`, never passing a `deps`
+ *     override) are the two new importers the owner financial-corrections UI brief adds — its own section component
+ *     imports neither the ledger nor `ledger/minor-units.ts` directly, so it needs no entry here, unlike the
+ *     package/prepayment cards.
  *  2. They are plain library functions: no `"use server"` (which would make an exported function an invocable endpoint), no route, no
  *     client component.
  *  3. They are registered in `scripts/pending-callers.ts`, the repo's list of code built ahead of its caller.
@@ -74,6 +80,8 @@ const AUTHORIZED_CALLERS = [
   "src/lib/dues/prepayment-queries.ts",
   "src/lib/dues/prepayment-actions.ts",
   "src/app/[locale]/(staff)/payments/prepayment-section.tsx",
+  "src/lib/dues/financial-corrections-queries.ts",
+  "src/lib/dues/financial-corrections-actions.ts",
 ];
 
 describe("the ledger writers are not reachable from production code", () => {
