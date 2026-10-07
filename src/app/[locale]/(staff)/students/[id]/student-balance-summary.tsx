@@ -1,7 +1,10 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Pill } from "@/components/ui/pill";
 import { formatMoney } from "@/lib/payments/format-money";
-import { minorToDecimal, type RosterLedgerDisplay, type DuesPendingReceiptFact } from "@/lib/dues/roster-payment-facts-queries";
+// Pure, prisma-free arithmetic (no DB dependency) — same exception already established for
+// `package-purchase-section.tsx`'s own `decimalToMinor` import; see `dues-ledger-not-exposed.test.ts`.
+import { minorToDecimal } from "@/lib/dues/ledger/minor-units";
+import type { RosterLedgerDisplay, DuesPendingReceiptFact } from "@/lib/dues/roster-payment-facts-queries";
 
 /**
  * ROSTER-STUDENT-DETAIL-INTEGRATION-BRIEF.md §2.3/§3 decision 2: a current-balance summary ALONGSIDE the existing

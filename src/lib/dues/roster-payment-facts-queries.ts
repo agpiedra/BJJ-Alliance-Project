@@ -3,15 +3,11 @@ import type { TenantContext } from "@/lib/tenant/types";
 import { inactiveLedgerActivation, type LedgerDeps } from "@/lib/dues/ledger/activation";
 import { listDuesFactsForStudents, type DuesFactsForStudent, type DuesPendingReceiptFact } from "@/lib/dues/ledger/dues-facts";
 import { todayIn } from "@/lib/dues/ledger/common";
-import { minorToDecimal } from "@/lib/dues/ledger/minor-units";
 import type { Currency } from "@/generated/prisma/client";
 
-// Re-exported so neither page/component needs its own direct (even type-only, or a pure-arithmetic helper) import
-// from `dues/ledger` — `tests/unit/dues-ledger-not-exposed.test.ts`'s own `IMPORTS_LEDGER` regex matches any import
-// string containing that substring regardless of what's imported (see `payment-entry-recovery.ts`'s own precedent
-// for the type-only case).
+// Type-only re-export (erased at compile time — unlike a value import, this does NOT pull this module's own
+// `prisma` import into a consumer, which matters for component unit tests that never connect to a real database).
 export type { DuesPendingReceiptFact };
-export { minorToDecimal };
 
 /**
  * ROSTER-STUDENT-DETAIL-INTEGRATION-BRIEF.md §2.2/§2.4: a plain, never-"use server" read wrapper over

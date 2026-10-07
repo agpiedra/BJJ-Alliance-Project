@@ -1,6 +1,9 @@
 import { Pill } from "@/components/ui/pill";
 import { formatMoney } from "@/lib/payments/format-money";
-import { minorToDecimal, type RosterLedgerDisplay } from "@/lib/dues/roster-payment-facts-queries";
+// Pure, prisma-free arithmetic (no DB dependency) — same exception already established for
+// `package-purchase-section.tsx`'s own `decimalToMinor` import; see `dues-ledger-not-exposed.test.ts`.
+import { minorToDecimal } from "@/lib/dues/ledger/minor-units";
+import type { RosterLedgerDisplay } from "@/lib/dues/roster-payment-facts-queries";
 
 /**
  * ROSTER-STUDENT-DETAIL-INTEGRATION-BRIEF.md §3 decision 1: per-currency outstanding totals, fee already folded
