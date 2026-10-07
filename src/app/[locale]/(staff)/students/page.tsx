@@ -36,7 +36,13 @@ import { isOverdue } from "@/lib/payments/overdue";
 import type { ContactPaymentStatus } from "@/lib/students/contact-list";
 import { parseTrack } from "@/lib/students/parse-track";
 import { ZONE } from "@/lib/scheduling/zone";
-import { isLedgerActiveForOrg, listRosterPaymentFacts, toRosterLedgerDisplay, type RosterLedgerDisplay } from "@/lib/dues/roster-payment-facts-queries";
+import {
+  isLedgerActiveForOrg,
+  listRosterPaymentFacts,
+  toRosterLedgerDisplay,
+  matchesActiveLedgerFilters,
+  type RosterLedgerEntry,
+} from "@/lib/dues/roster-payment-facts-queries";
 import { RosterLedgerStatus, RosterLedgerUnavailable } from "./roster-ledger-status";
 
 // §2.2.1/§3 decision 5: decision 5 approved a NEW, independent ledger flag set — it did NOT approve a mapping FROM
@@ -228,8 +234,7 @@ export default async function StudentsPage({
   // §2.2: batched (ceil(N/60) calls, bounded concurrency, one shared `now`) — replaces the per-student
   // `getCurrentPaymentPeriod` loop above ONLY when the ledger is active for this organization. A chunk failure or a
   // missing per-student entry renders as a distinct "unavailable" flag, never "paid"/"no debt".
-  type LedgerDisplayEntry = { kind: "ledger"; display: RosterLedgerDisplay } | { kind: "unavailable" };
-  const ledgerDisplayByStudentId = new Map<string, LedgerDisplayEntry>();
+  const ledgerDisplayByStudentId = new Map<string, RosterLedgerEntry>();
   if (ledgerActive) {
     const { byStudentId } = await listRosterPaymentFacts(context, students.map((s) => s.id), now.toJSDate());
     for (const student of students) {
@@ -254,14 +259,7 @@ export default async function StudentsPage({
   // task's own guidance for this app's scale — it's a plain post-filter over
   // the roster already fetched, not a schema/query change.
   const filteredStudents = ledgerActive
-    ? students.filter((student) => {
-        const entry = ledgerDisplayByStudentId.get(student.id);
-        // An unavailable row is never silently counted as matching OR not-matching any filter — its own
-        // unavailability is itself the visible state, always shown regardless of which filters are active.
-        if (!entry || entry.kind === "unavailable") return true;
-        if (activeLedgerFilters.size === 0) return true;
-        return [...activeLedgerFilters].some((key) => entry.display.flags[key]);
-      })
+    ? students.filter((student) => matchesActiveLedgerFilters(ledgerDisplayByStudentId.get(student.id) ?? { kind: "unavailable" }, activeLedgerFilters))
     : legacyPaymentParam
       ? students.filter((student) => rosterExtrasByStudentId.get(student.id)?.paymentStatus === legacyPaymentParam)
       : students;
@@ -460,6 +458,12 @@ export default async function StudentsPage({
         </form>
 
         <CardContent className="pt-4">
+          {/* §3 decision 5: the checkboxes OR together (any one match is enough) — explained explicitly here
+              rather than left for staff to infer from how multiple selections behave in practice. */}
+          {ledgerActive && <p className="mb-2 text-xs text-muted-foreground">{t("ledger.filters.combineHint")}</p>}
+          {/* Corrected wording (review fix): "not applied" is the only honest claim — it must never also claim
+              "all students are shown," which is false whenever another ledger filter is active alongside the
+              dropped legacy one. */}
           {showLegacyBookmarkNotice && <p className="mb-3 text-sm text-muted-foreground">{t("ledger.filters.legacyUnavailable")}</p>}
           {sortedStudents.length === 0 ? (
             <EmptyState message={t("empty")} />

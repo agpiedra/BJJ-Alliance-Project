@@ -57,6 +57,11 @@ export function StudentBalanceSummary({
             <p className="text-sm text-muted-foreground">{t("ledger.pendingReceipt.notice")}</p>
             {pendingReceipts.map((receipt) => (
               <div key={receipt.receiptId} className="flex flex-wrap items-center gap-2 text-sm">
+                {/* A malformed/mismatched stored snapshot (`error: "snapshotIntegrityFailure"`) must never render as
+                    a receipt with zero components — that would be indistinguishable from one that genuinely
+                    references nothing. The receipt's own identity (key) and raw tender facts (below) stay
+                    trustworthy either way; only its debt/proposed-coverage DECOMPOSITION is unknown here. */}
+                {!receipt.ok && <Pill variant="warn">{t("ledger.pendingReceipt.integrityUnavailable")}</Pill>}
                 {receipt.ok && receipt.referencedExistingObligationIds.length > 0 && (
                   <Pill variant="plain">{t("ledger.pendingReceipt.referencesExisting")}</Pill>
                 )}

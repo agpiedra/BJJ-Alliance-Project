@@ -80,4 +80,17 @@ describe("StudentBalanceSummary", () => {
     expect(screen.queryByText(/settled/i)).toBeNull();
     expect(screen.queryByText(/confirmed/i)).toBeNull();
   });
+
+  it("a malformed/mismatched stored snapshot (snapshotIntegrityFailure) shows a distinct warning, preserves the tender facts, and never implies a known decomposition", () => {
+    renderSummary(null, [
+      { ok: false, receiptId: "r3", kind: "ORDINARY", tenderCurrency: "USD", tenderAmountMinor: 15000, error: "snapshotIntegrityFailure" },
+    ]);
+    expect(screen.getByText("Receipt details unavailable")).toBeTruthy();
+    // The raw tender fact stays trustworthy and visible even though the decomposition is unknown.
+    expect(screen.getByText("$ 150.00")).toBeTruthy();
+    // Never silently rendered as a receipt with zero components (which would look identical to one that
+    // genuinely references nothing) — neither Component A nor Component B pill appears for this receipt.
+    expect(screen.queryByText("References existing debt")).toBeNull();
+    expect(screen.queryByText("Proposes new coverage")).toBeNull();
+  });
 });

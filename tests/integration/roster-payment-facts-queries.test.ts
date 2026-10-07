@@ -12,7 +12,10 @@ import { listRosterPaymentFacts, toRosterLedgerDisplay } from "../../src/lib/due
 /**
  * ROSTER-STUDENT-DETAIL-INTEGRATION-BRIEF.md §7: real-DB tests for the batched roster facts wrapper — query-count
  * (ceil(N/60)), bounded concurrency, shared-instant, mixed-status/fail-closed rendering, currency-separated totals
- * (fee folded once), and the five approved independent filter flags.
+ * (fee folded once), and all six approved independent filter flags (debt/noDebt/monthlyPastGrace were already
+ * covered here; signupPastDue/pendingConversion/configIssue are the review-fix addition closing that gap — their
+ * CONSUMER filtering behavior, i.e. the roster page's own OR-matching, is covered separately in
+ * tests/unit/roster-ledger-filter-match.test.ts against the real `matchesActiveLedgerFilters` export).
  */
 const prisma = getTestPrismaClient();
 type Fixture = Awaited<ReturnType<typeof makeAccountingOrg>>;
@@ -25,6 +28,7 @@ let a: Fixture;
 let otherTzAcademy: { id: string; timezone: string };
 const terms: Record<string, { id: string }> = {};
 const feePolicy: Record<string, { id: string }> = {};
+const plans: Record<string, { id: string }> = {};
 
 function context(org: Fixture, over: Partial<TenantContext> = {}): TenantContext {
   return { kind: "tenant", actorUserId: org.admin.id, organizationId: org.org.id, organizationRole: "ADMIN", academyIds: "ALL", selfStudentId: null, linkedStudentId: null, ...over };
@@ -52,11 +56,40 @@ async function newObligation(studentId: string, month: number, academyId = a.aca
 
 async function seedPlanAndPolicy(academyId: string) {
   const plan = await prisma.paymentPlan.create({ data: { organizationId: a.org.id, academyId, name: `RosterFacts plan ${suffix}-${academyId}` } });
+  plans[academyId] = plan;
   terms[academyId] = await prisma.paymentPlanTerms.create({
     data: { organizationId: a.org.id, planId: plan.id, effectiveYear: 2030, effectiveMonth: 1, priceAmount: "100.00", currency: "USD", monthsCovered: 1, createdById: a.admin.id },
   });
   feePolicy[academyId] = await prisma.duesPolicyVersion.create({
     data: { organizationId: a.org.id, academyId, effectiveYear: 2030, effectiveMonth: 1, dueDay: 20, graceDay: 5, lateFeeAmount: "20.00", lateFeeCurrency: "USD", createdById: a.admin.id },
+  });
+}
+
+async function assign(studentId: string, planId: string, effectiveYear: number, effectiveMonth: number) {
+  return prisma.studentPlanAssignment.create({ data: { organizationId: a.org.id, studentId, planId, effectiveYear, effectiveMonth, createdById: a.admin.id } });
+}
+
+async function statusActive(studentId: string, effectiveOn: Date) {
+  return prisma.studentStatusChange.create({ data: { organizationId: a.org.id, studentId, status: "ACTIVE", effectiveOn, sequence: 1, source: "EVENT", actorId: a.admin.id } });
+}
+
+async function createSignupObligation(studentId: string, dueOn: Date, academyId = a.academy.id) {
+  return prisma.duesObligation.create({
+    data: {
+      organizationId: a.org.id, studentId, academyId, origin: "STAFF", type: "SIGNUP",
+      coverageYear: 2030, coverageMonth: 1, monthsCovered: 1, amount: "50.00", currency: "USD",
+      dueOn, graceDeadline: null, lateFeeAmount: null, planTermsId: terms[academyId].id, policyVersionId: null, createdById: a.admin.id,
+    },
+  });
+}
+
+async function createReceipt(studentId: string, snapshot: unknown, academyId = a.academy.id) {
+  return prisma.awaitingRateReceipt.create({
+    data: {
+      organizationId: a.org.id, studentId, academyId, kind: "ORDINARY", status: "PENDING",
+      receivedOn: new Date("2030-01-01"), tenderCurrency: "CRC", tenderAmount: "100.00", method: "EFECTIVO",
+      capturedAt: new Date("2030-01-01"), capturedById: a.admin.id, snapshot: snapshot as object,
+    },
   });
 }
 
@@ -78,7 +111,7 @@ async function cleanupLedgerRows(org: Fixture) {
   await prisma.$transaction(
     async (tx) => {
       await tx.$executeRawUnsafe("SET LOCAL session_replication_role = replica");
-      for (const table of ["DuesSettlement", "DuesPayment", "DuesLateFee", "DuesCoverage", "DuesObligation", "ExchangeRateQuote"]) {
+      for (const table of ["AwaitingRateReceipt", "DuesSettlement", "DuesPayment", "DuesLateFee", "DuesCoverage", "DuesObligation", "ExchangeRateQuote", "StudentStatusChange", "StudentPlanAssignment"]) {
         await tx.$executeRawUnsafe(`DELETE FROM "${table}" WHERE "organizationId" = $1`, org.org.id);
       }
     },
@@ -251,5 +284,44 @@ describe("toRosterLedgerDisplay: currency-separated totals, fee folded exactly o
     const empty = toRosterLedgerDisplay({ studentId: "x", eligibility: { outcome: "NOT_ELIGIBLE" }, outstanding: [], coverage: [], pendingReceipts: [] }, "2030-01-01");
     expect(empty.totals).toEqual([]);
     expect(empty.flags.noDebt).toBe(true);
+  });
+});
+
+describe("toRosterLedgerDisplay: the three previously-untested flags (review fix: close the agreed verification gap)", () => {
+  it("signupPastDue: an unsettled SIGNUP obligation past its own dueOn sets the flag, independent of eligibility (SIGNUP's pastGrace is always null)", async () => {
+    const student = await newStudent(a);
+    await createSignupObligation(student.id, new Date("2030-01-01")); // long before NOW (2030-12-15)
+    const { byStudentId } = await listRosterPaymentFacts(context(a), [student.id], NOW, deps());
+    const fact = byStudentId.get(student.id);
+    if (!fact?.ok) throw new Error("expected ok fact");
+    const display = toRosterLedgerDisplay(fact.facts, fact.todayIso);
+    expect(display.flags.signupPastDue).toBe(true);
+    expect(display.flags.debt).toBe(true); // still unsettled, contributing a currency total too
+    expect(display.flags.monthlyPastGrace).toBe(false); // SIGNUP never acquires the MONTHLY-only flag
+  });
+
+  it("pendingConversion: a PENDING awaiting-rate receipt sets the flag — true for a genuine receipt regardless of its own ok/snapshotIntegrityFailure status", async () => {
+    const student = await newStudent(a);
+    const obligationId = await newObligation(student.id, 4);
+    await createReceipt(student.id, { kind: "ORDINARY", obligationIds: [obligationId] });
+    const { byStudentId } = await listRosterPaymentFacts(context(a), [student.id], NOW, deps());
+    const fact = byStudentId.get(student.id);
+    if (!fact?.ok) throw new Error("expected ok fact");
+    const display = toRosterLedgerDisplay(fact.facts, fact.todayIso);
+    expect(display.flags.pendingConversion).toBe(true);
+  });
+
+  it("configIssue: eligible + assigned + configured, but no MONTHLY exists yet for the resolved period (OBSERVED_DISCREPANCY) sets the flag", async () => {
+    const student = await newStudent(a);
+    await statusActive(student.id, new Date("2029-12-01"));
+    await assign(student.id, plans[a.academy.id].id, 2029, 12);
+    // No MONTHLY obligation and no DuesCoverage row for this student at all — NOW's own resolved "today" month
+    // (2030-12, branch-local) has nothing covering it, which is exactly OBSERVED_DISCREPANCY's own condition.
+    const { byStudentId } = await listRosterPaymentFacts(context(a), [student.id], NOW, deps());
+    const fact = byStudentId.get(student.id);
+    if (!fact?.ok) throw new Error("expected ok fact");
+    expect(fact.facts.eligibility).toEqual({ outcome: "OBSERVED_DISCREPANCY" });
+    const display = toRosterLedgerDisplay(fact.facts, fact.todayIso);
+    expect(display.flags.configIssue).toBe(true);
   });
 });

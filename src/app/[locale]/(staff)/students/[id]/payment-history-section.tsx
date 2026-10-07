@@ -47,6 +47,33 @@ export function PaymentHistorySection({
   const [loadMoreError, setLoadMoreError] = useState(false);
   const requestRef = useRef(0);
 
+  // Review fix: a parent re-render (e.g. a correction/reversal elsewhere revalidated this route while the
+  // component stayed mounted) hands this component a brand-new `initialRows`/`initialCursor`/`initialFailed` —
+  // react to it rather than keeping whatever this component's own `loadMore` had accumulated. Comparing by
+  // REFERENCE (not deep equality) is correct, not a shortcut: every one of these props is freshly produced by a
+  // real server render and never recreated by this component's own re-renders, so a reference change here always
+  // means genuinely new server data. Bumping `requestRef` invalidates any "load more" request already in flight —
+  // its eventual response is then discarded by the same `requestRef.current !== requestId` check `loadMore` already
+  // used for the ordinary "newer request superseded an older one" case, so a stale response can never append onto
+  // a now-superseded snapshot. Setting state conditionally during render (not in an effect) is the documented React
+  // pattern for "reset state when a prop changes" — it re-renders with the synced state before anything commits.
+  const lastSyncedProps = useRef({ organizationId, studentId, initialRows, initialCursor, initialFailed });
+  const prevProps = lastSyncedProps.current;
+  if (
+    prevProps.organizationId !== organizationId ||
+    prevProps.studentId !== studentId ||
+    prevProps.initialRows !== initialRows ||
+    prevProps.initialCursor !== initialCursor ||
+    prevProps.initialFailed !== initialFailed
+  ) {
+    lastSyncedProps.current = { organizationId, studentId, initialRows, initialCursor, initialFailed };
+    requestRef.current++;
+    setRows(initialRows);
+    setCursor(initialCursor);
+    setLoadMoreError(false);
+    setLoading(false);
+  }
+
   async function loadMore() {
     if (!cursor || loading) return;
     const requestId = ++requestRef.current;
@@ -105,26 +132,42 @@ export function PaymentHistorySection({
                     <DataTableCell>
                       <div className="flex flex-col">
                         <span>{formatMoney(Number(row.tenderAmount), row.tenderCurrency, locale)}</span>
+                        {/* PR #95's own Gap C: cross-currency evidence snapshotted on the payment row at settlement
+                            time — revision/rounding surfaced as stored, never recomputed against the (possibly
+                            since-corrected) live quote. */}
                         {row.conversion && (
                           <span className="text-[11px] text-muted-foreground">
                             @ {row.conversion.appliedRateValue} ({row.conversion.appliedRateQuoteDate.year}-
                             {String(row.conversion.appliedRateQuoteDate.month).padStart(2, "0")}-
-                            {String(row.conversion.appliedRateQuoteDate.day).padStart(2, "0")})
+                            {String(row.conversion.appliedRateQuoteDate.day).padStart(2, "0")}, rev{" "}
+                            {row.conversion.appliedRateRevision}, {row.conversion.appliedRoundingRule})
                           </span>
                         )}
+                        {row.notes && <span className="text-[11px] text-muted-foreground italic">{row.notes}</span>}
                       </div>
                     </DataTableCell>
                     <DataTableCell>{row.method}</DataTableCell>
                     <DataTableCell>
                       <div className="flex flex-col gap-1">
                         {row.settlements.map((s) => (
-                          <div key={s.id} className="whitespace-nowrap">
-                            {s.coverageYear}-{String(s.coverageMonth).padStart(2, "0")} {s.obligationType} —{" "}
-                            {formatMoney(Number(s.totalAmount), s.currency, locale)}
-                            {s.lateFee && s.lateFee.removalKind && (
-                              <Badge variant="outline" className="ml-1">
-                                {s.lateFee.removalKind}
-                              </Badge>
+                          <div key={s.id} className="flex flex-col whitespace-nowrap">
+                            <span>
+                              {s.coverageYear}-{String(s.coverageMonth).padStart(2, "0")} {s.obligationType} —{" "}
+                              {s.lateFee
+                                ? t("ledger.history.principalAndFee", {
+                                    principal: formatMoney(Number(s.principalAmount), s.currency, locale),
+                                    fee: formatMoney(Number(s.lateFee.amount), s.currency, locale),
+                                    total: formatMoney(Number(s.totalAmount), s.currency, locale),
+                                  })
+                                : formatMoney(Number(s.totalAmount), s.currency, locale)}
+                            </span>
+                            {/* Gap B (PR #95): `removalKind` is the referenced fee's CURRENT, separately-mutable
+                                state — never a claim that THIS settlement itself waived/voided anything. The
+                                principal/fee breakdown above is the unchanged historical fact. */}
+                            {s.lateFee?.removalKind && (
+                              <span className="text-[11px] text-muted-foreground">
+                                {t("ledger.history.feeCurrentState", { state: t(`ledger.history.removalKind.${s.lateFee.removalKind}`) })}
+                              </span>
                             )}
                           </div>
                         ))}

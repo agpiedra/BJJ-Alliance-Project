@@ -127,6 +127,22 @@ export type RosterLedgerFlags = {
 
 export type RosterLedgerDisplay = { totals: CurrencyTotal[]; flags: RosterLedgerFlags };
 
+export type RosterLedgerEntry = { kind: "ledger"; display: RosterLedgerDisplay } | { kind: "unavailable" };
+
+/**
+ * The approved OR semantics (brief §3 decision 5: "independently-true, overlapping flags"): any ONE checked filter
+ * matching is enough to include a student — never AND. An `unavailable` entry (a failed read) is always shown
+ * regardless of which filters are active; its own unavailability is itself the visible state, never silently
+ * counted as matching OR excluded. Extracted as a plain, exported, DB-free function so this exact matching rule —
+ * including the signupPastDue/pendingConversion/configIssue flags, previously only exercised indirectly — is
+ * directly unit-testable without a page render or a database.
+ */
+export function matchesActiveLedgerFilters(entry: RosterLedgerEntry, activeFilters: ReadonlySet<keyof RosterLedgerFlags>): boolean {
+  if (entry.kind === "unavailable") return true;
+  if (activeFilters.size === 0) return true;
+  return [...activeFilters].some((key) => entry.display.flags[key]);
+}
+
 /**
  * Brief §3 decision 1/5: per-currency unsettled totals (fee already folded into `outstandingAmountMinor` by
  * `dues-facts.ts` itself — never added again here) plus the five approved independent filter flags. `todayIso` must

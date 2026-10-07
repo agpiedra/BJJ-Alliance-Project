@@ -856,7 +856,8 @@
         "pendingConversion": "Pending conversion",
         "configIssue": "Configuration issue",
         "apply": "Apply filters",
-        "legacyUnavailable": "This bookmarked payment filter isn't available after the ledger cutover. Showing all students instead."
+        "combineHint": "Checking more than one shows students matching any of the selected filters, not all of them.",
+        "legacyUnavailable": "This bookmarked payment filter is not available after the ledger cutover and was not applied. Any other filters selected below are still in effect."
       },
       "balanceSummary": {
         "heading": "Current balance",
@@ -867,7 +868,8 @@
         "heading": "Pending receipt",
         "notice": "Money was reported received and is awaiting settlement — not a completed payment.",
         "referencesExisting": "References existing debt",
-        "proposesCoverage": "Proposes new coverage"
+        "proposesCoverage": "Proposes new coverage",
+        "integrityUnavailable": "Receipt details unavailable"
       },
       "history": {
         "heading": "Ledger payment history",
@@ -880,7 +882,13 @@
         "columnDate": "Date",
         "columnAmount": "Amount",
         "columnMethod": "Method",
-        "columnSettlements": "Covers"
+        "columnSettlements": "Covers",
+        "principalAndFee": "{principal} + {fee} fee = {total}",
+        "feeCurrentState": "Included fee is now {state}",
+        "removalKind": {
+          "WAIVED": "waived",
+          "VOIDED": "voided"
+        }
       }
     }
   },
