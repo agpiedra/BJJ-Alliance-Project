@@ -78,9 +78,15 @@ export interface PaymentHistoryRow {
 }
 
 /**
- * Brief §7: three distinct outcomes, never collapsed into one another — `notActive` (the ledger isn't live for
- * this organization), a genuinely empty success (`ok: true, rows: []`, e.g. no payments yet, or a student outside
- * this caller's own scope), and a read failure (`ok: false, error: "invalid"` — malformed input).
+ * Brief §7: distinct outcomes, never collapsed into one another — `notActive` (the ledger isn't live for this
+ * organization), a genuinely empty success (`ok: true, rows: []`, e.g. no payments yet, or a student outside this
+ * caller's own scope), and `ok: false, error: "invalid"` for malformed INPUT (caught by `isNonBlankString` before
+ * any database access is attempted).
+ *
+ * This union has no member for an operational database failure. A real rejection from the underlying read (a
+ * connection error, a transient failure) is NOT caught and converted into any typed result here — it propagates
+ * as a rejected promise, exactly like any other unhandled `await` in this codebase. Callers that need a typed
+ * outcome for that case must catch it themselves; this function's own contract has never promised otherwise.
  */
 export type PaymentHistoryResult = { ok: true; rows: PaymentHistoryRow[]; nextCursor: string | null } | { ok: false; error: "invalid" | "notActive" };
 

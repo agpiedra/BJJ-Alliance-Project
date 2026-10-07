@@ -1,6 +1,7 @@
 import "dotenv/config";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { getTestPrismaClient } from "../helpers/test-db";
+import { prisma as appPrisma } from "../../src/lib/prisma";
 import { makeAccountingOrg } from "../helpers/accounting-org";
 import type { TenantContext } from "../../src/lib/tenant/types";
 import { createMonthlyObligation } from "../../src/lib/dues/ledger/create-monthly-obligation";
@@ -30,11 +31,10 @@ const deps = (extra: Record<string, unknown> = {}) => ({ activation: ACTIVE, now
 let a: Fixture;
 let b: Fixture;
 let otherAcademy: { id: string };
+let otherTerms: { id: string };
+let otherPolicy: { id: string };
 const terms: Record<string, { id: string }> = {};
 const feePolicy: Record<string, { id: string }> = {};
-let crcAcademy: { id: string };
-let crcTerms: { id: string };
-let crcPolicy: { id: string };
 
 function context(org: Fixture, over: Partial<TenantContext> = {}): TenantContext {
   return { kind: "tenant", actorUserId: org.admin.id, organizationId: org.org.id, organizationRole: "ADMIN", academyIds: "ALL", selfStudentId: null, linkedStudentId: null, ...over };
@@ -95,17 +95,15 @@ beforeAll(async () => {
   await seedPlanAndPolicy(b);
   otherAcademy = await prisma.academy.create({ data: { organizationId: a.org.id, name: "PmtHist other branch", slug: `pmthist-other-${suffix}`, kioskTokenHash: `pmthist-other-${suffix}` } });
 
-  // A SEPARATE academy for the CRC-currency fixtures: `DuesPolicyVersion` is unique on (academyId, effectiveYear,
-  // effectiveMonth), and `latestEffective` resolution is scoped per academy, so a CRC policy sharing `a.academy.id`
-  // would compete with `seedPlanAndPolicy`'s own USD policy for "latest effective" — a separate branch sidesteps that
-  // entirely, matching `dues-currency-settlement.test.ts`'s own established fixture shape.
-  crcAcademy = await prisma.academy.create({ data: { organizationId: a.org.id, name: "PmtHist CRC branch", slug: `pmthist-crc-${suffix}`, kioskTokenHash: `pmthist-crc-${suffix}` } });
-  const crcPlan = await prisma.paymentPlan.create({ data: { organizationId: a.org.id, academyId: crcAcademy.id, name: `PmtHist CRC plan ${suffix}` } });
-  crcTerms = await prisma.paymentPlanTerms.create({
-    data: { organizationId: a.org.id, planId: crcPlan.id, effectiveYear: 2027, effectiveMonth: 1, priceAmount: "50000.00", currency: "CRC", monthsCovered: 1, createdById: a.admin.id },
+  // `otherAcademy`'s own plan/policy: `createMonthlyObligation` refuses `inapplicable` when the plan's own
+  // academyId doesn't match the student's home academy, so a student homed here needs fixtures scoped to THIS
+  // academy, not org `a`'s own default (`a.academy.id`-scoped) plan.
+  const otherPlan = await prisma.paymentPlan.create({ data: { organizationId: a.org.id, academyId: otherAcademy.id, name: `PmtHist other plan ${suffix}` } });
+  otherTerms = await prisma.paymentPlanTerms.create({
+    data: { organizationId: a.org.id, planId: otherPlan.id, effectiveYear: 2030, effectiveMonth: 1, priceAmount: "100.00", currency: "USD", monthsCovered: 1, createdById: a.admin.id },
   });
-  crcPolicy = await prisma.duesPolicyVersion.create({
-    data: { organizationId: a.org.id, academyId: crcAcademy.id, effectiveYear: 2027, effectiveMonth: 1, dueDay: 20, graceDay: 5, lateFeeAmount: "10000.00", lateFeeCurrency: "CRC", createdById: a.admin.id },
+  otherPolicy = await prisma.duesPolicyVersion.create({
+    data: { organizationId: a.org.id, academyId: otherAcademy.id, effectiveYear: 2030, effectiveMonth: 1, dueDay: 20, graceDay: 5, lateFeeAmount: "20.00", lateFeeCurrency: "USD", createdById: a.admin.id },
   });
 }, 60_000);
 
@@ -148,9 +146,20 @@ describe("listPaymentHistoryForStudent: three-way inactive-gate discrimination",
     expect(result).toEqual({ ok: true, rows: [], nextCursor: null });
   });
 
-  it("returns invalid (a read failure) for a malformed studentId, distinct from both outcomes above", async () => {
+  it("returns invalid for a malformed (empty) studentId — input validation, never reaching the database", async () => {
     const result = await listPaymentHistoryForStudent(context(a), "", {}, deps());
     expect(result).toEqual({ ok: false, error: "invalid" });
+  });
+
+  it("propagates a genuine database rejection for an otherwise valid, active, authorized request, rather than folding it into any typed outcome", async () => {
+    const student = await newStudent(a);
+    const dbError = new Error("connection lost");
+    const spy = vi.spyOn(appPrisma.duesPayment, "findMany").mockRejectedValueOnce(dbError);
+    try {
+      await expect(listPaymentHistoryForStudent(context(a), student.id, {}, deps())).rejects.toBe(dbError);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
 
@@ -168,8 +177,27 @@ describe("listPaymentHistoryForStudent: tenant and branch scoping", () => {
     expect(result).toEqual({ ok: true, rows: [], nextCursor: null });
   });
 
-  it("a DIRECTOR scoped to one branch gets an empty success for a student homed at a different branch", async () => {
+  it("a DIRECTOR scoped to one branch cannot see a real payment belonging to a student homed at a different branch", async () => {
     const student = await newStudent(a, otherAcademy.id);
+    const obligationResult = await createMonthlyObligation(
+      { context: context(a), studentId: student.id, coverage: { year: 2030, month: 10 }, planTermsId: otherTerms.id, policyVersionId: otherPolicy.id },
+      deps(),
+    );
+    if (!obligationResult.ok) throw new Error(`fixture obligation failed: ${obligationResult.error}`);
+    const obligationId = obligationResult.obligationId;
+    const recorded = await recordDuesPayment(
+      { context: context(a), studentId: student.id, receivedOn: { year: 2030, month: 10, day: 20 }, tender: { currency: "USD", amount: "100.00" }, method: "EFECTIVO", obligationIds: [obligationId], maxBackdateDays: 30 },
+      deps({ now: at("2030-10-21T12:00:00") }),
+    );
+    if (!recorded.ok) throw new Error("fixture payment failed");
+
+    // First, an authorized (org-wide) context proves this payment genuinely exists and is readable at all.
+    const authorized = await listPaymentHistoryForStudent(context(a), student.id, {}, deps());
+    if (!authorized.ok) throw new Error("expected ok result");
+    expect(authorized.rows.map((r) => r.id)).toContain(recorded.paymentId);
+
+    // Then the branch-restricted DIRECTOR, excluding this student's own branch, must get nothing — a MEANINGFUL
+    // empty success now, since real data exists and is being correctly withheld, not trivially absent.
     const director = context(a, { organizationRole: "DIRECTOR", academyIds: [a.academy.id] });
     const result = await listPaymentHistoryForStudent(director, student.id, {}, deps());
     expect(result).toEqual({ ok: true, rows: [], nextCursor: null });
@@ -349,40 +377,58 @@ describe("listPaymentHistoryForStudent: stored cross-currency evidence survives 
   });
 });
 
-describe("listPaymentHistoryForStudent: currency is never summed across rows", () => {
-  it("keeps a USD payment's and a CRC payment's settlement currency fully separate", async () => {
-    // Two DIFFERENT students, since a MONTHLY plan/policy applies to exactly one branch (`writeMonthlyObligationInTx`'s
-    // own `plan.academyId !== student.homeAcademyId` refusal) — the USD and CRC fixtures live on different branches.
-    const usdStudent = await newStudent(a);
-    const usdObligation = await newObligation(a, usdStudent.id, 7);
-    const crcStudent = await newStudent(a, crcAcademy.id);
-    const crcObligation = await createMonthlyObligation(
-      { context: context(a), studentId: crcStudent.id, coverage: { year: 2030, month: 7 }, planTermsId: crcTerms.id, policyVersionId: crcPolicy.id },
-      deps(),
-    ).then((r) => {
-      if (!r.ok) throw new Error(`fixture obligation failed: ${r.error}`);
-      return r.obligationId;
-    });
+describe("listPaymentHistoryForStudent: one student's own mixed-currency history is never summed", () => {
+  it("shows a same-currency USD payment and a cross-currency CRC-tendered payment side by side, each with its own distinct currency and conversion evidence", async () => {
+    const student = await newStudent(a);
+    const usdObligation = await newObligation(a, student.id, 7);
+    const crcObligation = await newObligation(a, student.id, 8);
 
+    const quoteDate = freshQuoteDate();
+    const quote = await enterExchangeRateQuote({ context: context(a), quoteDate, value: "500.00", expectedCurrentRevision: 0 }, deps());
+    if (!quote.ok) throw new Error("fixture quote entry failed");
+
+    // Payment 1: ordinary same-currency USD tender against the USD obligation — no conversion involved.
     const usdPayment = await recordDuesPayment(
-      { context: context(a), studentId: usdStudent.id, receivedOn: { year: 2030, month: 7, day: 10 }, tender: { currency: "USD", amount: "100.00" }, method: "EFECTIVO", obligationIds: [usdObligation], maxBackdateDays: 30 },
+      { context: context(a), studentId: student.id, receivedOn: { year: 2030, month: 7, day: 10 }, tender: { currency: "USD", amount: "100.00" }, method: "EFECTIVO", obligationIds: [usdObligation], maxBackdateDays: 30 },
       deps({ now: at("2030-07-10T12:00:00") }),
     );
     if (!usdPayment.ok) throw new Error("fixture USD payment failed");
+
+    // Payment 2: a CRC tender against a USD obligation — the existing cross-currency conversion path, same student.
     const crcPayment = await recordDuesPayment(
-      { context: context(a), studentId: crcStudent.id, receivedOn: { year: 2030, month: 7, day: 11 }, tender: { currency: "CRC", amount: "50000.00" }, method: "EFECTIVO", obligationIds: [crcObligation], maxBackdateDays: 30 },
-      deps({ now: at("2030-07-11T12:00:00") }),
+      { context: context(a), studentId: student.id, receivedOn: { year: 2030, month: 8, day: 10 }, tender: { currency: "CRC", amount: "50000.00" }, method: "EFECTIVO", obligationIds: [crcObligation], maxBackdateDays: 30 },
+      deps({ now: at("2030-08-10T12:00:00") }),
     );
     if (!crcPayment.ok) throw new Error("fixture CRC payment failed");
 
-    const usdResult = await listPaymentHistoryForStudent(context(a), usdStudent.id, {}, deps());
-    const crcResult = await listPaymentHistoryForStudent(context(a), crcStudent.id, {}, deps());
-    if (!usdResult.ok || !crcResult.ok) throw new Error("expected ok results");
-    const usdRow = usdResult.rows.find((r) => r.id === usdPayment.paymentId);
-    const crcRow = crcResult.rows.find((r) => r.id === crcPayment.paymentId);
-    expect(usdRow!.settlements[0].currency).toBe("USD");
+    // Both inspected through ONE reader call for this one student.
+    const result = await listPaymentHistoryForStudent(context(a), student.id, {}, deps());
+    if (!result.ok) throw new Error("expected ok result");
+    const usdRow = result.rows.find((r) => r.id === usdPayment.paymentId);
+    const crcRow = result.rows.find((r) => r.id === crcPayment.paymentId);
+    expect(usdRow).toBeDefined();
+    expect(crcRow).toBeDefined();
+
+    // Same-currency payment: tender and settlement both report USD, and there is no conversion evidence.
     expect(usdRow!.tenderCurrency).toBe("USD");
-    expect(crcRow!.settlements[0].currency).toBe("CRC");
+    expect(usdRow!.tenderAmount).toBe("100.00");
+    expect(usdRow!.conversion).toBeNull();
+    expect(usdRow!.settlements[0].currency).toBe("USD");
+    expect(usdRow!.settlements[0].principalAmount).toBe("100.00");
+    expect(usdRow!.settlements[0].totalAmount).toBe("100.00");
+
+    // Cross-currency payment: tenderCurrency/tenderAmount report the actual CRC tender; the settlement stays in
+    // the OBLIGATION's own currency (USD, unconverted); conversion carries the stored snapshot evidence.
     expect(crcRow!.tenderCurrency).toBe("CRC");
+    expect(crcRow!.tenderAmount).toBe("50000.00");
+    expect(crcRow!.settlements[0].currency).toBe("USD");
+    expect(crcRow!.settlements[0].principalAmount).toBe("100.00");
+    expect(crcRow!.settlements[0].totalAmount).toBe("100.00");
+    expect(crcRow!.conversion).not.toBeNull();
+    expect(crcRow!.conversion!.appliedRateId).toBe(quote.quoteId);
+    expect(Number(crcRow!.conversion!.appliedRateValue)).toBe(500);
+    expect(crcRow!.conversion!.appliedRateRevision).toBe(1);
+
+    // Never summed: each row's own currency and amounts are asserted independently above, with no combined total.
   });
 });
