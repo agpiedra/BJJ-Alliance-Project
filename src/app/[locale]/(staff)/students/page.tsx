@@ -36,6 +36,21 @@ import { isOverdue } from "@/lib/payments/overdue";
 import type { ContactPaymentStatus } from "@/lib/students/contact-list";
 import { parseTrack } from "@/lib/students/parse-track";
 import { ZONE } from "@/lib/scheduling/zone";
+import {
+  isLedgerActiveForOrg,
+  listRosterPaymentFacts,
+  toRosterLedgerDisplay,
+  matchesActiveLedgerFilters,
+  type RosterLedgerEntry,
+} from "@/lib/dues/roster-payment-facts-queries";
+import { RosterLedgerStatus, RosterLedgerUnavailable } from "./roster-ledger-status";
+
+// §2.2.1/§3 decision 5: decision 5 approved a NEW, independent ledger flag set — it did NOT approve a mapping FROM
+// any legacy `?payment=` value (reusing `parsePaymentStatus`'s own validation below to detect one). Every legacy
+// value has no honest ledger equivalent today, so a bookmark using one gets an EXPLICIT notice once `ledgerActive`
+// is true, never a silent reinterpretation into one of the new flags the bookmarker never intended.
+const LEDGER_FILTER_KEYS = ["debt", "noDebt", "monthlyPastGrace", "signupPastDue", "pendingConversion", "configIssue"] as const;
+type LedgerFilterKey = (typeof LEDGER_FILTER_KEYS)[number];
 
 // Staff data an admin/director could change without a redeploy (students,
 // academy roster) — never frozen at build time, same reasoning as /signup.
@@ -110,7 +125,22 @@ type StudentsSearchParams = {
   payment?: string;
   academyId?: string;
   track?: string;
+  debt?: string;
+  noDebt?: string;
+  monthlyPastGrace?: string;
+  signupPastDue?: string;
+  pendingConversion?: string;
+  configIssue?: string;
 };
+
+/** The approved independent ledger flags actually checked in the request — non-exclusive, any subset. */
+function parseLedgerFilters(params: StudentsSearchParams): Set<LedgerFilterKey> {
+  const active = new Set<LedgerFilterKey>();
+  for (const key of LEDGER_FILTER_KEYS) {
+    if (params[key] === "1") active.add(key);
+  }
+  return active;
+}
 
 export default async function StudentsPage({
   searchParams,
@@ -128,6 +158,11 @@ export default async function StudentsPage({
     track: parseTrack(params.track),
   });
 
+  // ROSTER-STUDENT-DETAIL-INTEGRATION-BRIEF.md §2.4: ONE captured instant, read ONCE per page load, BEFORE any
+  // per-student work. `ledgerActive: false` (the real production default) keeps every line below byte-identical to
+  // this page's pre-integration code — `getCurrentPaymentPeriod`/`isOverdue` still run per student, unchanged.
+  const ledgerActive = await isLedgerActiveForOrg(context.organizationId);
+
   // Per-row lookups, batched via Promise.all across the fetched student
   // list — same accepted per-row-query shape as Phase 4's
   // classifyActiveStudents at this app's current scale (a single gym's
@@ -139,6 +174,9 @@ export default async function StudentsPage({
   const configByTrack = await resolvePromotionConfigMap(context.organizationId);
   const rosterExtras = await Promise.all(
     students.map(async (student) => {
+      // §2.2: when the ledger is active, the legacy per-student `getCurrentPaymentPeriod` call is skipped entirely
+      // (not just unused) — that is the exact per-student query this integration replaces with the batched call
+      // below. Attendance/belt-summary queries are unrelated and always run, either way.
       const [summary, lastAttendance, currentPeriod] = await Promise.all([
         getAtBeltSummary(student.id, context.organizationId, configByTrack),
         prisma.attendanceRecord.findFirst({
@@ -146,7 +184,7 @@ export default async function StudentsPage({
           orderBy: { occurredAt: "desc" },
           select: { occurredAt: true },
         }),
-        getCurrentPaymentPeriod(student.id, context.organizationId, today),
+        ledgerActive ? Promise.resolve(null) : getCurrentPaymentPeriod(student.id, context.organizationId, today),
       ]);
 
       // Mechanical migration off eligibility.ts's classifyEligibility (Phase
@@ -193,14 +231,38 @@ export default async function StudentsPage({
   );
   const rosterExtrasByStudentId = new Map(rosterExtras.map((extra) => [extra.studentId, extra]));
 
+  // §2.2: batched (ceil(N/60) calls, bounded concurrency, one shared `now`) — replaces the per-student
+  // `getCurrentPaymentPeriod` loop above ONLY when the ledger is active for this organization. A chunk failure or a
+  // missing per-student entry renders as a distinct "unavailable" flag, never "paid"/"no debt".
+  const ledgerDisplayByStudentId = new Map<string, RosterLedgerEntry>();
+  if (ledgerActive) {
+    const { byStudentId } = await listRosterPaymentFacts(context, students.map((s) => s.id), now.toJSDate());
+    for (const student of students) {
+      const fact = byStudentId.get(student.id);
+      ledgerDisplayByStudentId.set(
+        student.id,
+        fact?.ok ? { kind: "ledger", display: toRosterLedgerDisplay(fact.facts, fact.todayIso) } : { kind: "unavailable" },
+      );
+    }
+  }
+
+  // §2.2.1/§3 decision 5: when the ledger is active, the legacy `?payment=` enum has no honest mapping at all
+  // (decision 5 approved a NEW flag set, not a mapping FROM the old one) — a bookmark using it gets an explicit
+  // notice, never silent reinterpretation or silent ignoring. When inactive, the legacy filter still works exactly
+  // as it always has (byte-identical requirement, §7).
+  const legacyPaymentParam = parsePaymentStatus(params.payment);
+  const showLegacyBookmarkNotice = ledgerActive && legacyPaymentParam !== undefined;
+  const activeLedgerFilters = ledgerActive ? parseLedgerFilters(params) : new Set<LedgerFilterKey>();
+
   // §4.2's new payment-status filter: `listStudents`/Prisma can't express
   // this (payment status is computed above, not a column), so — per the
   // task's own guidance for this app's scale — it's a plain post-filter over
   // the roster already fetched, not a schema/query change.
-  const paymentFilter = parsePaymentStatus(params.payment);
-  const filteredStudents = paymentFilter
-    ? students.filter((student) => rosterExtrasByStudentId.get(student.id)?.paymentStatus === paymentFilter)
-    : students;
+  const filteredStudents = ledgerActive
+    ? students.filter((student) => matchesActiveLedgerFilters(ledgerDisplayByStudentId.get(student.id) ?? { kind: "unavailable" }, activeLedgerFilters))
+    : legacyPaymentParam
+      ? students.filter((student) => rosterExtrasByStudentId.get(student.id)?.paymentStatus === legacyPaymentParam)
+      : students;
 
   // §4.2 "Sort by closest to promotion by default": ascending remaining
   // count (0 = already eligible), computed AFTER the fetch since it depends
@@ -344,17 +406,34 @@ export default async function StudentsPage({
               ))}
             </FilterBarSelect>
 
-            <label htmlFor="students-payment" className="sr-only">
-              {t("filters.payment")}
-            </label>
-            <FilterBarSelect id="students-payment" name="payment" defaultValue={params.payment ?? ""}>
-              <option value="">{t("filters.allPayments")}</option>
-              {PAYMENT_STATUS_OPTIONS.map((status) => (
-                <option key={status} value={status}>
-                  {paymentStatusLabel(status, t, tPaymentStatus)}
-                </option>
-              ))}
-            </FilterBarSelect>
+            {ledgerActive ? (
+              // §2.2.1/§3 decision 5: independently-true, overlapping flags — a checkbox per flag, never a single
+              // enum select. Any legacy `?payment=` value a bookmark still carries is deliberately NOT submitted by
+              // this form (it has its own notice below, outside the form) and is dropped on the next submit.
+              <fieldset className="flex flex-wrap items-center gap-3">
+                <legend className="sr-only">{t("filters.payment")}</legend>
+                {LEDGER_FILTER_KEYS.map((key) => (
+                  <label key={key} className="flex items-center gap-1.5 text-sm">
+                    <input type="checkbox" name={key} value="1" defaultChecked={params[key] === "1"} />
+                    {t(`ledger.filters.${key}`)}
+                  </label>
+                ))}
+              </fieldset>
+            ) : (
+              <>
+                <label htmlFor="students-payment" className="sr-only">
+                  {t("filters.payment")}
+                </label>
+                <FilterBarSelect id="students-payment" name="payment" defaultValue={params.payment ?? ""}>
+                  <option value="">{t("filters.allPayments")}</option>
+                  {PAYMENT_STATUS_OPTIONS.map((status) => (
+                    <option key={status} value={status}>
+                      {paymentStatusLabel(status, t, tPaymentStatus)}
+                    </option>
+                  ))}
+                </FilterBarSelect>
+              </>
+            )}
 
             {context.organizationRole === "ADMIN" && hasAcademyChoice(academies) && (
               <>
@@ -379,6 +458,13 @@ export default async function StudentsPage({
         </form>
 
         <CardContent className="pt-4">
+          {/* §3 decision 5: the checkboxes OR together (any one match is enough) — explained explicitly here
+              rather than left for staff to infer from how multiple selections behave in practice. */}
+          {ledgerActive && <p className="mb-2 text-xs text-muted-foreground">{t("ledger.filters.combineHint")}</p>}
+          {/* Corrected wording (review fix): "not applied" is the only honest claim — it must never also claim
+              "all students are shown," which is false whenever another ledger filter is active alongside the
+              dropped legacy one. */}
+          {showLegacyBookmarkNotice && <p className="mb-3 text-sm text-muted-foreground">{t("ledger.filters.legacyUnavailable")}</p>}
           {sortedStudents.length === 0 ? (
             <EmptyState message={t("empty")} />
           ) : (
@@ -476,9 +562,17 @@ export default async function StudentsPage({
                         )}
                       </DataTableCell>
                       <DataTableCell>
-                        <Pill variant={paymentPillVariant(extra.paymentStatus)}>
-                          {paymentStatusLabel(extra.paymentStatus, t, tPaymentStatus)}
-                        </Pill>
+                        {ledgerActive ? (
+                          (() => {
+                            const entry = ledgerDisplayByStudentId.get(student.id);
+                            if (!entry || entry.kind === "unavailable") return <RosterLedgerUnavailable t={t} />;
+                            return <RosterLedgerStatus display={entry.display} locale={locale} t={t} />;
+                          })()
+                        ) : (
+                          <Pill variant={paymentPillVariant(extra.paymentStatus)}>
+                            {paymentStatusLabel(extra.paymentStatus, t, tPaymentStatus)}
+                          </Pill>
+                        )}
                       </DataTableCell>
                       <DataTableCell>
                         {extra.eligibility === "exam-eligible" && (

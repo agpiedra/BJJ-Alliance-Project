@@ -844,6 +844,52 @@
         "statusActive": "Current belt",
         "statusOutOfScope": "Past belt"
       }
+    },
+    "ledger": {
+      "unavailable": "Couldn't load payment status",
+      "totalWithFee": "{total} (includes {fee} late fee)",
+      "filters": {
+        "debt": "Has outstanding debt",
+        "noDebt": "No outstanding debt",
+        "monthlyPastGrace": "Monthly past grace",
+        "signupPastDue": "Signup past due",
+        "pendingConversion": "Pending conversion",
+        "configIssue": "Configuration issue",
+        "apply": "Apply filters",
+        "combineHint": "Checking more than one shows students matching any of the selected filters, not all of them.",
+        "legacyUnavailable": "This bookmarked payment filter is not available after the ledger cutover and was not applied. Any other filters selected below are still in effect."
+      },
+      "balanceSummary": {
+        "heading": "Current balance",
+        "noDebt": "No outstanding debt.",
+        "unavailable": "Couldn't load current balance."
+      },
+      "pendingReceipt": {
+        "heading": "Pending receipt",
+        "notice": "Money was reported received and is awaiting settlement — not a completed payment.",
+        "referencesExisting": "References existing debt",
+        "proposesCoverage": "Proposes new coverage",
+        "integrityUnavailable": "Receipt details unavailable"
+      },
+      "history": {
+        "heading": "Ledger payment history",
+        "empty": "No ledger payments yet.",
+        "unavailable": "Couldn't load ledger payment history.",
+        "retry": "Retry",
+        "loadMore": "Load more",
+        "loading": "Loading…",
+        "reversed": "Reversed",
+        "columnDate": "Date",
+        "columnAmount": "Amount",
+        "columnMethod": "Method",
+        "columnSettlements": "Covers",
+        "principalAndFee": "{principal} + {fee} fee = {total}",
+        "feeCurrentState": "Included fee is now {state}",
+        "removalKind": {
+          "WAIVED": "waived",
+          "VOIDED": "voided"
+        }
+      }
     }
   },
   "onboarding": {

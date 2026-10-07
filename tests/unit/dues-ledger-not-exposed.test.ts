@@ -53,8 +53,15 @@ import { productionSourceFiles, stripComments } from "../helpers/source-files";
  *     package/prepayment cards. `src/lib/dues/payment-history-queries.ts` (plain reads; imports `inTenantScope`
  *     from `ledger/common.ts` and `columnToMinor`/`minorToDecimal` from `ledger/minor-units.ts`, never a writer —
  *     the roster/student-detail ledger-integration brief's PR 1 payment-history reader) is the one new importer
- *     that brief's PR 1 adds. No action or component importer yet — this PR is the library function and its own
- *     tests only, no page/action wiring.
+ *     that brief's PR 1 adds. `src/lib/dues/roster-payment-facts-queries.ts` (plain reads; imports
+ *     `listDuesFactsForStudents` from `dues-facts.ts` and `todayIn` from `ledger/common.ts`, never a writer — the
+ *     batched roster/student-detail facts wrapper) is PR 2's main new importer; both pages route every ledger read
+ *     through it instead of importing `dues/ledger` directly themselves. `src/app/[locale]/(staff)/students/
+ *     roster-ledger-status.tsx` and `.../[id]/student-balance-summary.tsx` (each imports only `minorToDecimal` from
+ *     `ledger/minor-units.ts` — pure, prisma-free arithmetic, never a writer call, the identical exception
+ *     `package-purchase-section.tsx` already established) are PR 2's other two new importers: going through the
+ *     wrapper above for this one pure function would otherwise drag its own `prisma` import into these two
+ *     presentational components, breaking component unit tests that never connect to a real database.
  *  2. They are plain library functions: no `"use server"` (which would make an exported function an invocable endpoint), no route, no
  *     client component.
  *  3. They are registered in `scripts/pending-callers.ts`, the repo's list of code built ahead of its caller.
@@ -87,6 +94,9 @@ const AUTHORIZED_CALLERS = [
   "src/lib/dues/financial-corrections-queries.ts",
   "src/lib/dues/financial-corrections-actions.ts",
   "src/lib/dues/payment-history-queries.ts",
+  "src/lib/dues/roster-payment-facts-queries.ts",
+  "src/app/[locale]/(staff)/students/roster-ledger-status.tsx",
+  "src/app/[locale]/(staff)/students/[id]/student-balance-summary.tsx",
 ];
 
 describe("the ledger writers are not reachable from production code", () => {
