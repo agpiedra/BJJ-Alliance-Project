@@ -57,6 +57,10 @@ const GATES: Gate[] = [
       // PR 3: the caller's OWN next page of attendance history (no student id in the input; whose history it is
       // comes from the session's linked student record).
       "src/app/[locale]/portal/attendance-history-actions.ts",
+      // STUDENT-PORTAL-LEDGER-INTEGRATION-BRIEF.md §3.3: the identical shape — the caller's OWN next page of
+      // payment history, no student id in the input, re-derived from `auth.context.linkedStudentId` fresh on
+      // every call.
+      "src/app/[locale]/portal/payment-history-actions.ts",
     ],
     signature: /function resolveActionContext\(\s*organizationId:\s*string,\s*allowedRoles:\s*MembershipRole\[\],?\s*\)/,
   },

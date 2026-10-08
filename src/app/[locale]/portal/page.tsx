@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { DateTime } from "luxon";
 import { getTranslations } from "next-intl/server";
 import { requirePortalContext } from "@/lib/tenant/context";
@@ -25,6 +26,11 @@ import { formatTimestampInAcademyZone } from "@/lib/format-date";
 import { getCurrentPaymentPeriod, currentCrDateParts } from "@/lib/payments/get-current-period";
 import { isOverdue } from "@/lib/payments/overdue";
 import type { ContactPaymentStatus } from "@/lib/students/contact-list";
+import { isLedgerActiveForOrg, toRosterLedgerDisplay, type DuesPendingReceiptFact } from "@/lib/dues/roster-payment-facts-queries";
+import { getOwnPaymentFacts, resolveEligibilityNoticeKey, type PortalSelfContext } from "@/lib/dues/portal-ledger-queries";
+import { listOwnPaymentHistory, type PortalPaymentHistoryRow } from "@/lib/dues/payment-history-queries";
+import { StudentBalanceSummary } from "../(staff)/students/[id]/student-balance-summary";
+import { PortalPaymentHistorySection } from "./payment-history-section";
 import { TodaysClassesCard } from "./todays-classes-card";
 import { AttendanceHistorySection } from "./attendance-history-section";
 import { PortalTopBar } from "./portal-top-bar";
@@ -104,6 +110,11 @@ export default async function StudentPortalPage({
   const { locale } = await params;
   const branding = await getOrganizationBranding(context);
 
+  // STUDENT-PORTAL-LEDGER-INTEGRATION-BRIEF.md §3.1: ONE captured flag, read ONCE per page load, BEFORE any
+  // legacy-vs-ledger decision below — `ledgerActive: false` (the real production default) keeps every line below
+  // byte-identical to this page's pre-integration code, exactly like the roster/student-detail pages' own §2.4.
+  const ledgerActive = await isLedgerActiveForOrg(context.organizationId);
+
   // Safe with no additional scope check: `studentId` came from the tenant
   // context itself (re-verified against the DB on every call), never from a
   // route param an attacker could substitute another student's id into —
@@ -128,16 +139,40 @@ export default async function StudentPortalPage({
     // Scoped to studentId exactly like every other portal query above — no
     // route param, so there's no way to see another student's payment status
     // (spec §4.2 shows this to the student only, read-only, no recording UI).
-    getCurrentPaymentPeriod(studentId, context.organizationId),
+    // §3.1: skipped ENTIRELY when the ledger is active for this org — never computed and discarded — mirroring
+    // the roster page's own identical `ledgerActive ? Promise.resolve(null) : getCurrentPaymentPeriod(...)` shape.
+    ledgerActive ? Promise.resolve(null) : getCurrentPaymentPeriod(studentId, context.organizationId),
   ]);
   // Today's classes for the student's own academy (Costa Rica day and boundaries), each with its honest state.
   const todays = await listTodaysClasses({ context, academyId: student.homeAcademy.id, studentId });
-  const overdue = isOverdue(currentPaymentPeriod, currentCrDateParts());
-  const paymentStatus: ContactPaymentStatus = overdue
-    ? "OVERDUE"
-    : currentPaymentPeriod
-      ? currentPaymentPeriod.status
-      : "NOT_RECORDED";
+
+  // §3.1/§3.3: pending receipts and payment history are genuinely NEW information categories — gated entirely
+  // behind `ledgerActive`, never interleaved with the legacy card above. Mirrors `[id]/page.tsx`'s identical
+  // "ledger facts, then history" fetch shape (lines 98-124 there), reused here for the self-scoped functions.
+  let ledgerBalanceDisplay: ReturnType<typeof toRosterLedgerDisplay> | null = null;
+  let pendingReceipts: DuesPendingReceiptFact[] = [];
+  let eligibilityNoticeKey: ReturnType<typeof resolveEligibilityNoticeKey> = null;
+  let historyInitial: { rows: PortalPaymentHistoryRow[]; cursor: string | null; failed: boolean } = { rows: [], cursor: null, failed: false };
+  if (ledgerActive) {
+    const now = new Date();
+    // `studentId` is `requirePortalContext`'s own non-null `context.linkedStudentId` — the identical value,
+    // never a route param or client-selected id (requirement 1). No branch check of any kind on this path (§2.5).
+    const selfContext: PortalSelfContext = { ...context, linkedStudentId: studentId };
+    const fact = await getOwnPaymentFacts(selfContext, now);
+    if (fact.ok) {
+      ledgerBalanceDisplay = toRosterLedgerDisplay(fact.facts, fact.todayIso);
+      pendingReceipts = fact.facts.pendingReceipts;
+      eligibilityNoticeKey = resolveEligibilityNoticeKey(fact.facts, fact.currentPeriod);
+    }
+    try {
+      const historyResult = await listOwnPaymentHistory(selfContext);
+      historyInitial = historyResult.ok
+        ? { rows: historyResult.rows, cursor: historyResult.nextCursor, failed: false }
+        : { rows: [], cursor: null, failed: true };
+    } catch {
+      historyInitial = { rows: [], cursor: null, failed: true };
+    }
+  }
 
   // Phase 8's read-only week calendar: this student's OWN home academy,
   // current week only — no navigation, no view switcher, no click-to-detail,
@@ -188,6 +223,10 @@ export default async function StudentPortalPage({
   const tPaymentStatus = await getTranslations("students.paymentStatus");
   const tAdminSchedule = await getTranslations("adminSchedule");
   const tClassType = await getTranslations("classType");
+  // Reuses the STAFF "students" namespace's existing `ledger.*` copy — the same balance-summary/history strings
+  // the staff student-detail page already shows, so the two surfaces never drift into two different wordings for
+  // the same ledger facts. Only the eligibility-notice strings (students.ledger.eligibilityNotice.*) are new.
+  const tStudents = await getTranslations("students");
 
   // One display shaping for every surface (buildProgressView): an eligible student shows a full bar with the
   // count capped at the target - never 42 / 30 - and a time-based degree shows a due date, not a fraction.
@@ -209,20 +248,53 @@ export default async function StudentPortalPage({
   );
   const progressCard = <ProgressCard locale={locale} summary={summary} view={progressView} dueDateLabel={dueDateFormatted} />;
 
-  const paymentCard = (
-    <Card>
-      <CardHeader className="border-b">
-        <CardTitle>{t("paymentStatus.heading")}</CardTitle>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-2 pt-4">
-        <div className="flex items-center justify-between gap-2">
-          <span className="text-muted-foreground">{currentPaymentPeriod?.planName ?? "—"}</span>
-          <Pill variant={paymentPillVariant(paymentStatus)}>{paymentStatusLabel(paymentStatus, t, tPaymentStatus)}</Pill>
-        </div>
-        {overdue && <p className="text-sm text-muted-foreground">{t("paymentStatus.overdueNotice")}</p>}
-      </CardContent>
-    </Card>
+  // §3.1: a ternary replacement, exactly like the roster's own pill replacement — never two possibly-disagreeing
+  // "is my payment current" sources rendered side by side. Inactive renders this exact legacy card, byte-for-byte.
+  // Review fix: `isOverdue`/the status computation are now INSIDE this `!ledgerActive` branch, never invoked at
+  // all when active — not merely computed-and-discarded (currentPaymentPeriod was already null when active via
+  // the skipped fetch above, but isOverdue/paymentPillVariant/paymentStatusLabel were still being CALLED).
+  let legacyPaymentCard: ReactNode = null;
+  if (!ledgerActive) {
+    const overdue = isOverdue(currentPaymentPeriod, currentCrDateParts());
+    const paymentStatus: ContactPaymentStatus = overdue
+      ? "OVERDUE"
+      : currentPaymentPeriod
+        ? currentPaymentPeriod.status
+        : "NOT_RECORDED";
+    legacyPaymentCard = (
+      <Card>
+        <CardHeader className="border-b">
+          <CardTitle>{t("paymentStatus.heading")}</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-2 pt-4">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-muted-foreground">{currentPaymentPeriod?.planName ?? "—"}</span>
+            <Pill variant={paymentPillVariant(paymentStatus)}>{paymentStatusLabel(paymentStatus, t, tPaymentStatus)}</Pill>
+          </div>
+          {overdue && <p className="text-sm text-muted-foreground">{t("paymentStatus.overdueNotice")}</p>}
+        </CardContent>
+      </Card>
+    );
+  }
+  const ledgerPaymentCard = (
+    <StudentBalanceSummary
+      display={ledgerBalanceDisplay}
+      pendingReceipts={pendingReceipts}
+      locale={locale}
+      t={tStudents}
+      notice={eligibilityNoticeKey ? tStudents(`ledger.eligibilityNotice.${eligibilityNoticeKey}`) : undefined}
+    />
   );
+  const paymentCard = ledgerActive ? ledgerPaymentCard : legacyPaymentCard;
+  const paymentHistoryCard = ledgerActive ? (
+    <PortalPaymentHistorySection
+      organizationId={context.organizationId}
+      initialRows={historyInitial.rows}
+      initialCursor={historyInitial.cursor}
+      initialFailed={historyInitial.failed}
+      locale={locale}
+    />
+  ) : null;
 
   const promotionCard = (
     <Card>
@@ -254,7 +326,9 @@ export default async function StudentPortalPage({
 
   // HOME. Two columns from `lg` (check-in and recent attendance left; progress, payment and promotions right). On narrower screens the two
   // column wrappers dissolve (`contents`) and `order` puts the cards in priority order: check-in, progress, recent attendance, payment,
-  // promotion history. Progress comes second on purpose: it is what a student looks for right after checking in.
+  // promotion history, [ledger history]. Progress comes second on purpose: it is what a student looks for right after checking in.
+  // The ledger history card (order-6) is genuinely NEW content (§3.1) — it renders only when `ledgerActive`, after
+  // every other card, never interleaved with the payment card above it.
   const home = (
     <div className="flex flex-col gap-4 lg:grid lg:grid-cols-[minmax(0,7fr)_minmax(0,5fr)] lg:items-start">
       <div className="contents lg:flex lg:flex-col lg:gap-4">
@@ -267,6 +341,7 @@ export default async function StudentPortalPage({
         <div className="order-2">{progressCard}</div>
         <div className="order-4">{paymentCard}</div>
         <div className="order-5">{promotionCard}</div>
+        {paymentHistoryCard && <div className="order-6">{paymentHistoryCard}</div>}
       </div>
     </div>
   );

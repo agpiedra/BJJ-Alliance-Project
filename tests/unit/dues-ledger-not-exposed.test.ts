@@ -62,6 +62,14 @@ import { productionSourceFiles, stripComments } from "../helpers/source-files";
  *     `package-purchase-section.tsx` already established) are PR 2's other two new importers: going through the
  *     wrapper above for this one pure function would otherwise drag its own `prisma` import into these two
  *     presentational components, breaking component unit tests that never connect to a real database.
+ *     `src/lib/dues/portal-ledger-queries.ts` (plain reads; imports `getOwnDuesFacts`/`DuesFactsForStudent` from
+ *     `dues-facts.ts` and `todayIn` from `ledger/common.ts`, never a writer — the SELF-mode counterpart to
+ *     `roster-payment-facts-queries.ts` above, STUDENT-PORTAL-LEDGER-INTEGRATION-BRIEF.md §3) is the student
+ *     portal's one new importer; the portal page and its "load more" action route every ledger-adjacent read
+ *     through this file (or the already-authorized `payment-history-queries.ts`) instead of importing `dues/
+ *     ledger` directly themselves — including `src/app/[locale]/portal/payment-history-actions.ts` and
+ *     `page.tsx` themselves, which import `PortalSelfContext` from this file's own RE-EXPORT rather than from
+ *     `dues/ledger/dues-facts` directly, needing no entries of their own.
  *  2. They are plain library functions: no `"use server"` (which would make an exported function an invocable endpoint), no route, no
  *     client component.
  *  3. They are registered in `scripts/pending-callers.ts`, the repo's list of code built ahead of its caller.
@@ -97,6 +105,7 @@ const AUTHORIZED_CALLERS = [
   "src/lib/dues/roster-payment-facts-queries.ts",
   "src/app/[locale]/(staff)/students/roster-ledger-status.tsx",
   "src/app/[locale]/(staff)/students/[id]/student-balance-summary.tsx",
+  "src/lib/dues/portal-ledger-queries.ts",
 ];
 
 describe("the ledger writers are not reachable from production code", () => {
