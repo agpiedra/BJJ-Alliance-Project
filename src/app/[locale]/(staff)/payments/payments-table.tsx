@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useOptimistic, useState, useTransition } from "react";
+import { useEffect, useMemo, useOptimistic, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import {
@@ -101,6 +101,22 @@ export function PaymentsTable({
   const [academyFilter, setAcademyFilter] = useState("");
   const [receiptStudentId, setReceiptStudentId] = useState<string | null>(null);
   const [editStudentId, setEditStudentId] = useState<string | null>(null);
+
+  // REMAINING-LEDGER-CONSUMERS-BRIEF.md §2.6 (review fix): the single source of truth for "may this session edit
+  // a legacy payment right now" — the "Editar" button above already uses this exact condition; the edit sheet
+  // below must use the SAME one, not just the button, or an already-open sheet (editStudentId set from an
+  // earlier render, before a prop change) would keep showing a live form after write permission is revoked.
+  const canEditPayments = canRecordPayments && !ledgerActive;
+
+  // Closes a stale edit sheet the instant write permission is revoked (canRecordPayments turns false, or
+  // ledgerActive turns true) WITHOUT unmounting this component — a real scenario a server-resolved prop change
+  // (a fresh render after revalidation) can produce while a director still has the sheet open. The render guard
+  // on the sheet's own content below closes the single-frame gap before this effect runs.
+  useEffect(() => {
+    if (!canEditPayments && editStudentId !== null) {
+      setEditStudentId(null);
+    }
+  }, [canEditPayments, editStudentId]);
 
   const filteredRows = useMemo(() => {
     const needle = search.trim().toLowerCase();
@@ -251,7 +267,7 @@ export function PaymentsTable({
                       // REMAINING-LEDGER-CONSUMERS-BRIEF.md §2.6: once the ledger is active, this row falls back
                       // to the same read-only receipt view a non-recording role already gets — `recordPayment`
                       // (which the "Editar" sheet below ultimately calls) refuses server-side regardless.
-                      (canRecordPayments && !ledgerActive ? (
+                      (canEditPayments ? (
                         <Button variant="ghost" size="sm" onClick={() => setEditStudentId(row.studentId)}>
                           {t("edit")}
                         </Button>
@@ -260,7 +276,7 @@ export function PaymentsTable({
                           {t("viewReceipt")}
                         </Button>
                       ))}
-                    {(row.bucket === "PENDING" || row.bucket === "OVERDUE") && canRecordPayments && !ledgerActive && (
+                    {(row.bucket === "PENDING" || row.bucket === "OVERDUE") && canEditPayments && (
                       <Button variant="primary" size="sm" disabled={isPending} onClick={() => handleMarkPaid(row)}>
                         {t("markPaid")}
                       </Button>
@@ -320,7 +336,11 @@ export function PaymentsTable({
 
       <Sheet open={editRow !== null} onOpenChange={(open) => !open && setEditStudentId(null)}>
         <SheetContent>
-          {editRow?.period && (
+          {/* REMAINING-LEDGER-CONSUMERS-BRIEF.md §2.6 (review fix): gated on `canEditPayments`, not just
+              `editRow?.period` — closes the single-render gap before the effect above clears `editStudentId`,
+              so a live legacy form (and its submit control) can never render once write permission is revoked,
+              even for a sheet that was already open before this render. */}
+          {editRow?.period && canEditPayments && (
             <>
               <SheetHeader>
                 <SheetTitle>{t("edit")}</SheetTitle>

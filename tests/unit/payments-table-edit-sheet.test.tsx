@@ -54,8 +54,8 @@ function promoRowOn(planId: string, planName: string) {
   };
 }
 
-function renderTable(row: ReturnType<typeof promoRowOn>) {
-  render(
+function tableElement(row: ReturnType<typeof promoRowOn>, ledgerActive: boolean) {
+  return (
     <NextIntlClientProvider locale="en" messages={enMessages}>
       <PaymentsTable
         organizationId="org-1"
@@ -65,11 +65,15 @@ function renderTable(row: ReturnType<typeof promoRowOn>) {
         currentYear={2026}
         currentMonth={9}
         canRecordPayments={true}
-        ledgerActive={false}
+        ledgerActive={ledgerActive}
         locale="en"
       />
-    </NextIntlClientProvider>,
+    </NextIntlClientProvider>
   );
+}
+
+function renderTable(row: ReturnType<typeof promoRowOn>, ledgerActive = false) {
+  return render(tableElement(row, ledgerActive));
 }
 
 describe("Pagos edit sheet, for a payment on a plan that has since been deactivated", () => {
@@ -114,5 +118,30 @@ describe("Pagos edit sheet, for a payment on a plan that has since been deactiva
     const options = [...planSelect.options].map((o) => o.textContent);
     expect(options.filter((o) => o?.includes("Monthly"))).toEqual(["Monthly"]);
     expect(planSelect.value).toBe("plan-monthly");
+  });
+});
+
+describe("Pagos edit sheet: write permission revoked while already open (REMAINING-LEDGER-CONSUMERS-BRIEF.md §2.6 review fix)", () => {
+  afterEach(() => {
+    cleanup();
+    recordPaymentMock.mockReset();
+  });
+
+  it("REQUIRED: open the PROMO/EXEMPT edit sheet while inactive, then rerender active WITHOUT unmounting — the legacy form and submit control disappear, and no payment action is ever dispatched", async () => {
+    const row = promoRowOn("plan-monthly", "Monthly");
+    const { rerender } = renderTable(row, false);
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    expect(within(screen.getByRole("dialog")).getByRole("button", { name: "Save payment" })).toBeTruthy();
+    expect(within(screen.getByRole("dialog")).getByLabelText("Plan")).toBeTruthy();
+
+    // The SAME component instance, re-rendered with a new `ledgerActive` prop — exactly what a server-resolved
+    // prop change (e.g. a fresh render after revalidation) can produce while a director still has this sheet
+    // open. Never unmounts: `rerender` reconciles in place, the real regression this test guards against.
+    rerender(tableElement(row, true));
+
+    expect(screen.queryByRole("button", { name: "Save payment" })).toBeNull();
+    expect(screen.queryByLabelText("Plan")).toBeNull();
+    expect(recordPaymentMock).not.toHaveBeenCalled();
   });
 });

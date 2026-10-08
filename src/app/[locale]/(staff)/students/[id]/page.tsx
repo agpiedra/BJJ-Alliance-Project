@@ -470,29 +470,37 @@ export default async function StudentDetailPage({
               isAcademyInTenantScope + plan-academy cross-check). Same shared
               `RecordPaymentForm` the new `/payments` route uses
               (REDESIGN_BRIEF.md §6.1) — locked to this one student here,
-              wrapped in the same <details> toggle this page has always used. */}
-          <details className="rounded border p-4">
-            <summary className="cursor-pointer font-medium">{tDetail("recordPayment.toggle")}</summary>
-            <div className="mt-4">
-              <RecordPaymentForm
-                organizationId={context.organizationId}
-                students={[
-                  {
-                    id: student.id,
-                    firstName: student.firstName,
-                    lastName: student.lastName,
-                    academyId: student.homeAcademyId,
-                    academyName: student.homeAcademy.name,
-                  },
-                ]}
-                plans={paymentPlans}
-                currency={organizationCurrency}
-                lockedStudentId={student.id}
-                canManagePromotions={canEdit}
-                defaults={{ month: `${currentYear}-${String(currentMonth).padStart(2, "0")}` }}
-              />
-            </div>
-          </details>
+              wrapped in the same <details> toggle this page has always used.
+              REMAINING-LEDGER-CONSUMERS-BRIEF.md §2.6: hidden once the ledger
+              is active for this organization — recordPayment itself refuses
+              regardless (the real enforcement); this only avoids offering a
+              control that would always be refused, matching the identical
+              gate payments/page.tsx already applies to the same component.
+              Preserves the exact unconditional rendering when inactive. */}
+          {!ledgerActive && (
+            <details className="rounded border p-4">
+              <summary className="cursor-pointer font-medium">{tDetail("recordPayment.toggle")}</summary>
+              <div className="mt-4">
+                <RecordPaymentForm
+                  organizationId={context.organizationId}
+                  students={[
+                    {
+                      id: student.id,
+                      firstName: student.firstName,
+                      lastName: student.lastName,
+                      academyId: student.homeAcademyId,
+                      academyName: student.homeAcademy.name,
+                    },
+                  ]}
+                  plans={paymentPlans}
+                  currency={organizationCurrency}
+                  lockedStudentId={student.id}
+                  canManagePromotions={canEdit}
+                  defaults={{ month: `${currentYear}-${String(currentMonth).padStart(2, "0")}` }}
+                />
+              </div>
+            </details>
+          )}
           {/* An archived student can be restored — that is what the archive
               dialog's "you can restore them later" refers to. Archive is only
               offered while there is something to archive. */}

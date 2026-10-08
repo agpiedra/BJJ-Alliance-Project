@@ -862,7 +862,39 @@ describe("recordPayment / markPaymentPaid: the dues-ledger activation boundary (
     expect(await prisma.auditLog.count({ where: { organizationId: admin.organizationId, action: "payment.record" } })).toBe(auditCountBefore);
   });
 
-  it("markPaymentPaid refuses with ledgerActive once the ledger is active, never flipping an existing PENDING row to PAID and writing no new audit row", async () => {
+  it("recordPayment refuses with ledgerActive even when an EXISTING row would otherwise be updated by a genuinely conflicting submission — the full row stays byte-for-byte unchanged, not just the row count (review fix: a count alone cannot catch an upsert's UPDATE branch silently running)", async () => {
+    const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+    const plan = await prisma.paymentPlan.findFirstOrThrow({ where: { academyId: escazu.id, name: "Mensualidad" } });
+    const admin = await makeStaffUser("ADMIN", "record-ledgeractive-conflict-admin");
+    const student = await makeStudent(escazu.id, escazu.organizationId);
+    await prisma.paymentPeriod.create({
+      data: {
+        studentId: student.id, academyId: escazu.id, organizationId: escazu.organizationId,
+        year: 2026, month: 2, planId: plan.id, status: "PENDING", amount: 10000, currency: "CRC", notes: "original note", recordedById: admin.id,
+      },
+    });
+    const snapshotBefore = await paymentPeriodFor(student.id, 2026, 2);
+    const auditCountBefore = await prisma.auditLog.count({ where: { organizationId: admin.organizationId, action: "payment.record" } });
+
+    currentSession = { user: { id: admin.id, role: "ADMIN" }, activeOrganizationId: admin.organizationId };
+    mockActive = true;
+    // Genuinely conflicting with the row above on every field the upsert's `update` branch would otherwise touch
+    // (status, amount, notes) — if the activation check were ever bypassed or placed after the upsert, THIS is
+    // what would catch it: a row-count check alone cannot distinguish "nothing happened" from "the same row was
+    // silently updated in place."
+    const result = await recordPayment(
+      admin.organizationId,
+      {},
+      formData({ studentId: student.id, year: "2026", month: "2", planId: plan.id, status: "PAID", amount: "99999", notes: "conflicting update" }),
+    );
+    expect(result.error).toBe("ledgerActive");
+
+    const snapshotAfter = await paymentPeriodFor(student.id, 2026, 2);
+    expect(snapshotAfter).toEqual(snapshotBefore); // the FULL row — every field, not a status check or a count
+    expect(await prisma.auditLog.count({ where: { organizationId: admin.organizationId, action: "payment.record" } })).toBe(auditCountBefore);
+  });
+
+  it("markPaymentPaid refuses with ledgerActive once the ledger is active, leaving an existing PENDING row's FULL row byte-for-byte unchanged (never flipped to PAID), writing no new audit row", async () => {
     const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
     const plan = await prisma.paymentPlan.findFirstOrThrow({ where: { academyId: escazu.id, name: "Mensualidad" } });
     const admin = await makeStaffUser("ADMIN", "markpaid-ledgeractive-admin");
@@ -873,6 +905,7 @@ describe("recordPayment / markPaymentPaid: the dues-ledger activation boundary (
         year: 2026, month: 12, planId: plan.id, status: "PENDING", amount: 45000, currency: "CRC", recordedById: admin.id,
       },
     });
+    const snapshotBefore = await paymentPeriodFor(student.id, 2026, 12);
     const auditCountBefore = await prisma.auditLog.count({ where: { organizationId: admin.organizationId, action: "payment.record" } });
 
     currentSession = { user: { id: admin.id, role: "ADMIN" }, activeOrganizationId: admin.organizationId };
@@ -880,8 +913,8 @@ describe("recordPayment / markPaymentPaid: the dues-ledger activation boundary (
     const result = await markPaymentPaid(admin.organizationId, student.id, 2026, 12);
     expect(result.error).toBe("ledgerActive");
 
-    const period = await paymentPeriodFor(student.id, 2026, 12);
-    expect(period?.status).toBe("PENDING"); // never flipped to PAID
+    const snapshotAfter = await paymentPeriodFor(student.id, 2026, 12);
+    expect(snapshotAfter).toEqual(snapshotBefore); // the FULL row — markPaymentPaid would have flipped status to PAID
     expect(await prisma.auditLog.count({ where: { organizationId: admin.organizationId, action: "payment.record" } })).toBe(auditCountBefore);
   });
 
