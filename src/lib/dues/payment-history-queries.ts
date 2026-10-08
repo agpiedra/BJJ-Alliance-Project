@@ -4,6 +4,7 @@ import { inTenantScope } from "@/lib/dues/ledger/common";
 import { inactiveLedgerActivation, type LedgerDeps } from "@/lib/dues/ledger/activation";
 import type { Currency, PaymentMethod } from "@/generated/prisma/client";
 import { columnToMinor, minorToDecimal } from "@/lib/dues/ledger/minor-units";
+import type { PortalSelfContext } from "@/lib/dues/ledger/dues-facts";
 
 /**
  * ROSTER-STUDENT-DETAIL-INTEGRATION-BRIEF.md §2.1: a narrow, authorized, paginated ledger payment-history reader
@@ -103,7 +104,19 @@ export async function listPaymentHistoryForStudent(
   const student = await prisma.student.findFirst({ where: { id: studentId, organizationId: context.organizationId }, select: { id: true, homeAcademyId: true } });
   if (!student || !inTenantScope(context, student.homeAcademyId)) return { ok: true, rows: [], nextCursor: null };
 
-  const where = { organizationId: context.organizationId, studentId } as const;
+  return queryPaymentHistoryRows(context.organizationId, studentId, opts);
+}
+
+/**
+ * STUDENT-PORTAL-LEDGER-INTEGRATION-BRIEF.md §3.3: the authorization-free query/projection core, extracted
+ * verbatim from this function's own prior inline body. No authorization logic of any kind — it trusts the
+ * `organizationId`/`studentId` pair its caller already decided is safe to read, and always returns the full
+ * staff-shaped `PaymentHistoryResult` (including `notes`). `listPaymentHistoryForStudent` (staff, branch-checked)
+ * and `listOwnPaymentHistory` (self, identity-checked, below) are its only two callers, each applying its own,
+ * genuinely different, authorization front before reaching it.
+ */
+async function queryPaymentHistoryRows(organizationId: string, studentId: string, opts: { limit?: number; cursor?: string }): Promise<PaymentHistoryResult> {
+  const where = { organizationId, studentId } as const;
   const limit = clampLimit(opts.limit);
 
   // Tenant/student-bound cursor validation, same discipline as `financial-corrections-queries.ts`: a foreign
@@ -189,4 +202,101 @@ export async function listPaymentHistoryForStudent(
   }));
 
   return { ok: true, rows, nextCursor: hasMore ? page[page.length - 1].id : null };
+}
+
+/**
+ * STUDENT-PORTAL-LEDGER-INTEGRATION-BRIEF.md §3.3/§5.1: the student-facing row — an ALLOWLIST built by explicit
+ * field copy in `toPortalPaymentHistoryRow` below, never the staff `PaymentHistoryRow` narrowed by a TypeScript
+ * return-type annotation. A TypeScript type is compile-time-only and erased at runtime; narrowing a function's
+ * declared return type does nothing to the actual object a Server Component serializes into its render payload or
+ * a "use server" action serializes into its JSON response. Nothing not copied into this object by
+ * `toPortalPaymentHistoryRow` can ever reach the client, because nothing not copied there is ever written onto the
+ * object at all. `lateFee.amount` is included (§5.1) — without it the required principal + fee = total breakdown
+ * has no fee figure to show. `notes` is decided excluded (revision 6, §8) — deliberately absent from this type.
+ */
+export type PortalPaymentHistoryRow = {
+  id: string;
+  receivedOn: { year: number; month: number; day: number };
+  tenderCurrency: Currency;
+  tenderAmount: string;
+  method: PaymentMethod;
+  reversedAt: string | null;
+  conversion: { appliedRateValue: string; appliedRateQuoteDate: { year: number; month: number; day: number }; appliedRateRevision: number; appliedRoundingRule: string } | null;
+  settlements: Array<{
+    id: string;
+    reversedAt: string | null;
+    obligationId: string;
+    obligationType: "MONTHLY" | "SIGNUP" | "PACKAGE";
+    coverageYear: number;
+    coverageMonth: number;
+    currency: Currency;
+    principalAmount: string;
+    lateFee: { id: string; amount: string; removalKind: "WAIVED" | "VOIDED" | null } | null;
+    totalAmount: string;
+  }>;
+};
+
+/** The one place the staff-shaped row is narrowed to the student-facing allowlist — `notes` is never copied onto
+ * the returned object (revision 6, §8: decided excluded), for either call path. */
+function toPortalPaymentHistoryRow(row: PaymentHistoryRow): PortalPaymentHistoryRow {
+  return {
+    id: row.id,
+    receivedOn: row.receivedOn,
+    tenderCurrency: row.tenderCurrency,
+    tenderAmount: row.tenderAmount,
+    method: row.method,
+    reversedAt: row.reversedAt,
+    conversion: row.conversion
+      ? {
+          appliedRateValue: row.conversion.appliedRateValue,
+          appliedRateQuoteDate: row.conversion.appliedRateQuoteDate,
+          appliedRateRevision: row.conversion.appliedRateRevision,
+          appliedRoundingRule: row.conversion.appliedRoundingRule,
+        }
+      : null,
+    settlements: row.settlements.map((s) => ({
+      id: s.id,
+      reversedAt: s.reversedAt,
+      obligationId: s.obligationId,
+      obligationType: s.obligationType,
+      coverageYear: s.coverageYear,
+      coverageMonth: s.coverageMonth,
+      currency: s.currency,
+      principalAmount: s.principalAmount,
+      lateFee: s.lateFee ? { id: s.lateFee.id, amount: s.lateFee.amount, removalKind: s.lateFee.removalKind } : null,
+      totalAmount: s.totalAmount,
+    })),
+  };
+}
+
+export type PortalPaymentHistoryResult = { ok: true; rows: PortalPaymentHistoryRow[]; nextCursor: string | null } | { ok: false; error: "invalid" | "notActive" };
+
+/**
+ * STUDENT-PORTAL-LEDGER-INTEGRATION-BRIEF.md §3.3: the self path. Two independent defenses, both required: (1) no
+ * branch check at all — the caller's own `linkedStudentId` is unconditionally theirs, regardless of which branch
+ * it's home to or which branches the caller is staff-assigned to (brief §2.5's traced "coach trains elsewhere"
+ * case); (2) a RUNTIME identity check before any database access, the same defensive pattern `getOwnDuesFacts`
+ * already uses — a `string` TYPE on `PortalSelfContext.linkedStudentId` promises nothing at runtime. If
+ * `undefined` ever reached `prisma.duesPayment.findMany({ where: { studentId, organizationId } })`, Prisma does
+ * not error on it — an `undefined` value drops that field from the `where` clause entirely, silently returning
+ * every student's payments in the organization instead of refusing. The check below exists specifically to make
+ * that impossible, regardless of what produced the bad value upstream.
+ *
+ * The portal page's initial fetch and its "load more" action both call this function directly and exclusively —
+ * neither calls `queryPaymentHistoryRows` or `listPaymentHistoryForStudent` itself, so there is exactly one place
+ * the identity check and the field projection can be bypassed from, and it is nowhere.
+ */
+export async function listOwnPaymentHistory(
+  context: PortalSelfContext,
+  opts: { limit?: number; cursor?: string } = {},
+  deps: LedgerDeps = {},
+): Promise<PortalPaymentHistoryResult> {
+  const activation = deps.activation ?? inactiveLedgerActivation;
+  if (!(await activation.isActive(context.organizationId))) return { ok: false, error: "notActive" };
+  if (typeof context.linkedStudentId !== "string" || context.linkedStudentId.trim().length === 0) {
+    return { ok: false, error: "invalid" };
+  }
+  const result = await queryPaymentHistoryRows(context.organizationId, context.linkedStudentId, opts);
+  if (!result.ok) return result;
+  return { ok: true, rows: result.rows.map(toPortalPaymentHistoryRow), nextCursor: result.nextCursor };
 }

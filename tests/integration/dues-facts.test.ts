@@ -19,6 +19,7 @@ const at = (isoLocal: string) => () => new Date(`${isoLocal}-06:00`); // Costa R
 const deps = (extra: Record<string, unknown> = {}) => ({ activation: ACTIVE, ...extra });
 
 let a: Fixture;
+let b: Fixture;
 let a2: { id: string };
 let director2: { id: string };
 let planA: { id: string };
@@ -111,6 +112,7 @@ async function ledgerCounts() {
 
 beforeAll(async () => {
   a = await makeAccountingOrg("CUMULATIVE", "facts-a");
+  b = await makeAccountingOrg("CUMULATIVE", "facts-b"); // a genuinely different organization, for cross-org isolation tests (§4 item 2)
   a2 = await prisma.academy.create({ data: { organizationId: a.org.id, name: "Facts A2", slug: `facts-a2-${suffix}`, kioskTokenHash: `facts-a2-${suffix}` } });
   const dir2User = await prisma.user.create({ data: { email: `facts-d2-${suffix}@example.com`, passwordHash: "x", role: "DIRECTOR" } });
   await prisma.organizationMembership.create({ data: { userId: dir2User.id, organizationId: a.org.id, role: "DIRECTOR" } });
@@ -150,6 +152,7 @@ afterAll(async () => {
   await prisma.duesPolicyVersion.deleteMany({ where: { organizationId: a.org.id } });
   await prisma.paymentPlan.deleteMany({ where: { organizationId: a.org.id } });
   await a.drop();
+  if (b) await b.drop();
 }, 60_000);
 
 describe("billing inactive: the gated branch returns nothing, byte-identical to absent", () => {
@@ -161,7 +164,7 @@ describe("billing inactive: the gated branch returns nothing, byte-identical to 
 
   it("getOwnDuesFacts returns null with default deps", async () => {
     const s = await newStudent("ACTIVE", "inactiveself");
-    const selfCtx: PortalSelfContext = { ...context({ organizationRole: "STUDENT", selfStudentId: s.id }), selfStudentId: s.id };
+    const selfCtx: PortalSelfContext = { ...context({ organizationRole: "STUDENT", linkedStudentId: s.id }), linkedStudentId: s.id };
     expect(await getOwnDuesFacts(selfCtx)).toBeNull();
   });
 });
@@ -425,20 +428,50 @@ describe("input validation (§6): month / studentIds entries / the captured cloc
 
   it("getOwnDuesFacts returns null for a malformed supplied month", async () => {
     const s = await newStudent("ACTIVE", "selfbadmonth");
-    const selfCtx: PortalSelfContext = { ...context({ organizationRole: "STUDENT", selfStudentId: s.id }), selfStudentId: s.id };
+    const selfCtx: PortalSelfContext = { ...context({ organizationRole: "STUDENT", linkedStudentId: s.id }), linkedStudentId: s.id };
     const result = await getOwnDuesFacts(selfCtx, { year: 99999, month: 1 }, deps());
     expect(result).toBeNull();
   });
 
-  it("getOwnDuesFacts returns null for a blank selfStudentId", async () => {
-    const selfCtx: PortalSelfContext = { ...context({ organizationRole: "STUDENT", selfStudentId: "" }), selfStudentId: "" };
-    const result = await getOwnDuesFacts(selfCtx, undefined, deps());
-    expect(result).toBeNull();
+  it("getOwnDuesFacts returns null for a blank linkedStudentId, never reaching the database (DB-spy proof)", async () => {
+    const selfCtx: PortalSelfContext = { ...context({ organizationRole: "STUDENT", linkedStudentId: "" }), linkedStudentId: "" };
+    const studentFindManySpy = vi.spyOn(appPrisma.student, "findMany");
+    try {
+      const result = await getOwnDuesFacts(selfCtx, undefined, deps());
+      expect(result).toBeNull();
+      expect(studentFindManySpy).not.toHaveBeenCalled();
+    } finally {
+      studentFindManySpy.mockRestore();
+    }
+  });
+
+  it("getOwnDuesFacts returns null for a whitespace-only linkedStudentId, never reaching the database (DB-spy proof)", async () => {
+    const selfCtx: PortalSelfContext = { ...context({ organizationRole: "STUDENT", linkedStudentId: "   " }), linkedStudentId: "   " };
+    const studentFindManySpy = vi.spyOn(appPrisma.student, "findMany");
+    try {
+      const result = await getOwnDuesFacts(selfCtx, undefined, deps());
+      expect(result).toBeNull();
+      expect(studentFindManySpy).not.toHaveBeenCalled();
+    } finally {
+      studentFindManySpy.mockRestore();
+    }
+  });
+
+  it("getOwnDuesFacts returns null for an undefined/non-string linkedStudentId, never reaching the database (DB-spy proof)", async () => {
+    const selfCtx = { ...context({ organizationRole: "STUDENT" }), linkedStudentId: undefined as unknown as string } as PortalSelfContext;
+    const studentFindManySpy = vi.spyOn(appPrisma.student, "findMany");
+    try {
+      const result = await getOwnDuesFacts(selfCtx, undefined, deps());
+      expect(result).toBeNull();
+      expect(studentFindManySpy).not.toHaveBeenCalled();
+    } finally {
+      studentFindManySpy.mockRestore();
+    }
   });
 
   it("getOwnDuesFacts returns null for an Invalid Date clock", async () => {
     const s = await newStudent("ACTIVE", "selfbadclock");
-    const selfCtx: PortalSelfContext = { ...context({ organizationRole: "STUDENT", selfStudentId: s.id }), selfStudentId: s.id };
+    const selfCtx: PortalSelfContext = { ...context({ organizationRole: "STUDENT", linkedStudentId: s.id }), linkedStudentId: s.id };
     const result = await getOwnDuesFacts(selfCtx, undefined, deps({ now: () => new Date("not-a-date") }));
     expect(result).toBeNull();
   });
@@ -555,9 +588,55 @@ describe("self mode: structurally and at runtime cannot return a foreign student
     const someoneElse = await newStudent("ACTIVE", "notme");
     await createObligation({ studentId: me.id, type: "MONTHLY", year: 2030, month: 1, dueOn: new Date("2030-01-01"), graceDeadline: new Date("2030-01-06"), lateFeeAmount: "20.00", policyVersionId: policyA.id });
     await createObligation({ studentId: someoneElse.id, type: "MONTHLY", year: 2030, month: 1, dueOn: new Date("2030-01-01"), graceDeadline: new Date("2030-01-06"), lateFeeAmount: "20.00", policyVersionId: policyA.id });
-    const selfCtx: PortalSelfContext = { ...context({ organizationRole: "STUDENT", selfStudentId: me.id }), selfStudentId: me.id };
+    const selfCtx: PortalSelfContext = { ...context({ organizationRole: "STUDENT", linkedStudentId: me.id }), linkedStudentId: me.id };
     const result = await getOwnDuesFacts(selfCtx, undefined, deps({ now: at("2030-01-10T12:00:00") }));
     expect(result?.studentId).toBe(me.id);
+  });
+
+  it("never returns a different student in the same branch — self mode uses IDENTITY, never the staff path's branch check (brief §4.1)", async () => {
+    const me = await newStudent("ACTIVE", "selfsamebranch", a.academy.id);
+    const sameBranchOther = await newStudent("ACTIVE", "selfsamebranchother", a.academy.id);
+    await createObligation({ studentId: sameBranchOther.id, type: "MONTHLY", year: 2030, month: 1, dueOn: new Date("2030-01-01"), graceDeadline: new Date("2030-01-06"), lateFeeAmount: "20.00", policyVersionId: policyA.id });
+    const selfCtx: PortalSelfContext = { ...context({ organizationRole: "STUDENT", linkedStudentId: me.id }), linkedStudentId: me.id };
+    const result = await getOwnDuesFacts(selfCtx, undefined, deps({ now: at("2030-01-10T12:00:00") }));
+    expect(result?.studentId).toBe(me.id);
+    expect(result?.outstanding).toEqual([]); // nothing of sameBranchOther's ever leaks in
+  });
+
+  it("never returns another organization's data for a coincidentally-reused student id — cross-org isolation tested for the self-scoped function directly, not assumed (brief §4 item 2)", async () => {
+    const realStudent = await newStudent("ACTIVE", "crossorgself");
+    await createObligation({ studentId: realStudent.id, type: "MONTHLY", year: 2030, month: 1, dueOn: new Date("2030-01-01"), graceDeadline: new Date("2030-01-06"), lateFeeAmount: "20.00", policyVersionId: policyA.id });
+    // org `b`'s own context, claiming (as if forged) org `a`'s real student id as its own linkedStudentId —
+    // the organizationId filter inside computeDuesFactsForStudents must still exclude it.
+    const crossOrgCtx: PortalSelfContext = {
+      kind: "tenant", actorUserId: b.admin.id, organizationId: b.org.id, organizationRole: "STUDENT",
+      academyIds: [], selfStudentId: realStudent.id, linkedStudentId: realStudent.id,
+    };
+    const result = await getOwnDuesFacts(crossOrgCtx, undefined, deps({ now: at("2030-01-10T12:00:00") }));
+    expect(result).toBeNull();
+  });
+
+  it("brief §2.5/§3.2: a staff member whose own linked student is homed OUTSIDE their staff-assignment branch scope still sees their own real data — no branch check runs on the self path", async () => {
+    // `director2` (beforeAll) is already staff-assigned to `a2`, so it can't exercise this mismatch — a FRESH
+    // staff member, scoped to `a.academy.id` ONLY, whose own linked student is homed at `a2` instead, is needed.
+    const staffLinkedStudent = await newStudent("ACTIVE", "staffbutstudent", a2.id);
+    const outsideStaffUser = await prisma.user.create({ data: { email: `facts-outsidestaff-${suffix}@example.com`, passwordHash: "x", role: "DIRECTOR" } });
+    await prisma.organizationMembership.create({ data: { userId: outsideStaffUser.id, organizationId: a.org.id, role: "DIRECTOR" } });
+    await prisma.staffAssignment.create({ data: { userId: outsideStaffUser.id, academyId: a.academy.id, organizationId: a.org.id, role: "DIRECTOR" } });
+    await createObligation({ studentId: staffLinkedStudent.id, type: "MONTHLY", year: 2030, month: 1, dueOn: new Date("2030-01-01"), graceDeadline: new Date("2030-01-06"), lateFeeAmount: "20.00", policyVersionId: policyA.id });
+    try {
+      const selfCtx: PortalSelfContext = {
+        kind: "tenant", actorUserId: outsideStaffUser.id, organizationId: a.org.id, organizationRole: "DIRECTOR",
+        academyIds: [a.academy.id], selfStudentId: null, linkedStudentId: staffLinkedStudent.id,
+      };
+      const result = await getOwnDuesFacts(selfCtx, undefined, deps({ now: at("2030-01-10T12:00:00") }));
+      expect(result?.studentId).toBe(staffLinkedStudent.id);
+      expect(result?.outstanding).toHaveLength(1); // their own real obligation, not silently excluded by a branch check
+    } finally {
+      await prisma.staffAssignment.deleteMany({ where: { userId: outsideStaffUser.id } });
+      await prisma.organizationMembership.deleteMany({ where: { userId: outsideStaffUser.id, organizationId: a.org.id } });
+      await prisma.user.deleteMany({ where: { id: outsideStaffUser.id } });
+    }
   });
 });
 

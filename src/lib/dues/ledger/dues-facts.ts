@@ -25,10 +25,13 @@ import type { YearMonth } from "@/lib/dues/calendar";
  * different, unbuilt capability.
  */
 
-/** A staff (or self) session's own linked student id, non-null — the structural guarantee `getOwnDuesFacts` (below)
- * relies on instead of a runtime check: the type itself makes "request someone else's id" inexpressible, since the
- * function takes no `studentIds` parameter at all. */
-export type PortalSelfContext = TenantContext & { selfStudentId: string };
+/** A session's own linked student id, non-null — the structural guarantee `getOwnDuesFacts` (below) relies on
+ * instead of a runtime check: the type itself makes "request someone else's id" inexpressible, since the function
+ * takes no `studentIds` parameter at all. Keyed on `linkedStudentId` (role-independent — "this account's own
+ * training record"), never `selfStudentId` (role-gated to STUDENT, and drives ROSTER scoping instead — see
+ * `TenantContext`'s own doc comments, `src/lib/tenant/types.ts:20-37`). A staff member who also trains has a
+ * non-null `linkedStudentId` too, and must reach their own portal data exactly like a pure student. */
+export type PortalSelfContext = TenantContext & { linkedStudentId: string };
 
 export type DuesEligibilityFact =
   | { outcome: "UNDECIDABLE" | "NOT_ELIGIBLE" | "NO_ASSIGNMENT" }
@@ -328,18 +331,23 @@ export async function listDuesFactsForStudents(
 }
 
 /**
- * Student-self mode (brief §6): takes NO `studentIds` parameter at all — the caller's own student id
- * (`context.selfStudentId`) is implicit, never a request parameter. This structurally eliminates "could a student
+ * Student-self mode (brief §6): takes NO `studentIds` parameter at all — the caller's own linked student id
+ * (`context.linkedStudentId`) is implicit, never a request parameter. This structurally eliminates "could a caller
  * request someone else's data" as a question, rather than relying on a runtime check that could have a bug: a
  * caller that somehow holds a foreign id has no parameter to put it in.
+ *
+ * No branch check of any kind, deliberately (STUDENT-PORTAL-LEDGER-INTEGRATION-BRIEF.md §2.5/§3.2): unlike staff
+ * mode's `branchScopeWhere`, this function never consults `context.academyIds`. A staff member whose own linked
+ * student is homed at a branch outside their own staff-assignment scope must still see their own real data —
+ * `academyIds` answers "which students may I see as STAFF," a different question from "is this my own record."
  */
 export async function getOwnDuesFacts(context: PortalSelfContext, month?: YearMonth, deps: LedgerDeps = {}): Promise<DuesFactsForStudent | null> {
   const activation = deps.activation ?? inactiveLedgerActivation;
   if (!(await activation.isActive(context.organizationId))) return null;
-  if (typeof context.selfStudentId !== "string" || context.selfStudentId.trim().length === 0) return null;
+  if (typeof context.linkedStudentId !== "string" || context.linkedStudentId.trim().length === 0) return null;
   if (month !== undefined && !isValidCoverageMonth(month)) return null;
   const now = (deps.now ?? (() => new Date()))();
   if (!isRealClock(now)) return null;
-  const facts = await computeDuesFactsForStudents(prisma, context.organizationId, [context.selfStudentId], month, now);
+  const facts = await computeDuesFactsForStudents(prisma, context.organizationId, [context.linkedStudentId], month, now);
   return facts[0] ?? null;
 }
