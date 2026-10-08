@@ -64,6 +64,8 @@ let a: Fixture;
 let studentUser: { id: string };
 let student: { id: string };
 let newerPaymentId: string;
+let sharedTerms: { id: string };
+let sharedPolicy: { id: string };
 
 function adminContext(): TenantContext {
   return { kind: "tenant", actorUserId: a.admin.id, organizationId: a.org.id, organizationRole: "ADMIN", academyIds: "ALL", selfStudentId: null, linkedStudentId: null };
@@ -90,6 +92,8 @@ beforeAll(async () => {
   const policy = await prisma.duesPolicyVersion.create({
     data: { organizationId: a.org.id, academyId: a.academy.id, effectiveYear: 2020, effectiveMonth: 1, dueDay: 20, graceDay: 5, lateFeeAmount: "20.00", lateFeeCurrency: "USD", createdById: a.admin.id },
   });
+  sharedTerms = terms;
+  sharedPolicy = policy;
   const obligation = await createMonthlyObligation(
     { context: adminContext(), studentId: student.id, coverage: { year: 2030, month: 6 }, planTermsId: terms.id, policyVersionId: policy.id },
     ACTIVE_DEPS,
@@ -123,7 +127,7 @@ afterAll(async () => {
   await prisma.$transaction(
     async (tx) => {
       await tx.$executeRawUnsafe("SET LOCAL session_replication_role = replica");
-      for (const table of ["DuesSettlement", "DuesPayment", "DuesCoverage", "DuesObligation"]) {
+      for (const table of ["DuesSettlement", "DuesPayment", "DuesLateFee", "DuesCoverage", "DuesObligation"]) {
         await tx.$executeRawUnsafe(`DELETE FROM "${table}" WHERE "organizationId" = $1`, a.org.id);
       }
     },
@@ -216,23 +220,56 @@ describe("portal/page.tsx: inactive-ledger render parity + active ledger cutover
     expect(JSON.stringify(capturedHistoryProps)).not.toContain("an older private staff note that must never reach the portal either");
   });
 
-  it("REQUIRED: a genuinely nonempty SECOND page, fetched through the ACTUAL getOwnPaymentHistoryPage action (not the library directly), also has no notes", async () => {
-    currentSession = { user: { id: studentUser.id }, activeOrganizationId: a.org.id };
-    try {
-      // `newerPaymentId` anchors what a real page 1 (default page size, no explicit limit) would have ended on;
-      // passing it as the cursor is exactly what the client component does for "load more" — a real, valid
-      // cursor, not a fabricated one — and the older payment is what a genuine next page returns.
-      const page2 = await getOwnPaymentHistoryPage(a.org.id, newerPaymentId);
-      expect(page2.ok).toBe(true);
-      if (!page2.ok) throw new Error("expected ok result");
-      expect(page2.rows.length).toBeGreaterThan(0); // non-vacuous: a real second page, not an empty one
-      expect(page2.rows.some((r) => r.tenderAmount === "100.00")).toBe(true);
-      for (const row of page2.rows) {
-        expect(row).not.toHaveProperty("notes");
+  it(
+    "REQUIRED: a genuinely nonempty SECOND page, fetched through the ACTUAL getOwnPaymentHistoryPage action with the REAL cursor it returned (not the library directly, not a fabricated cursor), also has no notes",
+    async () => {
+      // Self-contained: sets its own activation state rather than depending on a previous test's mockActive, and
+      // seeds enough valid payments to exceed the action's real DEFAULT_LIMIT (25, payment-history-queries.ts) —
+      // so a genuine no-cursor call produces a non-null nextCursor on its own, never a manually-supplied one.
+      mockActive = true;
+
+      // 25 filler payments, all dated TODAY (2030-06-15, the frozen clock) — strictly newer than `newerPaymentId`
+      // (2030-06-10), so they fill page 1 entirely; `newerPaymentId` and the older May payment fall onto page 2.
+      for (let i = 0; i < 25; i++) {
+        const year = 2026 + Math.floor(i / 12);
+        const month = (i % 12) + 1;
+        const fillerObligation = await createMonthlyObligation(
+          { context: adminContext(), studentId: student.id, coverage: { year, month }, planTermsId: sharedTerms.id, policyVersionId: sharedPolicy.id },
+          ACTIVE_DEPS,
+        );
+        if (!fillerObligation.ok) throw new Error(`filler obligation ${i} failed: ${fillerObligation.error}`);
+        const fillerRecorded = await recordDuesPayment(
+          // Must exactly match the obligation's own real total as of "now" — each coverage month is years in the
+          // past relative to the frozen 2030-06-15 clock, so every one is already well past its grace deadline:
+          // the selectable total is priceAmount + the flat lateFeeAmount (100.00 + 20.00), never priceAmount alone.
+          { context: adminContext(), studentId: student.id, receivedOn: { year: 2030, month: 6, day: 15 }, tender: { currency: "USD", amount: "120.00" }, method: "EFECTIVO", obligationIds: [fillerObligation.obligationId], maxBackdateDays: 30 },
+          ACTIVE_DEPS,
+        );
+        if (!fillerRecorded.ok) throw new Error(`filler payment ${i} failed: ${fillerRecorded.error}`);
       }
-      expect(JSON.stringify(page2)).not.toContain("an older private staff note that must never reach the portal either");
-    } finally {
-      currentSession = null;
-    }
-  });
+
+      currentSession = { user: { id: studentUser.id }, activeOrganizationId: a.org.id };
+      try {
+        const page1 = await getOwnPaymentHistoryPage(a.org.id);
+        expect(page1.ok).toBe(true);
+        if (!page1.ok) throw new Error("expected ok result");
+        expect(page1.nextCursor).not.toBeNull(); // proves a genuine second page exists, before fetching it
+
+        const page2 = await getOwnPaymentHistoryPage(a.org.id, page1.nextCursor!);
+        expect(page2.ok).toBe(true);
+        if (!page2.ok) throw new Error("expected ok result");
+        expect(page2.rows.length).toBeGreaterThan(0); // non-vacuous: a real second page, not an empty one
+        // The exact expected payment — the one carrying the known private note — is present on this real page.
+        expect(page2.rows.some((r) => r.id === newerPaymentId)).toBe(true);
+        for (const row of page2.rows) {
+          expect(row).not.toHaveProperty("notes");
+        }
+        expect(JSON.stringify(page2)).not.toContain("a private staff note that must never reach the portal");
+        expect(JSON.stringify(page2)).not.toContain("an older private staff note that must never reach the portal either");
+      } finally {
+        currentSession = null;
+      }
+    },
+    30_000,
+  );
 });
