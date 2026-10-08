@@ -65,6 +65,7 @@ function renderTable(row: ReturnType<typeof promoRowOn>) {
         currentYear={2026}
         currentMonth={9}
         canRecordPayments={true}
+        ledgerActive={false}
         locale="en"
       />
     </NextIntlClientProvider>,

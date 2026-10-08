@@ -139,7 +139,11 @@ export default async function PaymentsPage() {
           student-detail page's own `canEdit` gate for the identical form.
           `recordPayment`/`markPaymentPaid` re-enforce the same gate
           server-side regardless. */}
-      {canRecordPayments && (
+      {/* REMAINING-LEDGER-CONSUMERS-BRIEF.md §2.6: this legacy write control is hidden once the ledger is active
+          for this organization — `recordPayment` itself refuses server-side regardless (the real enforcement),
+          this only avoids offering a control that would always be refused. Preserves the exact unconditional
+          rendering when inactive. */}
+      {canRecordPayments && !ledgerActive && (
         <Card>
           <CardHeader className="border-b">
             <CardTitle>{t("recordCard.heading")}</CardTitle>
@@ -248,6 +252,7 @@ export default async function PaymentsPage() {
             currentYear={today.year}
             currentMonth={today.month}
             canRecordPayments={canRecordPayments}
+            ledgerActive={ledgerActive}
             locale={locale}
           />
         </CardContent>

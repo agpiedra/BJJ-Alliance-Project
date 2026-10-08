@@ -36,6 +36,11 @@ export interface PaymentsTableProps {
   currentYear: number;
   currentMonth: number;
   canRecordPayments: boolean;
+  /** REMAINING-LEDGER-CONSUMERS-BRIEF.md §2.6: hides the "Marcar pagado" action and the PROMO_OR_EXEMPT row's
+   * "Editar" action (both ultimately call the legacy `recordPayment`/`markPaymentPaid`, which refuse server-side
+   * regardless) once the ledger is active for this organization — never offers a control that would always be
+   * refused. The status table/pill rendering itself is unaffected; that replacement is a separate, later PR. */
+  ledgerActive: boolean;
   locale: string;
 }
 
@@ -60,6 +65,7 @@ export function PaymentsTable({
   currentYear,
   currentMonth,
   canRecordPayments,
+  ledgerActive,
   locale,
 }: PaymentsTableProps) {
   const t = useTranslations("payments.table");
@@ -242,7 +248,10 @@ export function PaymentsTable({
                       </Button>
                     )}
                     {row.bucket === "PROMO_OR_EXEMPT" &&
-                      (canRecordPayments ? (
+                      // REMAINING-LEDGER-CONSUMERS-BRIEF.md §2.6: once the ledger is active, this row falls back
+                      // to the same read-only receipt view a non-recording role already gets — `recordPayment`
+                      // (which the "Editar" sheet below ultimately calls) refuses server-side regardless.
+                      (canRecordPayments && !ledgerActive ? (
                         <Button variant="ghost" size="sm" onClick={() => setEditStudentId(row.studentId)}>
                           {t("edit")}
                         </Button>
@@ -251,7 +260,7 @@ export function PaymentsTable({
                           {t("viewReceipt")}
                         </Button>
                       ))}
-                    {(row.bucket === "PENDING" || row.bucket === "OVERDUE") && canRecordPayments && (
+                    {(row.bucket === "PENDING" || row.bucket === "OVERDUE") && canRecordPayments && !ledgerActive && (
                       <Button variant="primary" size="sm" disabled={isPending} onClick={() => handleMarkPaid(row)}>
                         {t("markPaid")}
                       </Button>

@@ -55,6 +55,9 @@ const { default: PaymentsPage } = await import("../../src/app/[locale]/(staff)/p
 
 const PACKAGE_CARD_MARKER = "Sell a package";
 const LEDGER_CARD_MARKER = "Record a ledger payment";
+// Distinct from LEDGER_CARD_MARKER on purpose: "Record a payment" (recordCard.heading) never appears as a
+// substring of "Record a ledger payment" (ledgerEntry.heading) — the two cards' own headings never collide.
+const LEGACY_CARD_MARKER = "Record a payment";
 
 describe("payments/page.tsx: role + activation gate the new ledger cards", () => {
   let fixture: Awaited<ReturnType<typeof makeAccountingOrg>>;
@@ -113,5 +116,20 @@ describe("payments/page.tsx: role + activation gate the new ledger cards", () =>
     const html = await renderAs(fixture.admin.id);
     expect(html).not.toContain(PACKAGE_CARD_MARKER);
     expect(html).not.toContain(LEDGER_CARD_MARKER);
+  });
+
+  // REMAINING-LEDGER-CONSUMERS-BRIEF.md §2.6 (PR 2): the legacy "Record a payment" card — unlike the three ledger
+  // cards above, which only ever APPEAR when active — must be hidden once active (`recordPayment` itself refuses
+  // regardless), and its rendering while inactive must stay byte-for-byte unchanged from before this PR.
+  it("REQUIRED: ADMIN + active organization no longer sees the legacy 'Record a payment' card", async () => {
+    mockActive = true;
+    const html = await renderAs(fixture.admin.id);
+    expect(html).not.toContain(LEGACY_CARD_MARKER);
+  });
+
+  it("REQUIRED: ADMIN + INACTIVE organization still sees the legacy 'Record a payment' card, unchanged", async () => {
+    mockActive = false;
+    const html = await renderAs(fixture.admin.id);
+    expect(html).toContain(LEGACY_CARD_MARKER);
   });
 });

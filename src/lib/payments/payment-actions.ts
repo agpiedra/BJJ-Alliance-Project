@@ -12,6 +12,7 @@ import { ALL_DEFAULT_PLAN_NAMES } from "@/lib/payments/default-plan-name";
 import { currentCrDateParts } from "@/lib/payments/get-current-period";
 import { isPeriodMoreThanOneMonthInFuture } from "@/lib/payments/period-window";
 import { NOT_PACKAGE_PLAN } from "@/lib/dues/package-plans";
+import { inactiveLedgerActivation } from "@/lib/dues/ledger/activation";
 import type { ActionState } from "@/lib/action-state";
 
 const recordPaymentSchema = z.object({
@@ -73,6 +74,18 @@ export async function recordPayment(
   const auth = await resolveActionContext(organizationId, ["ADMIN", "DIRECTOR"]);
   if (!auth.ok) return { error: "notFound" };
   const context = auth.context;
+
+  // REMAINING-LEDGER-CONSUMERS-BRIEF.md §2.6: once the dues ledger is active for this organization, this legacy
+  // writer refuses — before any further read, and unconditionally before the write below — rather than silently
+  // redirecting the request or converting it into a ledger payment. Resolved from the real, unmodified
+  // `inactiveLedgerActivation` production default every other ledger-gated check in this codebase already uses
+  // (activation.ts's own file comment: "production passes nothing, so every writer ... refuses for every
+  // organization"; `payments/page.tsx` reads this exact same binding to decide what to render) — never a client-
+  // supplied flag, never an override parameter added to this action's own public signature. `markPaymentPaid`
+  // below has no write path of its own: it only ever writes THROUGH this function, so this one check closes both.
+  if (await inactiveLedgerActivation.isActive(organizationId)) {
+    return { error: "ledgerActive" };
+  }
 
   const parsed = recordPaymentSchema.safeParse(Object.fromEntries(formData.entries()));
 
@@ -285,6 +298,10 @@ export async function recordPayment(
  * ponytail: a real "default plan" flag on `PaymentPlan` would replace this
  * heuristic if it ever picks the wrong plan for an academy's makeup —
  * cheap to add later, not worth it for a single quick-mark button today.
+ *
+ * Inherits `recordPayment`'s own ledger-activation refusal below for free: this function builds a `FormData` and
+ * calls that SAME action, so once the ledger is active for this organization, the final `recordPayment(...)` call
+ * at the bottom refuses with `ledgerActive` before writing anything — no separate check is needed here.
  */
 export async function markPaymentPaid(
   organizationId: string,

@@ -665,6 +665,7 @@
         "success": "Payment recorded.",
         "invalid": "Please check the form for errors.",
         "notFound": "Could not record this payment.",
+        "ledgerActive": "This organization now records payments through the ledger payment flow. Use the ledger payment option on the Payments page instead of this form.",
         "invalidPlan": "That plan does not belong to this student's academy.",
         "planInactive": "That plan has been deactivated, so no new payment can be recorded on it. Choose an active plan.",
         "periodTooFarInFuture": "The period cannot be more than one month in the future.",

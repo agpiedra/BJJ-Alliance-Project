@@ -69,7 +69,11 @@ import { productionSourceFiles, stripComments } from "../helpers/source-files";
  *     through this file (or the already-authorized `payment-history-queries.ts`) instead of importing `dues/
  *     ledger` directly themselves — including `src/app/[locale]/portal/payment-history-actions.ts` and
  *     `page.tsx` themselves, which import `PortalSelfContext` from this file's own RE-EXPORT rather than from
- *     `dues/ledger/dues-facts` directly, needing no entries of their own.
+ *     `dues/ledger/dues-facts` directly, needing no entries of their own. `src/lib/payments/payment-actions.ts`
+ *     (REMAINING-LEDGER-CONSUMERS-BRIEF.md §2.6, PR 2) is the one new importer that brief's PR 2 adds: the legacy
+ *     `recordPayment`/`markPaymentPaid` writers' own read-only `inactiveLedgerActivation.isActive` check — unlike
+ *     every other page-level pre-check in this list, this one IS the real, unconditional enforcement (there is no
+ *     separate engine-level gate for these two legacy writers), never a ledger write itself.
  *  2. They are plain library functions: no `"use server"` (which would make an exported function an invocable endpoint), no route, no
  *     client component.
  *  3. They are registered in `scripts/pending-callers.ts`, the repo's list of code built ahead of its caller.
@@ -106,6 +110,10 @@ const AUTHORIZED_CALLERS = [
   "src/app/[locale]/(staff)/students/roster-ledger-status.tsx",
   "src/app/[locale]/(staff)/students/[id]/student-balance-summary.tsx",
   "src/lib/dues/portal-ledger-queries.ts",
+  // REMAINING-LEDGER-CONSUMERS-BRIEF.md §2.6 (PR 2): the legacy `recordPayment`/`markPaymentPaid` writers' own
+  // activation-boundary refusal — reads `inactiveLedgerActivation.isActive(organizationId)` directly, the same
+  // read-only binding `payments/page.tsx` already imports, never a writer call.
+  "src/lib/payments/payment-actions.ts",
 ];
 
 describe("the ledger writers are not reachable from production code", () => {

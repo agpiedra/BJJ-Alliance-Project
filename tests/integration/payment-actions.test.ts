@@ -26,6 +26,17 @@ vi.mock("@/auth", () => ({
   auth: () => Promise.resolve(currentSession),
 }));
 
+// REMAINING-LEDGER-CONSUMERS-BRIEF.md §2.6: the sanctioned test seam `activation.ts`'s own file comment documents
+// ("Tests inject an active stub to exercise the writers"), the same technique `payments-page-card-gating.test.ts`
+// already established — never the production activation gate itself. Defaults to `false` (the real, unmodified
+// production default) so every pre-existing test in this file below is completely unaffected; only the new
+// "activation boundary" describe block at the bottom of this file ever sets it `true`, and always resets it.
+let mockActive = false;
+vi.mock("@/lib/dues/ledger/activation", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../src/lib/dues/ledger/activation")>();
+  return { ...actual, inactiveLedgerActivation: { isActive: async () => mockActive } };
+});
+
 const { recordPayment, markPaymentPaid } = await import("../../src/lib/payments/payment-actions");
 
 const prisma = getTestPrismaClient();
@@ -810,5 +821,146 @@ describe("markPaymentPaid", () => {
       // effect of just marking a month paid.
       promoRecurring: true,
     });
+  });
+});
+
+describe("recordPayment / markPaymentPaid: the dues-ledger activation boundary (REMAINING-LEDGER-CONSUMERS-BRIEF.md §2.6)", () => {
+  // Every test in this describe block calls `recordPayment`/`markPaymentPaid` DIRECTLY — no component, no form, no
+  // button is ever rendered here — so a refusal proven here is proven independently of whatever a UI does or does
+  // not show; a forged request or a stale/previously-opened form reaches exactly this same code path.
+  afterAll(cleanup);
+
+  beforeEach(() => {
+    currentSession = null;
+    mockActive = false;
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    mockActive = false;
+  });
+
+  it("recordPayment refuses with ledgerActive once the ledger is active, writing zero PaymentPeriod/AuditLog rows", async () => {
+    const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+    const plan = await prisma.paymentPlan.findFirstOrThrow({ where: { academyId: escazu.id, name: "Mensualidad" } });
+    const admin = await makeStaffUser("ADMIN", "record-ledgeractive-admin");
+    const student = await makeStudent(escazu.id, escazu.organizationId);
+
+    const periodCountBefore = await prisma.paymentPeriod.count({ where: { studentId: student.id } });
+    const auditCountBefore = await prisma.auditLog.count({ where: { organizationId: admin.organizationId, action: "payment.record" } });
+
+    currentSession = { user: { id: admin.id, role: "ADMIN" }, activeOrganizationId: admin.organizationId };
+    mockActive = true;
+    const result = await recordPayment(
+      admin.organizationId,
+      {},
+      formData({ studentId: student.id, year: "2026", month: "11", planId: plan.id, status: "PAID", amount: "45000" }),
+    );
+    expect(result.error).toBe("ledgerActive");
+
+    expect(await prisma.paymentPeriod.count({ where: { studentId: student.id } })).toBe(periodCountBefore);
+    expect(await prisma.auditLog.count({ where: { organizationId: admin.organizationId, action: "payment.record" } })).toBe(auditCountBefore);
+  });
+
+  it("markPaymentPaid refuses with ledgerActive once the ledger is active, never flipping an existing PENDING row to PAID and writing no new audit row", async () => {
+    const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+    const plan = await prisma.paymentPlan.findFirstOrThrow({ where: { academyId: escazu.id, name: "Mensualidad" } });
+    const admin = await makeStaffUser("ADMIN", "markpaid-ledgeractive-admin");
+    const student = await makeStudent(escazu.id, escazu.organizationId);
+    await prisma.paymentPeriod.create({
+      data: {
+        studentId: student.id, academyId: escazu.id, organizationId: escazu.organizationId,
+        year: 2026, month: 12, planId: plan.id, status: "PENDING", amount: 45000, currency: "CRC", recordedById: admin.id,
+      },
+    });
+    const auditCountBefore = await prisma.auditLog.count({ where: { organizationId: admin.organizationId, action: "payment.record" } });
+
+    currentSession = { user: { id: admin.id, role: "ADMIN" }, activeOrganizationId: admin.organizationId };
+    mockActive = true;
+    const result = await markPaymentPaid(admin.organizationId, student.id, 2026, 12);
+    expect(result.error).toBe("ledgerActive");
+
+    const period = await paymentPeriodFor(student.id, 2026, 12);
+    expect(period?.status).toBe("PENDING"); // never flipped to PAID
+    expect(await prisma.auditLog.count({ where: { organizationId: admin.organizationId, action: "payment.record" } })).toBe(auditCountBefore);
+  });
+
+  it("an authorized call still succeeds when the ledger is inactive — the real, unmodified production default, unaffected by this new check", async () => {
+    const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+    const plan = await prisma.paymentPlan.findFirstOrThrow({ where: { academyId: escazu.id, name: "Mensualidad" } });
+    const admin = await makeStaffUser("ADMIN", "record-stillinactive-admin");
+    const student = await makeStudent(escazu.id, escazu.organizationId);
+
+    currentSession = { user: { id: admin.id, role: "ADMIN" }, activeOrganizationId: admin.organizationId };
+    // mockActive stays false (beforeEach's default) — explicit here for the reader, not relied on silently.
+    mockActive = false;
+    const result = await recordPayment(
+      admin.organizationId,
+      {},
+      formData({ studentId: student.id, year: "2026", month: "11", planId: plan.id, status: "PAID", amount: "45000" }),
+    );
+    expect(result.ok).toBe(true);
+
+    const period = await paymentPeriodFor(student.id, 2026, 11);
+    expect(period?.status).toBe("PAID");
+  });
+
+  it("an INSTRUCTOR session is still rejected by the ordinary role gate when the ledger is active — activation never substitutes for authorization", async () => {
+    const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+    const plan = await prisma.paymentPlan.findFirstOrThrow({ where: { academyId: escazu.id, name: "Mensualidad" } });
+    const instructor = await makeStaffUser("INSTRUCTOR", "record-active-instructor", escazu.id);
+    const student = await makeStudent(escazu.id, escazu.organizationId);
+
+    currentSession = { user: { id: instructor.id, role: "INSTRUCTOR" }, activeOrganizationId: instructor.organizationId };
+    mockActive = true;
+    await expect(
+      recordPayment(instructor.organizationId, {}, formData({ studentId: student.id, year: "2026", month: "11", planId: plan.id, status: "PAID" })),
+    ).rejects.toThrow("FORBIDDEN");
+
+    const period = await paymentPeriodFor(student.id, 2026, 11);
+    expect(period).toBeNull();
+  });
+
+  it("a genuine cross-organization mismatch still gets notFound (never ledgerActive) when the ledger is active — resolveActionContext's own refusal always precedes the activation check, so activation state is never disclosed to a non-member", async () => {
+    const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+    const plan = await prisma.paymentPlan.findFirstOrThrow({ where: { academyId: escazu.id, name: "Mensualidad" } });
+    const admin = await makeStaffUser("ADMIN", "record-active-crossorg-admin");
+    const student = await makeStudent(escazu.id, escazu.organizationId);
+    const otherOrg = await prisma.organization.create({
+      data: { slug: `payment-active-crossorg-${Date.now()}`, name: "Cross-Org Active Test Org", status: "ACTIVE" },
+    });
+
+    try {
+      // The session's own ambient selector points at the admin's real (Alliance) organization; `otherOrg.id` is
+      // the EXPLICIT argument this call names instead — the exact 1f-4 stale-tab/tampered-bind shape, now proven
+      // under an active ledger too.
+      currentSession = { user: { id: admin.id, role: "ADMIN" }, activeOrganizationId: admin.organizationId };
+      mockActive = true;
+      const result = await recordPayment(
+        otherOrg.id,
+        {},
+        formData({ studentId: student.id, year: "2026", month: "11", planId: plan.id, status: "PAID" }),
+      );
+      expect(result.error).toBe("notFound");
+
+      const period = await paymentPeriodFor(student.id, 2026, 11);
+      expect(period).toBeNull();
+    } finally {
+      await prisma.auditLog.deleteMany({ where: { organizationId: otherOrg.id } });
+      await prisma.organization.delete({ where: { id: otherOrg.id } });
+    }
+  });
+
+  it("markPaymentPaid: an unauthorized INSTRUCTOR is still rejected when the ledger is active", async () => {
+    const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
+    const instructor = await makeStaffUser("INSTRUCTOR", "markpaid-active-instructor", escazu.id);
+    const student = await makeStudent(escazu.id, escazu.organizationId);
+
+    currentSession = { user: { id: instructor.id, role: "INSTRUCTOR" }, activeOrganizationId: instructor.organizationId };
+    mockActive = true;
+    await expect(markPaymentPaid(instructor.organizationId, student.id, 2026, 12)).rejects.toThrow("FORBIDDEN");
+
+    const period = await paymentPeriodFor(student.id, 2026, 12);
+    expect(period).toBeNull();
   });
 });
