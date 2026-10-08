@@ -12,7 +12,8 @@ import { reversePayment } from "../../src/lib/dues/ledger/reverse-payment";
 import { enterExchangeRateQuote } from "../../src/lib/dues/ledger/exchange-rate";
 import { versionRevision } from "../../src/lib/dues/config-input";
 import type { LedgerActivation } from "../../src/lib/dues/ledger/activation";
-import { listPaymentHistoryForStudent } from "../../src/lib/dues/payment-history-queries";
+import { listPaymentHistoryForStudent, listOwnPaymentHistory } from "../../src/lib/dues/payment-history-queries";
+import type { PortalSelfContext } from "../../src/lib/dues/ledger/dues-facts";
 
 /**
  * ROSTER-STUDENT-DETAIL-INTEGRATION-BRIEF.md §7: reader tests for `listPaymentHistoryForStudent` against the real
@@ -38,6 +39,15 @@ const feePolicy: Record<string, { id: string }> = {};
 
 function context(org: Fixture, over: Partial<TenantContext> = {}): TenantContext {
   return { kind: "tenant", actorUserId: org.admin.id, organizationId: org.org.id, organizationRole: "ADMIN", academyIds: "ALL", selfStudentId: null, linkedStudentId: null, ...over };
+}
+
+function selfContext(org: Fixture, linkedStudentId: string, over: Partial<TenantContext> = {}): PortalSelfContext {
+  // academyIds: [] is the real value resolveAcademyIds (resolve-context.ts) produces for a non-ADMIN role — an
+  // ordinary pure STUDENT has no staff assignments. The self path never consults it (that's the whole point of
+  // §3.3's no-branch-check design), so an ordinary success fixture asserting real own data below is exactly the
+  // proof that an empty array doesn't matter here. `over` can still replace it (e.g. the coach-outside-branch
+  // test passes a real, non-empty staff academyIds on purpose).
+  return { ...context(org, { organizationRole: "STUDENT", academyIds: [], ...over }), linkedStudentId } as PortalSelfContext;
 }
 
 let studentCounter = 0;
@@ -430,5 +440,310 @@ describe("listPaymentHistoryForStudent: one student's own mixed-currency history
     expect(crcRow!.conversion!.appliedRateRevision).toBe(1);
 
     // Never summed: each row's own currency and amounts are asserted independently above, with no combined total.
+  });
+});
+
+describe("listOwnPaymentHistory: inactive gate and runtime identity guard (brief §3.3/§4.7)", () => {
+  it("returns notActive when the ledger is not active, before any identity check", async () => {
+    const student = await newStudent(a);
+    const inactive: LedgerActivation = { isActive: async () => false };
+    const result = await listOwnPaymentHistory(selfContext(a, student.id), {}, { activation: inactive, now: DEC_2030 });
+    expect(result).toEqual({ ok: false, error: "notActive" });
+  });
+
+  it("refuses a null linkedStudentId before any database access (DB-spy proof)", async () => {
+    const ctx = selfContext(a, null as unknown as string);
+    const spy = vi.spyOn(appPrisma.duesPayment, "findMany");
+    try {
+      const result = await listOwnPaymentHistory(ctx, {}, deps());
+      expect(result).toEqual({ ok: false, error: "invalid" });
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("refuses an undefined linkedStudentId before any database access (DB-spy proof)", async () => {
+    const ctx = selfContext(a, undefined as unknown as string);
+    const spy = vi.spyOn(appPrisma.duesPayment, "findMany");
+    try {
+      const result = await listOwnPaymentHistory(ctx, {}, deps());
+      expect(result).toEqual({ ok: false, error: "invalid" });
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("refuses an empty-string linkedStudentId before any database access (DB-spy proof)", async () => {
+    const ctx = selfContext(a, "");
+    const spy = vi.spyOn(appPrisma.duesPayment, "findMany");
+    try {
+      const result = await listOwnPaymentHistory(ctx, {}, deps());
+      expect(result).toEqual({ ok: false, error: "invalid" });
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("refuses a whitespace-only linkedStudentId before any database access (DB-spy proof)", async () => {
+    const ctx = selfContext(a, "   ");
+    const spy = vi.spyOn(appPrisma.duesPayment, "findMany");
+    try {
+      const result = await listOwnPaymentHistory(ctx, {}, deps());
+      expect(result).toEqual({ ok: false, error: "invalid" });
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
+describe("listOwnPaymentHistory: no branch check — the coach-trains-elsewhere case (brief §2.5/§3.3/§4.4)", () => {
+  it("a staff member scoped to one branch still sees their OWN real payment history for a linked student homed at a DIFFERENT branch", async () => {
+    const student = await newStudent(a, otherAcademy.id);
+    const obligationResult = await createMonthlyObligation(
+      { context: context(a), studentId: student.id, coverage: { year: 2030, month: 11 }, planTermsId: otherTerms.id, policyVersionId: otherPolicy.id },
+      deps(),
+    );
+    if (!obligationResult.ok) throw new Error(`fixture obligation failed: ${obligationResult.error}`);
+    const recorded = await recordDuesPayment(
+      { context: context(a), studentId: student.id, receivedOn: { year: 2030, month: 11, day: 20 }, tender: { currency: "USD", amount: "100.00" }, method: "EFECTIVO", obligationIds: [obligationResult.obligationId], maxBackdateDays: 30 },
+      deps({ now: at("2030-11-21T12:00:00") }),
+    );
+    if (!recorded.ok) throw new Error("fixture payment failed");
+
+    // The STAFF path, scoped to a DIFFERENT branch than the student's home academy, is correctly denied —
+    // establishing the branch check is real and would have blocked this student if reused for the self path.
+    const staffDenied = await listPaymentHistoryForStudent(context(a, { organizationRole: "DIRECTOR", academyIds: [a.academy.id] }), student.id, {}, deps());
+    expect(staffDenied).toEqual({ ok: true, rows: [], nextCursor: null });
+
+    // The SELF path, run by that same staff member for their OWN linked record (which happens to be this
+    // other-branch student), must succeed — no branch check runs on this path at all.
+    const selfResult = await listOwnPaymentHistory(selfContext(a, student.id, { organizationRole: "DIRECTOR", academyIds: [a.academy.id] }), {}, deps());
+    if (!selfResult.ok) throw new Error("expected ok result");
+    expect(selfResult.rows.map((r) => r.id)).toContain(recorded.paymentId);
+  });
+});
+
+describe("listOwnPaymentHistory: identity isolation, never the staff branch-membership check (brief §4.1/§4.2)", () => {
+  it("never returns a different student's payments, even one in the same branch", async () => {
+    const me = await newStudent(a);
+    const other = await newStudent(a);
+    const otherObligation = await newObligation(a, other.id, 1);
+    const otherPayment = await recordDuesPayment(
+      { context: context(a), studentId: other.id, receivedOn: { year: 2030, month: 1, day: 20 }, tender: { currency: "USD", amount: "100.00" }, method: "EFECTIVO", obligationIds: [otherObligation], maxBackdateDays: 30 },
+      deps({ now: at("2030-01-21T12:00:00") }),
+    );
+    if (!otherPayment.ok) throw new Error("fixture payment failed");
+
+    const result = await listOwnPaymentHistory(selfContext(a, me.id), {}, deps());
+    expect(result).toEqual({ ok: true, rows: [], nextCursor: null });
+  });
+
+  it("never returns another organization's payments for a coincidentally-reused student id, treated as empty success", async () => {
+    const studentInA = await newStudent(a);
+    const obligationId = await newObligation(a, studentInA.id, 1);
+    const recorded = await recordDuesPayment(
+      { context: context(a), studentId: studentInA.id, receivedOn: { year: 2030, month: 1, day: 20 }, tender: { currency: "USD", amount: "100.00" }, method: "EFECTIVO", obligationIds: [obligationId], maxBackdateDays: 30 },
+      deps({ now: at("2030-01-21T12:00:00") }),
+    );
+    if (!recorded.ok) throw new Error("fixture payment failed");
+
+    // org `b`'s own context, claiming (falsely, as if forged) org a's real student id as its own linkedStudentId —
+    // the organizationId filter in the underlying query must still exclude it.
+    const crossOrgCtx = selfContext(b, studentInA.id);
+    const result = await listOwnPaymentHistory(crossOrgCtx, {}, deps());
+    expect(result).toEqual({ ok: true, rows: [], nextCursor: null });
+  });
+});
+
+describe("listOwnPaymentHistory: every call validates its OWN supplied context independently, never trusting an earlier call's identity (brief §4.5's reader-level scope)", () => {
+  it("a second (paginated) call given a context whose linkedStudentId is null is refused on its own terms — this proves the READER re-validates identity on every call, not that any authorization re-resolution pipeline ran", async () => {
+    const student = await newStudent(a);
+    for (const m of [2, 3]) {
+      const obligationId = await newObligation(a, student.id, m);
+      const recorded = await recordDuesPayment(
+        { context: context(a), studentId: student.id, receivedOn: { year: 2030, month: m, day: 20 }, tender: { currency: "USD", amount: "100.00" }, method: "EFECTIVO", obligationIds: [obligationId], maxBackdateDays: 30 },
+        deps({ now: at(`2030-${String(m).padStart(2, "0")}-21T12:00:00`) }),
+      );
+      if (!recorded.ok) throw new Error("fixture payment failed");
+    }
+
+    const page1 = await listOwnPaymentHistory(selfContext(a, student.id), { limit: 1 }, deps());
+    if (!page1.ok) throw new Error("expected ok result");
+    expect(page1.rows).toHaveLength(1);
+    expect(page1.nextCursor).not.toBeNull();
+
+    // This does NOT exercise membership deactivation, context re-resolution, or any server-action-layer
+    // revocation path — none of that exists at this library layer. It directly constructs a SECOND,
+    // independent context with a manually-set null linkedStudentId and calls the reader with it, proving only
+    // that `listOwnPaymentHistory` runs its own runtime guard on whatever context it is GIVEN on every call,
+    // rather than silently carrying forward page 1's already-proven identity into page 2's cursor branch. A real
+    // membership/link-revocation-between-requests integration test (deactivate the DB row, then re-resolve a
+    // fresh TenantContext via resolveContext and observe the server action refuse) belongs to, and is deferred
+    // to, the upcoming portal-action PR, which is the first layer where context resolution actually happens.
+    const differentCtxWithNullIdentity = selfContext(a, null as unknown as string);
+    const page2 = await listOwnPaymentHistory(differentCtxWithNullIdentity, { limit: 1, cursor: page1.nextCursor! }, deps());
+    expect(page2).toEqual({ ok: false, error: "invalid" });
+  });
+
+  it("a cursor obtained under one student's context is never honored under a DIFFERENT student's context", async () => {
+    const studentX = await newStudent(a);
+    const studentY = await newStudent(a);
+    const obligationX = await newObligation(a, studentX.id, 1);
+    const paymentX = await recordDuesPayment(
+      { context: context(a), studentId: studentX.id, receivedOn: { year: 2030, month: 1, day: 20 }, tender: { currency: "USD", amount: "100.00" }, method: "EFECTIVO", obligationIds: [obligationX], maxBackdateDays: 30 },
+      deps({ now: at("2030-01-21T12:00:00") }),
+    );
+    if (!paymentX.ok) throw new Error("fixture payment failed");
+
+    const obligationY = await newObligation(a, studentY.id, 1);
+    const paymentY = await recordDuesPayment(
+      { context: context(a), studentId: studentY.id, receivedOn: { year: 2030, month: 1, day: 20 }, tender: { currency: "USD", amount: "100.00" }, method: "EFECTIVO", obligationIds: [obligationY], maxBackdateDays: 30 },
+      deps({ now: at("2030-01-21T12:00:00") }),
+    );
+    if (!paymentY.ok) throw new Error("fixture payment failed");
+
+    // Reusing X's own payment id as a "cursor" under Y's context must be ignored (falls back to page 1 for Y),
+    // never used to peek into X's page.
+    const result = await listOwnPaymentHistory(selfContext(a, studentY.id), { cursor: paymentX.paymentId }, deps());
+    if (!result.ok) throw new Error("expected ok result");
+    expect(result.rows.map((r) => r.id)).toContain(paymentY.paymentId);
+    expect(result.rows.map((r) => r.id)).not.toContain(paymentX.paymentId);
+  });
+});
+
+describe("listOwnPaymentHistory: library pagination tests — notes omitted from the ACTUAL returned object on both of the function's own call shapes (brief §5.1). Real portal-page/\"load more\"-action integration is deferred to the UI PR.", () => {
+  it("omits notes from the real object on a first call (no cursor), even though the underlying row has one", async () => {
+    const student = await newStudent(a);
+    const obligationId = await newObligation(a, student.id, 1);
+    const recorded = await recordDuesPayment(
+      { context: context(a), studentId: student.id, receivedOn: { year: 2030, month: 1, day: 20 }, tender: { currency: "USD", amount: "100.00" }, method: "EFECTIVO", obligationIds: [obligationId], maxBackdateDays: 30, notes: "a private staff note" },
+      deps({ now: at("2030-01-21T12:00:00") }),
+    );
+    if (!recorded.ok) throw new Error("fixture payment failed");
+
+    // First, the STAFF reader confirms the note genuinely exists on the underlying row (the test is non-vacuous).
+    const staffResult = await listPaymentHistoryForStudent(context(a), student.id, {}, deps());
+    if (!staffResult.ok) throw new Error("expected ok result");
+    const staffRow = staffResult.rows.find((r) => r.id === recorded.paymentId);
+    expect(staffRow?.notes).toBe("a private staff note");
+
+    const selfResult = await listOwnPaymentHistory(selfContext(a, student.id), {}, deps());
+    if (!selfResult.ok) throw new Error("expected ok result");
+    const row = selfResult.rows.find((r) => r.id === recorded.paymentId);
+    expect(row).toBeDefined();
+    expect(row).not.toHaveProperty("notes");
+    // Stronger than a type check: proves the property is absent from the real serialized object, not merely
+    // typed away — a privacy leak via `as any`/spread would still show up here.
+    expect(JSON.stringify(row)).not.toContain("a private staff note");
+  });
+
+  it("omits notes from the ACTUAL returned object on a genuinely nonempty SECOND (paginated) call too, not just the first — non-vacuous: two payments, two distinct private notes, a real second page", async () => {
+    const student = await newStudent(a);
+    const olderObligation = await newObligation(a, student.id, 4);
+    const olderPayment = await recordDuesPayment(
+      { context: context(a), studentId: student.id, receivedOn: { year: 2030, month: 4, day: 20 }, tender: { currency: "USD", amount: "100.00" }, method: "EFECTIVO", obligationIds: [olderObligation], maxBackdateDays: 30, notes: "older private note" },
+      deps({ now: at("2030-04-21T12:00:00") }),
+    );
+    if (!olderPayment.ok) throw new Error("fixture payment failed");
+    const newerObligation = await newObligation(a, student.id, 5);
+    const newerPayment = await recordDuesPayment(
+      { context: context(a), studentId: student.id, receivedOn: { year: 2030, month: 5, day: 20 }, tender: { currency: "USD", amount: "100.00" }, method: "EFECTIVO", obligationIds: [newerObligation], maxBackdateDays: 30, notes: "newer private note" },
+      deps({ now: at("2030-05-21T12:00:00") }),
+    );
+    if (!newerPayment.ok) throw new Error("fixture payment failed");
+
+    // orderBy is [receivedOn desc, id desc] — the newer (month 5) payment fills page 1; the OLDER (month 4) one is
+    // genuinely what page 2 returns, not a request past the end of the data.
+    const page1 = await listOwnPaymentHistory(selfContext(a, student.id), { limit: 1 }, deps());
+    if (!page1.ok) throw new Error("expected ok result");
+    expect(page1.rows).toHaveLength(1);
+    expect(page1.rows[0]!.id).toBe(newerPayment.paymentId);
+    expect(page1.nextCursor).not.toBeNull(); // proves more genuinely exists before requesting page 2
+
+    const page2 = await listOwnPaymentHistory(selfContext(a, student.id), { limit: 1, cursor: page1.nextCursor! }, deps());
+    if (!page2.ok) throw new Error("expected ok result");
+    expect(page2.rows).toHaveLength(1); // a real, nonempty second page — not vacuous
+    expect(page2.rows[0]!.id).toBe(olderPayment.paymentId); // the EXPECTED payment identity, not just "something"
+    expect(page2.rows[0]).not.toHaveProperty("notes");
+    expect(JSON.stringify(page2.rows[0])).not.toContain("older private note");
+  });
+
+  it("the student-facing row has exactly the allowlisted top-level and nested keys, with a GENUINE fee-bearing settlement — lateFee asserted non-null, never behind a conditional", async () => {
+    const student = await newStudent(a);
+    const obligationId = await newObligation(a, student.id, 5);
+    // Fee assessed, deliberately left UN-waived — the payment below settles the obligation while the fee is
+    // still active, so the settlement's own lateFeeId is genuinely set. Waiving it first (as the previous version
+    // of this test did) leaves no active fee to settle, so settlement.lateFee comes back null and the conditional
+    // assertion below it never runs — a vacuous test. This version has no conditional at all.
+    const outcomes = await assessAsOf(a, student.id, 6, 10);
+    const feeId = feeIdFor(outcomes, obligationId);
+    const recorded = await recordDuesPayment(
+      { context: context(a), studentId: student.id, receivedOn: { year: 2030, month: 6, day: 15 }, tender: { currency: "USD", amount: "120.00" }, method: "EFECTIVO", obligationIds: [obligationId], maxBackdateDays: 30 },
+      deps({ now: at("2030-06-15T12:00:00") }),
+    );
+    if (!recorded.ok) throw new Error("fixture payment failed");
+
+    const result = await listOwnPaymentHistory(selfContext(a, student.id), {}, deps());
+    if (!result.ok) throw new Error("expected ok result");
+    const row = result.rows.find((r) => r.id === recorded.paymentId)!;
+    expect(Object.keys(row).sort()).toEqual(["conversion", "id", "method", "receivedOn", "reversedAt", "settlements", "tenderAmount", "tenderCurrency"].sort());
+    const settlement = row.settlements[0]!;
+    expect(Object.keys(settlement).sort()).toEqual(
+      ["coverageYear", "coverageMonth", "currency", "id", "lateFee", "obligationId", "obligationType", "principalAmount", "reversedAt", "totalAmount"].sort(),
+    );
+    expect(settlement.lateFee).not.toBeNull();
+    expect(Object.keys(settlement.lateFee!).sort()).toEqual(["amount", "id", "removalKind"].sort());
+    expect(settlement.lateFee!.id).toBe(feeId);
+    expect(settlement.lateFee!.amount).toBe("20.00");
+    expect(settlement.lateFee!.removalKind).toBeNull(); // genuinely unwaived/unvoided at settlement time
+    expect(settlement.principalAmount).toBe("100.00");
+    expect(settlement.totalAmount).toBe("120.00"); // principal + fee, exact sum
+  });
+
+  it("the student-facing row shows a non-null conversion for a genuine cross-currency payment, with exactly the allowlisted keys, the stored values, and appliedRateId omitted", async () => {
+    const student = await newStudent(a);
+    const obligationId = await newObligation(a, student.id, 7);
+    const quoteDate = freshQuoteDate();
+    const quote = await enterExchangeRateQuote({ context: context(a), quoteDate, value: "500.00", expectedCurrentRevision: 0 }, deps());
+    if (!quote.ok) throw new Error("fixture quote entry failed");
+    const recorded = await recordDuesPayment(
+      { context: context(a), studentId: student.id, receivedOn: { year: 2030, month: 7, day: 10 }, tender: { currency: "CRC", amount: "50000.00" }, method: "EFECTIVO", obligationIds: [obligationId], maxBackdateDays: 30 },
+      deps({ now: at("2030-07-10T12:00:00") }),
+    );
+    if (!recorded.ok) throw new Error("fixture payment failed");
+
+    const result = await listOwnPaymentHistory(selfContext(a, student.id), {}, deps());
+    if (!result.ok) throw new Error("expected ok result");
+    const row = result.rows.find((r) => r.id === recorded.paymentId)!;
+    expect(row.conversion).not.toBeNull();
+    expect(Object.keys(row.conversion!).sort()).toEqual(["appliedRateQuoteDate", "appliedRateRevision", "appliedRateValue", "appliedRoundingRule"].sort());
+    expect(Number(row.conversion!.appliedRateValue)).toBe(500);
+    expect(row.conversion!.appliedRateQuoteDate).toEqual(quoteDate);
+    expect(row.conversion!.appliedRateRevision).toBe(1);
+    expect(row.conversion!.appliedRoundingRule).toBe("HALF_UP_TO_COLON"); // USD obligation -> CRC tender direction
+    expect(row.conversion).not.toHaveProperty("appliedRateId");
+    // Stronger than a type/key check: the staff reader's own internal id never appears in the real serialized object.
+    expect(JSON.stringify(row.conversion)).not.toContain(quote.quoteId);
+  });
+});
+
+describe("listPaymentHistoryForStudent: staff behavior preserved unchanged by the extraction (brief §3.3 regression)", () => {
+  it("the staff reader still returns the full row, including notes — unaffected by the new self path's projection", async () => {
+    const student = await newStudent(a);
+    const obligationId = await newObligation(a, student.id, 9);
+    const recorded = await recordDuesPayment(
+      { context: context(a), studentId: student.id, receivedOn: { year: 2030, month: 9, day: 20 }, tender: { currency: "USD", amount: "100.00" }, method: "EFECTIVO", obligationIds: [obligationId], maxBackdateDays: 30, notes: "staff-visible note" },
+      deps({ now: at("2030-09-21T12:00:00") }),
+    );
+    if (!recorded.ok) throw new Error("fixture payment failed");
+
+    const result = await listPaymentHistoryForStudent(context(a), student.id, {}, deps());
+    if (!result.ok) throw new Error("expected ok result");
+    const row = result.rows.find((r) => r.id === recorded.paymentId);
+    expect(row?.notes).toBe("staff-visible note");
   });
 });

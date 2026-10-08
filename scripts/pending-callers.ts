@@ -332,7 +332,19 @@ const PENDING_CALLERS: PendingCaller[] = [
     file: "src/lib/dues/ledger/dues-facts.ts (no callers yet — portal balance is out of scope for the roster/student-detail brief)",
     dueBy: "whenever the portal read surface (payment-UI-consumer brief §3 item 4) is built",
     reason:
-      "Student-self mode (brief §6): takes no studentIds parameter at all — the caller's own linked student id is implicit, never a request parameter, so a caller holding a foreign id has no parameter to put it in. Shares computeDuesFactsForStudents with listDuesFactsForStudents (now live via roster-payment-facts-queries.ts) but returns a bare DuesFactsForStudent | null rather than a discriminated result, a known shape divergence noted in ROSTER-STUDENT-DETAIL-INTEGRATION-BRIEF.md §7. Gated by the identical LedgerActivation default every other ledger function uses; production returns null for every organization today.",
+      "Student-self mode (brief §6): takes no studentIds parameter at all — the caller's own linked student id is implicit, never a request parameter, so a caller holding a foreign id has no parameter to put it in. Shares computeDuesFactsForStudents with listDuesFactsForStudents (now live via roster-payment-facts-queries.ts) but returns a bare DuesFactsForStudent | null rather than a discriminated result, a known shape divergence noted in ROSTER-STUDENT-DETAIL-INTEGRATION-BRIEF.md §7. Gated by the identical LedgerActivation default every other ledger function uses; production returns null for every organization today. STUDENT-PORTAL-LEDGER-INTEGRATION-BRIEF.md §3.2 widened PortalSelfContext from selfStudentId to linkedStudentId (role-independent, matching every other self-scoped portal reader) — still no production caller.",
+  },
+  // STUDENT-PORTAL-LEDGER-INTEGRATION-BRIEF.md §3.3/§3.5 — the library-layer PR preceding the portal UI itself
+  // (mirrors PR #95 -> PR #96). No production caller exists on purpose: the portal page and its "load more" action
+  // are explicitly out of scope for this PR. Lives alongside listPaymentHistoryForStudent in
+  // src/lib/dues/payment-history-queries.ts, already an authorized ledger-adjacent caller
+  // (tests/unit/dues-ledger-not-exposed.test.ts), so it needs no new entry in that guard's own allowlist.
+  {
+    symbol: "listOwnPaymentHistory / PortalPaymentHistoryRow / toPortalPaymentHistoryRow",
+    file: "src/lib/dues/payment-history-queries.ts",
+    dueBy: "whenever the portal history surface (STUDENT-PORTAL-LEDGER-INTEGRATION-BRIEF.md §3.1) is built",
+    reason:
+      "Self-scoped payment history: no branch check (the caller's own linkedStudentId is unconditionally theirs, regardless of staff-assignment scope — brief §2.5's traced 'coach trains elsewhere' case), a runtime identity guard before any database access (a string TYPE alone cannot stop undefined from reaching Prisma and silently dropping the studentId filter), and an explicit allowlist projection (toPortalPaymentHistoryRow) that omits notes (decided excluded, revision 6, §8) from the real returned object on both the initial-fetch and 'load more' call paths. Shares the extracted, authorization-free queryPaymentHistoryRows core with listPaymentHistoryForStudent (byte-identical staff behavior, unchanged). Gated by the same LedgerActivation default; production returns notActive for every organization today.",
   },
 ];
 
