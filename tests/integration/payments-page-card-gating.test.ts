@@ -55,6 +55,9 @@ const { default: PaymentsPage } = await import("../../src/app/[locale]/(staff)/p
 
 const PACKAGE_CARD_MARKER = "Sell a package";
 const LEDGER_CARD_MARKER = "Record a ledger payment";
+// Distinct from LEDGER_CARD_MARKER on purpose: "Record a payment" (recordCard.heading) never appears as a
+// substring of "Record a ledger payment" (ledgerEntry.heading) — the two cards' own headings never collide.
+const LEGACY_CARD_MARKER = "Record a payment";
 
 describe("payments/page.tsx: role + activation gate the new ledger cards", () => {
   let fixture: Awaited<ReturnType<typeof makeAccountingOrg>>;
@@ -113,5 +116,25 @@ describe("payments/page.tsx: role + activation gate the new ledger cards", () =>
     const html = await renderAs(fixture.admin.id);
     expect(html).not.toContain(PACKAGE_CARD_MARKER);
     expect(html).not.toContain(LEDGER_CARD_MARKER);
+  });
+
+  // REMAINING-LEDGER-CONSUMERS-BRIEF.md §2.6 (PR 2): the legacy "Record a payment" card — unlike the three ledger
+  // cards above, which only ever APPEAR when active — must be hidden once active (`recordPayment` itself refuses
+  // regardless). Review fix: these two tests only prove the card's own heading marker is present/absent — a
+  // marker-presence check, NOT a byte-for-byte equivalence proof. The actual byte-for-byte inactive-rendering
+  // equivalence claim for this page's siblings is established by the established git-extracted baseline-
+  // comparison technique (e.g. `students-pages-inactive-baseline-comparison.test.ts`); no such baseline file
+  // exists for `payments/page.tsx` itself, and none is added here — this file's own claim is scoped to exactly
+  // what it tests: the one card's own marker, nothing broader.
+  it("REQUIRED: ADMIN + active organization no longer sees the legacy 'Record a payment' card's heading marker", async () => {
+    mockActive = true;
+    const html = await renderAs(fixture.admin.id);
+    expect(html).not.toContain(LEGACY_CARD_MARKER);
+  });
+
+  it("REQUIRED: ADMIN + INACTIVE organization still sees the legacy 'Record a payment' card's heading marker", async () => {
+    mockActive = false;
+    const html = await renderAs(fixture.admin.id);
+    expect(html).toContain(LEGACY_CARD_MARKER);
   });
 });

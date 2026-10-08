@@ -86,7 +86,7 @@ describe("the Payments location filter", () => {
   const renderTable = (academies: typeof TWO) =>
     render(
       inEnglish(
-        <PaymentsTable organizationId="org-1" rows={[]} plans={[]} academies={academies} currentYear={2026} currentMonth={9} canRecordPayments locale="en" />,
+        <PaymentsTable organizationId="org-1" rows={[]} plans={[]} academies={academies} currentYear={2026} currentMonth={9} canRecordPayments ledgerActive={false} locale="en" />,
       ),
     );
 

@@ -665,6 +665,7 @@
         "success": "Pago registrado.",
         "invalid": "Por favor revisa el formulario.",
         "notFound": "No se pudo registrar este pago.",
+        "ledgerActive": "Esta organización ahora registra los pagos mediante el flujo de pago del nuevo sistema. Usa la opción de pago del nuevo sistema en la página de Pagos en lugar de este formulario.",
         "invalidPlan": "Ese plan no pertenece a la academia de este estudiante.",
         "planInactive": "Ese plan fue desactivado, así que no se puede registrar un pago nuevo en él. Elige un plan activo.",
         "periodTooFarInFuture": "El período no puede ser más de un mes en el futuro.",
