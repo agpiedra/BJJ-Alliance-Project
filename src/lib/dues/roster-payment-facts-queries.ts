@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import type { TenantContext } from "@/lib/tenant/types";
+import type { TenantContext, SystemJobContext } from "@/lib/tenant/types";
 import { inactiveLedgerActivation, type LedgerDeps } from "@/lib/dues/ledger/activation";
 import { listDuesFactsForStudents, type DuesFactsForStudent, type DuesPendingReceiptFact } from "@/lib/dues/ledger/dues-facts";
 import { todayIn } from "@/lib/dues/ledger/common";
@@ -59,9 +59,16 @@ export type RosterPaymentFact =
  * exactly those ids — NEVER silently coerced into "no debt"/"paid". Also resolves each student's own branch-local
  * "today" (ISO date, `todayIn`) for callers that need it (e.g. an unpaid SIGNUP past its own `dueOn`) — the SAME
  * timezone resolution `dues-facts.ts` uses internally, never a second, drifting re-derivation.
+ *
+ * REMAINING-LEDGER-CONSUMERS-BRIEF.md §4 (PR 1): `context` also accepts a `SystemJobContext` — this function only
+ * ever reads `context.organizationId` (its own timezone lookup above, line ~79) and forwards `context` unchanged
+ * into `listDuesFactsForStudents`, whose own widened signature already defines correct `SystemJobContext` behavior.
+ * No new role check, no `academyId` parameter: a caller needing one branch's students still resolves its own
+ * student-id list first (exactly as `listOverdueStudents` already does for the digest) and passes that bounded
+ * list in here — this function narrows by STUDENT IDS, never by academy, for either context kind.
  */
 export async function listRosterPaymentFacts(
-  context: TenantContext,
+  context: TenantContext | SystemJobContext,
   studentIds: readonly string[],
   now: Date,
   deps: LedgerDeps = {},
