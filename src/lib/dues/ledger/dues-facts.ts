@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import type { TenantContext } from "@/lib/tenant/types";
+import type { TenantContext, SystemJobContext } from "@/lib/tenant/types";
 import { branchScopeWhere } from "@/lib/tenant/context";
 import type { Currency } from "@/generated/prisma/client";
 import { inactiveLedgerActivation, type LedgerDeps } from "@/lib/dues/ledger/activation";
@@ -314,9 +314,15 @@ export type ListDuesFactsResult = { ok: true; facts: DuesFactsForStudent[] } | {
  *
  * No role gate of its own — the same "plain function, caller already resolved scope" precedent `getCurrentPaymentPeriod`
  * establishes; each caller applies its own role restriction.
+ *
+ * REMAINING-LEDGER-CONSUMERS-BRIEF.md §4 (PR 1): `context` also accepts a `SystemJobContext`, for the digest's own
+ * batched-reader reuse — `branchScopeWhere` already has defined, correct behavior for it (`{}`, no per-user
+ * narrowing, matching how `listOverdueStudents` already treats a system job: org-wide, narrowed only by whatever
+ * student-id list the caller passes in). `KioskContext` is deliberately excluded from this union — a kiosk has no
+ * student-level authority here at all.
  */
 export async function listDuesFactsForStudents(
-  context: TenantContext,
+  context: TenantContext | SystemJobContext,
   studentIds: string[],
   month?: YearMonth,
   deps: LedgerDeps = {},
