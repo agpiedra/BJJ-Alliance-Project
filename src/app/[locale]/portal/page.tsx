@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { DateTime } from "luxon";
 import { getTranslations } from "next-intl/server";
 import { requirePortalContext } from "@/lib/tenant/context";
@@ -144,12 +145,6 @@ export default async function StudentPortalPage({
   ]);
   // Today's classes for the student's own academy (Costa Rica day and boundaries), each with its honest state.
   const todays = await listTodaysClasses({ context, academyId: student.homeAcademy.id, studentId });
-  const overdue = isOverdue(currentPaymentPeriod, currentCrDateParts());
-  const paymentStatus: ContactPaymentStatus = overdue
-    ? "OVERDUE"
-    : currentPaymentPeriod
-      ? currentPaymentPeriod.status
-      : "NOT_RECORDED";
 
   // §3.1/§3.3: pending receipts and payment history are genuinely NEW information categories — gated entirely
   // behind `ledgerActive`, never interleaved with the legacy card above. Mirrors `[id]/page.tsx`'s identical
@@ -255,20 +250,32 @@ export default async function StudentPortalPage({
 
   // §3.1: a ternary replacement, exactly like the roster's own pill replacement — never two possibly-disagreeing
   // "is my payment current" sources rendered side by side. Inactive renders this exact legacy card, byte-for-byte.
-  const legacyPaymentCard = (
-    <Card>
-      <CardHeader className="border-b">
-        <CardTitle>{t("paymentStatus.heading")}</CardTitle>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-2 pt-4">
-        <div className="flex items-center justify-between gap-2">
-          <span className="text-muted-foreground">{currentPaymentPeriod?.planName ?? "—"}</span>
-          <Pill variant={paymentPillVariant(paymentStatus)}>{paymentStatusLabel(paymentStatus, t, tPaymentStatus)}</Pill>
-        </div>
-        {overdue && <p className="text-sm text-muted-foreground">{t("paymentStatus.overdueNotice")}</p>}
-      </CardContent>
-    </Card>
-  );
+  // Review fix: `isOverdue`/the status computation are now INSIDE this `!ledgerActive` branch, never invoked at
+  // all when active — not merely computed-and-discarded (currentPaymentPeriod was already null when active via
+  // the skipped fetch above, but isOverdue/paymentPillVariant/paymentStatusLabel were still being CALLED).
+  let legacyPaymentCard: ReactNode = null;
+  if (!ledgerActive) {
+    const overdue = isOverdue(currentPaymentPeriod, currentCrDateParts());
+    const paymentStatus: ContactPaymentStatus = overdue
+      ? "OVERDUE"
+      : currentPaymentPeriod
+        ? currentPaymentPeriod.status
+        : "NOT_RECORDED";
+    legacyPaymentCard = (
+      <Card>
+        <CardHeader className="border-b">
+          <CardTitle>{t("paymentStatus.heading")}</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-2 pt-4">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-muted-foreground">{currentPaymentPeriod?.planName ?? "—"}</span>
+            <Pill variant={paymentPillVariant(paymentStatus)}>{paymentStatusLabel(paymentStatus, t, tPaymentStatus)}</Pill>
+          </div>
+          {overdue && <p className="text-sm text-muted-foreground">{t("paymentStatus.overdueNotice")}</p>}
+        </CardContent>
+      </Card>
+    );
+  }
   const ledgerPaymentCard = (
     <StudentBalanceSummary
       display={ledgerBalanceDisplay}

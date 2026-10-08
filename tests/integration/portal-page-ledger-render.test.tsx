@@ -11,6 +11,8 @@ import { createMonthlyObligation } from "../../src/lib/dues/ledger/create-monthl
 import { recordDuesPayment } from "../../src/lib/dues/ledger/record-payment";
 import { listPaymentHistoryForStudent } from "../../src/lib/dues/payment-history-queries";
 import type { TenantContext } from "../../src/lib/tenant/types";
+import * as getCurrentPeriodModule from "../../src/lib/payments/get-current-period";
+import * as overdueModule from "../../src/lib/payments/overdue";
 
 /**
  * STUDENT-PORTAL-LEDGER-INTEGRATION-BRIEF.md §3.1: a real render, not a code reading, proving (a) the
@@ -39,13 +41,29 @@ vi.mock("next-intl/server", () => ({
 vi.mock("../../src/app/[locale]/portal/portal-top-bar", () => ({ PortalTopBar: () => null }));
 vi.mock("../../src/app/[locale]/portal/todays-classes-card", () => ({ TodaysClassesCard: () => null }));
 
+// Review fix: a PARTIAL mock wrapping the REAL component — captures the exact props the real page.tsx passes it
+// (inspected directly, not inferred from rendered HTML) while still rendering the genuine component, so every
+// existing HTML-level assertion below keeps working unchanged.
+let capturedHistoryProps: Record<string, unknown> | null = null;
+vi.mock("../../src/app/[locale]/portal/payment-history-section", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../src/app/[locale]/portal/payment-history-section")>();
+  return {
+    PortalPaymentHistorySection: (props: Record<string, unknown>) => {
+      capturedHistoryProps = props;
+      return actual.PortalPaymentHistorySection(props as never);
+    },
+  };
+});
+
 const { default: StudentPortalPage } = await import("../../src/app/[locale]/portal/page");
+const { getOwnPaymentHistoryPage } = await import("../../src/app/[locale]/portal/payment-history-actions");
 
 const suffix = `${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
 type Fixture = Awaited<ReturnType<typeof makeAccountingOrg>>;
 let a: Fixture;
 let studentUser: { id: string };
 let student: { id: string };
+let newerPaymentId: string;
 
 function adminContext(): TenantContext {
   return { kind: "tenant", actorUserId: a.admin.id, organizationId: a.org.id, organizationRole: "ADMIN", academyIds: "ALL", selfStudentId: null, linkedStudentId: null };
@@ -82,6 +100,21 @@ beforeAll(async () => {
     ACTIVE_DEPS,
   );
   if (!recorded.ok) throw new Error("fixture payment failed");
+  newerPaymentId = recorded.paymentId;
+
+  // A second, OLDER settled payment with its own distinct note — gives the action's real cursor pagination a
+  // genuinely nonempty second page to fetch (the newer payment above anchors page "1"; this one is what a
+  // cursor-after-it call returns).
+  const olderObligation = await createMonthlyObligation(
+    { context: adminContext(), studentId: student.id, coverage: { year: 2030, month: 5 }, planTermsId: terms.id, policyVersionId: policy.id },
+    ACTIVE_DEPS,
+  );
+  if (!olderObligation.ok) throw new Error(`fixture older obligation failed: ${olderObligation.error}`);
+  const olderRecorded = await recordDuesPayment(
+    { context: adminContext(), studentId: student.id, receivedOn: { year: 2030, month: 5, day: 10 }, tender: { currency: "USD", amount: "100.00" }, method: "EFECTIVO", obligationIds: [olderObligation.obligationId], maxBackdateDays: 60, notes: "an older private staff note that must never reach the portal either" },
+    ACTIVE_DEPS,
+  );
+  if (!olderRecorded.ok) throw new Error("fixture older payment failed");
 }, 60_000);
 
 afterAll(async () => {
@@ -116,22 +149,44 @@ async function renderPortal() {
 }
 
 describe("portal/page.tsx: inactive-ledger render parity + active ledger cutover (brief §3.1)", () => {
-  it("REQUIRED: inactive ledger renders ONLY the legacy payment card — no balance summary, no ledger history section", async () => {
+  it("REQUIRED: inactive ledger renders ONLY the legacy payment card — no balance summary, no ledger history section — and calls the legacy helpers", async () => {
     mockActive = false;
-    const html = await renderPortal();
-    expect(html).toContain("Payment status"); // the legacy card's own heading
-    expect(html).not.toContain("Current balance"); // the new balance-summary heading never leaks in
-    expect(html).not.toContain("Ledger payment history");
+    const getCurrentPeriodSpy = vi.spyOn(getCurrentPeriodModule, "getCurrentPaymentPeriod");
+    const isOverdueSpy = vi.spyOn(overdueModule, "isOverdue");
+    try {
+      const html = await renderPortal();
+      expect(html).toContain("Payment status"); // the legacy card's own heading
+      expect(html).not.toContain("Current balance"); // the new balance-summary heading never leaks in
+      expect(html).not.toContain("Ledger payment history");
+      // Non-vacuous counterpart to the "unused when active" assertion below: the inactive path genuinely still
+      // calls both legacy helpers, proving the spies themselves work before trusting their absence elsewhere.
+      expect(getCurrentPeriodSpy).toHaveBeenCalled();
+      expect(isOverdueSpy).toHaveBeenCalled();
+    } finally {
+      getCurrentPeriodSpy.mockRestore();
+      isOverdueSpy.mockRestore();
+    }
   });
 
-  it("REQUIRED: active ledger replaces the legacy card with the new balance summary and adds the history section", async () => {
+  it("REQUIRED: active ledger replaces the legacy card with the new balance summary and adds the history section — the legacy helpers are never called at all", async () => {
     mockActive = true;
-    const html = await renderPortal();
-    expect(html).toContain("Current balance");
-    expect(html).toContain("No outstanding debt."); // the fixture payment is SETTLED — genuinely no outstanding debt
-    expect(html).toContain("Ledger payment history");
-    expect(html).toContain("100.00"); // the real settled payment's own history row
-    expect(html).not.toContain("Payment status"); // the legacy card is gone, not shown alongside
+    const getCurrentPeriodSpy = vi.spyOn(getCurrentPeriodModule, "getCurrentPaymentPeriod");
+    const isOverdueSpy = vi.spyOn(overdueModule, "isOverdue");
+    try {
+      const html = await renderPortal();
+      expect(html).toContain("Current balance");
+      expect(html).toContain("No outstanding debt."); // the fixture payments are SETTLED — genuinely no outstanding debt
+      expect(html).toContain("Ledger payment history");
+      expect(html).toContain("100.00"); // the real settled payments' own history rows
+      expect(html).not.toContain("Payment status"); // the legacy card is gone, not shown alongside
+      // Review fix: not merely "unused in the rendered card" — the underlying functions are never INVOKED at all
+      // on the active path, not computed and discarded.
+      expect(getCurrentPeriodSpy).not.toHaveBeenCalled();
+      expect(isOverdueSpy).not.toHaveBeenCalled();
+    } finally {
+      getCurrentPeriodSpy.mockRestore();
+      isOverdueSpy.mockRestore();
+    }
   });
 
   it("REQUIRED: notes never reach the ACTUAL rendered portal page, through the real page-1 fetch path (brief §5.1)", async () => {
@@ -143,5 +198,41 @@ describe("portal/page.tsx: inactive-ledger render parity + active ledger cutover
 
     const html = await renderPortal();
     expect(html).not.toContain("a private staff note that must never reach the portal");
+  });
+
+  it("REQUIRED: notes are absent from the ACTUAL PortalPaymentHistorySection props and their serialized payload (brief §5.1) — proving the boundary, not inferring it from HTML", async () => {
+    mockActive = true;
+    capturedHistoryProps = null;
+    await renderPortal();
+    expect(capturedHistoryProps).not.toBeNull();
+    const rows = capturedHistoryProps!.initialRows as Array<Record<string, unknown>>;
+    expect(rows.length).toBeGreaterThan(0); // non-vacuous: real rows were actually passed as props
+    for (const row of rows) {
+      expect(row).not.toHaveProperty("notes");
+    }
+    // Stronger than a property check: the real object graph never carries the note string anywhere, including
+    // nested fields a property-by-property check could miss.
+    expect(JSON.stringify(capturedHistoryProps)).not.toContain("a private staff note that must never reach the portal");
+    expect(JSON.stringify(capturedHistoryProps)).not.toContain("an older private staff note that must never reach the portal either");
+  });
+
+  it("REQUIRED: a genuinely nonempty SECOND page, fetched through the ACTUAL getOwnPaymentHistoryPage action (not the library directly), also has no notes", async () => {
+    currentSession = { user: { id: studentUser.id }, activeOrganizationId: a.org.id };
+    try {
+      // `newerPaymentId` anchors what a real page 1 (default page size, no explicit limit) would have ended on;
+      // passing it as the cursor is exactly what the client component does for "load more" — a real, valid
+      // cursor, not a fabricated one — and the older payment is what a genuine next page returns.
+      const page2 = await getOwnPaymentHistoryPage(a.org.id, newerPaymentId);
+      expect(page2.ok).toBe(true);
+      if (!page2.ok) throw new Error("expected ok result");
+      expect(page2.rows.length).toBeGreaterThan(0); // non-vacuous: a real second page, not an empty one
+      expect(page2.rows.some((r) => r.tenderAmount === "100.00")).toBe(true);
+      for (const row of page2.rows) {
+        expect(row).not.toHaveProperty("notes");
+      }
+      expect(JSON.stringify(page2)).not.toContain("an older private staff note that must never reach the portal either");
+    } finally {
+      currentSession = null;
+    }
   });
 });

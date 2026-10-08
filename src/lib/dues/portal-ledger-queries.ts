@@ -32,6 +32,15 @@ export type OwnPaymentFact =
  * notice's suppression predicate, below, needs).
  */
 export async function getOwnPaymentFacts(context: PortalSelfContext, now: Date, deps: LedgerDeps = {}): Promise<OwnPaymentFact> {
+  // The same runtime guard `getOwnDuesFacts`/`listOwnPaymentHistory` already run, moved BEFORE this function's
+  // own first query — a `string` TYPE on `linkedStudentId` promises nothing at runtime. Without this, an
+  // `undefined` id would drop the `id` predicate from the `where` clause below entirely, making
+  // `student.findFirst` an UNSCOPED lookup that returns an arbitrary student in the organization (whichever
+  // Postgres happens to return first) rather than refusing outright. The downstream `getOwnDuesFacts` guard
+  // still refuses to return FACTS for a bad id, but by then this function has already run an unscoped query and
+  // read a foreign student's own timezone — a privacy-irrelevant but still wrong read this guard prevents.
+  if (typeof context.linkedStudentId !== "string" || context.linkedStudentId.trim().length === 0) return { ok: false };
+
   let timezone: string;
   try {
     const student = await prisma.student.findFirst({

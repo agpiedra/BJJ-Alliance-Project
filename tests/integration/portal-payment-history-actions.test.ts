@@ -81,9 +81,9 @@ afterAll(async () => {
   await a?.drop();
 }, 120_000);
 
-describe("getOwnPaymentHistoryPage: no studentId parameter exists — a type-level proof (requirement 1)", () => {
-  it("the exported function's own arity is (organizationId, cursor?) — never a studentId slot at any position", () => {
-    expect(getOwnPaymentHistoryPage.length).toBeLessThanOrEqual(2);
+describe("getOwnPaymentHistoryPage: declared signature (requirement 1)", () => {
+  it("currently takes exactly (organizationId, cursor) — a tripwire if a studentId parameter is ever added, NOT a safety proof: `Function.length` only counts a function's own declared parameters and proves nothing about what they mean, whether a caller could substitute a foreign id into one of them, or how they're used internally. The real proof that a foreign student can never be read through this action is the authorization/isolation tests above and in `payment-history-queries.test.ts` (PR #97), which exercise actual behavior.", () => {
+    expect(getOwnPaymentHistoryPage.length).toBe(2);
   });
 });
 

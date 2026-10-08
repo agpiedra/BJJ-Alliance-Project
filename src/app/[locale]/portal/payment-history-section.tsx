@@ -50,6 +50,7 @@ export function PortalPaymentHistorySection({
   const t = useTranslations("students");
   const [rows, setRows] = useState<PortalPaymentHistoryRow[]>(initialRows);
   const [cursor, setCursor] = useState<string | null>(initialCursor);
+  const [failed, setFailed] = useState(initialFailed);
   const [loading, setLoading] = useState(false);
   const [loadMoreError, setLoadMoreError] = useState(false);
   const requestRef = useRef(0);
@@ -61,33 +62,55 @@ export function PortalPaymentHistorySection({
     requestRef.current++;
     setRows(initialRows);
     setCursor(initialCursor);
+    setFailed(initialFailed);
     setLoadMoreError(false);
     setLoading(false);
   }
 
-  async function loadMore() {
-    if (!cursor || loading) return;
+  // Shared by BOTH "load more" (cursor set — append) and the initial-failure retry (no cursor — replace, same
+  // first-page-read shape the server component itself uses). One generation guard, one dedup flag, for both.
+  async function fetchPage(pageCursor: string | undefined) {
+    if (loading) return;
     const requestId = ++requestRef.current;
     setLoading(true);
-    setLoadMoreError(false);
+    if (pageCursor) setLoadMoreError(false);
     try {
-      const page = await getOwnPaymentHistoryPage(organizationId, cursor);
+      const page = await getOwnPaymentHistoryPage(organizationId, pageCursor);
       if (requestRef.current !== requestId) return;
       if (!page.ok) {
-        setLoadMoreError(true);
+        if (pageCursor) setLoadMoreError(true);
+        else setFailed(true);
         return;
       }
-      setRows((prev) => {
-        const seen = new Set(prev.map((r) => r.id));
-        return [...prev, ...page.rows.filter((r) => !seen.has(r.id))];
-      });
+      if (pageCursor) {
+        setRows((prev) => {
+          const seen = new Set(prev.map((r) => r.id));
+          return [...prev, ...page.rows.filter((r) => !seen.has(r.id))];
+        });
+      } else {
+        setRows(page.rows);
+        setFailed(false);
+      }
       setCursor(page.nextCursor);
     } catch {
       if (requestRef.current !== requestId) return;
-      setLoadMoreError(true);
+      if (pageCursor) setLoadMoreError(true);
+      else setFailed(true);
     } finally {
       if (requestRef.current === requestId) setLoading(false);
     }
+  }
+
+  function loadMore() {
+    if (!cursor) return;
+    void fetchPage(cursor);
+  }
+  // STUDENT-PORTAL-LEDGER-INTEGRATION-BRIEF.md §6 review fix: the initial server-side read can genuinely fail
+  // (a transient DB error) with no "load more" cursor to retry from — this re-runs the SAME first-page read the
+  // server component itself performs (`getOwnPaymentHistoryPage` with no cursor), so a failed initial load is
+  // never a dead end. `loading`-gated the same way `loadMore` already is — no duplicate-click bypass.
+  function retryInitial() {
+    void fetchPage(undefined);
   }
 
   return (
@@ -96,8 +119,13 @@ export function PortalPaymentHistorySection({
         <CardTitle>{t("ledger.history.heading")}</CardTitle>
       </CardHeader>
       <CardContent>
-        {initialFailed ? (
-          <p className="text-muted-foreground">{t("ledger.history.unavailable")}</p>
+        {failed ? (
+          <div className="flex items-center gap-2">
+            <p className="text-muted-foreground">{t("ledger.history.unavailable")}</p>
+            <Button type="button" variant="outline" size="sm" onClick={retryInitial} disabled={loading}>
+              {loading ? t("ledger.history.loading") : t("ledger.history.retry")}
+            </Button>
+          </div>
         ) : rows.length === 0 ? (
           <p className="text-muted-foreground">{t("ledger.history.empty")}</p>
         ) : (

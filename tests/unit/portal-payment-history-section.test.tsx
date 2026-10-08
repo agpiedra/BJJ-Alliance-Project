@@ -85,6 +85,74 @@ describe("PortalPaymentHistorySection: load-more behavior", () => {
   });
 });
 
+describe("PortalPaymentHistorySection: initial-failure recovery (review fix — brief §6)", () => {
+  it("failure -> explicit retry -> success shows the real rows, never leaves a failed read looking like empty history", async () => {
+    renderSection({ initialRows: [], initialCursor: null, initialFailed: true });
+    expect(screen.getByText("Couldn't load ledger payment history.")).toBeTruthy();
+    expect(screen.queryByText("No ledger payments yet.")).toBeNull(); // never the EMPTY state for a FAILED read
+
+    getOwnPaymentHistoryPage.mockResolvedValueOnce({ ok: true, rows: [ROW_1], nextCursor: null });
+    fireEvent.click(screen.getByText("Retry"));
+
+    await waitFor(() => expect(screen.getByText("$ 100.00")).toBeTruthy());
+    expect(screen.queryByText("Couldn't load ledger payment history.")).toBeNull();
+    expect(getOwnPaymentHistoryPage).toHaveBeenCalledWith("org-1", undefined); // the same first-page (no cursor) read the server component itself performs
+  });
+
+  it("repeated failure: a retry that fails again still shows the unavailable state with its own retry control, never a false empty state", async () => {
+    renderSection({ initialRows: [], initialCursor: null, initialFailed: true });
+
+    getOwnPaymentHistoryPage.mockResolvedValueOnce({ ok: false, error: "unavailable" });
+    fireEvent.click(screen.getByText("Retry"));
+
+    await waitFor(() => expect(getOwnPaymentHistoryPage).toHaveBeenCalledTimes(1));
+    expect(screen.getByText("Couldn't load ledger payment history.")).toBeTruthy();
+    expect(screen.queryByText("No ledger payments yet.")).toBeNull();
+    expect(screen.getByText("Retry")).toBeTruthy(); // still retryable, not a dead end
+
+    // And retrying again after the SECOND failure still works.
+    getOwnPaymentHistoryPage.mockResolvedValueOnce({ ok: true, rows: [ROW_1], nextCursor: null });
+    fireEvent.click(screen.getByText("Retry"));
+    await waitFor(() => expect(screen.getByText("$ 100.00")).toBeTruthy());
+  });
+
+  it("a second click on Retry while the first retry is still in flight never fires a duplicate request", async () => {
+    const first = deferred<{ ok: true; rows: typeof ROW_1[]; nextCursor: string | null }>();
+    getOwnPaymentHistoryPage.mockReturnValueOnce(first.promise);
+    renderSection({ initialRows: [], initialCursor: null, initialFailed: true });
+
+    fireEvent.click(screen.getByText("Retry"));
+    await waitFor(() => expect(screen.getByText("Loading…")).toBeTruthy());
+    fireEvent.click(screen.getByText("Loading…")); // the button is now disabled; this must be a no-op
+    expect(getOwnPaymentHistoryPage).toHaveBeenCalledTimes(1);
+
+    first.resolve({ ok: true, rows: [ROW_1], nextCursor: null });
+    await waitFor(() => expect(screen.getByText("$ 100.00")).toBeTruthy());
+    expect(getOwnPaymentHistoryPage).toHaveBeenCalledTimes(1);
+  });
+
+  it("a stale retry response is discarded if refreshed props (a fresh server re-render) arrive first — mutation-verified below", async () => {
+    const stale = deferred<{ ok: true; rows: typeof ROW_1[]; nextCursor: string | null }>();
+    getOwnPaymentHistoryPage.mockReturnValueOnce(stale.promise);
+    const { rerender } = renderSection({ initialRows: [], initialCursor: null, initialFailed: true });
+
+    fireEvent.click(screen.getByText("Retry"));
+    await waitFor(() => expect(screen.getByText("Loading…")).toBeTruthy());
+
+    // The server re-rendered with a fresh, SUCCESSFUL snapshot while the stale retry is still in flight.
+    rerender(sectionElement({ initialRows: [ROW_3], initialCursor: null, initialFailed: false }));
+    expect(screen.getByText("$ 300.00")).toBeTruthy();
+    expect(screen.queryByText("Couldn't load ledger payment history.")).toBeNull();
+
+    // The stale retry finally resolves with its own distinctly-identifiable row — must never override the
+    // now-superseded (and already-successful) snapshot.
+    stale.resolve({ ok: true, rows: [STALE_ROW], nextCursor: null });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.getByText("$ 300.00")).toBeTruthy();
+    expect(screen.queryByText("$ 275.00")).toBeNull();
+  });
+});
+
 describe("PortalPaymentHistorySection: props reconciliation (mutation-verified deferred-response regression)", () => {
   it("a pending old load-more request cannot append after refreshed initial data replaces it", async () => {
     const stale = deferred<{ ok: true; rows: typeof STALE_ROW[]; nextCursor: string | null }>();
@@ -121,10 +189,15 @@ describe("PortalPaymentHistorySection: props reconciliation (mutation-verified d
   });
 });
 
-describe("PortalPaymentHistorySection: notes field is structurally absent (brief §5.1)", () => {
-  it("every row in the component's own prop type has no notes field — nothing to accidentally render", () => {
-    // Type-level proof: PortalPaymentHistoryRow (imported transitively via the component's own prop type) has no
-    // `notes` key at all — attempting `ROW_1.notes` would be a compile error, not merely undefined at runtime.
+describe("PortalPaymentHistorySection: fixture shape documentation", () => {
+  it("this file's own ROW_1 fixture carries no notes key — NOT a proof that the real system can't leak notes", () => {
+    // Review fix: this only checks a fixture this file itself wrote — it proves nothing about `PortalPaymentHistoryRow`'s
+    // real TypeScript contract (erased at runtime; a row WITH an extra `notes` property would still satisfy it
+    // structurally) and nothing about whether the component would render a `notes` field if one were present on a
+    // real row. The actual boundary proof — real backend rows, the real projection function, the real component's
+    // real props inspected directly, with a mutation check — lives in
+    // `tests/integration/portal-page-ledger-render.test.tsx`'s two dedicated boundary tests. This assertion is
+    // only a documentation note about this file's own fixtures.
     expect("notes" in ROW_1).toBe(false);
   });
 });

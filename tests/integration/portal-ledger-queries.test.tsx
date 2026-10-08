@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 import "dotenv/config";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
 import { getTestPrismaClient } from "../helpers/test-db";
@@ -10,15 +10,26 @@ import enMessages from "../../messages/en.json";
 import type { TenantContext } from "../../src/lib/tenant/types";
 import type { LedgerActivation } from "../../src/lib/dues/ledger/activation";
 import { resumeChargeInTx } from "../../src/lib/dues/ledger/resume-charge";
+import { purchasePackage } from "../../src/lib/dues/ledger/purchase-package";
 import { getOwnPaymentFacts, resolveEligibilityNoticeKey, type PortalSelfContext } from "../../src/lib/dues/portal-ledger-queries";
 import { toRosterLedgerDisplay } from "../../src/lib/dues/roster-payment-facts-queries";
 import { StudentBalanceSummary } from "../../src/app/[locale]/(staff)/students/[id]/student-balance-summary";
 
 /**
  * STUDENT-PORTAL-LEDGER-INTEGRATION-BRIEF.md §3/§5.2: `getOwnPaymentFacts` against the REAL test database, and
- * the three required eligibility-notice regression scenarios proved end-to-end — real engine-written facts,
- * the real `resolveEligibilityNoticeKey` predicate, AND a real render of `StudentBalanceSummary` (the component
- * the portal page actually uses), so "the rendered portal shows no notice" is proved by rendering, not inferred.
+ * the three required eligibility-notice regression scenarios, each against real `getOwnPaymentFacts`/
+ * `resolveEligibilityNoticeKey` output and a real `StudentBalanceSummary` COMPONENT render (via
+ * `@testing-library/react`'s `render`, not a full page render) — "the rendered balance shows no notice" is
+ * proved by rendering that one component, not inferred from data alone and not a full-page proof (the latter,
+ * including the real `getCurrentPaymentPeriod`/`isOverdue` cutover behavior, lives in
+ * `portal-page-ledger-render.test.tsx`).
+ *
+ * The THREE scenarios use genuinely different fixture techniques, named honestly at each one: regression 1
+ * (mid-month resume) and regression 2 (package) call REAL engine writers (`resumeChargeInTx`, `purchasePackage`)
+ * — their obligations/coverage/settlements are genuinely engine-produced. Regression 3 (the bare-SIGNUP
+ * counterexample) is a DIRECTLY SEEDED fixture (hand-built `DuesObligation`/`StudentStatusChange` rows via
+ * Prisma) that reproduces the relevant SHAPE without executing `enrollmentChargeInTx` — see that test's own
+ * comment for exactly what it does and does not claim.
  */
 const prisma = getTestPrismaClient();
 type Fixture = Awaited<ReturnType<typeof makeAccountingOrg>>;
@@ -63,12 +74,6 @@ async function newStudent(status: "ACTIVE" | "INACTIVE", label: string) {
 }
 async function assign(studentId: string, planId: string, effectiveYear = 2020, effectiveMonth = 1) {
   return prisma.studentPlanAssignment.create({ data: { organizationId: a.org.id, studentId, planId, effectiveYear, effectiveMonth, createdById: a.admin.id } });
-}
-async function settle(obligationId: string, studentId: string) {
-  const payment = await prisma.duesPayment.create({
-    data: { organizationId: a.org.id, studentId, academyId: a.academy.id, receivedOn: new Date("2030-01-01"), tenderCurrency: "USD", tenderAmount: "1.00", method: "EFECTIVO", recordedById: a.admin.id },
-  });
-  return prisma.duesSettlement.create({ data: { organizationId: a.org.id, studentId, paymentId: payment.id, obligationId } });
 }
 async function createObligation(opts: {
   studentId: string; type: "MONTHLY" | "SIGNUP" | "PACKAGE"; year: number; month: number; monthsCovered?: number;
@@ -133,6 +138,25 @@ describe("getOwnPaymentFacts: basic ok/fail paths", () => {
   });
 });
 
+describe("getOwnPaymentFacts: runtime identity guard runs BEFORE the first query (review fix)", () => {
+  async function expectRefusedWithoutQuerying(linkedStudentId: unknown) {
+    const spy = vi.spyOn(appPrisma.student, "findFirst");
+    try {
+      const ctx = selfContext(linkedStudentId as string);
+      const result = await getOwnPaymentFacts(ctx, at("2030-06-15T12:00:00"), deps());
+      expect(result).toEqual({ ok: false });
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
+  }
+
+  it("refuses null before querying student.findFirst", () => expectRefusedWithoutQuerying(null));
+  it("refuses undefined before querying student.findFirst", () => expectRefusedWithoutQuerying(undefined));
+  it("refuses an empty string before querying student.findFirst", () => expectRefusedWithoutQuerying(""));
+  it("refuses a whitespace-only string before querying student.findFirst", () => expectRefusedWithoutQuerying("   "));
+});
+
 describe("§5.2 regression 1: mid-month resume with an existing current-period charge", () => {
   it("eligibility is NOT_ELIGIBLE, outstanding contains the current-period obligation, and the rendered balance shows NO notice", async () => {
     const s = await newStudent("INACTIVE", "resume");
@@ -182,23 +206,27 @@ describe("§5.2 regression 2: a package-covered month", () => {
       data: { organizationId: a.org.id, planId: pkgPlan.id, effectiveYear: 2020, effectiveMonth: 1, priceAmount: "270.00", currency: "USD", monthsCovered: 3, createdById: a.admin.id },
     });
     await assign(s.id, pkgPlan.id, 2029, 12);
-    const o = await createObligation({ studentId: s.id, type: "PACKAGE", year: 2030, month: 6, monthsCovered: 3, amount: "270.00", planTermsId: packageTerms.id });
-    // Coverage ≠ paid: a coverage row alone doesn't settle the obligation. "Fully covered" per the brief's own
-    // scenario means a real, settled package — never shown as outstanding debt once genuinely paid.
-    await settle(o.id, s.id);
-    await prisma.duesCoverage.createMany({
-      data: [
-        { organizationId: a.org.id, studentId: s.id, obligationId: o.id, year: 2030, month: 6 },
-        { organizationId: a.org.id, studentId: s.id, obligationId: o.id, year: 2030, month: 7 },
-        { organizationId: a.org.id, studentId: s.id, obligationId: o.id, year: 2030, month: 8 },
-      ],
-    });
+    // REAL engine writer (review fix — replaces a hand-built obligation + a fake $1 settlement that never
+    // reconciled with the $270 price): `purchasePackage` creates the PACKAGE obligation, all three of its
+    // DuesCoverage rows, AND settles it in the same atomic receipt — a genuinely, amount-consistently paid
+    // package, not a boolean flipped by a mismatched settlement. June 2030 is this fresh student's own true
+    // first-uncovered month under the frozen clock below, so it is both the valid `requestedStartMonth` and the
+    // current period this regression needs covered.
+    const purchased = await purchasePackage(
+      {
+        context: context(), studentId: s.id, planTermsId: packageTerms.id, requestedStartMonth: { year: 2030, month: 6 },
+        receivedOn: { year: 2030, month: 6, day: 1 }, tender: { currency: "USD", amount: "270.00" }, method: "EFECTIVO", maxBackdateDays: 90,
+      },
+      deps({ now: () => at("2030-06-15T12:00:00") }),
+    );
+    expect(purchased.ok).toBe(true);
+    if (!purchased.ok) throw new Error(`fixture purchase failed: ${purchased.error}`);
 
     const result = await getOwnPaymentFacts(selfContext(s.id), at("2030-06-15T12:00:00"), deps());
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("unreachable");
     expect(result.facts.eligibility).toEqual({ outcome: "MISSING_CONFIGURATION" }); // the engine's real, unchanged behavior
-    expect(result.facts.coverage).toEqual(expect.arrayContaining([{ year: 2030, month: 6, obligationId: o.id }]));
+    expect(result.facts.coverage).toEqual(expect.arrayContaining([{ year: 2030, month: 6, obligationId: purchased.obligationId }]));
 
     const noticeKey = resolveEligibilityNoticeKey(result.facts, result.currentPeriod);
     expect(noticeKey).toBeNull();
@@ -219,9 +247,14 @@ describe("§5.2 regression 3 (counterexample): a bare SIGNUP must NOT suppress a
     const s = await newStudent("ACTIVE", "signuponly");
     await prisma.studentStatusChange.create({ data: { organizationId: a.org.id, studentId: s.id, status: "ACTIVE", effectiveOn: new Date("2029-12-01"), sequence: 1, source: "EVENT", actorId: a.admin.id } });
     await assign(s.id, planA.id, 2029, 12);
-    // A SIGNUP for the current period, enrolled on/after the branch's due day (21st > dueDay 20) — the exact
-    // enrollment-charge.ts shape that writes SIGNUP alone, no same-month MONTHLY. Deliberately NO MONTHLY/
-    // coverage row for this period at all — the genuine gap this counterexample proves SIGNUP cannot hide.
+    // DIRECTLY SEEDED fixture (not run through the real enrollmentChargeInTx writer, and not a reconstruction of
+    // a genuine enrollment event): the pre-month ACTIVE status-change row above only establishes ELIGIBLE and
+    // assigned, so `eligibleAndAssigned` reaches OBSERVED_DISCREPANCY instead of short-circuiting to
+    // NOT_ELIGIBLE/NO_ASSIGNMENT — it is not claimed to be what a real enrollment's own status history looks
+    // like. The hand-built obligation below reproduces only the SHAPE `enrollmentChargeInTx` produces for an
+    // on/after-due-day enrollment (dueOn 2030-06-21, after the policy's dueDay 20; no same-month MONTHLY; zero
+    // DuesCoverage rows — enrollment-charge.ts:108-140), never executes that writer. Deliberately NO MONTHLY/
+    // coverage row for this period at all — the genuine gap this counterexample proves a bare SIGNUP cannot hide.
     await createObligation({ studentId: s.id, type: "SIGNUP", year: 2030, month: 6, dueOn: new Date("2030-06-21"), graceDeadline: null, lateFeeAmount: null });
 
     const result = await getOwnPaymentFacts(selfContext(s.id), at("2030-06-25T12:00:00"), deps());
