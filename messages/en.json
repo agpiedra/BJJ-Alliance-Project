@@ -889,6 +889,11 @@
           "WAIVED": "waived",
           "VOIDED": "voided"
         }
+      },
+      "eligibilityNotice": {
+        "notRecorded": "No monthly charge is recorded for this period.",
+        "noAssignment": "No payment plan is assigned for this period. Contact the front desk if you believe this is incorrect.",
+        "unconfirmed": "We couldn't confirm the monthly billing information for this period. Any recorded charges are shown separately. Contact the front desk for clarification."
       }
     }
   },

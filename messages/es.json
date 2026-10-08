@@ -889,6 +889,11 @@
           "WAIVED": "exonerada",
           "VOIDED": "anulada"
         }
+      },
+      "eligibilityNotice": {
+        "notRecorded": "No hay cargo mensual registrado para este período.",
+        "noAssignment": "No hay un plan de pago asignado para este período. Contacte a la recepción si considera que esto es incorrecto.",
+        "unconfirmed": "No pudimos confirmar la información de facturación mensual para este período. Cualquier cargo registrado se muestra por separado. Contacte a la recepción para más información."
       }
     }
   },

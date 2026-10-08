@@ -322,30 +322,12 @@ const PENDING_CALLERS: PendingCaller[] = [
     reason:
       "Implements the approved genuine-return rule (D20-D22): an ARCHIVED student whose statusBeforeArchive was ACTIVE or INACTIVE returns to ACTIVE unconditionally (never the stored statusBeforeArchive value, unlike restoreStudent, which stays completely unchanged and is never composed here), atomically with membership, status history and the return-month charge (dueOn = max(normal due date, return date) via writeMonthlyObligationInTx's existing minimumDueOn parameter, no proration, no new SIGNUP, existing coverage/debt untouched). The request is bound to a SPECIFIC archive event (the student's latest EVENT-sourced StudentStatusChange, ordered by sequence desc, never createdAt) via a hidden archiveEventId field, re-verified fresh under the student lock before any write — a mismatch (the earlier attempt already committed, or a later archive-and-return cycle has since produced its own event) refuses, zero writes; a BASELINE-sourced or missing archive event refuses explicitly (noTrustworthyArchiveEvent), never a status-only fallback, never a fabricated event. A genuine configuration gap refuses the WHOLE attempt with zero writes, leaving the same archive event current for a legitimate later retry. The existing-coverage check and the candidate assignment/terms/policy pre-check are shared helpers (monthly-config-resolution.ts) extracted from, and now also used by, resumeChargeInTx — enrollmentChargeInTx stays excluded, its package-refusal/due-day-branch logic needs the resolved values firsthand under its own lock for decisions resume and return never make.",
   },
-  // PAYMENT-UI-CONSUMER-INTEGRATION-BRIEF.md §6 (the read-model PR). `listDuesFactsForStudents` (staff mode) got its
-  // first real caller in ROSTER-STUDENT-DETAIL-INTEGRATION-BRIEF.md PR 2 (roster-payment-facts-queries.ts); only
-  // `getOwnDuesFacts` (self/portal mode) still has zero callers — portal balance is explicitly out of scope for that
-  // brief (§6). Listed for the same reason every ledger reader/writer is: built ahead of its caller, closed by the
-  // same LedgerActivation default.
-  {
-    symbol: "getOwnDuesFacts",
-    file: "src/lib/dues/ledger/dues-facts.ts (no callers yet — portal balance is out of scope for the roster/student-detail brief)",
-    dueBy: "whenever the portal read surface (payment-UI-consumer brief §3 item 4) is built",
-    reason:
-      "Student-self mode (brief §6): takes no studentIds parameter at all — the caller's own linked student id is implicit, never a request parameter, so a caller holding a foreign id has no parameter to put it in. Shares computeDuesFactsForStudents with listDuesFactsForStudents (now live via roster-payment-facts-queries.ts) but returns a bare DuesFactsForStudent | null rather than a discriminated result, a known shape divergence noted in ROSTER-STUDENT-DETAIL-INTEGRATION-BRIEF.md §7. Gated by the identical LedgerActivation default every other ledger function uses; production returns null for every organization today. STUDENT-PORTAL-LEDGER-INTEGRATION-BRIEF.md §3.2 widened PortalSelfContext from selfStudentId to linkedStudentId (role-independent, matching every other self-scoped portal reader) — still no production caller.",
-  },
-  // STUDENT-PORTAL-LEDGER-INTEGRATION-BRIEF.md §3.3/§3.5 — the library-layer PR preceding the portal UI itself
-  // (mirrors PR #95 -> PR #96). No production caller exists on purpose: the portal page and its "load more" action
-  // are explicitly out of scope for this PR. Lives alongside listPaymentHistoryForStudent in
-  // src/lib/dues/payment-history-queries.ts, already an authorized ledger-adjacent caller
-  // (tests/unit/dues-ledger-not-exposed.test.ts), so it needs no new entry in that guard's own allowlist.
-  {
-    symbol: "listOwnPaymentHistory / PortalPaymentHistoryRow / toPortalPaymentHistoryRow",
-    file: "src/lib/dues/payment-history-queries.ts",
-    dueBy: "whenever the portal history surface (STUDENT-PORTAL-LEDGER-INTEGRATION-BRIEF.md §3.1) is built",
-    reason:
-      "Self-scoped payment history: no branch check (the caller's own linkedStudentId is unconditionally theirs, regardless of staff-assignment scope — brief §2.5's traced 'coach trains elsewhere' case), a runtime identity guard before any database access (a string TYPE alone cannot stop undefined from reaching Prisma and silently dropping the studentId filter), and an explicit allowlist projection (toPortalPaymentHistoryRow) that omits notes (decided excluded, revision 6, §8) from the real returned object on both the initial-fetch and 'load more' call paths. Shares the extracted, authorization-free queryPaymentHistoryRows core with listPaymentHistoryForStudent (byte-identical staff behavior, unchanged). Gated by the same LedgerActivation default; production returns notActive for every organization today.",
-  },
+  // PAYMENT-UI-CONSUMER-INTEGRATION-BRIEF.md §6 (the read-model PR) / STUDENT-PORTAL-LEDGER-INTEGRATION-BRIEF.md.
+  // `getOwnDuesFacts` and `listOwnPaymentHistory` (self/portal mode) are REMOVED from this list — the student
+  // portal page (`src/app/[locale]/portal/page.tsx`, via `portal-ledger-queries.ts`'s `getOwnPaymentFacts`) and
+  // its "load more" action (`portal/payment-history-actions.ts`'s `getOwnPaymentHistoryPage`) are now their real
+  // production callers. Still gated by the same, unconditionally-false `LedgerActivation` default every other
+  // ledger function uses — production returns `notActive`/`null` for every organization today regardless.
 ];
 
 function main() {
