@@ -282,9 +282,10 @@ export type PortalPaymentHistoryResult = { ok: true; rows: PortalPaymentHistoryR
  * every student's payments in the organization instead of refusing. The check below exists specifically to make
  * that impossible, regardless of what produced the bad value upstream.
  *
- * The portal page's initial fetch and its "load more" action both call this function directly and exclusively —
- * neither calls `queryPaymentHistoryRows` or `listPaymentHistoryForStudent` itself, so there is exactly one place
- * the identity check and the field projection can be bypassed from, and it is nowhere.
+ * PLANNED callers, not yet built (this PR is library-only, STUDENT-PORTAL-LEDGER-INTEGRATION-BRIEF.md §3.5): the
+ * portal page's initial fetch and its "load more" action are both meant to call this function directly and
+ * exclusively, never `queryPaymentHistoryRows` or `listPaymentHistoryForStudent` themselves — so there will be
+ * exactly one place the identity check and the field projection can be bypassed from, and it will be nowhere.
  */
 export async function listOwnPaymentHistory(
   context: PortalSelfContext,

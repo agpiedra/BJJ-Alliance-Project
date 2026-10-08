@@ -25,12 +25,19 @@ import type { YearMonth } from "@/lib/dues/calendar";
  * different, unbuilt capability.
  */
 
-/** A session's own linked student id, non-null — the structural guarantee `getOwnDuesFacts` (below) relies on
- * instead of a runtime check: the type itself makes "request someone else's id" inexpressible, since the function
- * takes no `studentIds` parameter at all. Keyed on `linkedStudentId` (role-independent — "this account's own
- * training record"), never `selfStudentId` (role-gated to STUDENT, and drives ROSTER scoping instead — see
- * `TenantContext`'s own doc comments, `src/lib/tenant/types.ts:20-37`). A staff member who also trains has a
- * non-null `linkedStudentId` too, and must reach their own portal data exactly like a pure student. */
+/** A session's own linked student id, non-null at the TYPE level — but the type alone proves nothing at runtime
+ * (a `string` annotation does not stop `undefined` from reaching Prisma), so `getOwnDuesFacts` (below) and
+ * `listOwnPaymentHistory` (`payment-history-queries.ts`) still run a real runtime guard on it before any database
+ * access. The actual trust boundary: callers are expected to supply a `PortalSelfContext` built ONLY from a
+ * freshly server-resolved `TenantContext` (`resolveContext`/`requirePortalContext`), never hand-constructed from
+ * client-supplied data. These two functions are plain, un-authenticated readers — they validate `linkedStudentId`'s
+ * runtime SHAPE (a non-blank string) and scope every query by it, but they do not themselves verify that the
+ * context handed to them was genuinely produced by a trusted server-side resolution path; that verification
+ * happens upstream, wherever the context is resolved, not inside these functions. Keyed on `linkedStudentId`
+ * (role-independent — "this account's own training record"), never `selfStudentId` (role-gated to STUDENT, and
+ * drives ROSTER scoping instead — see `TenantContext`'s own doc comments, `src/lib/tenant/types.ts:20-37`). A
+ * staff member who also trains has a non-null `linkedStudentId` too, and must reach their own portal data exactly
+ * like a pure student. */
 export type PortalSelfContext = TenantContext & { linkedStudentId: string };
 
 export type DuesEligibilityFact =

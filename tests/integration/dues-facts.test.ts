@@ -469,6 +469,18 @@ describe("input validation (§6): month / studentIds entries / the captured cloc
     }
   });
 
+  it("getOwnDuesFacts returns null for a literal null linkedStudentId (e.g. no linked student at all), never reaching the database (DB-spy proof)", async () => {
+    const selfCtx = { ...context({ organizationRole: "STUDENT" }), linkedStudentId: null as unknown as string } as PortalSelfContext;
+    const studentFindManySpy = vi.spyOn(appPrisma.student, "findMany");
+    try {
+      const result = await getOwnDuesFacts(selfCtx, undefined, deps());
+      expect(result).toBeNull();
+      expect(studentFindManySpy).not.toHaveBeenCalled();
+    } finally {
+      studentFindManySpy.mockRestore();
+    }
+  });
+
   it("getOwnDuesFacts returns null for an Invalid Date clock", async () => {
     const s = await newStudent("ACTIVE", "selfbadclock");
     const selfCtx: PortalSelfContext = { ...context({ organizationRole: "STUDENT", linkedStudentId: s.id }), linkedStudentId: s.id };
@@ -588,7 +600,10 @@ describe("self mode: structurally and at runtime cannot return a foreign student
     const someoneElse = await newStudent("ACTIVE", "notme");
     await createObligation({ studentId: me.id, type: "MONTHLY", year: 2030, month: 1, dueOn: new Date("2030-01-01"), graceDeadline: new Date("2030-01-06"), lateFeeAmount: "20.00", policyVersionId: policyA.id });
     await createObligation({ studentId: someoneElse.id, type: "MONTHLY", year: 2030, month: 1, dueOn: new Date("2030-01-01"), graceDeadline: new Date("2030-01-06"), lateFeeAmount: "20.00", policyVersionId: policyA.id });
-    const selfCtx: PortalSelfContext = { ...context({ organizationRole: "STUDENT", linkedStudentId: me.id }), linkedStudentId: me.id };
+    // academyIds: [] matches the real value resolveAcademyIds produces for a non-ADMIN role (resolve-context.ts) —
+    // an ordinary pure STUDENT has no staff assignments. Still contains real own data below: the empty array is
+    // never consulted on the self path, so it must not matter that it's empty.
+    const selfCtx: PortalSelfContext = { ...context({ organizationRole: "STUDENT", academyIds: [], linkedStudentId: me.id }), linkedStudentId: me.id };
     const result = await getOwnDuesFacts(selfCtx, undefined, deps({ now: at("2030-01-10T12:00:00") }));
     expect(result?.studentId).toBe(me.id);
   });
@@ -597,7 +612,7 @@ describe("self mode: structurally and at runtime cannot return a foreign student
     const me = await newStudent("ACTIVE", "selfsamebranch", a.academy.id);
     const sameBranchOther = await newStudent("ACTIVE", "selfsamebranchother", a.academy.id);
     await createObligation({ studentId: sameBranchOther.id, type: "MONTHLY", year: 2030, month: 1, dueOn: new Date("2030-01-01"), graceDeadline: new Date("2030-01-06"), lateFeeAmount: "20.00", policyVersionId: policyA.id });
-    const selfCtx: PortalSelfContext = { ...context({ organizationRole: "STUDENT", linkedStudentId: me.id }), linkedStudentId: me.id };
+    const selfCtx: PortalSelfContext = { ...context({ organizationRole: "STUDENT", academyIds: [], linkedStudentId: me.id }), linkedStudentId: me.id };
     const result = await getOwnDuesFacts(selfCtx, undefined, deps({ now: at("2030-01-10T12:00:00") }));
     expect(result?.studentId).toBe(me.id);
     expect(result?.outstanding).toEqual([]); // nothing of sameBranchOther's ever leaks in
