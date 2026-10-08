@@ -167,7 +167,8 @@
         },
         "overdue": {
           "label": "Mensualidad atrasada"
-        }
+        },
+        "unknownSuffix": "{count, plural, one {# sin confirmar} other {# sin confirmar}}"
       },
       "weeklyChart": {
         "heading": "Asistencia semanal",

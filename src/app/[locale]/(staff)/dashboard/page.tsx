@@ -29,6 +29,14 @@ import {
   type PromotionCandidate,
 } from "@/lib/students/promotion-queue";
 import { listOverdueStudents, type OverdueStudent } from "@/lib/payments/list-overdue";
+import {
+  isLedgerActiveForOrg,
+  listRosterPaymentFacts,
+  toRosterLedgerDisplay,
+  type RosterPaymentFact,
+} from "@/lib/dues/roster-payment-facts-queries";
+import { RosterLedgerStatus, RosterLedgerUnavailable } from "../students/roster-ledger-status";
+import type { StudentStatus } from "@/generated/prisma/client";
 import { getActiveStudentCounts } from "@/lib/students/active-counts";
 import { getAtBeltSummary } from "@/lib/students/attendance-summary";
 import { buildProgressView } from "@/lib/promotion/progress-view";
@@ -121,6 +129,56 @@ function paymentStatusLabel(status: ContactPaymentStatus, tPaymentStatus: (key: 
   return tPaymentStatus(status);
 }
 
+type LedgerOverdueSummary = {
+  monthlyPastGraceCount: number;
+  monthlyPastGraceNote: string;
+  signupPastDueCount: number;
+  signupPastDueNote: string;
+  /** A failed read contributes here ONLY — never silently folded into either count above, never treated as
+   * "no debt" (REMAINING-LEDGER-CONSUMERS-BRIEF.md §6.2's approved partial-read-failure policy). */
+  unknownCount: number;
+};
+
+/**
+ * REMAINING-LEDGER-CONSUMERS-BRIEF.md §2.1/Decision 1/Decision 2 (dashboard overdue panel): two independent
+ * counts — `monthlyPastGrace` and `signupPastDue` — a student can appear in BOTH (never deduplicated into one
+ * "unique affected students" total, never summed together into one number). The population this is called over
+ * includes inactive/archived students with qualifying old debt (Decision 2); their status is labeled in the
+ * joined-names note whenever it is not `"ACTIVE"`, never presented indistinguishably from an active student's
+ * debt. Pure — no I/O — so the real batched read (`listRosterPaymentFacts`) and this aggregation are two
+ * separately verifiable steps, mirroring `toRosterLedgerDisplay`'s own pure-function precedent.
+ */
+function summarizeLedgerOverdue(
+  students: Array<{ id: string; firstName: string; lastName: string; status: StudentStatus }>,
+  byStudentId: Map<string, RosterPaymentFact>,
+  tStatus: (status: string) => string,
+): LedgerOverdueSummary {
+  const monthlyNames: string[] = [];
+  const signupNames: string[] = [];
+  let unknownCount = 0;
+
+  for (const student of students) {
+    const fact = byStudentId.get(student.id);
+    if (!fact?.ok) {
+      unknownCount++;
+      continue;
+    }
+    const display = toRosterLedgerDisplay(fact.facts, fact.todayIso);
+    const label =
+      student.status === "ACTIVE" ? `${student.firstName} ${student.lastName}` : `${student.firstName} ${student.lastName} (${tStatus(student.status)})`;
+    if (display.flags.monthlyPastGrace) monthlyNames.push(label);
+    if (display.flags.signupPastDue) signupNames.push(label);
+  }
+
+  return {
+    monthlyPastGraceCount: monthlyNames.length,
+    monthlyPastGraceNote: joinNames(monthlyNames),
+    signupPastDueCount: signupNames.length,
+    signupPastDueNote: joinNames(signupNames),
+    unknownCount,
+  };
+}
+
 export default async function DashboardPage() {
   const context = await requireTenantContext(["ADMIN", "DIRECTOR", "INSTRUCTOR"]);
   const t = await getTranslations("dashboard");
@@ -128,8 +186,17 @@ export default async function DashboardPage() {
   const tPaymentStatus = await getTranslations("students.paymentStatus");
   const tBand = await getTranslations("dashboard.panel.franjaHeatmap.bands");
   const tDay = await getTranslations("dayOfWeek");
+  const tStudents = await getTranslations("students");
+  const tStatus = await getTranslations("students.status");
+  const tLedgerFilters = await getTranslations("students.ledger.filters");
   const locale = await getLocale();
   const now = DateTime.now().setZone(ZONE);
+
+  // REMAINING-LEDGER-CONSUMERS-BRIEF.md §2.1/§2.3: ONE captured flag, read ONCE per page load, BEFORE any
+  // legacy-vs-ledger decision below — matches every other page's own established `ledgerActive` convention
+  // (portal/roster/student-detail/payments). `false` (the real production default) keeps every line below
+  // byte-identical to this page's pre-PR3 code.
+  const ledgerActive = await isLedgerActiveForOrg(context.organizationId);
 
   // branchScopeWhere(context) returns a fragment keyed `academyId`, but
   // Student's tenancy column is `homeAcademyId` — spreading the fragment
@@ -165,11 +232,39 @@ export default async function DashboardPage() {
   // Both promotion queries scope by getScopedDb/branchScopeWhere internally (see
   // promotion-queue.ts) the same way pendingCount does above — a
   // DIRECTOR/INSTRUCTOR only ever sees their own academy/academies here too.
+  // §2.1/§6: `listOverdueStudents` (and its own internal `getCurrentPaymentPeriod`/`isOverdue` calls) is never
+  // invoked at all once `ledgerActive` — not merely computed and discarded. The ledger-backed replacement is
+  // resolved separately below.
   const [promotionQueue, approachingStudents, overdueStudents] = await Promise.all([
     listPromotionQueue(context),
     listApproachingStudents(context),
-    canViewOverduePayments ? listOverdueStudents(context) : Promise.resolve<OverdueStudent[]>([]),
+    canViewOverduePayments && !ledgerActive ? listOverdueStudents(context) : Promise.resolve<OverdueStudent[]>([]),
   ]);
+
+  // §2.1/Decision 1/Decision 2: the ledger-backed replacement for the panel above — two independent counts,
+  // over a population that includes inactive/archived students with qualifying old debt (still scoped to this
+  // caller's own existing tenant/branch authorization via `scope` above — a population change, never an
+  // authorization change). Computed only when it would actually be shown.
+  let ledgerOverdue: LedgerOverdueSummary = {
+    monthlyPastGraceCount: 0,
+    monthlyPastGraceNote: "",
+    signupPastDueCount: 0,
+    signupPastDueNote: "",
+    unknownCount: 0,
+  };
+  if (canViewOverduePayments && ledgerActive) {
+    const overduePopulation = await getScopedDb(context).student.findMany({
+      where: {
+        // Decision 2: deliberately NO `status` filter — the dashboard's own population now spans every status
+        // (ACTIVE/INACTIVE/ARCHIVED/PENDING) within this caller's existing branch scope, unlike the contact
+        // list below, which stays ACTIVE-only on purpose.
+        ...(scope.academyId ? { homeAcademyId: scope.academyId } : {}),
+      },
+      select: { id: true, firstName: true, lastName: true, status: true },
+    });
+    const { byStudentId } = await listRosterPaymentFacts(context, overduePopulation.map((s) => s.id), now.toJSDate());
+    ledgerOverdue = summarizeLedgerOverdue(overduePopulation, byStudentId, (status) => tStatus(status));
+  }
 
   // Confirming a promotion is ADMIN/DIRECTOR only (spec §3 excludes
   // INSTRUCTOR from promotions, same restriction confirmPromotion enforces
@@ -388,8 +483,9 @@ export default async function DashboardPage() {
 
   // §4.1 Task 4: "Alumnos por contactar" — every role, no gate (see
   // contact-list.ts's own doc comment on why this is NOT a lowered-threshold
-  // `getRetentionList`).
-  const contactList = await listStudentsToContact(context);
+  // `getRetentionList`). §2.3/Decision 2: its own population/attendance selection/authorization are unchanged
+  // by `ledgerActive` — only the per-student payment-status fact it reads changes.
+  const contactList = await listStudentsToContact(context, ledgerActive);
 
   // MULTI_ACADEMY_AND_KIDS_BELTS.md Item 2 — the wizard's own acceptance
   // criteria named this reminder card as not yet built. Shown to
@@ -456,13 +552,43 @@ export default async function DashboardPage() {
           flag="accent"
           note={readyNote || undefined}
         />
-        {canViewOverduePayments && (
+        {/* §2.1/§6: the legacy single "Atrasado" tile — replaced wholesale when `ledgerActive`, never shown
+            alongside the two ledger tiles below (the same replacement ternary every other current-status
+            consumer in this cutover already follows). */}
+        {canViewOverduePayments && !ledgerActive && (
           <StatTile
             label={t("panel.stats.overdue.label")}
             value={overdueStudents.length}
             flag="bad"
             note={overdueNote || undefined}
           />
+        )}
+        {/* Decision 1: two separate, never-merged counts — a student can appear in both. §6.2: a non-zero
+            unknownCount is shown alongside EACH count (both come from the same read, so a failure affects both
+            equally), never silently dropped. */}
+        {canViewOverduePayments && ledgerActive && (
+          <>
+            <StatTile
+              label={tLedgerFilters("monthlyPastGrace")}
+              value={ledgerOverdue.monthlyPastGraceCount}
+              flag="bad"
+              note={
+                [ledgerOverdue.monthlyPastGraceNote, ledgerOverdue.unknownCount > 0 ? t("panel.stats.unknownSuffix", { count: ledgerOverdue.unknownCount }) : ""]
+                  .filter(Boolean)
+                  .join(" · ") || undefined
+              }
+            />
+            <StatTile
+              label={tLedgerFilters("signupPastDue")}
+              value={ledgerOverdue.signupPastDueCount}
+              flag="bad"
+              note={
+                [ledgerOverdue.signupPastDueNote, ledgerOverdue.unknownCount > 0 ? t("panel.stats.unknownSuffix", { count: ledgerOverdue.unknownCount }) : ""]
+                  .filter(Boolean)
+                  .join(" · ") || undefined
+              }
+            />
+          </>
         )}
       </StatRow>
 
@@ -652,9 +778,19 @@ export default async function DashboardPage() {
                         {entry.daysAbsent ?? "—"}
                       </DataTableCell>
                       <DataTableCell>
-                        <Pill variant={paymentStatusPillVariant(entry.paymentStatus)}>
-                          {paymentStatusLabel(entry.paymentStatus, tPaymentStatus)}
-                        </Pill>
+                        {/* §2.3: reuses the roster's own already-approved independent-facts display exactly
+                            as-is — never a collapsed "healthy"/"not healthy" boolean, never "no debt" presented
+                            as "paid"/"covered"/"eligible". A failed read renders the SAME fail-closed
+                            "unavailable" state the roster uses, never a false empty/zero-debt row. */}
+                        {entry.paymentStatus.source === "legacy" ? (
+                          <Pill variant={paymentStatusPillVariant(entry.paymentStatus.status)}>
+                            {paymentStatusLabel(entry.paymentStatus.status, tPaymentStatus)}
+                          </Pill>
+                        ) : entry.paymentStatus.entry.kind === "unavailable" ? (
+                          <RosterLedgerUnavailable t={tStudents} />
+                        ) : (
+                          <RosterLedgerStatus display={entry.paymentStatus.entry.display} locale={locale} t={tStudents} />
+                        )}
                       </DataTableCell>
                       <DataTableCell>
                         {waLink ? (
