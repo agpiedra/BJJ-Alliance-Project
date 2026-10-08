@@ -485,7 +485,12 @@ export default async function DashboardPage() {
   // contact-list.ts's own doc comment on why this is NOT a lowered-threshold
   // `getRetentionList`). §2.3/Decision 2: its own population/attendance selection/authorization are unchanged
   // by `ledgerActive` — only the per-student payment-status fact it reads changes.
-  const contactList = await listStudentsToContact(context, ledgerActive);
+  // Review fix: pass this page's OWN captured `now` through explicitly — `listStudentsToContact`'s own default
+  // param (`DateTime.now()`) would otherwise re-capture a LATER instant for its internal `listRosterPaymentFacts`
+  // call than the one `ledgerOverdue` above already used, risking a different branch-local "today" (and therefore
+  // a different past-grace/past-due classification for the same student) across a midnight boundary. `thresholdDays`
+  // and `today` are left at their own defaults — only the ledger instant is unified, never the legacy/attendance rules.
+  const contactList = await listStudentsToContact(context, ledgerActive, undefined, undefined, now);
 
   // MULTI_ACADEMY_AND_KIDS_BELTS.md Item 2 — the wizard's own acceptance
   // criteria named this reminder card as not yet built. Shown to

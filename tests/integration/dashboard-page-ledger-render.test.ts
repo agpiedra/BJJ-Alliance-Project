@@ -1,5 +1,6 @@
 import "dotenv/config";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { DateTime } from "luxon";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createElement } from "react";
 import { createTranslator, NextIntlClientProvider } from "next-intl";
@@ -8,6 +9,7 @@ import { makeAccountingOrg } from "../helpers/accounting-org";
 import { hashSecret } from "../../src/lib/crypto";
 import { createMonthlyObligation } from "../../src/lib/dues/ledger/create-monthly-obligation";
 import * as duesFactsModule from "../../src/lib/dues/ledger/dues-facts";
+import * as rosterPaymentFactsModule from "../../src/lib/dues/roster-payment-facts-queries";
 import * as getCurrentPeriodModule from "../../src/lib/payments/get-current-period";
 import * as overdueModule from "../../src/lib/payments/overdue";
 import * as listOverdueModule from "../../src/lib/payments/list-overdue";
@@ -70,7 +72,7 @@ async function seedPlanAndPolicy(org: Fixture, academyId: string) {
 }
 
 let studentCounter = 0;
-async function newStudent(org: Fixture, academyId: string, status: "ACTIVE" | "ARCHIVED" = "ACTIVE") {
+async function newStudent(org: Fixture, academyId: string, status: "ACTIVE" | "INACTIVE" | "ARCHIVED" = "ACTIVE") {
   const n = ++studentCounter;
   return prisma.student.create({
     data: {
@@ -174,6 +176,19 @@ function statTileNote(html: string, label: string): string {
   return match?.[1] ?? "";
 }
 
+/** The exact rendered number for a given stat tile's label — the numeric contract itself, not just the note. */
+function statTileCount(html: string, label: string): number {
+  const match = html.match(new RegExp(`${label}</div><div[^>]*>(\\d+)</div>`));
+  if (!match) throw new Error(`Stat tile "${label}" not found in rendered HTML`);
+  return Number(match[1]);
+}
+
+/** The "N unknown" suffix inside a tile's own note (§6.2) — 0 when the note carries no such suffix at all. */
+function statTileUnknownCount(html: string, label: string): number {
+  const match = statTileNote(html, label).match(/(\d+) unknown/);
+  return match ? Number(match[1]) : 0;
+}
+
 /** The contact-list row for one student, bounded to its own `<tr>...</tr>` — other rows (shared fixtures
  * accumulate across tests in this file) must never leak into a single row's assertions. */
 function contactRow(html: string, fullName: string): string {
@@ -198,6 +213,12 @@ describe("dashboard: MONTHLY-only, SIGNUP-only, and overlapping students counted
 
     const html = await renderAs(a.admin.id, a.org.id);
 
+    // Numeric contract (review fix): this is the FIRST test to render in this file, against a fresh org with no
+    // other qualifying debtors yet — monthlyOnly + overlap = 2, signupOnly + overlap = 2, never summed/deduped
+    // into one total (would be 3 unique students, or 4 if double-counted — neither 2 nor 2).
+    expect(statTileCount(html, "Monthly past grace")).toBe(2);
+    expect(statTileCount(html, "Signup past due")).toBe(2);
+
     const monthlyNote = statTileNote(html, "Monthly past grace");
     const signupNote = statTileNote(html, "Signup past due");
     expect(monthlyNote).toContain(`${monthlyOnly.firstName} ${monthlyOnly.lastName}`);
@@ -212,19 +233,27 @@ describe("dashboard: MONTHLY-only, SIGNUP-only, and overlapping students counted
 });
 
 describe("dashboard: population extended to inactive/archived students with qualifying debt (Decision 2)", () => {
-  it("REQUIRED: an ARCHIVED student with real old debt appears on the dashboard, clearly labeled, but never on the contact list", async () => {
+  it("REQUIRED: both an ARCHIVED and an INACTIVE student with real old debt appear on the dashboard, clearly labeled, but never on the contact list", async () => {
     mockActive = true;
+    // Split across the two tiles on purpose: `joinNames` caps a tile's note at 3 names, and this shared org
+    // already carries 2 qualifying names per tile from the earlier "two independent counts" test — putting BOTH
+    // new debtors on the SAME tile would push one past the cap, truncating it to "+1" and silently removing its
+    // name from the literal-containment check below (a test-fixture ordering artifact, not a real product bug).
     const archived = await newStudent(a, a.academy.id, "ARCHIVED");
-    await newMonthlyObligation(a, archived.id, a.academy.id);
+    await newSignupObligation(a, archived.id, a.academy.id);
     await newAttendance(a, archived.id, a.academy.id, 30); // would also qualify for the contact list by attendance alone, if they were ACTIVE
+    const inactive = await newStudent(a, a.academy.id, "INACTIVE");
+    await newMonthlyObligation(a, inactive.id, a.academy.id);
+    await newAttendance(a, inactive.id, a.academy.id, 30);
 
     const html = await renderAs(a.admin.id, a.org.id);
 
     // Appears on the dashboard panel, labeled with their real (non-ACTIVE) status, and never a second time
     // (a contact-list row for the same student would add a second occurrence) — the contact list never gained it.
-    expect(html).toContain(`${archived.firstName} ${archived.lastName} (Archived)`);
-    const occurrences = html.split(`${archived.firstName} ${archived.lastName}`).length - 1;
-    expect(occurrences).toBe(1);
+    expect(statTileNote(html, "Signup past due")).toContain(`${archived.firstName} ${archived.lastName} (Archived)`);
+    expect(html.split(`${archived.firstName} ${archived.lastName}`).length - 1).toBe(1);
+    expect(statTileNote(html, "Monthly past grace")).toContain(`${inactive.firstName} ${inactive.lastName} (Inactive)`);
+    expect(html.split(`${inactive.firstName} ${inactive.lastName}`).length - 1).toBe(1);
   });
 });
 
@@ -272,8 +301,14 @@ describe("dashboard: tenant/branch isolation with real foreign data and positive
 });
 
 describe("dashboard: partial-read failure stays visible (§6.2)", () => {
-  it("REQUIRED: a student missing from an otherwise-successful read shows an explicit unknown count on the dashboard panel, and 'unavailable' on the contact list — never silently zero/healthy", async () => {
+  it("REQUIRED: a student missing from an otherwise-successful read shows an explicit unknown count on the dashboard panel, excluded from the confirmed counts, and 'unavailable' on the contact list — never silently zero/healthy", async () => {
     mockActive = true;
+    // Baseline BEFORE this test's own debtor exists — other tests in this file share org `a`, so the confirmed
+    // count already includes earlier fixtures' debtors. The numeric contract this test proves is a DELTA: this
+    // debtor's real debt must contribute zero to the confirmed count and exactly one to `unknownCount`.
+    const baselineHtml = await renderAs(a.admin.id, a.org.id);
+    const baselineMonthlyCount = statTileCount(baselineHtml, "Monthly past grace");
+
     const debtor = await newStudent(a, a.academy.id);
     await newMonthlyObligation(a, debtor.id, a.academy.id);
     await newAttendance(a, debtor.id, a.academy.id, 10);
@@ -293,9 +328,88 @@ describe("dashboard: partial-read failure stays visible (§6.2)", () => {
     } finally {
       spy.mockRestore();
     }
+
+    // Numeric contract (review fix): the failed student is NEVER folded into the confirmed count (it would have
+    // qualified for "Monthly past grace" had the read succeeded) — the count stays exactly at its baseline — and
+    // `unknownCount` is exactly 1, not merged into, or confused with, the confirmed count itself.
+    expect(statTileCount(html, "Monthly past grace")).toBe(baselineMonthlyCount);
+    expect(statTileUnknownCount(html, "Monthly past grace")).toBe(1);
+    expect(statTileUnknownCount(html, "Signup past due")).toBe(1);
+    expect(statTileNote(html, "Monthly past grace")).not.toContain(`${debtor.firstName} ${debtor.lastName}`);
+
     expect(html).toContain("unknown");
     // React escapes the apostrophe in rendered text as `&#x27;` — assert on the unambiguous half of the string.
     expect(contactRow(html, `${debtor.firstName} ${debtor.lastName}`)).toContain("load payment status");
+  });
+});
+
+describe("dashboard + contact list share one captured ledger instant (review fix)", () => {
+  it("REQUIRED: the panel's own ledger read and the contact list's internal ledger read receive the SAME instant, never an independently re-captured later one, across a branch-local midnight boundary", async () => {
+    mockActive = true;
+    const student = await newStudent(a, a.academy.id);
+    await newAttendance(a, student.id, a.academy.id, 10);
+
+    // A dedicated policy/terms (graceDay 14), used ONLY by this test — the shared academy policy (graceDay 5)
+    // stays untouched for every other test in this file. Coverage {2030, 5} + graceDay 14 ⇒ graceDeadlineFor
+    // (next month's graceDay) = 2030-06-14, exactly the branch-local calendar date of INSTANT_A below.
+    const boundaryPlan = await prisma.paymentPlan.create({ data: { organizationId: a.org.id, academyId: a.academy.id, name: `DashRender boundary plan ${suffix}` } });
+    const boundaryTerms = await prisma.paymentPlanTerms.create({
+      data: { organizationId: a.org.id, planId: boundaryPlan.id, effectiveYear: 2020, effectiveMonth: 2, priceAmount: "100.00", currency: "USD", monthsCovered: 1, createdById: a.admin.id },
+    });
+    const boundaryPolicy = await prisma.duesPolicyVersion.create({
+      data: { organizationId: a.org.id, academyId: a.academy.id, effectiveYear: 2020, effectiveMonth: 2, dueDay: 20, graceDay: 14, lateFeeAmount: "20.00", lateFeeCurrency: "USD", createdById: a.admin.id },
+    });
+    const r = await createMonthlyObligation(
+      { context: { kind: "tenant", actorUserId: a.admin.id, organizationId: a.org.id, organizationRole: "ADMIN", academyIds: "ALL", selfStudentId: null, linkedStudentId: null }, studentId: student.id, coverage: { year: 2030, month: 5 }, planTermsId: boundaryTerms.id, policyVersionId: boundaryPolicy.id },
+      writerDeps,
+    );
+    if (!r.ok) throw new Error(`fixture obligation failed: ${r.error}`);
+
+    // America/Costa_Rica (UTC-6, no DST, the academy's own default timezone): INSTANT_A is 30 seconds before
+    // branch-local midnight on 2030-06-14; INSTANT_B is 30 seconds after it rolls over to 2030-06-15 — a real
+    // branch-local midnight boundary. `DateTime.now()` returns INSTANT_A on its FIRST call (the dashboard page's
+    // own capture) and INSTANT_B on every call after — simulating exactly what a re-introduced bug (the contact
+    // list independently calling `DateTime.now()` again, later in the same render) would receive.
+    const INSTANT_A = DateTime.fromISO("2030-06-14T23:59:30", { zone: "America/Costa_Rica" }) as ReturnType<typeof DateTime.now>;
+    const INSTANT_B = DateTime.fromISO("2030-06-15T00:00:30", { zone: "America/Costa_Rica" }) as ReturnType<typeof DateTime.now>;
+    const nowSpy = vi.spyOn(DateTime, "now").mockReturnValueOnce(INSTANT_A).mockReturnValue(INSTANT_B);
+
+    const capturedInstants: Date[] = [];
+    const realListRosterPaymentFacts = rosterPaymentFactsModule.listRosterPaymentFacts;
+    const factsSpy = vi
+      .spyOn(rosterPaymentFactsModule, "listRosterPaymentFacts")
+      .mockImplementation(async (...args: Parameters<typeof realListRosterPaymentFacts>) => {
+        capturedInstants.push(args[2]);
+        return realListRosterPaymentFacts(...args);
+      });
+
+    let html: string;
+    try {
+      html = await renderAs(a.admin.id, a.org.id);
+    } finally {
+      nowSpy.mockRestore();
+      factsSpy.mockRestore();
+    }
+
+    // Core proof: EVERY ledger read during this render (the panel's own population call, and the one inside
+    // `listStudentsToContact`) received the identical instant — the dashboard's first-captured INSTANT_A, never
+    // the later INSTANT_B that an independent `DateTime.now()` call would have produced.
+    expect(capturedInstants.length).toBeGreaterThanOrEqual(2);
+    for (const instant of capturedInstants) {
+      expect(instant.getTime()).toBe(INSTANT_A.toJSDate().getTime());
+    }
+
+    // Content-level consistency at the boundary: at INSTANT_A's branch-local date (2030-06-14), this obligation's
+    // grace deadline (also 2030-06-14) has NOT yet passed (`compareDates` is strict `>` — "on the deadline" is
+    // still on time), so it must NOT appear in the dashboard's "Monthly past grace" tile, and the contact list's
+    // row for the same student must show the principal with NO late fee. Had the contact list instead used
+    // INSTANT_B (one branch-local day later), the SAME obligation would already be past grace and carry a late
+    // fee — a real, user-visible divergence this fixture is built to expose, not just a spy-argument artifact.
+    const monthlyNote = statTileNote(html, "Monthly past grace");
+    expect(monthlyNote).not.toContain(`${student.firstName} ${student.lastName}`);
+    const row = contactRow(html, `${student.firstName} ${student.lastName}`);
+    expect(row).toContain("$");
+    expect(row).not.toContain("late fee");
   });
 });
 
