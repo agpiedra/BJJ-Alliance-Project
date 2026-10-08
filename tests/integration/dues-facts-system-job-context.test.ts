@@ -209,17 +209,22 @@ describe("the reader respects a caller-supplied subset — never silently every 
 });
 
 describe("KioskContext is rejected by both signatures — a real compile-time proof (requirement 5)", () => {
+  // Mirrors reassign-attendance.test.ts's own established pattern ("expectedAcademyId is required at the type
+  // level"): the invalid call lives inside an arrow function that is itself never invoked — only its VALUE is
+  // discarded via `void`, never its return. `tsc --noEmit` still type-checks the function body regardless of
+  // whether it's ever called, so the `@ts-expect-error` below is still genuinely verified; Vitest, which only
+  // transpiles (never type-checks) test files, never executes `reader(...)` at runtime either way.
   it("listDuesFactsForStudents: a KioskContext fails to type-check against the widened context parameter", () => {
     const kiosk: KioskContext = { kind: "kiosk", organizationId: "fake-org", academyId: "fake-academy" };
-    // @ts-expect-error — KioskContext does not satisfy TenantContext | SystemJobContext; this line must fail tsc.
-    const call = listDuesFactsForStudents(kiosk, ["s1"]);
-    void call;
+    void (() =>
+      // @ts-expect-error — KioskContext does not satisfy TenantContext | SystemJobContext; this line must fail tsc.
+      listDuesFactsForStudents(kiosk, ["s1"]));
   });
 
   it("listRosterPaymentFacts: a KioskContext fails to type-check against the widened context parameter", () => {
     const kiosk: KioskContext = { kind: "kiosk", organizationId: "fake-org", academyId: "fake-academy" };
-    // @ts-expect-error — KioskContext does not satisfy TenantContext | SystemJobContext; this line must fail tsc.
-    const call = listRosterPaymentFacts(kiosk, ["s1"], new Date());
-    void call;
+    void (() =>
+      // @ts-expect-error — KioskContext does not satisfy TenantContext | SystemJobContext; this line must fail tsc.
+      listRosterPaymentFacts(kiosk, ["s1"], new Date()));
   });
 });
