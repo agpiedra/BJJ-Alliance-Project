@@ -24,7 +24,9 @@ import {
   previousEquivalentRange,
   computeTileDelta,
   type TileDeltaPolarity,
+  type LedgerInstant,
 } from "@/lib/analytics/headline-tiles";
+import { isLedgerActiveForOrg } from "@/lib/dues/roster-payment-facts-queries";
 import {
   getClassPopularity,
   countWeekdayOccurrences,
@@ -93,6 +95,17 @@ export default async function AnalyticsPage({
     ...previousEquivalentRange({ from: filters.from, to: filters.to }),
     academyId: filters.academyId,
   };
+  // Review fix (PR 6, gap 3): ONE ledger instant/activation flag, captured HERE at the page's own composition
+  // boundary, before any of the (potentially several) `getHeadlineTiles`/`getLocationComparison` calls below —
+  // never recomputed per call, which risked the current-tiles call, the previous-tiles call, and each academy's
+  // own call inside `getLocationComparison` landing on different real-clock instants (and, right at a month
+  // boundary, different branch-local target months) for what is supposed to be a single, consistent page load.
+  // Unrelated to `now`/`filters` above (the attendance-range/quick-range clock) — deliberately a separate read,
+  // preserving that clock's own existing semantics untouched.
+  const ledgerInstant: LedgerInstant = {
+    ledgerActive: await isLedgerActiveForOrg(context.organizationId),
+    ledgerNow: DateTime.now().setZone(ZONE).toJSDate(),
+  };
   const [
     tiles,
     previousTiles,
@@ -103,12 +116,12 @@ export default async function AnalyticsPage({
     retentionList,
     weeklyTrend,
   ] = await Promise.all([
-    getHeadlineTiles(context, filters),
+    getHeadlineTiles(context, filters, ledgerInstant),
     // §4.3 Task 2: "each with a comparison line vs. the previous period" —
     // reuses `getHeadlineTiles` itself against `previousEquivalentRange`
     // (already exported by headline-tiles.ts) rather than a second,
     // drifting computation of what "the previous period" means.
-    getHeadlineTiles(context, previousFilters),
+    getHeadlineTiles(context, previousFilters, ledgerInstant),
     getClassPopularity(context, filters, locale),
     getProgressionPlanningList(context, filters),
     getBeltDistribution(context, filters),
@@ -124,7 +137,7 @@ export default async function AnalyticsPage({
   // rejected outright, not narrowed), so this check only saves the query.
   const [locationComparison, crossTraining] =
     context.organizationRole === "ADMIN"
-      ? await Promise.all([getLocationComparison(context, filters), getCrossTraining(context, filters)])
+      ? await Promise.all([getLocationComparison(context, filters, ledgerInstant), getCrossTraining(context, filters)])
       : [[], []];
 
   // §4.3 Task 3/5: BarList + "Detalle por clase" both derive from the same
@@ -186,9 +199,16 @@ export default async function AnalyticsPage({
   // conflated — checked in that order, since `tiles.enrolled === 0` is the only reliable signal for "empty"
   // (the legacy/inactive path's own `paymentHealthPercent` stays a real `0`, not `null`, for an empty
   // population — preserving its exact pre-existing value — so `null` alone can't be read as "empty" there).
+  //
+  // Review fix (PR 6, gap 1): this new empty/partial-failure presentation applies ONLY on the ledger-active
+  // path. The inactive path's own `paymentHealthPercent` is ALWAYS a real number (never `null`, including its
+  // own pre-existing "0 for an empty population" value) — rendering it as a plain percentage, unconditionally,
+  // is itself the exact preserved legacy output; gating this whole conditional on `tiles.paymentHealthLedgerActive`
+  // is what stops "No active students" (or the partial-counts string) from ever being misapplied to an inactive
+  // organization's genuinely-empty-or-healthy-at-0% result.
   const paymentHealthLabel = tiles.paymentHealthLedgerActive ? t("tiles.paymentHealthPercentLedger") : t("tiles.paymentHealthPercent");
-  const paymentHealthDisplay =
-    tiles.enrolled === 0
+  const paymentHealthDisplay = tiles.paymentHealthLedgerActive
+    ? tiles.enrolled === 0
       ? t("tiles.paymentHealthNoActiveStudents")
       : tiles.paymentHealthUnknownCount > 0
         ? t("tiles.paymentHealthPartial", {
@@ -196,7 +216,8 @@ export default async function AnalyticsPage({
             checked: tiles.paymentHealthSuccessfullyCheckedCount,
             unknown: tiles.paymentHealthUnknownCount,
           })
-        : `${tiles.paymentHealthPercent}%`;
+        : `${tiles.paymentHealthPercent}%`
+    : `${tiles.paymentHealthPercent}%`;
 
   const csvRows = [
     { metric: t("tiles.enrolled"), value: tiles.enrolled },
@@ -416,7 +437,7 @@ export default async function AnalyticsPage({
       />
 
       {context.organizationRole === "ADMIN" && (
-        <LocationsPanel comparison={locationComparison} crossTraining={crossTraining} />
+        <LocationsPanel comparison={locationComparison} crossTraining={crossTraining} ledgerActive={ledgerInstant.ledgerActive} />
       )}
 
       <RetentionPanel entries={retentionListRows} weeklyTrend={weeklyTrend} />

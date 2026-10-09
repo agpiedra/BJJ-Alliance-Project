@@ -10,6 +10,17 @@ import type { AnalyticsFilters } from "@/lib/analytics/filters";
 import { isLedgerActiveForOrg } from "@/lib/dues/roster-payment-facts-queries";
 import { getLedgerPaymentHealth, type PaymentHealthResult } from "@/lib/analytics/payment-health";
 
+/**
+ * Review fix (PR 6, gap 3): the ONE ledger instant/activation flag a page composition resolves ONCE and threads
+ * through every `getHeadlineTiles`/`getLocationComparison` call it makes — never recomputed per call. Optional:
+ * omitted entirely, every existing/independent caller (tests, a future caller with no page boundary of its own)
+ * keeps the exact prior default behavior of resolving both fresh, right here, every time.
+ */
+export interface LedgerInstant {
+  ledgerActive: boolean;
+  ledgerNow: Date;
+}
+
 export interface DateRange {
   from: DateTime;
   to: DateTime;
@@ -145,6 +156,7 @@ export function countEnrolledAtRangeStart(
 export async function getHeadlineTiles(
   context: TenantContext,
   filters: AnalyticsFilters,
+  ledgerInstant?: LedgerInstant,
 ): Promise<HeadlineTiles> {
   if (context.organizationRole !== "ADMIN" && context.organizationRole !== "DIRECTOR") {
     throw new Error("FORBIDDEN");
@@ -215,10 +227,17 @@ export async function getHeadlineTiles(
   // §2.2/§6.1 Decision 3/§4: ONE captured flag, read once, before the legacy-vs-ledger decision below — same
   // convention every other cutover page/job already established. §6: the legacy reader is never invoked at
   // all once `ledgerActive` — not merely computed and discarded (dashboard/digest/Pagos precedent).
-  const ledgerActive = await isLedgerActiveForOrg(context.organizationId);
+  //
+  // Review fix (PR 6, gap 3): a page composing MULTIPLE `getHeadlineTiles`/`getLocationComparison` calls (the
+  // current/previous-range pair, one per academy) resolves this ONCE at its own boundary and passes it in as
+  // `ledgerInstant` — never recomputed per call, which could otherwise land on different instants (and, right
+  // at a month boundary, different branch-local target months) across calls that are supposed to describe the
+  // SAME page load. Omitted entirely (every other/independent caller, including every existing test), this
+  // resolves exactly as before: freshly, right here, every call.
+  const ledgerActive = ledgerInstant ? ledgerInstant.ledgerActive : await isLedgerActiveForOrg(context.organizationId);
   // §4: the one captured instant shared by every ledger read this call makes (today, exactly one —
   // `getLedgerPaymentHealth`'s own `listRosterPaymentFacts` call).
-  const ledgerNow = DateTime.now().setZone(ZONE).toJSDate();
+  const ledgerNow = ledgerInstant ? ledgerInstant.ledgerNow : DateTime.now().setZone(ZONE).toJSDate();
   const paymentHealth: PaymentHealthResult = ledgerActive
     ? await getLedgerPaymentHealth(context, studentIds, ledgerNow)
     : await legacyPaymentHealth(studentIds, context.organizationId, enrolled);

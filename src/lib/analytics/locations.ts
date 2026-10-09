@@ -1,6 +1,6 @@
 import { getScopedDb } from "@/lib/tenant/scoped-client";
 import type { TenantContext } from "@/lib/tenant/types";
-import { getHeadlineTiles } from "@/lib/analytics/headline-tiles";
+import { getHeadlineTiles, type LedgerInstant } from "@/lib/analytics/headline-tiles";
 import type { Prisma } from "@/generated/prisma/client";
 import type { AnalyticsFilters } from "@/lib/analytics/filters";
 
@@ -63,6 +63,7 @@ export interface LocationComparisonRow {
 export async function getLocationComparison(
   context: TenantContext,
   filters: AnalyticsFilters,
+  ledgerInstant?: LedgerInstant,
 ): Promise<LocationComparisonRow[]> {
   requireAdminOnly(context);
 
@@ -75,7 +76,10 @@ export async function getLocationComparison(
   return Promise.all(
     academies.map(async (academy) => {
       const [tiles, classCount] = await Promise.all([
-        getHeadlineTiles(context, { ...filters, academyId: academy.id }),
+        // Review fix (PR 6, gap 3): the SAME `ledgerInstant` the page composed once — never a fresh one per
+        // academy, which would risk a different academy landing on a different real-clock instant (and, right
+        // at a month boundary, a different branch-local target month) than its siblings in the same table.
+        getHeadlineTiles(context, { ...filters, academyId: academy.id }, ledgerInstant),
         getScopedDb(context).classSession.count({ where: { academyId: academy.id } }),
       ]);
 

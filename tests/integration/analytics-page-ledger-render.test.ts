@@ -1,10 +1,12 @@
 import "dotenv/config";
 import { afterAll, describe, expect, it, vi } from "vitest";
+import { DateTime } from "luxon";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createElement } from "react";
 import { createTranslator, NextIntlClientProvider } from "next-intl";
 import { getTestPrismaClient } from "../helpers/test-db";
 import { makeAccountingOrg } from "../helpers/accounting-org";
+import { ZONE } from "../../src/lib/scheduling/zone";
 import enMessages from "../../messages/en.json";
 
 /**
@@ -32,9 +34,27 @@ vi.mock("next-intl/server", () => ({
   getTranslations: async (namespace: string) => createTranslator({ locale: "en", messages: enMessages, namespace } as never),
 }));
 
+/**
+ * Review fix (PR 6, gap 2): `ExportCsvButton`'s real CSV build happens entirely CLIENT-SIDE, inside its own
+ * `onClick` handler (`toCsv(rows)` → a Blob download) — never present in server-rendered markup, so a plain
+ * `renderToStaticMarkup` assertion can never see the actual CSV payload. Stubbed here to dump its `rows` prop
+ * as inspectable JSON text instead, the same "replace a client-only concern with something the test CAN see"
+ * technique this codebase's own render-test precedents already use for other client subcomponents (e.g.
+ * `payments-page-ledger-render.test.ts`'s stubs). Every panel on this page uses the SAME `ExportCsvButton`, so
+ * this produces several JSON dumps per render — assertions below match on a specific dump's exact substring,
+ * not "the only one."
+ */
+vi.mock("../../src/app/[locale]/(staff)/dashboard/analytics/export-csv-button", () => ({
+  ExportCsvButton: ({ rows }: { rows: Array<Record<string, string | number>> }) =>
+    createElement("pre", { "data-csv-dump": true }, JSON.stringify(rows)),
+}));
+
 const { default: AnalyticsPage } = await import("../../src/app/[locale]/(staff)/dashboard/analytics/page");
 const { createMonthlyObligation } = await import("../../src/lib/dues/ledger/create-monthly-obligation");
 const { recordDuesPayment } = await import("../../src/lib/dues/ledger/record-payment");
+const headlineTilesModule = await import("../../src/lib/analytics/headline-tiles");
+const locationsModule = await import("../../src/lib/analytics/locations");
+const paymentHealthModule = await import("../../src/lib/analytics/payment-health");
 
 type Fixture = Awaited<ReturnType<typeof makeAccountingOrg>>;
 
@@ -109,6 +129,18 @@ async function dropDeps(org: Fixture) {
   await prisma.paymentPlanTerms.deleteMany({ where: { organizationId: org.org.id } });
   await prisma.duesPolicyVersion.deleteMany({ where: { organizationId: org.org.id } });
   await prisma.paymentPlan.deleteMany({ where: { organizationId: org.org.id } });
+}
+
+/** React's own text-content escaping (`escapeTextForBrowser`) turns `"`/`'`/`&`/`<`/`>` into HTML entities even
+ * inside a plain text node — undoing that is what lets the `JSON.stringify`'d CSV dump be matched as literal
+ * JSON text below, rather than against its escaped-for-HTML form. */
+function decodeHtmlEntities(s: string): string {
+  return s.replace(/&quot;/g, '"').replace(/&#x27;/g, "'").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">");
+}
+
+/** Every `ExportCsvButton` stub's dumped `rows` prop on the page, decoded back to literal JSON text. */
+function extractCsvDumps(html: string): string[] {
+  return [...html.matchAll(/<pre data-csv-dump="true">([\s\S]*?)<\/pre>/g)].map((m) => decodeHtmlEntities(m[1]));
 }
 
 async function renderAs(userId: string, organizationId: string): Promise<string> {
@@ -200,6 +232,39 @@ describe("dashboard/analytics/page.tsx: payment health ledger cutover (page-leve
     }
   });
 
+  it("REQUIRED (review fix, gap 1): the inactive path with an EMPTY (zero-active-student) population still renders the legacy 0% — never 'No active students', on either the headline tile or the per-academy location row/CSV", async () => {
+    mockActive = false;
+    const org = await makeAccountingOrg("CUMULATIVE", "ar-inactive-empty-population");
+    try {
+      const html = await renderAs(org.admin.id, org.org.id);
+
+      expect(html).not.toContain("No active students");
+      const statTileSection = html.slice(0, html.indexOf("Class popularity"));
+      expect(statTileSection).toContain("Payment health (current month)");
+      expect(statTileSection).toContain("0%");
+
+      // The per-academy location row (same org, one academy, zero students): the OLD table header AND the
+      // OLD CSV header key, both carrying the legacy 0% value — not the new empty-population string.
+      const locationsSection = html.slice(html.indexOf("Location comparison"));
+      expect(locationsSection).toContain("Payment health (current month)");
+      expect(locationsSection).not.toContain("Current month covered by settled payments");
+      expect(locationsSection).toContain("0%");
+
+      const csvDumps = extractCsvDumps(html);
+      const locationCsvDump = csvDumps.find((d) => d.includes('"Academy"'));
+      expect(locationCsvDump).toBeDefined();
+      expect(locationCsvDump).toContain('"Payment health (current month)":"0%"');
+      expect(locationCsvDump).not.toContain("No active students");
+
+      const headlineCsvDump = csvDumps.find((d) => d.includes('"metric"') && d.includes('"Enrolled"'));
+      expect(headlineCsvDump).toBeDefined();
+      expect(headlineCsvDump).toContain('{"metric":"Payment health (current month)","value":"0%"}');
+    } finally {
+      mockActive = true;
+      await org.drop();
+    }
+  });
+
   it("REQUIRED: the locations panel renders the SAME partial-failure string for one academy via locations.ts's own propagation", async () => {
     mockActive = true;
     const org = await makeAccountingOrg("CUMULATIVE", "ar-locations-partial");
@@ -228,6 +293,106 @@ describe("dashboard/analytics/page.tsx: payment health ledger cutover (page-leve
       expect(html).toContain("1 confirmed-paid of 1 successfully checked (1 unknown)");
     } finally {
       await dropDeps(org);
+      await org.drop();
+    }
+  });
+
+  it("REQUIRED (review fix, gap 2): ledger-active — the locations table's visible column header AND its exported CSV header both switch to the approved ledger label", async () => {
+    mockActive = true;
+    const org = await makeAccountingOrg("CUMULATIVE", "ar-locations-label-cutover");
+    try {
+      const { terms, policy } = await seedPlanAndPolicy(org, org.academy.id);
+      await settledCurrentMonthStudent(org, org.academy.id, terms, policy);
+
+      const html = await renderAs(org.admin.id, org.org.id);
+      const locationsSection = html.slice(html.indexOf("Location comparison"));
+      expect(locationsSection).toContain("Current month covered by settled payments");
+      expect(locationsSection).not.toContain("Payment health (current month)");
+
+      const csvDumps = extractCsvDumps(html);
+      const locationCsvDump = csvDumps.find((d) => d.includes('"Academy"'));
+      expect(locationCsvDump).toBeDefined();
+      expect(locationCsvDump).toContain('"Current month covered by settled payments":"100%"');
+      expect(locationCsvDump).not.toContain("Payment health (current month)");
+    } finally {
+      await dropDeps(org);
+      await org.drop();
+    }
+  });
+
+  it("REQUIRED (review fix, gap 3): every ledger call this page makes — both getHeadlineTiles calls, and every per-academy getHeadlineTiles call inside getLocationComparison — receives the IDENTICAL captured instant/activation flag, never a freshly re-resolved one", async () => {
+    mockActive = true;
+    const org = await makeAccountingOrg("CUMULATIVE", "ar-one-ledger-instant");
+    try {
+      // A second academy so getLocationComparison's own internal Promise.all makes a SECOND per-academy
+      // getHeadlineTiles call — without the fix, this (and the page's own current/previous-range pair) would
+      // each resolve `DateTime.now()` independently; right at a real month boundary, that drift could land
+      // different calls on different branch-local target months for what must be one consistent page load.
+      const academyB = await prisma.academy.create({
+        data: { organizationId: org.org.id, name: "AR Second Academy", slug: `ar-second-${suffix()}`, kioskTokenHash: `ar-second-hash-${suffix()}` },
+      });
+
+      // A controlled, strictly-ADVANCING clock — not real wall-clock time — because a real-clock version of
+      // this test is NOT actually deterministic: several `DateTime.now()` calls made microseconds apart can
+      // easily land on the identical millisecond, which would make an unthreaded (buggy) implementation look
+      // threaded purely by timing luck. Advancing by a full day per call makes every call's own value visibly
+      // distinct whenever `DateTime.now()` is genuinely invoked more than once for ledger purposes — the exact
+      // "different instant each independent call" failure mode this fix prevents, deliberately forced instead
+      // of hoped-for.
+      let mockCallCount = 0;
+      const dateTimeNowSpy = vi.spyOn(DateTime, "now").mockImplementation(
+        () => DateTime.fromISO("2031-01-15T12:00:00", { zone: ZONE }).plus({ days: mockCallCount++ }) as DateTime<true>,
+      );
+
+      const headlineSpy = vi.spyOn(headlineTilesModule, "getHeadlineTiles");
+      const locationsSpy = vi.spyOn(locationsModule, "getLocationComparison");
+      // The REAL proof: `getHeadlineTiles`'s own `call[2]` argument is just what the PAGE passed in — always
+      // the same object, even if `getHeadlineTiles` itself ignored it internally (the exact bug this test must
+      // catch). `getLedgerPaymentHealth`'s own `now` argument (its 3rd parameter) is what `getHeadlineTiles`
+      // ACTUALLY resolved `ledgerNow` to, internally — spying one layer deeper is what makes this test prove
+      // the threading is honored, not merely that the page composed one instant and handed it to a function
+      // that was free to disregard it.
+      const paymentHealthSpy = vi.spyOn(paymentHealthModule, "getLedgerPaymentHealth");
+      let headlineCalls: typeof headlineSpy.mock.calls;
+      let locationsCalls: typeof locationsSpy.mock.calls;
+      let paymentHealthCalls: typeof paymentHealthSpy.mock.calls;
+      try {
+        await renderAs(org.admin.id, org.org.id);
+        // Captured HERE, before `mockRestore()` below — restoring a spy also clears its own `.mock.calls`.
+        headlineCalls = headlineSpy.mock.calls;
+        locationsCalls = locationsSpy.mock.calls;
+        paymentHealthCalls = paymentHealthSpy.mock.calls;
+      } finally {
+        headlineSpy.mockRestore();
+        locationsSpy.mockRestore();
+        paymentHealthSpy.mockRestore();
+        dateTimeNowSpy.mockRestore();
+      }
+      void academyB;
+
+      // 2 direct page.tsx calls (current + previous range) + 2 per-academy calls inside getLocationComparison.
+      expect(headlineCalls.length).toBe(4);
+      expect(locationsCalls.length).toBe(1);
+      // Ledger-active on every one of those 4 calls, so `getLedgerPaymentHealth` is reached exactly 4 times too.
+      expect(paymentHealthCalls.length).toBe(4);
+
+      // Layer 1: the page composed ONE `ledgerInstant` and passed the identical object into every call it made.
+      const headlineLedgerInstants = headlineCalls.map((call) => call[2]);
+      const locationsLedgerInstant = locationsCalls[0]?.[2];
+      expect(headlineLedgerInstants.every((d) => d !== undefined)).toBe(true);
+      expect(locationsLedgerInstant).toBeDefined();
+      const everyPassedNowTime = [...headlineLedgerInstants, locationsLedgerInstant].map((d) => d!.ledgerNow.getTime());
+      const everyPassedActiveFlag = [...headlineLedgerInstants, locationsLedgerInstant].map((d) => d!.ledgerActive);
+      expect(new Set(everyPassedNowTime).size).toBe(1);
+      expect(new Set(everyPassedActiveFlag).size).toBe(1);
+      expect(everyPassedActiveFlag[0]).toBe(true);
+
+      // Layer 2 (the real catch): what `getHeadlineTiles` ACTUALLY used `ledgerNow` as, internally, on every
+      // one of its 4 calls — proven via the `now` it handed to `getLedgerPaymentHealth`, never recomputed.
+      const everyActuallyUsedNowTime = paymentHealthCalls.map((call) => call[2].getTime());
+      expect(new Set(everyActuallyUsedNowTime).size).toBe(1);
+      expect(everyActuallyUsedNowTime[0]).toBe(everyPassedNowTime[0]);
+    } finally {
       await org.drop();
     }
   });
