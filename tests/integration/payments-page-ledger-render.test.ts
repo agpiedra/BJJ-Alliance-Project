@@ -15,14 +15,23 @@ import enMessages from "../../messages/en.json";
  * REMAINING-LEDGER-CONSUMERS-BRIEF.md §2.4 (PR 5): the Pagos status table's ledger cutover — reuses PR 3's own
  * `summarizeLedgerOverdue`/`listRosterPaymentFacts`/`toRosterLedgerDisplay` wiring
  * (`src/lib/payments/list-ledger-payment-status.ts`) through the real `TenantContext` `payments/page.tsx`
- * already resolves. Two describe blocks: a reader-level one (fee totals, pending-conversion) that calls
- * `listLedgerPaymentStatus` directly — neither fact is visible through the rendered status pill alone, which
- * only shows currency totals — and a page-level one (overlapping stat-tile counts, visible read failures,
- * tenant/branch isolation, active legacy-reader exclusion) that renders the real page.
+ * already resolves. Two describe blocks: a reader-level one (fee totals, pending-conversion — asserted on the
+ * READER's own numeric fields, not rendered markup) that calls `listLedgerPaymentStatus` directly, and a
+ * page-level one (per-row flag indicators, overlapping stat-tile counts, visible read failures, tenant/branch
+ * isolation, active legacy-reader exclusion) that renders the real page and asserts the actual rendered HTML —
+ * including `LedgerPaymentsTable`'s own additive `monthlyPastGrace`/`signupPastDue`/`pendingConversion`/
+ * `configIssue` indicators (review fix), not merely `RosterLedgerStatus`'s totals/"No outstanding debt" pill.
  *
  * Coverage months are pinned to 2020 (same technique `dashboard-page-ledger-render.test.ts` already uses) — this
  * page's own ledger `now` is real, unmocked wall-clock time (not injectable here), so fixtures must be
  * unambiguously past-grace/past-due under the REAL current date.
+ *
+ * Fixture honesty: `newMonthlyObligation` writes through the REAL `createMonthlyObligation` ledger writer.
+ * `newSignupObligation`, `newPendingReceipt`, `assignPlan`, and `markActiveSince` are all DIRECT Prisma rows —
+ * no real writer/action exists for a plain SIGNUP obligation, a captured awaiting-rate receipt, a plan
+ * assignment, or a status-history entry in this codebase's test surface, so these are seeded fixture data,
+ * schema-valid (the receipt shape matches `awaiting-rate-receipt-queries.test.ts`'s own proven fixture), never
+ * claimed to be writer-produced.
  */
 const prisma = getTestPrismaClient();
 
@@ -138,7 +147,23 @@ async function newPendingReceipt(org: Fixture, studentId: string, academyId: str
   });
 }
 
+/** Direct fixture row (no real writer) — effective safely before the real current month, so
+ * `eligibleAndAssigned` resolves it for THIS month regardless of which real month this suite runs in. */
+async function assignPlan(org: Fixture, studentId: string, planId: string) {
+  return prisma.studentPlanAssignment.create({ data: { organizationId: org.org.id, studentId, planId, effectiveYear: 2020, effectiveMonth: 1, createdById: org.admin.id } });
+}
+
+/** Direct fixture row (no real writer) — marks the student ACTIVE as of a date safely before the real current
+ * month, matching `dues-facts.test.ts`'s own proven MISSING_CONFIGURATION fixture shape. */
+async function markActiveSince(org: Fixture, studentId: string) {
+  return prisma.studentStatusChange.create({ data: { organizationId: org.org.id, studentId, status: "ACTIVE", effectiveOn: new Date("2020-01-01"), sequence: 1, source: "EVENT", actorId: org.admin.id } });
+}
+
 async function dropDeps(org: Fixture) {
+  // Not covered by `makeAccountingOrg`'s own `drop()` (no prior caller of this fixture ever created a
+  // StudentPlanAssignment row) — deleted here first, before `drop()`'s own student delete, to avoid a
+  // foreign-key violation.
+  await prisma.studentPlanAssignment.deleteMany({ where: { organizationId: org.org.id } });
   await prisma.$transaction(
     async (tx) => {
       await tx.$executeRawUnsafe("SET LOCAL session_replication_role = replica");
@@ -285,7 +310,18 @@ describe("payments/page.tsx: ledger status table (page-level)", () => {
     return match?.[1] ?? "";
   }
 
-  it("REQUIRED: overlapping facts — a student with both debts counts toward both stat tiles, deliberately asymmetric", async () => {
+  /** The table row for one student, bounded to its own `<tr>...</tr>` — other rows (shared fixtures accumulate
+   * across tests in this describe block) must never leak into a single row's assertions. Same technique
+   * `dashboard-page-ledger-render.test.ts`'s own `contactRow` helper already establishes. */
+  function studentRow(html: string, fullName: string): string {
+    const start = html.indexOf(fullName);
+    if (start === -1) return "";
+    const rowStart = html.lastIndexOf("<tr", start);
+    const rowEnd = html.indexOf("</tr>", start);
+    return html.slice(rowStart, rowEnd);
+  }
+
+  it("REQUIRED: overlapping facts — a student with both debts counts toward both stat tiles and shows both row-level indicators, deliberately asymmetric", async () => {
     mockActive = true;
     const { terms, policy } = await seedPlanAndPolicy(fixture, fixture.academy.id);
     const monthlyOnly1 = await newStudent(fixture, fixture.academy.id);
@@ -301,12 +337,33 @@ describe("payments/page.tsx: ledger status table (page-level)", () => {
     // swapped monthlyPastGrace/signupPastDue tile mapping is visible here, not hidden by equal counts.
     expect(statTileCount(html, "Monthly past grace")).toBe(3);
     expect(statTileCount(html, "Signup past due")).toBe(1);
+
+    // Row-level indicators (review fix): monthlyOnly1 shows ONLY the monthly indicator; overlap shows BOTH,
+    // on the SAME row, proving the two facts render independently rather than one suppressing the other.
+    const monthlyOnlyRow = studentRow(html, `${monthlyOnly1.firstName} ${monthlyOnly1.lastName}`);
+    expect(monthlyOnlyRow).toContain("Monthly past grace");
+    expect(monthlyOnlyRow).not.toContain("Signup past due");
+    const overlapRow = studentRow(html, `${overlap.firstName} ${overlap.lastName}`);
+    expect(overlapRow).toContain("Monthly past grace");
+    expect(overlapRow).toContain("Signup past due");
   });
 
-  it("REQUIRED: a student missing from an otherwise-successful read shows 'unavailable', excluded from the confirmed stat tile count, with an exact unknown count", async () => {
+  it("REQUIRED: exact confirmed and unknown counts together on BOTH tiles — a failed student contributes to unknown only, never to either confirmed count, alongside successful debtors on both", async () => {
     mockActive = true;
+    // Baseline BEFORE this test's own debtors exist — earlier tests in this shared-academy describe block
+    // already contributed to the confirmed counts; the numeric contract here is a DELTA, not an absolute.
+    const baselineHtml = await renderAs(fixture.admin.id, fixture.org.id);
+    const baselineMonthly = statTileCount(baselineHtml, "Monthly past grace");
+    const baselineSignup = statTileCount(baselineHtml, "Signup past due");
+
     const { terms, policy } = await seedPlanAndPolicy(fixture, fixture.academy.id, "CRC");
-    const failedDebtor = await newStudent(fixture, fixture.academy.id);
+    // A real, successfully-read debtor on EACH tile, so "exact confirmed count" is a genuine positive delta,
+    // not just "0 because everything failed" — plus a separate debtor whose read will fail.
+    const confirmedMonthly = await newStudent(fixture, fixture.academy.id);
+    await newMonthlyObligation(fixture, confirmedMonthly.id, terms, policy);
+    const confirmedSignup = await newStudent(fixture, fixture.academy.id);
+    await newSignupObligation(fixture, confirmedSignup.id, fixture.academy.id, terms, "CRC");
+    const failedDebtor = await newStudent(fixture, fixture.academy.id); // would ALSO qualify for monthly past grace
     await newMonthlyObligation(fixture, failedDebtor.id, terms, policy);
 
     const real = duesFactsModule.listDuesFactsForStudents;
@@ -325,7 +382,13 @@ describe("payments/page.tsx: ledger status table (page-level)", () => {
     // React escapes the apostrophe in rendered text as `&#x27;` — assert on the unambiguous half of the string
     // (same gotcha `dashboard-page-ledger-render.test.ts` already documents).
     expect(html).toContain("load payment status");
+    // Exact deltas on BOTH tiles: +1 confirmed monthly (confirmedMonthly), +1 confirmed signup (confirmedSignup)
+    // — failedDebtor's real monthly debt (which would have qualified) is excluded from the confirmed count on
+    // EITHER tile, never folded in, while a genuinely unrelated successful signup debtor is unaffected by it.
+    expect(statTileCount(html, "Monthly past grace")).toBe(baselineMonthly + 1);
+    expect(statTileCount(html, "Signup past due")).toBe(baselineSignup + 1);
     expect(statTileNote(html, "Monthly past grace")).toContain("1 unknown");
+    expect(statTileNote(html, "Signup past due")).toContain("1 unknown");
   });
 
   it("REQUIRED: a DIRECTOR scoped to academy A never sees academy B's (same-org) debt student, but DOES see their own branch's debt student", async () => {
@@ -358,6 +421,47 @@ describe("payments/page.tsx: ledger status table (page-level)", () => {
     expect(html).toContain(`${branchADebtor.firstName} ${branchADebtor.lastName}`);
     expect(html).toContain(`${branchBDebtor.firstName} ${branchBDebtor.lastName}`);
     expect(html).not.toContain(`${foreignOrgDebtor.firstName} ${foreignOrgDebtor.lastName}`);
+  });
+
+  it("REQUIRED: outstanding debt AND pending conversion render together — exact debt total/fee AND the pending-conversion indicator, on the same row", async () => {
+    mockActive = true;
+    const { terms, policy } = await seedPlanAndPolicy(fixture, fixture.academy.id);
+    const debtor = await newStudent(fixture, fixture.academy.id);
+    await newMonthlyObligation(fixture, debtor.id, terms, policy);
+    await newPendingReceipt(fixture, debtor.id, fixture.academy.id);
+
+    const html = await renderAs(fixture.admin.id, fixture.org.id);
+    const row = studentRow(html, `${debtor.firstName} ${debtor.lastName}`);
+    // Exact rendered currency total + fee breakdown (not merely the reader's numeric fields): principal
+    // 100.00 + late fee 20.00 = 120.00, with the fee named separately — the pending receipt never implies
+    // this debt is settled, and is shown as its own, additive, separate indicator.
+    expect(row).toContain("$ 120.00 (includes $ 20.00 late fee)");
+    expect(row).toContain("Pending conversion");
+    expect(row).toContain("Monthly past grace");
+  });
+
+  it("REQUIRED: a pending-conversion receipt renders even with NO outstanding debt — never implied settled, never conflated with 'no outstanding debt' meaning paid", async () => {
+    mockActive = true;
+    const pendingOnlyStudent = await newStudent(fixture, fixture.academy.id);
+    await newPendingReceipt(fixture, pendingOnlyStudent.id, fixture.academy.id);
+
+    const html = await renderAs(fixture.admin.id, fixture.org.id);
+    const row = studentRow(html, `${pendingOnlyStudent.firstName} ${pendingOnlyStudent.lastName}`);
+    expect(row).toContain("No outstanding debt");
+    expect(row).toContain("Pending conversion");
+  });
+
+  it("REQUIRED: a configuration issue renders even with NO outstanding debt", async () => {
+    mockActive = true;
+    const noTermsPlan = await prisma.paymentPlan.create({ data: { organizationId: fixture.org.id, academyId: fixture.academy.id, name: `No terms plan ${suffix()}` } });
+    const configIssueStudent = await newStudent(fixture, fixture.academy.id);
+    await markActiveSince(fixture, configIssueStudent.id);
+    await assignPlan(fixture, configIssueStudent.id, noTermsPlan.id);
+
+    const html = await renderAs(fixture.admin.id, fixture.org.id);
+    const row = studentRow(html, `${configIssueStudent.firstName} ${configIssueStudent.lastName}`);
+    expect(row).toContain("No outstanding debt");
+    expect(row).toContain("Configuration issue");
   });
 
   it("REQUIRED: listCurrentPaymentStatus is never called when the ledger is active for this organization", async () => {

@@ -36,8 +36,11 @@ import enMessages from "../../messages/en.json";
  * regardless of which real calendar day this suite happens to run on, the same reasoning
  * `dashboard-page-inactive-baseline-comparison.test.ts` already documents for its own identical fixture shape.
  *
- * Normalization: NONE applied, and none was found necessary — no React `useId()`-generated ids appear in this
- * page's own markup path (unlike the dashboard's belt-graphic components elsewhere on that page).
+ * Normalization: exactly NONE. The comparison below is a direct `toBe` on the two raw HTML strings — no
+ * substitution, masking, or stripping of any kind runs on either side. Confirmed safe to compare raw, not
+ * merely assumed: `grep -rl "useId" src/components/` across the whole codebase returns exactly one file
+ * (`belt-graphic.tsx`), which this page's render tree never reaches — unlike the dashboard's own baseline
+ * test, which DOES render belt graphics and must normalize their `useId()`-generated `«...»` ids away.
  */
 const prisma = getTestPrismaClient();
 const BASELINE_REF = "a6bec7b50c504a5bf07a2b4f3379424ecbe10d8b";
@@ -132,12 +135,6 @@ function withProvider(page: unknown): string {
   return renderToStaticMarkup(createElement(NextIntlClientProvider, { locale: "en", messages: enMessages } as never, page as never));
 }
 
-/** React's own `useId()`-generated `«...»` ids are scoped to render CALL ORDER within this process, not to page
- * content — same documented normalization `dashboard-page-inactive-baseline-comparison.test.ts` applies. */
-function normalizeReactGeneratedIds(html: string): string {
-  return html.replace(/«[^»]*»/g, "«ID»");
-}
-
 describe("payments/page.tsx: inactive-path render EQUIVALENCE against the pre-PR5 baseline (main@a6bec7b)", () => {
   it("REQUIRED: current inactive render is byte-identical to the real pre-PR5 implementation", async () => {
     currentSession = { user: { id: a.admin.id }, activeOrganizationId: a.org.id };
@@ -148,6 +145,9 @@ describe("payments/page.tsx: inactive-path render EQUIVALENCE against the pre-PR
     // Non-vacuous: real financial content, not an empty shell.
     expect(baselineHtml).toContain("Overdue");
     expect(baselineHtml).toContain("Current");
-    expect(normalizeReactGeneratedIds(currentHtml)).toBe(normalizeReactGeneratedIds(baselineHtml));
+    // Direct comparison, no normalization (see this file's own header comment) — `grep -rl "useId"
+    // src/components/` across the whole codebase finds exactly one user (`belt-graphic.tsx`), never rendered
+    // anywhere in this page's tree, so there is no React-generated id to normalize away here.
+    expect(currentHtml).toBe(baselineHtml);
   });
 });

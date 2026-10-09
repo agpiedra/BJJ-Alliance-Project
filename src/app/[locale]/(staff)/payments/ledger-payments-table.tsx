@@ -13,15 +13,39 @@ import {
 } from "@/components/ui/data-table";
 import { FilterBar, FilterBarSearch, FilterBarSelect } from "@/components/ui/filter-bar";
 import { EmptyState } from "@/components/ui/empty-state";
+import { Pill } from "@/components/ui/pill";
 import { hasAcademyChoice } from "@/lib/staff-shell/academy-choice";
 import { RosterLedgerStatus, RosterLedgerUnavailable } from "../students/roster-ledger-status";
 import type { LedgerPaymentRow } from "@/lib/payments/list-ledger-payment-status";
+import type { RosterLedgerFlags } from "@/lib/dues/roster-payment-facts-queries";
 
 export interface LedgerPaymentsTableProps {
   rows: LedgerPaymentRow[];
   academies: { id: string; name: string }[];
   locale: string;
 }
+
+/**
+ * Review fix: `RosterLedgerStatus` (shared with the roster/dashboard/contact-list) renders ONLY currency
+ * totals or "No outstanding debt" — it never reads `display.flags`, so this page's own table showed an
+ * aggregate dollar figure with no way to tell WHICH obligation type is driving it, and a student with a real
+ * pending-conversion receipt or a configuration issue but zero current debt rendered as indistinguishable
+ * from a genuinely clean student. Kept local to this file (never touching the shared component, per review
+ * instruction) — these are ADDITIVE indicators rendered alongside `RosterLedgerStatus`'s own output, never a
+ * replacement for it, so the currency-separated totals and the fee-included-exactly-once display are
+ * unaffected either way. `monthlyPastGrace`/`signupPastDue` reuse Decision 1's own two-flag wording (the same
+ * `students.ledger.filters.*` keys the dashboard/roster already use for these exact flags) — "bad" (real debt
+ * driving the total). `pendingConversion` is deliberately NOT "bad"/"ok": a pending receipt is tender awaiting
+ * settlement, never implied to be settled or to offset any debt (§3) — "accent", the sanctioned neutral/
+ * informational variant (`pill.tsx`'s own doc comment). `configIssue` is an operational problem, not a debt
+ * state — "warn".
+ */
+const FLAG_INDICATORS: ReadonlyArray<{ key: keyof RosterLedgerFlags; variant: "bad" | "accent" | "warn" }> = [
+  { key: "monthlyPastGrace", variant: "bad" },
+  { key: "signupPastDue", variant: "bad" },
+  { key: "pendingConversion", variant: "accent" },
+  { key: "configIssue", variant: "warn" },
+];
 
 /**
  * REMAINING-LEDGER-CONSUMERS-BRIEF.md §2.4 (PR 5): the ledger-active replacement for `PaymentsTable`'s legacy
@@ -41,6 +65,9 @@ export interface LedgerPaymentsTableProps {
 export function LedgerPaymentsTable({ rows, academies, locale }: LedgerPaymentsTableProps) {
   const t = useTranslations("payments.table");
   const tStudents = useTranslations("students");
+  // Same label source the dashboard's own stat tiles and the roster's own filter checkboxes already use for
+  // these exact flags — reused, not re-translated.
+  const tLedgerFilters = useTranslations("students.ledger.filters");
   const [search, setSearch] = useState("");
   const [academyFilter, setAcademyFilter] = useState("");
 
@@ -105,7 +132,14 @@ export function LedgerPaymentsTable({ rows, academies, locale }: LedgerPaymentsT
                   {row.entry.kind === "unavailable" ? (
                     <RosterLedgerUnavailable t={tStudents} />
                   ) : (
-                    <RosterLedgerStatus display={row.entry.display} locale={locale} t={tStudents} />
+                    <div className="flex flex-col gap-1">
+                      <RosterLedgerStatus display={row.entry.display} locale={locale} t={tStudents} />
+                      {FLAG_INDICATORS.filter(({ key }) => row.entry.kind === "ledger" && row.entry.display.flags[key]).map(({ key, variant }) => (
+                        <Pill key={key} variant={variant}>
+                          {tLedgerFilters(key)}
+                        </Pill>
+                      ))}
+                    </div>
                   )}
                 </DataTableCell>
               </DataTableRow>
