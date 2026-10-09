@@ -234,3 +234,57 @@ describe("listStudentsToContact: population stays ACTIVE-only and attendance-dri
     expect(activeResult.find((e) => e.studentId === recent.id)).toBeUndefined();
   });
 });
+
+describe("listStudentsToContact: the ledger instant is independent from the attendance clock (review fix)", () => {
+  it("REQUIRED: a different ledgerNow never changes which students qualify by attendance — only the ledger facts it reads", async () => {
+    mockActive = true;
+    const nearThreshold = await newStudent("near-threshold", { daysAbsent: 6 }); // below the 7-day cutoff under NOW
+    const qualifying = await newStudent("ledgernow-independent", { daysAbsent: 8 });
+
+    // A dedicated policy/terms (graceDay 15), used ONLY by this test. Coverage {2030, 11} + graceDay 15 ⇒
+    // graceDeadlineFor (next month's graceDay) = 2030-12-15 — exactly NOW's own calendar date.
+    const plan = await prisma.paymentPlan.create({ data: { organizationId: a.org.id, academyId: a.academy.id, name: `ContactList ledgerNow plan ${suffix}` } });
+    const boundaryTerms = await prisma.paymentPlanTerms.create({
+      data: { organizationId: a.org.id, planId: plan.id, effectiveYear: 2030, effectiveMonth: 2, priceAmount: "100.00", currency: "USD", monthsCovered: 1, createdById: a.admin.id },
+    });
+    const boundaryPolicy = await prisma.duesPolicyVersion.create({
+      data: { organizationId: a.org.id, academyId: a.academy.id, effectiveYear: 2030, effectiveMonth: 2, dueDay: 20, graceDay: 15, lateFeeAmount: "20.00", lateFeeCurrency: "USD", createdById: a.admin.id },
+    });
+    const r = await createMonthlyObligation(
+      { context: context(), studentId: qualifying.id, coverage: { year: 2030, month: 11 }, planTermsId: boundaryTerms.id, policyVersionId: boundaryPolicy.id },
+      deps(),
+    );
+    if (!r.ok) throw new Error(`fixture obligation failed: ${r.error}`);
+
+    const LEDGER_NOW_A = NOW.toJSDate(); // 2030-12-15: on the grace deadline itself — not yet past grace
+    const LEDGER_NOW_B = NOW.plus({ days: 1 }).toJSDate(); // 2030-12-16: one day past it
+
+    // `now` (the attendance clock) is held FIXED at `NOW` across both calls — only `ledgerNow` differs.
+    const resultA = await listStudentsToContact(context(), true, 7, TODAY, NOW, LEDGER_NOW_A);
+    const resultB = await listStudentsToContact(context(), true, 7, TODAY, NOW, LEDGER_NOW_B);
+
+    // Attendance inclusion never moves with `ledgerNow`: the under-threshold student stays excluded in BOTH
+    // calls, and the qualifying student stays included in BOTH — proving `ledgerNow` has zero say over who
+    // appears on this list.
+    expect(resultA.find((e) => e.studentId === nearThreshold.id)).toBeUndefined();
+    expect(resultB.find((e) => e.studentId === nearThreshold.id)).toBeUndefined();
+    const entryA = resultA.find((e) => e.studentId === qualifying.id);
+    const entryB = resultB.find((e) => e.studentId === qualifying.id);
+    expect(entryA).toBeDefined();
+    expect(entryB).toBeDefined();
+
+    // `ledgerNow` DOES control the ledger facts themselves — proving the two instants are genuinely independent,
+    // not that `ledgerNow` is simply ignored everywhere.
+    expect(entryA!.paymentStatus.source).toBe("ledger");
+    if (entryA!.paymentStatus.source !== "ledger") throw new Error("unreachable");
+    expect(entryA!.paymentStatus.entry.kind).toBe("ledger");
+    if (entryA!.paymentStatus.entry.kind !== "ledger") throw new Error("unreachable");
+    expect(entryA!.paymentStatus.entry.display.flags.monthlyPastGrace).toBe(false);
+
+    expect(entryB!.paymentStatus.source).toBe("ledger");
+    if (entryB!.paymentStatus.source !== "ledger") throw new Error("unreachable");
+    expect(entryB!.paymentStatus.entry.kind).toBe("ledger");
+    if (entryB!.paymentStatus.entry.kind !== "ledger") throw new Error("unreachable");
+    expect(entryB!.paymentStatus.entry.display.flags.monthlyPastGrace).toBe(true);
+  });
+});

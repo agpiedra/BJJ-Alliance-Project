@@ -485,12 +485,14 @@ export default async function DashboardPage() {
   // contact-list.ts's own doc comment on why this is NOT a lowered-threshold
   // `getRetentionList`). §2.3/Decision 2: its own population/attendance selection/authorization are unchanged
   // by `ledgerActive` — only the per-student payment-status fact it reads changes.
-  // Review fix: pass this page's OWN captured `now` through explicitly — `listStudentsToContact`'s own default
-  // param (`DateTime.now()`) would otherwise re-capture a LATER instant for its internal `listRosterPaymentFacts`
-  // call than the one `ledgerOverdue` above already used, risking a different branch-local "today" (and therefore
-  // a different past-grace/past-due classification for the same student) across a midnight boundary. `thresholdDays`
-  // and `today` are left at their own defaults — only the ledger instant is unified, never the legacy/attendance rules.
-  const contactList = await listStudentsToContact(context, ledgerActive, undefined, undefined, now);
+  // Review fix: pass this page's OWN captured `now` through as `listStudentsToContact`'s dedicated `ledgerNow`
+  // argument (its 6th parameter) — NOT its `now` parameter, which is the existing attendance clock
+  // (`daysAbsent`'s own diff) and must keep re-capturing its own fresh instant exactly as before, unaffected by
+  // this fix. Without a shared `ledgerNow`, the contact list's internal `listRosterPaymentFacts` call would
+  // independently re-capture `DateTime.now()` LATER than the one `ledgerOverdue` above already used, risking a
+  // different branch-local "today" (and therefore a different past-grace/past-due classification for the same
+  // student) across a midnight boundary. `thresholdDays`, `today`, and `now` are all left at their own defaults.
+  const contactList = await listStudentsToContact(context, ledgerActive, undefined, undefined, undefined, now.toJSDate());
 
   // MULTI_ACADEMY_AND_KIDS_BELTS.md Item 2 — the wizard's own acceptance
   // criteria named this reminder card as not yet built. Shown to

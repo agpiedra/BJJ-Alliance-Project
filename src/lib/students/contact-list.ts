@@ -86,6 +86,11 @@ export async function listStudentsToContact(
   thresholdDays: number = CONTACT_THRESHOLD_DAYS,
   today: { year: number; month: number; day: number } = currentCrDateParts(),
   now: DateTime = DateTime.now().setZone(ZONE),
+  // Review fix: a SEPARATE instant for the ledger read only — `now` above is, and always was, the attendance
+  // clock (`daysAbsent`'s own diff), unrelated to the ledger. Defaults to `now`'s own instant, so any caller that
+  // doesn't care about the distinction (every one before this fix) gets byte-identical behavior; the dashboard is
+  // the only caller that passes this explicitly, to share its own captured instant with its other ledger read.
+  ledgerNow: Date = now.toJSDate(),
 ): Promise<ContactListEntry[]> {
   const scope = branchScopeWhere(context);
   const students = await getScopedDb(context).student.findMany({
@@ -135,7 +140,7 @@ export async function listStudentsToContact(
   // already does — never a per-student loop under the ledger. `null` when inactive: the legacy per-student
   // branch below is used instead, and this is never computed at all.
   const ledgerFactsByStudentId = ledgerActive
-    ? (await listRosterPaymentFacts(context, qualifying.map(({ student }) => student.id), now.toJSDate())).byStudentId
+    ? (await listRosterPaymentFacts(context, qualifying.map(({ student }) => student.id), ledgerNow)).byStudentId
     : null;
 
   const results = await Promise.all(
