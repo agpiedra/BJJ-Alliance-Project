@@ -117,4 +117,83 @@ describe("renderNotificationMessage", () => {
     expect(result.body).toContain("2");
     expect(result.body).toContain("overdue");
   });
+
+  // REMAINING-LEDGER-CONSUMERS-BRIEF.md §2.1/Decision 1/§6.2 (PR 4): the ledger-active digest body shows two
+  // independent, never-merged counts, never the legacy `overduePayments` text, and visibly surfaces a nonzero
+  // unknown-count rather than silently omitting it.
+  it("WEEKLY_DIGEST: ledgerActive renders monthlyPastGrace/signupPastDue counts, never the legacy 'overdue' text", () => {
+    const result = renderNotificationMessage(
+      "WEEKLY_DIGEST",
+      {
+        academyName: "Alliance Escazú",
+        attendanceCount: 12,
+        inactiveCount: 3,
+        ledgerActive: true,
+        monthlyPastGraceCount: 5,
+        signupPastDueCount: 7,
+        unknownCount: 0,
+      },
+      "en",
+    );
+    expect(result.type).toBe("WEEKLY_DIGEST");
+    expect(result.body).toContain("5 students past monthly grace");
+    expect(result.body).toContain("7 students past signup due");
+    expect(result.body).not.toContain("overdue");
+    expect(result.body).not.toContain("unknown");
+    // Population disclosure (review fix): the two debt counts are stated to include inactive/archived
+    // students with qualifying debt — distinct from the separate, attendance-based "inactive 30+ days" metric
+    // (`inactiveCount`), never conflated with it.
+    expect(result.body).toContain("include inactive and archived students with qualifying debt");
+    expect(result.body).toContain("3 students inactive 30+ days");
+  });
+
+  it("WEEKLY_DIGEST: ledgerActive renders the population-disclosure wording in Spanish too", () => {
+    const result = renderNotificationMessage(
+      "WEEKLY_DIGEST",
+      {
+        academyName: "Alliance Escazú",
+        attendanceCount: 12,
+        inactiveCount: 3,
+        ledgerActive: true,
+        monthlyPastGraceCount: 5,
+        signupPastDueCount: 7,
+        unknownCount: 0,
+      },
+      "es",
+    );
+    expect(result.body).toContain("5 estudiantes en gracia mensual vencida");
+    expect(result.body).toContain("7 estudiantes con inscripción vencida");
+    expect(result.body).toContain("incluyen estudiantes inactivos y archivados con deuda vigente");
+    expect(result.body).toContain("3 estudiantes inactivos por 30+ días");
+  });
+
+  it("WEEKLY_DIGEST: ledgerActive with a nonzero unknownCount shows it visibly in the body, not merely silently", () => {
+    const result = renderNotificationMessage(
+      "WEEKLY_DIGEST",
+      {
+        academyName: "Alliance Escazú",
+        attendanceCount: 12,
+        inactiveCount: 3,
+        ledgerActive: true,
+        monthlyPastGraceCount: 1,
+        signupPastDueCount: 0,
+        unknownCount: 4,
+      },
+      "en",
+    );
+    expect(result.body).toContain("4 students");
+    expect(result.body).toContain("unknown");
+  });
+
+  it("WEEKLY_DIGEST: ledgerActive false (or omitted) still renders the legacy overdue body — unchanged existing behavior", () => {
+    const result = renderNotificationMessage(
+      "WEEKLY_DIGEST",
+      { academyName: "Alliance Escazú", attendanceCount: 12, inactiveCount: 3, ledgerActive: false, overduePayments: 9 },
+      "en",
+    );
+    expect(result.body).toContain("9");
+    expect(result.body).toContain("overdue");
+    expect(result.body).not.toContain("past monthly grace");
+    expect(result.body).not.toContain("inactive and archived students");
+  });
 });

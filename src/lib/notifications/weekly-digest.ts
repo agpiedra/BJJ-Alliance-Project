@@ -5,11 +5,49 @@ import { resolveAcademyByIdOrThrow } from "@/lib/tenant/platform-lookups";
 import { requireEnv } from "@/lib/env";
 import { ZONE, attendanceDateFromZoned } from "@/lib/scheduling/zone";
 import { resolveSystemJobContext } from "@/lib/tenant/context";
+import { getScopedDb } from "@/lib/tenant/scoped-client";
+import type { SystemJobContext } from "@/lib/tenant/types";
 import { resolveStaffRecipients } from "@/lib/notifications/recipients";
 import { dispatchToRecipients } from "@/lib/notifications/dispatch";
 import { EmailChannel, type ResendClient } from "@/lib/notifications/email-channel";
-import { listOverdueStudents } from "@/lib/payments/list-overdue";
+import { listOverdueStudents, type OverdueStudent } from "@/lib/payments/list-overdue";
 import { getRetentionList } from "@/lib/analytics/retention";
+import { isLedgerActiveForOrg, listRosterPaymentFacts } from "@/lib/dues/roster-payment-facts-queries";
+import { summarizeLedgerOverdue, type LedgerOverdueSummary } from "@/lib/dues/ledger-overdue-summary";
+
+const EMPTY_LEDGER_OVERDUE: LedgerOverdueSummary = {
+  monthlyPastGraceCount: 0,
+  monthlyPastGraceNote: "",
+  signupPastDueCount: 0,
+  signupPastDueNote: "",
+  unknownCount: 0,
+};
+
+/**
+ * REMAINING-LEDGER-CONSUMERS-BRIEF.md §2.1/§4 (PR 4): the ledger-backed replacement for this academy's
+ * `listOverdueStudents` count, reusing PR 3's own population/aggregation wiring verbatim
+ * (`summarizeLedgerOverdue`, `src/lib/dues/ledger-overdue-summary.ts`) — Decision 2's population (every
+ * student status, no `status` filter) narrowed to this one academy via `homeAcademyId`, the same narrowing
+ * `listOverdueStudents` itself already applies for this caller (`list-overdue.ts`'s own `academyId` param).
+ * `jobContext` is a real `SystemJobContext`, never a fabricated `ADMIN` context or an unsafe cast — both
+ * `getScopedDb` and `listRosterPaymentFacts` already define correct, narrower behavior for it (§4 item 4).
+ * The digest has no per-recipient locale yet at this point (rendered later, once per recipient, by
+ * `renderNotificationMessage`) — the identity function is passed for `tStatus`, and only the two counts and
+ * `unknownCount` are read from the result; the `*Note` name strings are discarded.
+ */
+async function summarizeLedgerOverdueForAcademy(
+  jobContext: SystemJobContext,
+  academyId: string,
+  ledgerNow: Date,
+): Promise<LedgerOverdueSummary> {
+  const students = await getScopedDb(jobContext).student.findMany({
+    where: { homeAcademyId: academyId },
+    select: { id: true, firstName: true, lastName: true, status: true },
+  });
+  if (students.length === 0) return EMPTY_LEDGER_OVERDUE;
+  const { byStudentId } = await listRosterPaymentFacts(jobContext, students.map((s) => s.id), ledgerNow);
+  return summarizeLedgerOverdue(students, byStudentId, (status) => status);
+}
 
 /**
  * Sends one academy's weekly digest email to every resolved staff recipient
@@ -73,7 +111,15 @@ export async function sendWeeklyDigestForAcademy(
   const windowStart = attendanceDateFromZoned(todayCr.minus({ days: 6 }));
   const windowEnd = attendanceDateFromZoned(todayCr);
 
-  const [attendanceCount, inactiveStudents, overdueStudents, recipients] = await Promise.all([
+  // §2.1/§4: ONE captured flag, read once, before the legacy-vs-ledger decision below — same convention
+  // every other cutover page already established (dashboard/portal/roster/student-detail/payments).
+  const ledgerActive = await isLedgerActiveForOrg(jobContext.organizationId);
+  // §4: the one captured instant shared by every ledger read this digest makes (today, exactly one —
+  // `summarizeLedgerOverdueForAcademy`'s own `listRosterPaymentFacts` call) — kept separate from, and never
+  // substituted for, `todayCr`'s unrelated existing role driving the attendance window above.
+  const ledgerNow = todayCr.toJSDate();
+
+  const [attendanceCount, inactiveStudents, recipients, overdueStudents, ledgerOverdue] = await Promise.all([
     prisma.attendanceRecord.count({
       where: {
         organizationId: jobContext.organizationId,
@@ -91,8 +137,14 @@ export async function sendWeeklyDigestForAcademy(
     // value here is inert, so it's just `DateTime.now()` rather than a
     // `.minus({ days: 7 })` that reads as if it bounded something it doesn't.
     getRetentionList(jobContext, { from: DateTime.now(), to: DateTime.now(), academyId }),
-    listOverdueStudents(jobContext, undefined, academyId),
     resolveStaffRecipients(academyId),
+    // §6: the legacy reader is never invoked at all once `ledgerActive` — not merely computed and discarded
+    // (dashboard's own precedent, `dashboard/page.tsx`'s `listOverdueStudents` ternary).
+    !ledgerActive ? listOverdueStudents(jobContext, undefined, academyId) : Promise.resolve<OverdueStudent[]>([]),
+    // §2.1/Decision 1/Decision 2: the ledger-backed replacement — two independent counts, over a population
+    // that includes inactive/archived students with qualifying old debt, scoped to this one academy.
+    // Computed only when it would actually be used.
+    ledgerActive ? summarizeLedgerOverdueForAcademy(jobContext, academyId, ledgerNow) : Promise.resolve(EMPTY_LEDGER_OVERDUE),
   ]);
 
   // C1 decision #2: no staff email on file is a SKIP, not a failure — distinct from an
@@ -118,7 +170,11 @@ export async function sendWeeklyDigestForAcademy(
       academyName: academy.name,
       attendanceCount,
       inactiveCount: inactiveStudents.length,
+      ledgerActive,
       overduePayments: overdueStudents.length,
+      monthlyPastGraceCount: ledgerOverdue.monthlyPastGraceCount,
+      signupPastDueCount: ledgerOverdue.signupPastDueCount,
+      unknownCount: ledgerOverdue.unknownCount,
     },
     [channel],
   );
