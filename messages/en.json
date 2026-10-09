@@ -986,7 +986,8 @@
       },
       "promo": {
         "label": "Promotion or scholarship"
-      }
+      },
+      "unknownSuffix": "{count, plural, one {# unknown} other {# unknown}}"
     },
     "recordCard": {
       "heading": "Record a payment",
@@ -994,7 +995,9 @@
     },
     "statusCard": {
       "heading": "This month's status",
-      "note": "{month} · {academy}"
+      "note": "{month} · {academy}",
+      "ledgerHeading": "Payment status",
+      "ledgerNote": "{academy}"
     },
     "method": {
       "SINPE": "SINPE Mobile",
