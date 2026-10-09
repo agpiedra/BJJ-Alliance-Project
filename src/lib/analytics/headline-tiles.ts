@@ -4,8 +4,11 @@ import { branchScopeWhere } from "@/lib/tenant/context";
 import { getScopedDb } from "@/lib/tenant/scoped-client";
 import type { TenantContext } from "@/lib/tenant/types";
 import { currentCrDateParts } from "@/lib/payments/get-current-period";
+import { ZONE } from "@/lib/scheduling/zone";
 import type { Prisma } from "@/generated/prisma/client";
 import type { AnalyticsFilters } from "@/lib/analytics/filters";
+import { isLedgerActiveForOrg } from "@/lib/dues/roster-payment-facts-queries";
+import { getLedgerPaymentHealth, type PaymentHealthResult } from "@/lib/analytics/payment-health";
 
 export interface DateRange {
   from: DateTime;
@@ -20,7 +23,21 @@ export interface HeadlineTiles {
   lost: number;
   totalAttendances: number;
   avgAttendancesPerActive: number;
-  paymentHealthPercent: number;
+  /** REMAINING-LEDGER-CONSUMERS-BRIEF.md §6.2 Decision 3: `null` whenever any per-student read failed
+   * (withheld) OR `enrolled` is 0 (empty population) — never a bare number alongside the three counts below
+   * while either is true. The legacy (inactive) path never produces `null` for a nonzero `enrolled` — see
+   * `legacyPaymentHealth`'s own doc comment. */
+  paymentHealthPercent: number | null;
+  paymentHealthConfirmedPaidCount: number;
+  /** The denominator actually achieved — ACTIVE-in-scope students whose read succeeded. Equals `enrolled`
+   * whenever `paymentHealthUnknownCount` is 0 (always true on the legacy path). */
+  paymentHealthSuccessfullyCheckedCount: number;
+  paymentHealthUnknownCount: number;
+  /** Whether `paymentHealthPercent`/the three counts above reflect the ledger-backed metric (Decision 3) or
+   * the legacy `PaymentPeriod`-based one — the caller needs this to pick the right label ("Current month
+   * covered by settled payments" vs. "Payment health (current month)"), since the metric's own MEANING
+   * changes, not just its data source. */
+  paymentHealthLedgerActive: boolean;
   /** See `countEnrolledAtRangeStart`'s own doc comment — the "Inscritos"
    * tile's comparison figure, since `enrolled` itself has no date predicate
    * to diff across two calls. */
@@ -195,6 +212,51 @@ export async function getHeadlineTiles(
     range.from,
   );
 
+  // §2.2/§6.1 Decision 3/§4: ONE captured flag, read once, before the legacy-vs-ledger decision below — same
+  // convention every other cutover page/job already established. §6: the legacy reader is never invoked at
+  // all once `ledgerActive` — not merely computed and discarded (dashboard/digest/Pagos precedent).
+  const ledgerActive = await isLedgerActiveForOrg(context.organizationId);
+  // §4: the one captured instant shared by every ledger read this call makes (today, exactly one —
+  // `getLedgerPaymentHealth`'s own `listRosterPaymentFacts` call).
+  const ledgerNow = DateTime.now().setZone(ZONE).toJSDate();
+  const paymentHealth: PaymentHealthResult = ledgerActive
+    ? await getLedgerPaymentHealth(context, studentIds, ledgerNow)
+    : await legacyPaymentHealth(studentIds, context.organizationId, enrolled);
+
+  return {
+    enrolled,
+    active,
+    inactive,
+    newThisMonth,
+    lost,
+    totalAttendances,
+    avgAttendancesPerActive,
+    paymentHealthPercent: paymentHealth.percent,
+    paymentHealthConfirmedPaidCount: paymentHealth.confirmedPaidCount,
+    paymentHealthSuccessfullyCheckedCount: paymentHealth.successfullyCheckedCount,
+    paymentHealthUnknownCount: paymentHealth.unknownCount,
+    paymentHealthLedgerActive: ledgerActive,
+    enrolledAtRangeStart,
+  };
+}
+
+/**
+ * The INACTIVE path's own calculation, unchanged in VALUE from before this PR (same batched
+ * `PaymentPeriod` query, same "PAID or PROMO counts as healthy" rule, same `enrolled > 0 ? round(...) : 0`
+ * formula for `percent`) — only wrapped in the shared `PaymentHealthResult` shape so both paths return the
+ * same type. Exported (not merely internal) so a test can spy on it directly to prove the active path never
+ * calls it — the same precedent `listOverdueStudents`/`listCurrentPaymentStatus` already established in
+ * PRs 3-5.
+ *
+ * `unknownCount` is always 0 here: this legacy batched query has no notion of a per-student read failure
+ * (it's one plain `findMany`, not a per-student ledger fact lookup), so `successfullyCheckedCount` always
+ * equals `enrolled` and `percent` is never withheld for this path.
+ */
+export async function legacyPaymentHealth(
+  studentIds: string[],
+  organizationId: string,
+  enrolled: number,
+): Promise<PaymentHealthResult> {
   const today = currentCrDateParts();
   // A single batched query, not one `getCurrentPaymentPeriod` call per
   // student (that was a real N+1 — ~200 concurrent single-row queries on a
@@ -208,7 +270,7 @@ export async function getHeadlineTiles(
     studentIds.length === 0
       ? []
       : await prisma.paymentPeriod.findMany({
-          where: { studentId: { in: studentIds }, organizationId: context.organizationId, year: today.year, month: today.month },
+          where: { studentId: { in: studentIds }, organizationId, year: today.year, month: today.month },
           select: { studentId: true, status: true },
         });
   const healthyStudentIds = new Set(
@@ -216,18 +278,11 @@ export async function getHeadlineTiles(
       .filter((period) => period.status === "PAID" || period.status === "PROMO")
       .map((period) => period.studentId),
   );
-  const paymentHealthPercent = enrolled > 0 ? Math.round((healthyStudentIds.size / enrolled) * 100) : 0;
-
   return {
-    enrolled,
-    active,
-    inactive,
-    newThisMonth,
-    lost,
-    totalAttendances,
-    avgAttendancesPerActive,
-    paymentHealthPercent,
-    enrolledAtRangeStart,
+    percent: enrolled > 0 ? Math.round((healthyStudentIds.size / enrolled) * 100) : 0,
+    confirmedPaidCount: healthyStudentIds.size,
+    successfullyCheckedCount: enrolled,
+    unknownCount: 0,
   };
 }
 

@@ -262,7 +262,10 @@
         "totalAttendancesCaption": "Asistencias totales cuenta por la academia de origen del estudiante, no por la sede donde se registró la entrada.",
         "avgAttendancesPerActive": "Asistencias promedio por activo",
         "paymentHealthPercent": "Salud de pagos (mes actual)",
+        "paymentHealthPercentLedger": "Mes actual cubierto por pagos liquidados",
         "paymentHealthNote": "No aplica: siempre refleja el mes calendario en curso, no el rango seleccionado.",
+        "paymentHealthNoActiveStudents": "Sin estudiantes activos",
+        "paymentHealthPartial": "{confirmed} confirmados pagados de {checked} verificados con éxito ({unknown} desconocidos)",
         "deltaVsPrevious": "{value} vs. período anterior"
       },
       "classPopularity": {

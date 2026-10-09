@@ -182,6 +182,22 @@ export default async function AnalyticsPage({
   const branding = await getOrganizationBranding(context);
   const intlLocale = locale === "es" ? "es-CR" : "en-US";
 
+  // §6.2 Decision 3: empty population and a withheld (partial-failure) result are two DISTINCT states, never
+  // conflated — checked in that order, since `tiles.enrolled === 0` is the only reliable signal for "empty"
+  // (the legacy/inactive path's own `paymentHealthPercent` stays a real `0`, not `null`, for an empty
+  // population — preserving its exact pre-existing value — so `null` alone can't be read as "empty" there).
+  const paymentHealthLabel = tiles.paymentHealthLedgerActive ? t("tiles.paymentHealthPercentLedger") : t("tiles.paymentHealthPercent");
+  const paymentHealthDisplay =
+    tiles.enrolled === 0
+      ? t("tiles.paymentHealthNoActiveStudents")
+      : tiles.paymentHealthUnknownCount > 0
+        ? t("tiles.paymentHealthPartial", {
+            confirmed: tiles.paymentHealthConfirmedPaidCount,
+            checked: tiles.paymentHealthSuccessfullyCheckedCount,
+            unknown: tiles.paymentHealthUnknownCount,
+          })
+        : `${tiles.paymentHealthPercent}%`;
+
   const csvRows = [
     { metric: t("tiles.enrolled"), value: tiles.enrolled },
     { metric: t("tiles.active"), value: tiles.active },
@@ -190,7 +206,7 @@ export default async function AnalyticsPage({
     { metric: t("tiles.lost"), value: tiles.lost },
     { metric: t("tiles.totalAttendances"), value: tiles.totalAttendances },
     { metric: t("tiles.avgAttendancesPerActive"), value: tiles.avgAttendancesPerActive.toFixed(1) },
-    { metric: t("tiles.paymentHealthPercent"), value: `${tiles.paymentHealthPercent}%` },
+    { metric: paymentHealthLabel, value: paymentHealthDisplay },
   ];
 
   /** §4.3 Task 2: a `StatTile`'s `delta` prop, built from the current vs.
@@ -371,8 +387,8 @@ export default async function AnalyticsPage({
             )}
           />
           <StatTile
-            label={t("tiles.paymentHealthPercent")}
-            value={`${tiles.paymentHealthPercent}%`}
+            label={paymentHealthLabel}
+            value={paymentHealthDisplay}
             // No `delta` here — deliberately, not a silent gap.
             // `paymentHealthPercent` is pinned to the CURRENT calendar month
             // regardless of the filter range (getHeadlineTiles's own doc

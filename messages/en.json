@@ -262,7 +262,10 @@
         "totalAttendancesCaption": "Total attendances counts by the student's home academy, not by check-in location.",
         "avgAttendancesPerActive": "Avg attendances per active",
         "paymentHealthPercent": "Payment health (current month)",
+        "paymentHealthPercentLedger": "Current month covered by settled payments",
         "paymentHealthNote": "Not applicable: always reflects the current calendar month, not the selected range.",
+        "paymentHealthNoActiveStudents": "No active students",
+        "paymentHealthPartial": "{confirmed} confirmed-paid of {checked} successfully checked ({unknown} unknown)",
         "deltaVsPrevious": "{value} vs. previous period"
       },
       "classPopularity": {

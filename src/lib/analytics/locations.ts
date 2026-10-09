@@ -22,7 +22,15 @@ export interface LocationComparisonRow {
   activeStudents: number;
   totalAttendances: number;
   avgPerClass: number;
-  paymentHealthPercent: number;
+  /** Same §6.2 withhold-on-failure/empty-population contract as `HeadlineTiles` — reused, not re-derived. */
+  paymentHealthPercent: number | null;
+  paymentHealthConfirmedPaidCount: number;
+  paymentHealthSuccessfullyCheckedCount: number;
+  paymentHealthUnknownCount: number;
+  /** `tiles.enrolled` for THIS academy — distinct from `activeStudents` (`tiles.active`, an attendance-based
+   * figure) — needed to render "No active students" when this academy's own population is empty, since a
+   * `null` percent alone can't distinguish that from a withheld-due-to-failure result. */
+  paymentHealthPopulationCount: number;
 }
 
 /**
@@ -78,6 +86,10 @@ export async function getLocationComparison(
         totalAttendances: tiles.totalAttendances,
         avgPerClass: classCount > 0 ? tiles.totalAttendances / classCount : 0,
         paymentHealthPercent: tiles.paymentHealthPercent,
+        paymentHealthConfirmedPaidCount: tiles.paymentHealthConfirmedPaidCount,
+        paymentHealthSuccessfullyCheckedCount: tiles.paymentHealthSuccessfullyCheckedCount,
+        paymentHealthUnknownCount: tiles.paymentHealthUnknownCount,
+        paymentHealthPopulationCount: tiles.enrolled,
       };
     }),
   );

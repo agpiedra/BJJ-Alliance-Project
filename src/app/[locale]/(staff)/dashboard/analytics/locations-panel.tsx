@@ -40,13 +40,29 @@ export function LocationsPanel({
 
 function LocationComparisonPanel({ rows }: { rows: LocationComparisonRow[] }) {
   const t = useTranslations("dashboard.analytics.locations.comparison");
+  // Shared with the headline tile's own §6.2 Decision 3 wording — same namespace, not re-translated.
+  const tTiles = useTranslations("dashboard.analytics.tiles");
+
+  /** Same empty-population/withheld-result distinction `page.tsx`'s own `paymentHealthDisplay` applies,
+   * reused here per-row instead of a single page-wide value. */
+  function paymentHealthDisplay(row: LocationComparisonRow): string {
+    if (row.paymentHealthPopulationCount === 0) return tTiles("paymentHealthNoActiveStudents");
+    if (row.paymentHealthUnknownCount > 0) {
+      return tTiles("paymentHealthPartial", {
+        confirmed: row.paymentHealthConfirmedPaidCount,
+        checked: row.paymentHealthSuccessfullyCheckedCount,
+        unknown: row.paymentHealthUnknownCount,
+      });
+    }
+    return `${row.paymentHealthPercent}%`;
+  }
 
   const csvRows = rows.map((row) => ({
     [t("csv.academy")]: row.academyName,
     [t("csv.activeStudents")]: row.activeStudents,
     [t("csv.totalAttendances")]: row.totalAttendances,
     [t("csv.avgPerClass")]: row.avgPerClass.toFixed(1),
-    [t("csv.paymentHealthPercent")]: `${row.paymentHealthPercent}%`,
+    [t("csv.paymentHealthPercent")]: paymentHealthDisplay(row),
   }));
 
   return (
@@ -80,7 +96,7 @@ function LocationComparisonPanel({ rows }: { rows: LocationComparisonRow[] }) {
                   <DataTableCell className="text-right tabular-nums">{row.activeStudents}</DataTableCell>
                   <DataTableCell className="text-right tabular-nums">{row.totalAttendances}</DataTableCell>
                   <DataTableCell className="text-right tabular-nums">{row.avgPerClass.toFixed(1)}</DataTableCell>
-                  <DataTableCell className="text-right tabular-nums">{row.paymentHealthPercent}%</DataTableCell>
+                  <DataTableCell className="text-right tabular-nums">{paymentHealthDisplay(row)}</DataTableCell>
                 </DataTableRow>
               ))}
             </DataTableBody>
