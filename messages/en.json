@@ -167,7 +167,8 @@
         },
         "overdue": {
           "label": "Overdue monthly dues"
-        }
+        },
+        "unknownSuffix": "{count, plural, one {# unknown} other {# unknown}}"
       },
       "weeklyChart": {
         "heading": "Weekly attendance",

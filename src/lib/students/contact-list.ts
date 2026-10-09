@@ -9,6 +9,7 @@ import { buildProgressView } from "@/lib/promotion/progress-view";
 import { resolvePromotionConfigMap } from "@/lib/promotion/config";
 import { currentCrDateParts, getCurrentPaymentPeriod } from "@/lib/payments/get-current-period";
 import { isOverdue } from "@/lib/payments/overdue";
+import { listRosterPaymentFacts, toRosterLedgerDisplay, type RosterLedgerEntry } from "@/lib/dues/roster-payment-facts-queries";
 import type { BeltVisualData } from "@/components/belt-graphic/belt-graphic";
 
 /**
@@ -32,6 +33,15 @@ export function isAbsentEnoughToContact(daysAbsent: number | null, thresholdDays
 
 export type ContactPaymentStatus = "OVERDUE" | "PAID" | "PENDING" | "PROMO" | "EXEMPT" | "NOT_RECORDED";
 
+/**
+ * REMAINING-LEDGER-CONSUMERS-BRIEF.md §2.3: a discriminated replacement, never a silent reinterpretation of the
+ * legacy enum into a ledger fact. `source: "ledger"` reuses the roster's own already-approved independent-facts
+ * display (`RosterLedgerEntry`/`toRosterLedgerDisplay`) exactly as-is — never a collapsed "healthy"/"not healthy"
+ * boolean (§3/§5's own withdrawal of that reasoning). A caller must handle both branches; there is no default that
+ * silently treats "no debt" as "paid," "covered," or "eligible."
+ */
+export type ContactPaymentInfo = { source: "legacy"; status: ContactPaymentStatus } | { source: "ledger"; entry: RosterLedgerEntry };
+
 export interface ContactListEntry {
   studentId: string;
   firstName: string;
@@ -49,7 +59,7 @@ export interface ContactListEntry {
   lastAttendanceAt: Date | null;
   /** `null` means "never attended" — sorts as the most urgent case. */
   daysAbsent: number | null;
-  paymentStatus: ContactPaymentStatus;
+  paymentStatus: ContactPaymentInfo;
 }
 
 /**
@@ -58,20 +68,29 @@ export interface ContactListEntry {
  * page. Scoped by `getScopedDb`/`branchScopeWhere` the same way
  * `dashboard/page.tsx` already scopes `pendingCount`.
  *
- * Per-student payment status is computed the same `getCurrentPaymentPeriod` +
- * `isOverdue` way `students/page.tsx`'s roster already does — that page shows
- * this to every role with no extra gate, so doing the same here doesn't
- * loosen anything (`listOverdueStudents`'s ADMIN/DIRECTOR-only restriction is
- * about the aggregated overdue-payments panel, not per-student status).
+ * REMAINING-LEDGER-CONSUMERS-BRIEF.md §2.3/Decision 2: this list's own population query, attendance selection, and
+ * authorization are UNCHANGED by the ledger cutover — it stays `status: "ACTIVE"`-only (attendance-driven
+ * outreach, a different purpose from the dashboard/digest's debt-surfacing panels, which DO extend to
+ * inactive/archived students). Only the per-student payment-status FACT changes with `ledgerActive`: inactive,
+ * the legacy `getCurrentPaymentPeriod`/`isOverdue` per-student computation is unchanged; active, that legacy path
+ * is never called at all (§6 "active paths skip legacy payment calculations") — one BATCHED
+ * `listRosterPaymentFacts` call covers the whole qualifying cohort instead, reusing the roster's own
+ * `toRosterLedgerDisplay` independent-facts display exactly as-is (never a collapsed boolean).
  *
  * Sorted worst-first (never-attended, then longest absence), matching
  * `getRetentionList`'s "most urgent outreach target on top" convention.
  */
 export async function listStudentsToContact(
   context: TenantContext,
+  ledgerActive: boolean,
   thresholdDays: number = CONTACT_THRESHOLD_DAYS,
   today: { year: number; month: number; day: number } = currentCrDateParts(),
   now: DateTime = DateTime.now().setZone(ZONE),
+  // Review fix: a SEPARATE instant for the ledger read only — `now` above is, and always was, the attendance
+  // clock (`daysAbsent`'s own diff), unrelated to the ledger. Defaults to `now`'s own instant, so any caller that
+  // doesn't care about the distinction (every one before this fix) gets byte-identical behavior; the dashboard is
+  // the only caller that passes this explicitly, to share its own captured instant with its other ledger read.
+  ledgerNow: Date = now.toJSDate(),
 ): Promise<ContactListEntry[]> {
   const scope = branchScopeWhere(context);
   const students = await getScopedDb(context).student.findMany({
@@ -116,18 +135,34 @@ export async function listStudentsToContact(
   // Resolved ONCE for this whole batch, not once per student — see
   // resolvePromotionConfigMap's own doc comment on the N+1 this avoids.
   const configByTrack = await resolvePromotionConfigMap(context.organizationId);
+
+  // ONE batched read for the whole qualifying cohort, reusing `listRosterPaymentFacts` exactly as the roster
+  // already does — never a per-student loop under the ledger. `null` when inactive: the legacy per-student
+  // branch below is used instead, and this is never computed at all.
+  const ledgerFactsByStudentId = ledgerActive
+    ? (await listRosterPaymentFacts(context, qualifying.map(({ student }) => student.id), ledgerNow)).byStudentId
+    : null;
+
   const results = await Promise.all(
     qualifying.map(async ({ student, lastAttendanceAt, daysAbsent }) => {
-      const [summary, currentPeriod] = await Promise.all([
-        getAtBeltSummary(student.id, context.organizationId, configByTrack),
-        getCurrentPaymentPeriod(student.id, context.organizationId, today),
-      ]);
+      const summary = await getAtBeltSummary(student.id, context.organizationId, configByTrack);
 
-      const paymentStatus: ContactPaymentStatus = isOverdue(currentPeriod, today)
-        ? "OVERDUE"
-        : currentPeriod
-          ? currentPeriod.status
-          : "NOT_RECORDED";
+      let paymentStatus: ContactPaymentInfo;
+      if (ledgerFactsByStudentId) {
+        const fact = ledgerFactsByStudentId.get(student.id);
+        const entry: RosterLedgerEntry = fact?.ok
+          ? { kind: "ledger", display: toRosterLedgerDisplay(fact.facts, fact.todayIso) }
+          : { kind: "unavailable" };
+        paymentStatus = { source: "ledger", entry };
+      } else {
+        const currentPeriod = await getCurrentPaymentPeriod(student.id, context.organizationId, today);
+        const status: ContactPaymentStatus = isOverdue(currentPeriod, today)
+          ? "OVERDUE"
+          : currentPeriod
+            ? currentPeriod.status
+            : "NOT_RECORDED";
+        paymentStatus = { source: "legacy", status };
+      }
 
       const progress = buildProgressView(summary);
       return {
