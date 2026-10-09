@@ -7,6 +7,8 @@ import { getTestPrismaClient } from "../helpers/test-db";
 import { makeAccountingOrg } from "../helpers/accounting-org";
 import { hashSecret } from "../../src/lib/crypto";
 import { createMonthlyObligation } from "../../src/lib/dues/ledger/create-monthly-obligation";
+import { prepayMonthlyObligations } from "../../src/lib/dues/ledger/prepay-monthly";
+import { awaitingRateReceiptSnapshotSchema } from "../../src/lib/dues/ledger/awaiting-rate-receipt";
 import * as duesFactsModule from "../../src/lib/dues/ledger/dues-facts";
 import * as listCurrentStatusModule from "../../src/lib/payments/list-current-status";
 import enMessages from "../../messages/en.json";
@@ -26,12 +28,17 @@ import enMessages from "../../messages/en.json";
  * page's own ledger `now` is real, unmocked wall-clock time (not injectable here), so fixtures must be
  * unambiguously past-grace/past-due under the REAL current date.
  *
- * Fixture honesty: `newMonthlyObligation` writes through the REAL `createMonthlyObligation` ledger writer.
- * `newSignupObligation`, `newPendingReceipt`, `assignPlan`, and `markActiveSince` are all DIRECT Prisma rows —
- * no real writer/action exists for a plain SIGNUP obligation, a captured awaiting-rate receipt, a plan
- * assignment, or a status-history entry in this codebase's test surface, so these are seeded fixture data,
- * schema-valid (the receipt shape matches `awaiting-rate-receipt-queries.test.ts`'s own proven fixture), never
- * claimed to be writer-produced.
+ * Fixture honesty (review fix: a prior version of this file wrongly claimed no real writer/action exists for a
+ * captured awaiting-rate receipt — withdrawn): `newMonthlyObligation` writes through the REAL
+ * `createMonthlyObligation` ledger writer. The "pending conversion with no debt" test below writes through the
+ * REAL `prepayMonthlyObligations` writer (the same production path `awaiting-rate-receipt.test.ts` already uses
+ * to CAPTURE a PREPAYMENT receipt whenever the tender currency has no resolvable exchange rate) — a genuine
+ * production code path, not a direct seed. `newSignupObligation`, `newPendingReceipt` (the debt+pending test's
+ * own ORDINARY receipt, referencing the real outstanding obligation and validated against the real
+ * `awaitingRateReceiptSnapshotSchema` before insert), `assignPlan`, and `markActiveSince` remain DIRECT Prisma
+ * rows — this codebase genuinely has no real writer for a plain SIGNUP obligation, a plan assignment, or a
+ * status-history entry on its own (only as a side effect of other writers), so these stay deliberately seeded,
+ * schema-valid, and labeled as such — never claimed to be writer-produced.
  */
 const prisma = getTestPrismaClient();
 
@@ -80,7 +87,7 @@ function suffix() {
 // sequentially within a file, so this ordering holds.
 let policyYearCounter = 2000;
 
-async function seedPlanAndPolicy(org: Fixture, academyId: string, currency: "USD" | "CRC" = "USD") {
+async function seedPlanAndPolicy(org: Fixture, academyId: string, currency: "USD" | "CRC" = "USD", maxPrepaidMonths?: number) {
   const s = suffix();
   const effectiveYear = ++policyYearCounter;
   const plan = await prisma.paymentPlan.create({ data: { organizationId: org.org.id, academyId, name: `Pagos plan ${s}` } });
@@ -88,7 +95,7 @@ async function seedPlanAndPolicy(org: Fixture, academyId: string, currency: "USD
     data: { organizationId: org.org.id, planId: plan.id, effectiveYear, effectiveMonth: 1, priceAmount: "100.00", currency, monthsCovered: 1, createdById: org.admin.id },
   });
   const policy = await prisma.duesPolicyVersion.create({
-    data: { organizationId: org.org.id, academyId, effectiveYear, effectiveMonth: 1, dueDay: 20, graceDay: 5, lateFeeAmount: "20.00", lateFeeCurrency: currency, createdById: org.admin.id },
+    data: { organizationId: org.org.id, academyId, effectiveYear, effectiveMonth: 1, dueDay: 20, graceDay: 5, lateFeeAmount: "20.00", lateFeeCurrency: currency, maxPrepaidMonths, createdById: org.admin.id },
   });
   return { terms, policy };
 }
@@ -137,12 +144,23 @@ async function newSignupObligation(org: Fixture, studentId: string, academyId: s
   });
 }
 
-async function newPendingReceipt(org: Fixture, studentId: string, academyId: string) {
+/**
+ * Review fix: `obligationIds` is now REQUIRED and must reference a REAL, already-existing obligation —
+ * `ordinarySnapshotSchema.obligationIds` requires `.min(1)`; an empty array is a structurally invalid
+ * snapshot, not a valid "references nothing" case. Validated against the real
+ * `awaitingRateReceiptSnapshotSchema` before insert (this is a DIRECT seed, not a real writer — no production
+ * path captures a bare ORDINARY receipt outside an actual currency-mismatched payment attempt), so this
+ * fixture can never again silently regress to an invalid snapshot.
+ */
+async function newPendingReceipt(org: Fixture, studentId: string, academyId: string, obligationIds: string[]) {
+  const snapshot = { kind: "ORDINARY" as const, obligationIds };
+  const parsed = awaitingRateReceiptSnapshotSchema.safeParse(snapshot);
+  if (!parsed.success) throw new Error(`fixture: invalid ORDINARY snapshot: ${parsed.error.message}`);
   return prisma.awaitingRateReceipt.create({
     data: {
       organizationId: org.org.id, studentId, academyId, kind: "ORDINARY", status: "PENDING",
       receivedOn: new Date("2030-01-01"), tenderCurrency: "CRC", tenderAmount: "100.00", method: "EFECTIVO",
-      capturedAt: new Date(), capturedById: org.admin.id, snapshot: { kind: "ORDINARY", obligationIds: [] },
+      capturedAt: new Date(), capturedById: org.admin.id, snapshot,
     },
   });
 }
@@ -241,8 +259,8 @@ describe("listLedgerPaymentStatus: fee totals and pending-conversion (reader-lev
     try {
       const { terms, policy } = await seedPlanAndPolicy(org, org.academy.id, "USD");
       const debtor = await newStudent(org, org.academy.id);
-      await newMonthlyObligation(org, debtor.id, terms, policy);
-      await newPendingReceipt(org, debtor.id, org.academy.id);
+      const obligationId = await newMonthlyObligation(org, debtor.id, terms, policy);
+      await newPendingReceipt(org, debtor.id, org.academy.id, [obligationId]);
 
       const { rows } = await listLedgerPaymentStatus(tenantContext(org), new Date());
       const row = rows.find((r) => r.studentId === debtor.id);
@@ -427,8 +445,10 @@ describe("payments/page.tsx: ledger status table (page-level)", () => {
     mockActive = true;
     const { terms, policy } = await seedPlanAndPolicy(fixture, fixture.academy.id);
     const debtor = await newStudent(fixture, fixture.academy.id);
-    await newMonthlyObligation(fixture, debtor.id, terms, policy);
-    await newPendingReceipt(fixture, debtor.id, fixture.academy.id);
+    const obligationId = await newMonthlyObligation(fixture, debtor.id, terms, policy);
+    // A valid ORDINARY receipt referencing THIS student's own real outstanding obligation — never an empty
+    // `obligationIds` array (review fix: that violates `ordinarySnapshotSchema`'s own `.min(1)`).
+    await newPendingReceipt(fixture, debtor.id, fixture.academy.id, [obligationId]);
 
     const html = await renderAs(fixture.admin.id, fixture.org.id);
     const row = studentRow(html, `${debtor.firstName} ${debtor.lastName}`);
@@ -440,15 +460,46 @@ describe("payments/page.tsx: ledger status table (page-level)", () => {
     expect(row).toContain("Monthly past grace");
   });
 
-  it("REQUIRED: a pending-conversion receipt renders even with NO outstanding debt — never implied settled, never conflated with 'no outstanding debt' meaning paid", async () => {
+  it("REQUIRED: a pending PREPAYMENT receipt, captured through the REAL writer, renders even with NO outstanding debt — proposed coverage creates neither an obligation nor confirmed debt", async () => {
     mockActive = true;
+    // A dedicated policy with a real prepayment horizon (`maxPrepaidMonths`) — every other policy in this
+    // describe block leaves it unset (null), which `prepayMonthlyObligations` itself refuses
+    // ("prepaymentUnavailable"); this is the one test in this file that exercises that writer.
+    await seedPlanAndPolicy(fixture, fixture.academy.id, "USD", 12);
+    const plan = await prisma.paymentPlan.create({ data: { organizationId: fixture.org.id, academyId: fixture.academy.id, name: `Prepay plan ${suffix()}` } });
+    await prisma.paymentPlanTerms.create({
+      data: { organizationId: fixture.org.id, planId: plan.id, effectiveYear: ++policyYearCounter, effectiveMonth: 1, priceAmount: "100.00", currency: "USD", monthsCovered: 1, createdById: fixture.admin.id },
+    });
     const pendingOnlyStudent = await newStudent(fixture, fixture.academy.id);
-    await newPendingReceipt(fixture, pendingOnlyStudent.id, fixture.academy.id);
+    await assignPlan(fixture, pendingOnlyStudent.id, plan.id);
+
+    const obligationCountBefore = await prisma.duesObligation.count({ where: { organizationId: fixture.org.id } });
+    const coverageCountBefore = await prisma.duesCoverage.count({ where: { organizationId: fixture.org.id } });
+
+    // Real writer capture (not a direct seed): a tender currency (CRC) with no exchange-rate quote entered for
+    // this date makes `prepayMonthlyObligations` CAPTURE an AwaitingRateReceipt rather than settle immediately
+    // — the same production path, and the same technique, `awaiting-rate-receipt.test.ts` already proves for
+    // this exact scenario. `writerDeps` pins "now" to WRITER_NOW (2030-12-15); the requested month (2031-01)
+    // is the real next-uncovered month relative to that frozen instant, so the writer's own gap check passes.
+    const captured = await prepayMonthlyObligations(
+      {
+        context: tenantContext(fixture), studentId: pendingOnlyStudent.id,
+        requestedMonths: [{ year: 2031, month: 1 }], receivedOn: { year: 2030, month: 12, day: 15 },
+        tender: { currency: "CRC", amount: "50000.00" }, method: "EFECTIVO", maxBackdateDays: 5,
+      },
+      writerDeps,
+    );
+    if (captured.ok || captured.error !== "captured") throw new Error(`fixture: expected the writer to capture, got ${JSON.stringify(captured)}`);
 
     const html = await renderAs(fixture.admin.id, fixture.org.id);
     const row = studentRow(html, `${pendingOnlyStudent.firstName} ${pendingOnlyStudent.lastName}`);
     expect(row).toContain("No outstanding debt");
     expect(row).toContain("Pending conversion");
+
+    // The proposed coverage this receipt carries creates NEITHER a DuesObligation NOR a DuesCoverage row —
+    // only the PENDING receipt itself exists until a real exchange rate is entered and it is resolved.
+    expect(await prisma.duesObligation.count({ where: { organizationId: fixture.org.id } })).toBe(obligationCountBefore);
+    expect(await prisma.duesCoverage.count({ where: { organizationId: fixture.org.id } })).toBe(coverageCountBefore);
   });
 
   it("REQUIRED: a configuration issue renders even with NO outstanding debt", async () => {
