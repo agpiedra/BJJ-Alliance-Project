@@ -1,7 +1,6 @@
 import { getTranslations } from "next-intl/server";
 import { Button } from "@/components/ui/button";
 import { AuthCard } from "@/components/auth/auth-card";
-import { BrandBanner } from "@/components/brand/brand-banner";
 import { signOutStaff } from "@/lib/auth/sign-out-actions";
 
 /**
@@ -27,16 +26,13 @@ export default async function OrganizationUnavailablePage({
   const t = await getTranslations("auth.orgUnavailable");
 
   return (
-    <>
-      <BrandBanner />
-      <AuthCard title={t("heading")}>
-        <p className="text-sm text-muted-foreground">{t("body")}</p>
-        <form action={signOutStaff.bind(null, locale)}>
-          <Button type="submit" variant="primary">
-            {t("signOut")}
-          </Button>
-        </form>
-      </AuthCard>
-    </>
+    <AuthCard title={t("heading")}>
+      <p className="text-sm text-muted-foreground">{t("body")}</p>
+      <form action={signOutStaff.bind(null, locale)}>
+        <Button type="submit" variant="primary">
+          {t("signOut")}
+        </Button>
+      </form>
+    </AuthCard>
   );
 }

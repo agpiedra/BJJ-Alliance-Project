@@ -441,7 +441,8 @@
       "role": {
         "ADMIN": "Owner",
         "DIRECTOR": "Location director",
-        "INSTRUCTOR": "Instructor"
+        "INSTRUCTOR": "Instructor",
+        "STUDENT": "Student"
       },
       "platform": "Platform",
       "myTraining": "My training",

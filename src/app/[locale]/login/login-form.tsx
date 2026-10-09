@@ -6,6 +6,7 @@ import { useParams, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { AuthCard } from "@/components/auth/auth-card";
+import type { LogoMarkProps } from "@/components/brand/logo-mark";
 import { login } from "./actions";
 import { INITIAL_ACTION_STATE } from "@/lib/action-state";
 
@@ -16,16 +17,21 @@ import { INITIAL_ACTION_STATE } from "@/lib/action-state";
  * `resolveSingleOrganizationBranding`) before rendering, which a
  * `"use client"` file can't do. This component is unchanged from before
  * that split, just relocated.
+ *
+ * `brand` is the real org branding `/o/[orgSlug]/login` already resolves
+ * server-side and used to hand to `BrandBanner`; threaded straight through
+ * to `AuthCard`'s own `LogoMark`, unchanged. Bare `/login` passes nothing —
+ * same generic platform wordmark it has always shown.
  */
-export function LoginForm() {
+export function LoginForm({ brand }: { brand?: LogoMarkProps }) {
   return (
     <Suspense fallback={null}>
-      <LoginFormInner />
+      <LoginFormInner brand={brand} />
     </Suspense>
   );
 }
 
-function LoginFormInner() {
+function LoginFormInner({ brand }: { brand?: LogoMarkProps }) {
   const t = useTranslations("auth.login");
   const params = useParams<{ locale: string }>();
   const searchParams = useSearchParams();
@@ -39,6 +45,7 @@ function LoginFormInner() {
   return (
     <AuthCard
       title={t("heading")}
+      brand={brand}
       footer={
         <a href={`/${params.locale}/register-academy`} className="mt-4 text-sm underline pointer-coarse:py-3">
           {t("registerAcademy")}

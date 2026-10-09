@@ -1,6 +1,8 @@
 # Proposal: Auth & access-state screens page phase
 
-**Status: PROPOSED, awaiting owner approval. Nothing in this document has been implemented.**
+**Status: APPROVED and implemented (2026-10-09) — `design/matroom/DESIGN.md`'s change log and `verification/auth-access/` have the actual outcome. Left unedited below as the historical record of what was proposed.**
+
+**Correction (round 2 of implementation, same day):** the "What changes" section below claims "No such component exists today (confirmed: none of these 10 pages shares a common centering pattern currently)." That was wrong — the pattern already existed, identically, in 5 of the 10 screens (`no-access`, `no-organization-access`, `organization-unavailable`, `select-organization`, the shared `login-form.tsx`); it only needed extracting, not inventing. See `DESIGN.md`'s change log entry for what was actually built, including a round-2 correction against the approved prototype and the explicit scope boundary around `onboarding` (steps 2-3 were never part of this phase).
 
 Following the same convention as the approved student-portal and kiosk page phases (`design/matroom/DESIGN.md`'s own change log) — a named page phase, proposed and approved before implementation, verified against the matrix below before merge. This is the first redesign phase recommended in `docs/MATROOM_REDESIGN_EXECUTION_PLAN.md`.
 

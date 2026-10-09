@@ -1,6 +1,5 @@
 import { notFound } from "next/navigation";
 import { resolveOrganizationForSignup, resolveOrganizationLoginBranding } from "@/lib/tenant/platform-lookups";
-import { BrandBanner } from "@/components/brand/brand-banner";
 import { SignupForm } from "./signup-form";
 
 // The organization/academy list is queried live, not baked into the build —
@@ -49,15 +48,16 @@ export default async function OrganizationSignupPage({
   }
 
   return (
-    <>
-      <BrandBanner
-        logoUrl={branding?.logoUrl}
-        initials={branding?.initials}
-        initialsBackground={branding?.sidebar.background}
-        initialsForeground={branding?.sidebar.foreground}
-        alt={branding?.displayName}
-      />
-      <SignupForm orgSlug={orgSlug} academies={organization.academies} />
-    </>
+    <SignupForm
+      orgSlug={orgSlug}
+      academies={organization.academies}
+      brand={{
+        logoUrl: branding?.logoUrl,
+        initials: branding?.initials,
+        initialsBackground: branding?.sidebar.background,
+        initialsForeground: branding?.sidebar.foreground,
+        alt: branding?.displayName,
+      }}
+    />
   );
 }

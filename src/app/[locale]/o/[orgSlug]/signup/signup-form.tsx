@@ -5,6 +5,7 @@ import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { Input, FIELD_CLASS } from "@/components/ui/input";
 import { AuthCard } from "@/components/auth/auth-card";
+import type { LogoMarkProps } from "@/components/brand/logo-mark";
 import { signup, type SignupState } from "./actions";
 
 // MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 2: the old `Belt` enum is gone
@@ -19,14 +20,22 @@ const INITIAL_STATE: SignupState = {};
 
 type Academy = { slug: string; name: string };
 
-export function SignupForm({ orgSlug, academies }: { orgSlug: string; academies: Academy[] }) {
+export function SignupForm({
+  orgSlug,
+  academies,
+  brand,
+}: {
+  orgSlug: string;
+  academies: Academy[];
+  brand?: LogoMarkProps;
+}) {
   const t = useTranslations("signup");
   const tBelt = useTranslations("belt");
   const [state, formAction, isPending] = useActionState(signup.bind(null, orgSlug), INITIAL_STATE);
 
   if (state.ok) {
     return (
-      <AuthCard title={t("successHeading")}>
+      <AuthCard title={t("successHeading")} brand={brand}>
         <p>{t("successCodeWarning")}</p>
         <p className="text-4xl font-mono font-bold tracking-widest">{state.code}</p>
         <p className="text-sm text-muted-foreground">{t("successNote")}</p>
@@ -37,7 +46,7 @@ export function SignupForm({ orgSlug, academies }: { orgSlug: string; academies:
   const guardianNameErrors = state.fieldErrors?.guardianName;
 
   return (
-    <AuthCard title={t("heading")}>
+    <AuthCard title={t("heading")} brand={brand}>
       <form action={formAction} className="flex flex-col gap-3">
         <label className="flex flex-col gap-1">
           <span>{t("firstName")}</span>

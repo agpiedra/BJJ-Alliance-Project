@@ -4,7 +4,6 @@ import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { Button } from "@/components/ui/button";
 import { AuthCard } from "@/components/auth/auth-card";
-import { BrandBanner } from "@/components/brand/brand-banner";
 import { signOutStaff } from "@/lib/auth/sign-out-actions";
 import { resolvePendingApplication } from "@/lib/tenant/platform-lookups";
 
@@ -62,18 +61,15 @@ export default async function NoOrganizationAccessPage({
   const pending = await resolvePendingApplication(session.user.id);
 
   return (
-    <>
-      <BrandBanner />
-      <AuthCard title={pending ? t("pendingHeading") : t("heading")}>
-        <p className="text-sm text-muted-foreground">
-          {pending ? t("pendingBody", { organization: pending.organizationName }) : t("body")}
-        </p>
-        <form action={signOutStaff.bind(null, locale)}>
-          <Button type="submit" variant="primary">
-            {t("signOut")}
-          </Button>
-        </form>
-      </AuthCard>
-    </>
+    <AuthCard title={pending ? t("pendingHeading") : t("heading")}>
+      <p className="text-sm text-muted-foreground">
+        {pending ? t("pendingBody", { organization: pending.organizationName }) : t("body")}
+      </p>
+      <form action={signOutStaff.bind(null, locale)}>
+        <Button type="submit" variant="primary">
+          {t("signOut")}
+        </Button>
+      </form>
+    </AuthCard>
   );
 }

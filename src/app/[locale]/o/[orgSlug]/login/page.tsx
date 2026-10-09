@@ -1,4 +1,3 @@
-import { BrandBanner } from "@/components/brand/brand-banner";
 import { resolveOrganizationLoginBranding } from "@/lib/tenant/platform-lookups";
 import { LoginForm } from "../../../login/login-form";
 
@@ -43,15 +42,14 @@ export default async function OrganizationLoginPage({
   const branding = await resolveOrganizationLoginBranding(orgSlug);
 
   return (
-    <>
-      <BrandBanner
-        logoUrl={branding?.logoUrl}
-        initials={branding?.initials}
-        initialsBackground={branding?.sidebar.background}
-        initialsForeground={branding?.sidebar.foreground}
-        alt={branding?.displayName}
-      />
-      <LoginForm />
-    </>
+    <LoginForm
+      brand={{
+        logoUrl: branding?.logoUrl,
+        initials: branding?.initials,
+        initialsBackground: branding?.sidebar.background,
+        initialsForeground: branding?.sidebar.foreground,
+        alt: branding?.displayName,
+      }}
+    />
   );
 }

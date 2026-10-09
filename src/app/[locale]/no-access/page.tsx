@@ -4,7 +4,6 @@ import { getTranslations } from "next-intl/server";
 import { auth } from "@/auth";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { AuthCard } from "@/components/auth/auth-card";
-import { BrandBanner } from "@/components/brand/brand-banner";
 import { signOutStaff } from "@/lib/auth/sign-out-actions";
 import { accessFromContext } from "@/lib/auth/derive-access";
 import { landingFor } from "@/lib/auth/route-access";
@@ -35,21 +34,18 @@ export default async function NoAccessPage({ params }: { params: Promise<{ local
   const landing = result.status === "OK" ? landingFor(accessFromContext(result.context)) : null;
 
   return (
-    <>
-      <BrandBanner />
-      <AuthCard title={t("heading")}>
-        <p className="text-sm text-muted-foreground">{t("body")}</p>
-        {landing && (
-          <Link href={`/${locale}${landing}`} className={cn(buttonVariants({ variant: "primary" }))}>
-            {landing === "/dashboard" ? t("goStaff") : t("goPortal")}
-          </Link>
-        )}
-        <form action={signOutStaff.bind(null, locale)}>
-          <Button type="submit" variant="outline">
-            {t("signOut")}
-          </Button>
-        </form>
-      </AuthCard>
-    </>
+    <AuthCard title={t("heading")}>
+      <p className="text-sm text-muted-foreground">{t("body")}</p>
+      {landing && (
+        <Link href={`/${locale}${landing}`} className={cn(buttonVariants({ variant: "primary" }))}>
+          {landing === "/dashboard" ? t("goStaff") : t("goPortal")}
+        </Link>
+      )}
+      <form action={signOutStaff.bind(null, locale)}>
+        <Button type="submit" variant="outline">
+          {t("signOut")}
+        </Button>
+      </form>
+    </AuthCard>
   );
 }

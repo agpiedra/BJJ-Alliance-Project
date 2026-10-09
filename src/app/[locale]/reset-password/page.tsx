@@ -6,18 +6,14 @@ import { useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { AuthCard } from "@/components/auth/auth-card";
-import { BrandBanner } from "@/components/brand/brand-banner";
 import { resetPassword } from "./actions";
 import { INITIAL_ACTION_STATE } from "@/lib/action-state";
 
 export default function ResetPasswordPage() {
   return (
-    <>
-      <BrandBanner />
-      <Suspense fallback={null}>
-        <ResetPasswordForm />
-      </Suspense>
-    </>
+    <Suspense fallback={null}>
+      <ResetPasswordForm />
+    </Suspense>
   );
 }
 

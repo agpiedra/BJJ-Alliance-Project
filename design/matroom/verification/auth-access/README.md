@@ -2,6 +2,8 @@
 
 Real running app (`pnpm dev`, Turbopack, dev database), real Chromium via Playwright MCP, real server actions — not the static prototype (`design/matroom/preview/auth-access-phase-prototype.html`, see `design/matroom/verification/auth-access-prototype/` for that earlier, separate round). Every screenshot below is a genuine render of the shipped code on this branch.
 
+**This is round 1.** A side-by-side comparison against the prototype afterward found real layout discrepancies (branding placement, card spacing, the organization-selection row treatment) — corrected in `round-2-correction/`, which also finishes the verification this round left partial (onboarding step 1, valid-invitation states, a genuine multi-organization case) and records a font-rendering investigation. Read that folder's own README alongside this one; this round's own coverage table below is otherwise unchanged from when it was written, including the gaps round 2 closes.
+
 ## Coverage by exact route (10 approved screens)
 
 | # | Route (file) | Verified | Notes |
