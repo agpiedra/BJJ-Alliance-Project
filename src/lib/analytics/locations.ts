@@ -1,6 +1,6 @@
 import { getScopedDb } from "@/lib/tenant/scoped-client";
 import type { TenantContext } from "@/lib/tenant/types";
-import { getHeadlineTiles } from "@/lib/analytics/headline-tiles";
+import { getHeadlineTiles, type LedgerInstant } from "@/lib/analytics/headline-tiles";
 import type { Prisma } from "@/generated/prisma/client";
 import type { AnalyticsFilters } from "@/lib/analytics/filters";
 
@@ -22,7 +22,15 @@ export interface LocationComparisonRow {
   activeStudents: number;
   totalAttendances: number;
   avgPerClass: number;
-  paymentHealthPercent: number;
+  /** Same §6.2 withhold-on-failure/empty-population contract as `HeadlineTiles` — reused, not re-derived. */
+  paymentHealthPercent: number | null;
+  paymentHealthConfirmedPaidCount: number;
+  paymentHealthSuccessfullyCheckedCount: number;
+  paymentHealthUnknownCount: number;
+  /** `tiles.enrolled` for THIS academy — distinct from `activeStudents` (`tiles.active`, an attendance-based
+   * figure) — needed to render "No active students" when this academy's own population is empty, since a
+   * `null` percent alone can't distinguish that from a withheld-due-to-failure result. */
+  paymentHealthPopulationCount: number;
 }
 
 /**
@@ -55,6 +63,7 @@ export interface LocationComparisonRow {
 export async function getLocationComparison(
   context: TenantContext,
   filters: AnalyticsFilters,
+  ledgerInstant?: LedgerInstant,
 ): Promise<LocationComparisonRow[]> {
   requireAdminOnly(context);
 
@@ -67,7 +76,10 @@ export async function getLocationComparison(
   return Promise.all(
     academies.map(async (academy) => {
       const [tiles, classCount] = await Promise.all([
-        getHeadlineTiles(context, { ...filters, academyId: academy.id }),
+        // Review fix (PR 6, gap 3): the SAME `ledgerInstant` the page composed once — never a fresh one per
+        // academy, which would risk a different academy landing on a different real-clock instant (and, right
+        // at a month boundary, a different branch-local target month) than its siblings in the same table.
+        getHeadlineTiles(context, { ...filters, academyId: academy.id }, ledgerInstant),
         getScopedDb(context).classSession.count({ where: { academyId: academy.id } }),
       ]);
 
@@ -78,6 +90,10 @@ export async function getLocationComparison(
         totalAttendances: tiles.totalAttendances,
         avgPerClass: classCount > 0 ? tiles.totalAttendances / classCount : 0,
         paymentHealthPercent: tiles.paymentHealthPercent,
+        paymentHealthConfirmedPaidCount: tiles.paymentHealthConfirmedPaidCount,
+        paymentHealthSuccessfullyCheckedCount: tiles.paymentHealthSuccessfullyCheckedCount,
+        paymentHealthUnknownCount: tiles.paymentHealthUnknownCount,
+        paymentHealthPopulationCount: tiles.enrolled,
       };
     }),
   );

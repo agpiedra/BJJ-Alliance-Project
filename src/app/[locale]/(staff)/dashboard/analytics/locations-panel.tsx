@@ -26,27 +26,57 @@ import { ExportCsvButton } from "./export-csv-button";
 export function LocationsPanel({
   comparison,
   crossTraining,
+  ledgerActive,
 }: {
   comparison: LocationComparisonRow[];
   crossTraining: CrossTrainingEntry[];
+  /** Review fix (PR 6, gap 2): the SAME page-level activation flag `page.tsx`'s own headline tile uses —
+   * threaded down explicitly rather than re-derived per row, since every row in `comparison` shares one
+   * organization and therefore one activation state. */
+  ledgerActive: boolean;
 }) {
   return (
     <section className="grid grid-cols-1 gap-4 lg:grid-cols-[7fr_5fr]">
-      <LocationComparisonPanel rows={comparison} />
+      <LocationComparisonPanel rows={comparison} ledgerActive={ledgerActive} />
       <CrossTrainingPanel entries={crossTraining} />
     </section>
   );
 }
 
-function LocationComparisonPanel({ rows }: { rows: LocationComparisonRow[] }) {
+function LocationComparisonPanel({ rows, ledgerActive }: { rows: LocationComparisonRow[]; ledgerActive: boolean }) {
   const t = useTranslations("dashboard.analytics.locations.comparison");
+  // Shared with the headline tile's own §6.2 Decision 3 wording — same namespace, not re-translated.
+  const tTiles = useTranslations("dashboard.analytics.tiles");
+
+  /** Same empty-population/withheld-result distinction `page.tsx`'s own `paymentHealthDisplay` applies,
+   * reused here per-row instead of a single page-wide value. Review fix (PR 6, gap 1): gated on `ledgerActive`
+   * first — the inactive path's own `paymentHealthPercent` is always a real number (including its own
+   * pre-existing "0 for empty" value), rendered as a plain percentage unconditionally, exactly as before. */
+  function paymentHealthDisplay(row: LocationComparisonRow): string {
+    if (!ledgerActive) return `${row.paymentHealthPercent}%`;
+    if (row.paymentHealthPopulationCount === 0) return tTiles("paymentHealthNoActiveStudents");
+    if (row.paymentHealthUnknownCount > 0) {
+      return tTiles("paymentHealthPartial", {
+        confirmed: row.paymentHealthConfirmedPaidCount,
+        checked: row.paymentHealthSuccessfullyCheckedCount,
+        unknown: row.paymentHealthUnknownCount,
+      });
+    }
+    return `${row.paymentHealthPercent}%`;
+  }
+
+  // Review fix (PR 6, gap 2): the visible column header AND the exported CSV header both switch to the
+  // approved ledger wording once active — previously only the headline tile did, leaving this table's own
+  // label stuck on the generic legacy text even while displaying the new settlement-based metric.
+  const paymentHealthColumnLabel = ledgerActive ? tTiles("paymentHealthPercentLedger") : t("table.paymentHealthPercent");
+  const paymentHealthCsvLabel = ledgerActive ? tTiles("paymentHealthPercentLedger") : t("csv.paymentHealthPercent");
 
   const csvRows = rows.map((row) => ({
     [t("csv.academy")]: row.academyName,
     [t("csv.activeStudents")]: row.activeStudents,
     [t("csv.totalAttendances")]: row.totalAttendances,
     [t("csv.avgPerClass")]: row.avgPerClass.toFixed(1),
-    [t("csv.paymentHealthPercent")]: `${row.paymentHealthPercent}%`,
+    [paymentHealthCsvLabel]: paymentHealthDisplay(row),
   }));
 
   return (
@@ -69,7 +99,7 @@ function LocationComparisonPanel({ rows }: { rows: LocationComparisonRow[] }) {
                 <DataTableHeaderCell className="text-right">{t("table.totalAttendances")}</DataTableHeaderCell>
                 <DataTableHeaderCell className="text-right">{t("table.avgPerClass")}</DataTableHeaderCell>
                 <DataTableHeaderCell className="text-right">
-                  {t("table.paymentHealthPercent")}
+                  {paymentHealthColumnLabel}
                 </DataTableHeaderCell>
               </DataTableHeaderRow>
             </DataTableHead>
@@ -80,7 +110,7 @@ function LocationComparisonPanel({ rows }: { rows: LocationComparisonRow[] }) {
                   <DataTableCell className="text-right tabular-nums">{row.activeStudents}</DataTableCell>
                   <DataTableCell className="text-right tabular-nums">{row.totalAttendances}</DataTableCell>
                   <DataTableCell className="text-right tabular-nums">{row.avgPerClass.toFixed(1)}</DataTableCell>
-                  <DataTableCell className="text-right tabular-nums">{row.paymentHealthPercent}%</DataTableCell>
+                  <DataTableCell className="text-right tabular-nums">{paymentHealthDisplay(row)}</DataTableCell>
                 </DataTableRow>
               ))}
             </DataTableBody>
