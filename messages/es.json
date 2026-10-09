@@ -986,7 +986,8 @@
       },
       "promo": {
         "label": "Promoción o beca"
-      }
+      },
+      "unknownSuffix": "{count, plural, one {# desconocido} other {# desconocidos}}"
     },
     "recordCard": {
       "heading": "Registrar pago",
@@ -994,7 +995,9 @@
     },
     "statusCard": {
       "heading": "Estado del mes",
-      "note": "{month} · {academy}"
+      "note": "{month} · {academy}",
+      "ledgerHeading": "Estado de pagos",
+      "ledgerNote": "{academy}"
     },
     "method": {
       "SINPE": "SINPE Móvil",
