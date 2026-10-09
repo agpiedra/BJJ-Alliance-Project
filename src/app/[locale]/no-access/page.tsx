@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { getTranslations } from "next-intl/server";
 import { auth } from "@/auth";
 import { Button, buttonVariants } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { AuthCard } from "@/components/auth/auth-card";
 import { BrandBanner } from "@/components/brand/brand-banner";
 import { signOutStaff } from "@/lib/auth/sign-out-actions";
 import { accessFromContext } from "@/lib/auth/derive-access";
@@ -37,26 +37,19 @@ export default async function NoAccessPage({ params }: { params: Promise<{ local
   return (
     <>
       <BrandBanner />
-      <main className="flex min-h-[calc(100vh-4rem)] flex-col items-center justify-center bg-background p-6">
-        <Card className="w-full max-w-sm">
-          <CardHeader>
-            <CardTitle className="text-2xl">{t("heading")}</CardTitle>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-4">
-            <p className="text-sm text-muted-foreground">{t("body")}</p>
-            {landing && (
-              <Link href={`/${locale}${landing}`} className={cn(buttonVariants({ variant: "primary" }))}>
-                {landing === "/dashboard" ? t("goStaff") : t("goPortal")}
-              </Link>
-            )}
-            <form action={signOutStaff.bind(null, locale)}>
-              <Button type="submit" variant="outline">
-                {t("signOut")}
-              </Button>
-            </form>
-          </CardContent>
-        </Card>
-      </main>
+      <AuthCard title={t("heading")}>
+        <p className="text-sm text-muted-foreground">{t("body")}</p>
+        {landing && (
+          <Link href={`/${locale}${landing}`} className={cn(buttonVariants({ variant: "primary" }))}>
+            {landing === "/dashboard" ? t("goStaff") : t("goPortal")}
+          </Link>
+        )}
+        <form action={signOutStaff.bind(null, locale)}>
+          <Button type="submit" variant="outline">
+            {t("signOut")}
+          </Button>
+        </form>
+      </AuthCard>
     </>
   );
 }

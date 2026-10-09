@@ -4,7 +4,7 @@ import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { BrandBanner } from "@/components/brand/brand-banner";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { AuthCard } from "@/components/auth/auth-card";
 import { signOutStaff } from "@/lib/auth/sign-out-actions";
 import { selectOrganization } from "./actions";
 
@@ -53,31 +53,24 @@ export default async function SelectOrganizationPage({
   return (
     <>
       <BrandBanner />
-      <main className="flex min-h-[calc(100vh-4rem)] flex-col items-center justify-center bg-background p-6">
-        <Card className="w-full max-w-sm">
-          <CardHeader>
-            <CardTitle className="text-2xl">{t("heading")}</CardTitle>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-4">
-            <p className="text-sm text-muted-foreground">{t("body")}</p>
-            <div className="flex flex-col gap-2">
-              {memberships.map(({ organization }) => (
-                <form key={organization.id} action={selectOrganization.bind(null, locale, callbackUrl)}>
-                  <input type="hidden" name="organizationId" value={organization.id} />
-                  <Button type="submit" variant="outline" className="w-full justify-start">
-                    {organization.name}
-                  </Button>
-                </form>
-              ))}
-            </div>
-            <form action={signOutStaff.bind(null, locale)}>
-              <Button type="submit" variant="ghost" size="sm">
-                {t("signOut")}
+      <AuthCard title={t("heading")}>
+        <p className="text-sm text-muted-foreground">{t("body")}</p>
+        <div className="flex flex-col gap-2">
+          {memberships.map(({ organization }) => (
+            <form key={organization.id} action={selectOrganization.bind(null, locale, callbackUrl)}>
+              <input type="hidden" name="organizationId" value={organization.id} />
+              <Button type="submit" variant="outline" className="w-full justify-start">
+                {organization.name}
               </Button>
             </form>
-          </CardContent>
-        </Card>
-      </main>
+          ))}
+        </div>
+        <form action={signOutStaff.bind(null, locale)}>
+          <Button type="submit" variant="ghost" size="sm">
+            {t("signOut")}
+          </Button>
+        </form>
+      </AuthCard>
     </>
   );
 }

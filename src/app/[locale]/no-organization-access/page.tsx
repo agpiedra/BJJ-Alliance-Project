@@ -3,7 +3,7 @@ import { getTranslations } from "next-intl/server";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { AuthCard } from "@/components/auth/auth-card";
 import { BrandBanner } from "@/components/brand/brand-banner";
 import { signOutStaff } from "@/lib/auth/sign-out-actions";
 import { resolvePendingApplication } from "@/lib/tenant/platform-lookups";
@@ -64,23 +64,16 @@ export default async function NoOrganizationAccessPage({
   return (
     <>
       <BrandBanner />
-      <main className="flex min-h-[calc(100vh-4rem)] flex-col items-center justify-center bg-background p-6">
-        <Card className="w-full max-w-sm">
-          <CardHeader>
-            <CardTitle className="text-2xl">{pending ? t("pendingHeading") : t("heading")}</CardTitle>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-4">
-            <p className="text-sm text-muted-foreground">
-              {pending ? t("pendingBody", { organization: pending.organizationName }) : t("body")}
-            </p>
-            <form action={signOutStaff.bind(null, locale)}>
-              <Button type="submit" variant="primary">
-                {t("signOut")}
-              </Button>
-            </form>
-          </CardContent>
-        </Card>
-      </main>
+      <AuthCard title={pending ? t("pendingHeading") : t("heading")}>
+        <p className="text-sm text-muted-foreground">
+          {pending ? t("pendingBody", { organization: pending.organizationName }) : t("body")}
+        </p>
+        <form action={signOutStaff.bind(null, locale)}>
+          <Button type="submit" variant="primary">
+            {t("signOut")}
+          </Button>
+        </form>
+      </AuthCard>
     </>
   );
 }

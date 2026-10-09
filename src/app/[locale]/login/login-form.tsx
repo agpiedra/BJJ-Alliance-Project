@@ -4,7 +4,8 @@ import { Suspense, useActionState } from "react";
 import { useTranslations } from "next-intl";
 import { useParams, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { AuthCard } from "@/components/auth/auth-card";
 import { login } from "./actions";
 import { INITIAL_ACTION_STATE } from "@/lib/action-state";
 
@@ -36,34 +37,31 @@ function LoginFormInner() {
   );
 
   return (
-    <main className="flex min-h-[calc(100vh-4rem)] flex-col items-center justify-center bg-background p-6">
-      <Card className="w-full max-w-sm">
-        <CardHeader>
-          <CardTitle className="text-2xl">{t("heading")}</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <form action={formAction} className="flex flex-col gap-3">
-            <label className="flex flex-col gap-1">
-              <span>{t("email")}</span>
-              <input type="email" name="email" required className="rounded border border-input px-3 py-2" />
-            </label>
-            <label className="flex flex-col gap-1">
-              <span>{t("password")}</span>
-              <input type="password" name="password" required className="rounded border border-input px-3 py-2" />
-            </label>
-            {state.error && <p className="text-sm text-destructive">{t(state.error)}</p>}
-            <Button type="submit" variant="primary" disabled={isPending}>
-              {t("submit")}
-            </Button>
-            <a href={`/${params.locale}/forgot-password`} className="text-sm underline pointer-coarse:py-3">
-              {t("forgotPassword")}
-            </a>
-          </form>
-        </CardContent>
-      </Card>
-      <a href={`/${params.locale}/register-academy`} className="mt-4 text-sm underline pointer-coarse:py-3">
-        {t("registerAcademy")}
-      </a>
-    </main>
+    <AuthCard
+      title={t("heading")}
+      footer={
+        <a href={`/${params.locale}/register-academy`} className="mt-4 text-sm underline pointer-coarse:py-3">
+          {t("registerAcademy")}
+        </a>
+      }
+    >
+      <form action={formAction} className="flex flex-col gap-3">
+        <label className="flex flex-col gap-1">
+          <span>{t("email")}</span>
+          <Input type="email" name="email" required />
+        </label>
+        <label className="flex flex-col gap-1">
+          <span>{t("password")}</span>
+          <Input type="password" name="password" required />
+        </label>
+        {state.error && <p className="text-sm text-destructive">{t(state.error)}</p>}
+        <Button type="submit" variant="primary" disabled={isPending}>
+          {t("submit")}
+        </Button>
+        <a href={`/${params.locale}/forgot-password`} className="text-sm underline pointer-coarse:py-3">
+          {t("forgotPassword")}
+        </a>
+      </form>
+    </AuthCard>
   );
 }

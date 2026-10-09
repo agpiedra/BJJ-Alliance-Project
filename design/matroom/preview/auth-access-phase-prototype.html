@@ -1,0 +1,449 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>MATROOM — Auth &amp; Access-State Screens — PROTOTYPE</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500&display=swap" rel="stylesheet" />
+<style>
+  /* ---- Real approved MATROOM tokens, copied verbatim from design/matroom/tokens.css ---- */
+  .theme-light {
+    --background:#f5f3ec; --foreground:#1d392b; --card:#fffefa; --card-foreground:#1d392b;
+    --primary:#254b35; --primary-foreground:#fffefa; --secondary:#e6ebdd; --secondary-foreground:#1d392b;
+    --muted:#e6ebdd; --muted-foreground:#59675d; --accent:#e6ebdd; --accent-foreground:#1d392b;
+    --destructive:#87271d; --border:#d8ded3; --input:#738b79; --ring:#1d392b;
+    --ok:#247a52; --ok-soft:#e4f1eb; --ok-line:#2c9a67;
+    --warn:#92610c; --warn-soft:#f4ede1; --warn-line:#ba7b0f;
+    --bad:#87271d; --bad-soft:#f2e5e3; --bad-line:#d23d2d;
+  }
+  .theme-dark {
+    --background:#141d19; --foreground:#eff1e9; --card:#202c25; --card-foreground:#eff1e9;
+    --primary:#c9dfb4; --primary-foreground:#182a1e; --secondary:#2b3e30; --secondary-foreground:#eff1e9;
+    --muted:#2b3e30; --muted-foreground:#b4c1b7; --accent:#2b3e30; --accent-foreground:#eff1e9;
+    --destructive:#e48b81; --border:#3c4e40; --input:#6d8a76; --ring:#eff1e9;
+    --ok:#88ddb5; --ok-soft:#264034; --ok-line:#39c684;
+    --warn:#f4c471; --warn-soft:#47381f; --warn-line:#ec9c13;
+    --bad:#e48b81; --bad-soft:#422724; --bad-line:#d44535;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: "IBM Plex Sans", system-ui, sans-serif;
+    background: #e9e6da;
+    color: #1d392b;
+    padding: 0 0 80px;
+  }
+  .mono { font-family: "IBM Plex Mono", monospace; }
+
+  /* ---- Prototype chrome (never ships) ---- */
+  .proto-banner {
+    position: sticky; top: 0; z-index: 50;
+    background: #1d392b; color: #fffefa;
+    padding: 10px 20px; font-size: 13px; font-weight: 600;
+    display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  }
+  .proto-banner span.tag {
+    background: #c9dfb4; color: #182a1e; border-radius: 999px; padding: 2px 10px; font-size: 11px; letter-spacing: .04em; text-transform: uppercase;
+  }
+  .proto-toc {
+    max-width: 1200px; margin: 24px auto 0; padding: 0 20px;
+    display: flex; gap: 8px; flex-wrap: wrap; font-size: 13px;
+  }
+  .proto-toc a {
+    color: #1d392b; background: #fffefa; border: 1px solid #d8ded3; border-radius: 999px;
+    padding: 6px 14px; text-decoration: none;
+  }
+  .proto-section {
+    max-width: 1200px; margin: 48px auto 0; padding: 0 20px;
+  }
+  .proto-section h2 {
+    font-size: 20px; margin: 0 0 6px; letter-spacing: -0.01em;
+  }
+  .proto-section .proto-note {
+    font-size: 13.5px; color: #4b5a51; max-width: 760px; margin: 0 0 20px; line-height: 1.5;
+  }
+  .frame-row {
+    display: flex; gap: 24px; flex-wrap: wrap; align-items: flex-start; margin-bottom: 28px;
+  }
+  .frame {
+    border-radius: 14px; overflow: hidden; box-shadow: 0 1px 2px rgba(0,0,0,.08), 0 8px 24px rgba(0,0,0,.10);
+    display: flex; flex-direction: column;
+  }
+  .frame-label {
+    font-size: 11.5px; font-weight: 600; letter-spacing: .03em; text-transform: uppercase;
+    background: #1d392b; color: #fffefa; padding: 6px 12px;
+    display: flex; justify-content: space-between; gap: 8px;
+  }
+  .frame-label .dim { color: #c9dfb4; font-weight: 500; }
+  .frame-desktop { width: 760px; }
+  .frame-mobile { width: 300px; }
+  .frame-body {
+    background: var(--background); color: var(--foreground); flex: 1;
+    display: flex; align-items: center; justify-content: center; padding: 48px 32px;
+  }
+  .frame-mobile .frame-body { padding: 28px 16px; align-items: flex-start; padding-top: 48px; }
+
+  /* ---- The actual mock screen content ---- */
+  .wordmark { display: inline-flex; align-items: center; gap: 0.55em; font-weight: 600; letter-spacing: -0.02em; text-transform: uppercase; font-size: 15px; color: var(--foreground); margin-bottom: 28px; }
+  .wordmark svg { fill: currentColor; width: 17px; height: 21px; }
+
+  .auth-card {
+    background: var(--card); color: var(--card-foreground);
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    padding: 32px;
+    width: 100%; max-width: 380px;
+    display: flex; flex-direction: column; gap: 18px;
+  }
+  .frame-mobile .auth-card { max-width: 100%; padding: 24px 20px; }
+  .auth-card h1 { font-size: 19px; margin: 0; letter-spacing: -0.01em; }
+  .auth-card .sub { font-size: 13.5px; color: var(--muted-foreground); margin: -10px 0 4px; line-height: 1.45; }
+
+  .field { display: flex; flex-direction: column; gap: 6px; }
+  .field label { font-size: 13px; font-weight: 500; }
+  .field input {
+    font-family: inherit; font-size: 14px;
+    border: 1px solid var(--input); border-radius: 5px;
+    background: var(--card); color: var(--card-foreground);
+    padding: 9px 11px; outline: none;
+  }
+  .field input:focus { border-color: var(--ring); box-shadow: 0 0 0 2px var(--ring) inset, 0 0 0 1px var(--ring); }
+  .field.invalid input { border: 2px solid var(--destructive); padding: 8px 10px; }
+  .field .field-error { font-size: 12.5px; color: var(--destructive); font-weight: 500; }
+
+  .btn {
+    font-family: inherit; font-size: 14px; font-weight: 600;
+    border-radius: 5px; border: 1px solid transparent;
+    padding: 10px 16px; cursor: default; text-align: center;
+  }
+  .btn-primary { background: var(--primary); color: var(--primary-foreground); }
+  .btn-secondary { background: var(--secondary); color: var(--secondary-foreground); border-color: var(--input); }
+  .btn-link { background: transparent; color: var(--primary); text-decoration: underline; padding: 4px 0; font-weight: 500; }
+
+  /* Review fix: buttons/links had no visible keyboard-focus treatment (confirmed by a real Tab-key screenshot —
+     the browser's own default outline did not render visibly against these backgrounds). Explicit focus-visible
+     ring using the approved --ring token, matching the input fields' own already-correct focus treatment. */
+  .btn:focus-visible, .btn-link:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+
+  .banner { border-radius: 7px; padding: 10px 13px; font-size: 13px; display: flex; gap: 8px; align-items: flex-start; line-height: 1.4; }
+  .banner-bad { background: var(--bad-soft); color: var(--bad); border: 1px solid var(--bad-line); }
+  .banner-ok { background: var(--ok-soft); color: var(--ok); border: 1px solid var(--ok-line); }
+  .banner-warn { background: var(--warn-soft); color: var(--warn); border: 1px solid var(--warn-line); }
+
+  .org-list { display: flex; flex-direction: column; gap: 8px; }
+  .org-row {
+    display: flex; align-items: center; gap: 12px;
+    border: 1px solid var(--input); border-radius: 7px; padding: 12px 14px;
+    background: var(--card);
+  }
+  .org-row:hover { background: var(--accent); }
+  .org-mark {
+    width: 34px; height: 34px; border-radius: 7px; background: var(--primary); color: var(--primary-foreground);
+    display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 13px; flex-shrink: 0;
+  }
+  .org-meta { flex: 1; min-width: 0; }
+  .org-meta .name { font-weight: 600; font-size: 14px; }
+  .org-meta .role { font-size: 12.5px; color: var(--muted-foreground); }
+
+  .state-icon {
+    width: 48px; height: 48px; border-radius: 999px; display: flex; align-items: center; justify-content: center;
+    font-size: 22px; margin: 0 auto 4px;
+  }
+  .state-icon.bad { background: var(--bad-soft); color: var(--bad); }
+  .state-icon.neutral { background: var(--secondary); color: var(--muted-foreground); }
+  .center-text { text-align: center; }
+
+  .closing {
+    max-width: 760px; margin: 64px auto 0; padding: 0 20px 40px;
+  }
+  .closing h2 { font-size: 19px; }
+  .closing p { font-size: 14px; line-height: 1.6; color: #2c3b33; }
+  .closing ul { font-size: 14px; line-height: 1.6; color: #2c3b33; padding-left: 20px; }
+</style>
+</head>
+<body>
+
+<div class="proto-banner">
+  <div>⚠ PROTOTYPE — visual only, not production code. No real authentication, validation, or data. Preserves the existing behavior of each real screen; changes layout/visual treatment only.</div>
+  <span class="tag">Phase: Auth &amp; access-state</span>
+</div>
+
+<div class="proto-toc">
+  <a href="#a">A — Organization login</a>
+  <a href="#b">B — Invitation / reset-password flow</a>
+  <a href="#c">C — Organization selection</a>
+  <a href="#d">D — Access-denied / unavailable</a>
+  <a href="#closing">Observed common structure</a>
+</div>
+
+<!-- ================= SECTION A: ORGANIZATION LOGIN ================= -->
+<section class="proto-section" id="a">
+  <h2>A — Organization login (<code class="mono">/o/[orgSlug]/login</code>)</h2>
+  <p class="proto-note">Desktop + mobile, normal state (light) · validation-error state (desktop, light) · dark · Spanish. Real screen's session/redirect logic is unchanged — only the shell and field treatment are new.</p>
+
+  <div class="frame-row">
+    <div class="frame frame-desktop">
+      <div class="frame-label"><span>Desktop · Normal · Light · EN</span><span class="dim">760px</span></div>
+      <div class="frame-body theme-light">
+        <div class="auth-card">
+          <span class="wordmark"><svg viewBox="0 -3 24 30"><polygon points="0,2.55 24,-2.55 24,-0.55 0,4.55"/><polygon points="0,24.55 24,19.45 24,21.45 0,26.55"/></svg>MATROOM</span>
+          <h1>Sign in to Alliance BJJ</h1>
+          <div class="field"><label for="a1">Email</label><input id="a1" placeholder="you@example.com" /></div>
+          <div class="field"><label for="a2">Password</label><input id="a2" type="password" placeholder="••••••••" /></div>
+          <button class="btn btn-primary">Sign in</button>
+          <a href="#" onclick="return false" class="btn-link" style="font-size:13px">Forgot your password?</a>
+        </div>
+      </div>
+    </div>
+    <div class="frame frame-mobile">
+      <div class="frame-label"><span>Mobile · Normal · Light · EN</span><span class="dim">375px</span></div>
+      <div class="frame-body theme-light">
+        <div class="auth-card">
+          <span class="wordmark"><svg viewBox="0 -3 24 30"><polygon points="0,2.55 24,-2.55 24,-0.55 0,4.55"/><polygon points="0,24.55 24,19.45 24,21.45 0,26.55"/></svg>MATROOM</span>
+          <h1>Sign in to Alliance BJJ</h1>
+          <div class="field"><label for="a1m">Email</label><input id="a1m" placeholder="you@example.com" /></div>
+          <div class="field"><label for="a2m">Password</label><input id="a2m" type="password" placeholder="••••••••" /></div>
+          <button class="btn btn-primary">Sign in</button>
+          <a href="#" onclick="return false" class="btn-link" style="font-size:13px">Forgot your password?</a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="frame-row">
+    <div class="frame frame-desktop">
+      <div class="frame-label"><span>Desktop · Validation error · Light · EN</span><span class="dim">760px</span></div>
+      <div class="frame-body theme-light">
+        <div class="auth-card">
+          <span class="wordmark"><svg viewBox="0 -3 24 30"><polygon points="0,2.55 24,-2.55 24,-0.55 0,4.55"/><polygon points="0,24.55 24,19.45 24,21.45 0,26.55"/></svg>MATROOM</span>
+          <h1>Sign in to Alliance BJJ</h1>
+          <div class="banner banner-bad">Incorrect email or password. Try again, or reset your password.</div>
+          <div class="field invalid"><label for="a3">Email</label><input id="a3" value="you@example.com" /></div>
+          <div class="field invalid"><label for="a4">Password</label><input id="a4" type="password" value="wrongpass" /><span class="field-error">That password doesn't match this account.</span></div>
+          <button class="btn btn-primary">Sign in</button>
+          <a href="#" onclick="return false" class="btn-link" style="font-size:13px">Forgot your password?</a>
+        </div>
+      </div>
+    </div>
+
+    <div class="frame frame-desktop">
+      <div class="frame-label"><span>Desktop · Normal · Dark · EN</span><span class="dim">760px</span></div>
+      <div class="frame-body theme-dark">
+        <div class="auth-card">
+          <span class="wordmark"><svg viewBox="0 -3 24 30"><polygon points="0,2.55 24,-2.55 24,-0.55 0,4.55"/><polygon points="0,24.55 24,19.45 24,21.45 0,26.55"/></svg>MATROOM</span>
+          <h1>Sign in to Alliance BJJ</h1>
+          <div class="field"><label for="a5">Email</label><input id="a5" placeholder="you@example.com" /></div>
+          <div class="field"><label for="a6">Password</label><input id="a6" type="password" placeholder="••••••••" /></div>
+          <button class="btn btn-primary">Sign in</button>
+          <a href="#" onclick="return false" class="btn-link" style="font-size:13px">Forgot your password?</a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="frame-row">
+    <div class="frame frame-desktop">
+      <div class="frame-label"><span>Desktop · Normal · Light · ES</span><span class="dim">760px</span></div>
+      <div class="frame-body theme-light">
+        <div class="auth-card">
+          <span class="wordmark"><svg viewBox="0 -3 24 30"><polygon points="0,2.55 24,-2.55 24,-0.55 0,4.55"/><polygon points="0,24.55 24,19.45 24,21.45 0,26.55"/></svg>MATROOM</span>
+          <h1>Iniciar sesión en Alliance BJJ</h1>
+          <div class="field"><label for="a7">Correo electrónico</label><input id="a7" placeholder="tu@ejemplo.com" /></div>
+          <div class="field"><label for="a8">Contraseña</label><input id="a8" type="password" placeholder="••••••••" /></div>
+          <button class="btn btn-primary">Iniciar sesión</button>
+          <a href="#" onclick="return false" class="btn-link" style="font-size:13px">¿Olvidaste tu contraseña?</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= SECTION B: INVITATION / RESET ================= -->
+<section class="proto-section" id="b">
+  <h2>B — Invitation / reset-password flow (<code class="mono">/accept-invitation</code>, <code class="mono">/reset-password</code>)</h2>
+  <p class="proto-note">Valid-token state (desktop + mobile, light) vs. expired-token state (desktop, light) · one dark variant. The underlying token check and expiry logic are unchanged — this proposes only what each outcome looks like.</p>
+
+  <div class="frame-row">
+    <div class="frame frame-desktop">
+      <div class="frame-label"><span>Desktop · Valid token · Light · EN</span><span class="dim">760px</span></div>
+      <div class="frame-body theme-light">
+        <div class="auth-card">
+          <span class="wordmark"><svg viewBox="0 -3 24 30"><polygon points="0,2.55 24,-2.55 24,-0.55 0,4.55"/><polygon points="0,24.55 24,19.45 24,21.45 0,26.55"/></svg>MATROOM</span>
+          <h1>Set a new password</h1>
+          <p class="sub">For your account at Alliance BJJ.</p>
+          <div class="field"><label for="b1">New password</label><input id="b1" type="password" placeholder="At least 8 characters" /></div>
+          <div class="field"><label for="b2">Confirm password</label><input id="b2" type="password" placeholder="Repeat password" /></div>
+          <button class="btn btn-primary">Set password</button>
+        </div>
+      </div>
+    </div>
+    <div class="frame frame-mobile">
+      <div class="frame-label"><span>Mobile · Valid token · Light · EN</span><span class="dim">375px</span></div>
+      <div class="frame-body theme-light">
+        <div class="auth-card">
+          <span class="wordmark"><svg viewBox="0 -3 24 30"><polygon points="0,2.55 24,-2.55 24,-0.55 0,4.55"/><polygon points="0,24.55 24,19.45 24,21.45 0,26.55"/></svg>MATROOM</span>
+          <h1>Set a new password</h1>
+          <p class="sub">For your account at Alliance BJJ.</p>
+          <div class="field"><label for="b1m">New password</label><input id="b1m" type="password" placeholder="At least 8 characters" /></div>
+          <div class="field"><label for="b2m">Confirm password</label><input id="b2m" type="password" placeholder="Repeat password" /></div>
+          <button class="btn btn-primary">Set password</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="frame-row">
+    <div class="frame frame-desktop">
+      <div class="frame-label"><span>Desktop · Expired token · Light · EN</span><span class="dim">760px</span></div>
+      <div class="frame-body theme-light">
+        <div class="auth-card center-text" style="align-items:center">
+          <span class="state-icon bad">!</span>
+          <h1>This link has expired</h1>
+          <p class="sub">Password-reset links are only valid for 1 hour. Request a new one below.</p>
+          <button class="btn btn-primary" style="width:100%">Send a new link</button>
+          <a href="#" onclick="return false" class="btn-link">Back to sign in</a>
+        </div>
+      </div>
+    </div>
+    <div class="frame frame-desktop">
+      <div class="frame-label"><span>Desktop · Expired token · Dark · EN</span><span class="dim">760px</span></div>
+      <div class="frame-body theme-dark">
+        <div class="auth-card center-text" style="align-items:center">
+          <span class="state-icon bad">!</span>
+          <h1>This link has expired</h1>
+          <p class="sub">Password-reset links are only valid for 1 hour. Request a new one below.</p>
+          <button class="btn btn-primary" style="width:100%">Send a new link</button>
+          <a href="#" onclick="return false" class="btn-link">Back to sign in</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= SECTION C: ORGANIZATION SELECTION ================= -->
+<section class="proto-section" id="c">
+  <h2>C — Organization selection (<code class="mono">/select-organization</code>)</h2>
+  <p class="proto-note">This screen selects between ORGANIZATIONS a person belongs to (separate tenants) — never between branches/academies within one organization, which is a different, already-existing mechanism (branch scope) this screen does not touch or replace. Each row below is therefore a genuinely distinct organization, Alliance shown once; the other rows are clearly fictional placeholder organizations, not real gyms. Desktop + mobile, light · one dark variant. Each organization's own stored name/initial is shown — never the MATROOM mark for a tenant row (<code class="mono">design/matroom/DESIGN.md</code> "Identity": a tenant's own logo/initials, never the platform mark, where a tenant is in scope); the two fictional orgs use a neutral mark fill here since this prototype has no real stored brand color for them to show.</p>
+
+  <div class="frame-row">
+    <div class="frame frame-desktop">
+      <div class="frame-label"><span>Desktop · 3 organizations · Light · EN</span><span class="dim">760px</span></div>
+      <div class="frame-body theme-light">
+        <div class="auth-card" style="max-width:420px">
+          <span class="wordmark"><svg viewBox="0 -3 24 30"><polygon points="0,2.55 24,-2.55 24,-0.55 0,4.55"/><polygon points="0,24.55 24,19.45 24,21.45 0,26.55"/></svg>MATROOM</span>
+          <h1>Choose an organization</h1>
+          <p class="sub">You belong to more than one. Pick where to continue.</p>
+          <div class="org-list">
+            <div class="org-row"><div class="org-mark">AL</div><div class="org-meta"><div class="name">Alliance BJJ</div><div class="role">Director</div></div></div>
+            <div class="org-row"><div class="org-mark" style="background:var(--secondary);color:var(--secondary-foreground)">RG</div><div class="org-meta"><div class="name">Riverside Grappling Club (fictional)</div><div class="role">Staff</div></div></div>
+            <div class="org-row"><div class="org-mark" style="background:var(--secondary);color:var(--secondary-foreground)">NC</div><div class="org-meta"><div class="name">Northgate Combat Academy (fictional)</div><div class="role">Student</div></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="frame frame-mobile">
+      <div class="frame-label"><span>Mobile · 3 organizations · Light · EN</span><span class="dim">375px</span></div>
+      <div class="frame-body theme-light">
+        <div class="auth-card">
+          <span class="wordmark"><svg viewBox="0 -3 24 30"><polygon points="0,2.55 24,-2.55 24,-0.55 0,4.55"/><polygon points="0,24.55 24,19.45 24,21.45 0,26.55"/></svg>MATROOM</span>
+          <h1>Choose an organization</h1>
+          <p class="sub">You belong to more than one. Pick where to continue.</p>
+          <div class="org-list">
+            <div class="org-row"><div class="org-mark">AL</div><div class="org-meta"><div class="name">Alliance BJJ</div><div class="role">Director</div></div></div>
+            <div class="org-row"><div class="org-mark" style="background:var(--secondary);color:var(--secondary-foreground)">RG</div><div class="org-meta"><div class="name">Riverside Grappling Club (fictional)</div><div class="role">Staff</div></div></div>
+            <div class="org-row"><div class="org-mark" style="background:var(--secondary);color:var(--secondary-foreground)">NC</div><div class="org-meta"><div class="name">Northgate Combat Academy (fictional)</div><div class="role">Student</div></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="frame-row">
+    <div class="frame frame-desktop">
+      <div class="frame-label"><span>Desktop · 3 organizations · Dark · ES</span><span class="dim">760px</span></div>
+      <div class="frame-body theme-dark">
+        <div class="auth-card" style="max-width:420px">
+          <span class="wordmark"><svg viewBox="0 -3 24 30"><polygon points="0,2.55 24,-2.55 24,-0.55 0,4.55"/><polygon points="0,24.55 24,19.45 24,21.45 0,26.55"/></svg>MATROOM</span>
+          <h1>Elige una organización</h1>
+          <p class="sub">Perteneces a más de una. Elige con cuál continuar.</p>
+          <div class="org-list">
+            <div class="org-row"><div class="org-mark">AL</div><div class="org-meta"><div class="name">Alliance BJJ</div><div class="role">Director</div></div></div>
+            <div class="org-row"><div class="org-mark" style="background:var(--secondary);color:var(--secondary-foreground)">RG</div><div class="org-meta"><div class="name">Riverside Grappling Club (ficticia)</div><div class="role">Personal</div></div></div>
+            <div class="org-row"><div class="org-mark" style="background:var(--secondary);color:var(--secondary-foreground)">NC</div><div class="org-meta"><div class="name">Northgate Combat Academy (ficticia)</div><div class="role">Estudiante</div></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= SECTION D: ACCESS DENIED ================= -->
+<section class="proto-section" id="d">
+  <h2>D — Access-denied / unavailable (<code class="mono">/no-access</code>, <code class="mono">/no-organization-access</code>, <code class="mono">/organization-unavailable</code>)</h2>
+  <p class="proto-note">One shared pattern proposed for all three "you can't be here" screens — the icon/tone and action differ, the shell does not. Desktop + mobile, light · one dark variant.</p>
+
+  <div class="frame-row">
+    <div class="frame frame-desktop">
+      <div class="frame-label"><span>Desktop · No organization access · Light · EN</span><span class="dim">760px</span></div>
+      <div class="frame-body theme-light">
+        <div class="auth-card center-text" style="align-items:center">
+          <span class="wordmark" style="margin-bottom:8px"><svg viewBox="0 -3 24 30"><polygon points="0,2.55 24,-2.55 24,-0.55 0,4.55"/><polygon points="0,24.55 24,19.45 24,21.45 0,26.55"/></svg>MATROOM</span>
+          <span class="state-icon neutral">⦸</span>
+          <h1>You don't have access to this organization</h1>
+          <p class="sub">Ask a director at this academy to invite you, or switch to an organization you already belong to.</p>
+          <button class="btn btn-secondary" style="width:100%">Choose a different organization</button>
+          <a href="#" onclick="return false" class="btn-link">Sign out</a>
+        </div>
+      </div>
+    </div>
+    <div class="frame frame-mobile">
+      <div class="frame-label"><span>Mobile · No organization access · Light · EN</span><span class="dim">375px</span></div>
+      <div class="frame-body theme-light">
+        <div class="auth-card center-text" style="align-items:center">
+          <span class="wordmark" style="margin-bottom:8px"><svg viewBox="0 -3 24 30"><polygon points="0,2.55 24,-2.55 24,-0.55 0,4.55"/><polygon points="0,24.55 24,19.45 24,21.45 0,26.55"/></svg>MATROOM</span>
+          <span class="state-icon neutral">⦸</span>
+          <h1>You don't have access to this organization</h1>
+          <p class="sub">Ask a director at this academy to invite you, or switch to an organization you already belong to.</p>
+          <button class="btn btn-secondary" style="width:100%">Choose a different organization</button>
+          <a href="#" onclick="return false" class="btn-link">Sign out</a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="frame-row">
+    <div class="frame frame-desktop">
+      <div class="frame-label"><span>Desktop · Organization unavailable · Dark · EN</span><span class="dim">760px</span></div>
+      <div class="frame-body theme-dark">
+        <div class="auth-card center-text" style="align-items:center">
+          <span class="wordmark" style="margin-bottom:8px"><svg viewBox="0 -3 24 30"><polygon points="0,2.55 24,-2.55 24,-0.55 0,4.55"/><polygon points="0,24.55 24,19.45 24,21.45 0,26.55"/></svg>MATROOM</span>
+          <span class="state-icon bad">!</span>
+          <h1>This organization isn't available right now</h1>
+          <p class="sub">Its account may be suspended or pending review. Contact support if you believe this is a mistake.</p>
+          <button class="btn btn-secondary" style="width:100%">Sign out</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="closing" id="closing">
+  <h2>Observed common structure (written after building the four sections above — not decided beforehand)</h2>
+  <p>All four scenarios land on the same shape: a centered, max-width card (380-420px), the wordmark at the top, an `h1`, an optional one-line `.sub`, then either a form, a list, or a single state icon + message, then one primary action and (usually) one link-style secondary action. That repetition is real, not assumed — it is the same shell with different middles.</p>
+  <p>What is <em>not</em> identical: the organization-selection card needs a wider max-width (420px vs 380px) to fit a row's name/role pair without wrapping awkwardly, and its content is a list, not a form or a message — meaningfully different internals, not just a styling variant.</p>
+  <ul>
+    <li><strong>Justified as one shared component:</strong> the outer card shell (centering, max-width, card background/border/radius, the wordmark block, the heading+sub pattern). This is genuinely identical across all four and is where a real "AuthCard" component should start.</li>
+    <li><strong>Not justified as part of that same component:</strong> the form-field group, the org-list group, and the single-state-icon group are each their own small, separate piece — composed inside the shared card shell, not folded into one giant configurable component. Building three small pieces plus one shared shell is more honest than one component with a dozen conditional props.</li>
+    <li><strong>Still open:</strong> whether the access-denied pattern (section D) should be ONE component parameterized by icon/message/action, or three separate near-identical pages — the three real screens' exact copy needs to be read before deciding; this prototype used placeholder copy only.</li>
+  </ul>
+  <p>Recommendation: approve the shell shape shown above; defer the exact component boundary (one shell + three small pieces, as sketched) to implementation, where real code can confirm it holds once the actual existing screens' real copy and logic are read against it.</p>
+</div>
+
+</body>
+</html>

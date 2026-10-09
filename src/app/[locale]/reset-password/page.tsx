@@ -4,6 +4,8 @@ import { Suspense, useActionState } from "react";
 import { useTranslations } from "next-intl";
 import { useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { AuthCard } from "@/components/auth/auth-card";
 import { BrandBanner } from "@/components/brand/brand-banner";
 import { resetPassword } from "./actions";
 import { INITIAL_ACTION_STATE } from "@/lib/action-state";
@@ -27,26 +29,25 @@ function ResetPasswordForm() {
 
   if (state.ok) {
     return (
-      <main className="flex min-h-[calc(100vh-4rem)] flex-col items-center justify-center p-6 text-center">
-        <p>{t("success")}</p>
-      </main>
+      <AuthCard title={t("heading")}>
+        <p className="text-sm text-muted-foreground">{t("success")}</p>
+      </AuthCard>
     );
   }
 
   return (
-    <main className="flex min-h-[calc(100vh-4rem)] flex-col items-center justify-center gap-4 p-6">
-      <h1 className="text-2xl font-bold">{t("heading")}</h1>
-      <form action={formAction} className="flex w-full max-w-sm flex-col gap-3">
+    <AuthCard title={t("heading")}>
+      <form action={formAction} className="flex flex-col gap-3">
         <input type="hidden" name="token" value={token} />
         <label className="flex flex-col gap-1">
           <span>{t("newPassword")}</span>
-          <input type="password" name="password" required minLength={8} className="rounded border px-3 py-2" />
+          <Input type="password" name="password" required minLength={8} />
         </label>
-        {state.error && <p className="text-sm text-red-600">{t(state.error)}</p>}
+        {state.error && <p className="text-sm text-destructive">{t(state.error)}</p>}
         <Button type="submit" disabled={isPending}>
           {t("submit")}
         </Button>
       </form>
-    </main>
+    </AuthCard>
   );
 }

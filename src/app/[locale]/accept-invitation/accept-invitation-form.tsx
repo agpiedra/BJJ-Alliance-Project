@@ -3,6 +3,8 @@
 import { useActionState } from "react";
 import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { AuthCard } from "@/components/auth/auth-card";
 import { acceptInvitation } from "./actions";
 import { INITIAL_ACTION_STATE } from "@/lib/action-state";
 import type { InvitationSummary } from "@/lib/staff/describe-invitation";
@@ -19,9 +21,9 @@ export function AcceptInvitationForm({ locale, token, summary }: { locale: strin
 
   if (!summary.valid) {
     return (
-      <main className="flex min-h-[calc(100vh-4rem)] flex-col items-center justify-center gap-4 p-6">
-        <p className="max-w-sm text-center text-sm text-destructive">{t("invalidToken")}</p>
-      </main>
+      <AuthCard>
+        <p className="text-sm text-destructive">{t("invalidToken")}</p>
+      </AuthCard>
     );
   }
 
@@ -34,30 +36,28 @@ export function AcceptInvitationForm({ locale, token, summary }: { locale: strin
   // database (/api/access/refresh), so the old session needs nothing from them.
   if (state.ok) {
     return (
-      <main className="flex min-h-[calc(100vh-4rem)] flex-col items-center justify-center gap-4 p-6">
-        <h1 className="text-2xl font-bold">{t("joined", { organization: summary.organizationName })}</h1>
-        <p className="max-w-sm text-center text-sm text-muted-foreground">
+      <AuthCard title={t("joined", { organization: summary.organizationName })}>
+        <p className="text-sm text-muted-foreground">
           {summary.alreadySignedIn ? t("joinedBodySignedIn") : t("joinedBody")}
         </p>
-        <a href={summary.alreadySignedIn ? `/${locale}/dashboard` : `/${locale}/login`} className="underline">
+        <a href={summary.alreadySignedIn ? `/${locale}/dashboard` : `/${locale}/login`} className="text-sm underline">
           {summary.alreadySignedIn ? t("openApp") : t("signIn")}
         </a>
-      </main>
+      </AuthCard>
     );
   }
 
   return (
-    <main className="flex min-h-[calc(100vh-4rem)] flex-col items-center justify-center gap-4 p-6">
-      <h1 className="text-2xl font-bold">{summary.mode === "join" ? t("headingJoin", params) : t("heading")}</h1>
-      <p className="max-w-sm text-center text-sm text-muted-foreground">
+    <AuthCard title={summary.mode === "join" ? t("headingJoin", params) : t("heading")}>
+      <p className="text-sm text-muted-foreground">
         {summary.mode === "join" ? t("joinBody", params) : t("invitedAs", params)}
       </p>
-      <form action={formAction} className="flex w-full max-w-sm flex-col gap-3">
+      <form action={formAction} className="flex flex-col gap-3">
         <input type="hidden" name="token" value={token} />
         {summary.mode === "setPassword" && (
           <label className="flex flex-col gap-1">
             <span>{t("newPassword")}</span>
-            <input type="password" name="password" required minLength={8} className="rounded border px-3 py-2" />
+            <Input type="password" name="password" required minLength={8} />
           </label>
         )}
         {state.error && <p className="text-sm text-destructive">{t(state.error as never)}</p>}
@@ -65,6 +65,6 @@ export function AcceptInvitationForm({ locale, token, summary }: { locale: strin
           {summary.mode === "join" ? t("joinSubmit") : t("submit")}
         </Button>
       </form>
-    </main>
+    </AuthCard>
   );
 }
