@@ -1959,7 +1959,7 @@
     "weeklyDigest": {
       "title": "Weekly digest — {academyName}",
       "body": "{academyName}: {attendanceCount} check-ins in the last 7 days, {inactiveCount} students inactive 30+ days, {overduePayments} overdue payments.",
-      "bodyLedger": "{academyName}: {attendanceCount} check-ins in the last 7 days, {inactiveCount} students inactive 30+ days, {monthlyPastGrace} students past monthly grace, {signupPastDue} students past signup due.",
+      "bodyLedger": "{academyName}: {attendanceCount} check-ins in the last 7 days, {inactiveCount} students inactive 30+ days, {monthlyPastGrace} students past monthly grace, {signupPastDue} students past signup due. The two debt counts include inactive and archived students with qualifying debt, separate from the inactive-students count above.",
       "unknownSuffix": " {count, plural, one {(# student's ledger data unknown)} other {(# students' ledger data unknown)}}"
     }
   },

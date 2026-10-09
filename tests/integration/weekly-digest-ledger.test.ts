@@ -2,6 +2,7 @@ import "dotenv/config";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { getTestPrismaClient } from "../helpers/test-db";
 import { makeAccountingOrg } from "../helpers/accounting-org";
+import { hashSecret } from "../../src/lib/crypto";
 import { createMonthlyObligation } from "../../src/lib/dues/ledger/create-monthly-obligation";
 import * as duesFactsModule from "../../src/lib/dues/ledger/dues-facts";
 import * as listOverdueModule from "../../src/lib/payments/list-overdue";
@@ -77,6 +78,18 @@ async function newMonthlyObligation(org: Fixture, studentId: string, academyId: 
   );
   if (!r.ok) throw new Error(`fixture obligation failed: ${r.error}`);
   return r.obligationId;
+}
+
+/** A DIRECTOR recipient assigned to one academy, with an explicit locale — proves the digest renders the
+ * population-disclosure wording in each real recipient's own locale, not just a single hardcoded one. */
+async function addDirector(org: Fixture, academyId: string, locale: "en" | "es") {
+  const s = suffix();
+  const user = await prisma.user.create({
+    data: { email: `wdledger-director-${s}@example.com`, passwordHash: await hashSecret("irrelevant-password-123"), role: "DIRECTOR", locale },
+  });
+  await prisma.organizationMembership.create({ data: { userId: user.id, organizationId: org.org.id, role: "DIRECTOR" } });
+  await prisma.staffAssignment.create({ data: { userId: user.id, academyId, organizationId: org.org.id, role: "DIRECTOR" } });
+  return user;
 }
 
 async function newSignupObligation(org: Fixture, studentId: string, academyId: string, terms: { id: string }) {
@@ -180,6 +193,46 @@ describe("sendWeeklyDigestForAcademy: ledger-active counts (Decision 1)", () => 
   });
 });
 
+describe("sendWeeklyDigestForAcademy: population disclosure — the two debt counts include inactive/archived debtors", () => {
+  afterEach(() => {
+    mockActive = false;
+  });
+
+  it("REQUIRED: the disclosure wording renders in each real recipient's own locale — English and Spanish — distinct from the attendance-based inactive metric", async () => {
+    mockActive = true;
+    const org = await makeOrg("wd-ledger-disclosure"); // admin forced to "en" by makeOrg
+    const esDirector = await addDirector(org, org.academy.id, "es");
+    try {
+      const { terms, policy } = await seedPlanAndPolicy(org, org.academy.id);
+      const debtor = await newStudent(org, org.academy.id);
+      await newMonthlyObligation(org, debtor.id, org.academy.id, terms, policy);
+
+      const client = new RecordingResendClient();
+      await sendWeeklyDigestForAcademy(org.academy.id, client);
+
+      const enCall = client.calls.find((c) => c.to === org.admin.email);
+      const esCall = client.calls.find((c) => c.to === esDirector.email);
+      expect(enCall).toBeDefined();
+      expect(esCall).toBeDefined();
+
+      // English: states the disclosure, and still carries the separate attendance-based metric unconflated.
+      expect(enCall!.html).toContain("include inactive and archived students with qualifying debt");
+      expect(enCall!.html).toContain("students inactive 30+ days");
+
+      // Spanish: the same disclosure, genuinely translated — not just the English string reused.
+      expect(esCall!.html).toContain("incluyen estudiantes inactivos y archivados con deuda vigente");
+      expect(esCall!.html).toContain("estudiantes inactivos por 30+ días");
+    } finally {
+      // esDirector's StaffAssignment references org.academy.id — must go before org.drop()'s own academy delete.
+      await prisma.staffAssignment.deleteMany({ where: { userId: esDirector.id } });
+      await prisma.organizationMembership.deleteMany({ where: { userId: esDirector.id } });
+      await prisma.user.deleteMany({ where: { id: esDirector.id } });
+      await dropDeps(org);
+      await org.drop();
+    }
+  });
+});
+
 describe("sendWeeklyDigestForAcademy: real tenant/academy isolation with positive controls", () => {
   afterEach(() => {
     mockActive = false;
@@ -242,13 +295,19 @@ describe("sendWeeklyDigestForAcademy: partial-read failure stays visible (§6.2)
     mockActive = false;
   });
 
-  it("REQUIRED: a student missing from an otherwise-successful read shows an explicit unknown count, excluded from the confirmed count — never silently zero/healthy", async () => {
+  it("REQUIRED: exact confirmed and unknown counts together — a failed student contributes to unknown only, never to either confirmed count", async () => {
     mockActive = true;
     const org = await makeOrg("wd-ledger-partial-failure");
     try {
       const { terms, policy } = await seedPlanAndPolicy(org, org.academy.id);
-      const debtor = await newStudent(org, org.academy.id);
-      await newMonthlyObligation(org, debtor.id, org.academy.id, terms, policy);
+      // A real, successfully-read debtor on EACH count, so "exact confirmed count" is a genuine positive
+      // number, not just "0 because everything failed" — plus a separate debtor whose read will fail.
+      const confirmedMonthly = await newStudent(org, org.academy.id);
+      await newMonthlyObligation(org, confirmedMonthly.id, org.academy.id, terms, policy);
+      const confirmedSignup = await newStudent(org, org.academy.id);
+      await newSignupObligation(org, confirmedSignup.id, org.academy.id, terms);
+      const failedDebtor = await newStudent(org, org.academy.id); // would ALSO qualify for monthly past grace, if its read succeeded
+      await newMonthlyObligation(org, failedDebtor.id, org.academy.id, terms, policy);
 
       // Same documented partial-failure case `roster-payment-facts-queries.ts` itself describes: "a student
       // missing from an otherwise-successful chunk" — simulated by stripping this one student's fact out of a
@@ -257,7 +316,7 @@ describe("sendWeeklyDigestForAcademy: partial-read failure stays visible (§6.2)
       const spy = vi.spyOn(duesFactsModule, "listDuesFactsForStudents").mockImplementation(async (...args) => {
         const result = await real(...args);
         if (!result.ok) return result;
-        return { ...result, facts: result.facts.filter((f) => f.studentId !== debtor.id) };
+        return { ...result, facts: result.facts.filter((f) => f.studentId !== failedDebtor.id) };
       });
       const client = new RecordingResendClient();
       try {
@@ -266,12 +325,14 @@ describe("sendWeeklyDigestForAcademy: partial-read failure stays visible (§6.2)
         spy.mockRestore();
       }
 
-      // Numeric contract: the failed student is never folded into the confirmed count (it would have qualified
-      // for "past monthly grace" had the read succeeded) — the count stays at 0 — and the unknown-count is
-      // visible in the email body itself, not merely logged.
+      // Exact numeric contract, not a loose regex: confirmedMonthly alone (1), NEVER 2 — failedDebtor's real
+      // debt (which would have qualified) is excluded from the confirmed count, not folded in. The signup
+      // count (1, confirmedSignup) is unaffected by the monthly-side failure. The unknown-count is exactly 1
+      // (failedDebtor), rendered with its exact singular wording, not merely "nonzero" or logged only.
       const body = client.calls[0]!.html;
-      expect(body).toContain("0 students past monthly grace");
-      expect(body).toMatch(/student('|&#x27;|&#39;)?s? ledger data unknown/);
+      expect(body).toContain("1 students past monthly grace");
+      expect(body).toContain("1 students past signup due");
+      expect(body).toContain("(1 student&#39;s ledger data unknown)");
     } finally {
       await dropDeps(org);
       await org.drop();
