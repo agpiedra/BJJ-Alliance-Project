@@ -32,11 +32,9 @@ import { listOverdueStudents, type OverdueStudent } from "@/lib/payments/list-ov
 import {
   isLedgerActiveForOrg,
   listRosterPaymentFacts,
-  toRosterLedgerDisplay,
-  type RosterPaymentFact,
 } from "@/lib/dues/roster-payment-facts-queries";
+import { joinNames, summarizeLedgerOverdue, type LedgerOverdueSummary } from "@/lib/dues/ledger-overdue-summary";
 import { RosterLedgerStatus, RosterLedgerUnavailable } from "../students/roster-ledger-status";
-import type { StudentStatus } from "@/generated/prisma/client";
 import { getActiveStudentCounts } from "@/lib/students/active-counts";
 import { getAtBeltSummary } from "@/lib/students/attendance-summary";
 import { buildProgressView } from "@/lib/promotion/progress-view";
@@ -85,15 +83,6 @@ function capitalizeFirst(value: string): string {
   return value.length === 0 ? value : value.charAt(0).toUpperCase() + value.slice(1);
 }
 
-/** Bounded name list for a stat tile's context line — Rule 5 ("numbers get
- * context") without letting a large roster blow out the tile's fixed height. */
-function joinNames(names: string[], max = 3): string {
-  if (names.length === 0) return "";
-  const shown = names.slice(0, max).join(", ");
-  const remaining = names.length - max;
-  return remaining > 0 ? `${shown} +${remaining}` : shown;
-}
-
 /**
  * REDESIGN_BRIEF.md §4.1 Task 4: "days absent (colored by severity)". The
  * threshold this list is built on is 7+ days (`CONTACT_THRESHOLD_DAYS`) —
@@ -127,56 +116,6 @@ function paymentStatusLabel(status: ContactPaymentStatus, tPaymentStatus: (key: 
   if (status === "OVERDUE") return tPaymentStatus("overdue");
   if (status === "NOT_RECORDED") return tPaymentStatus("notRecorded");
   return tPaymentStatus(status);
-}
-
-type LedgerOverdueSummary = {
-  monthlyPastGraceCount: number;
-  monthlyPastGraceNote: string;
-  signupPastDueCount: number;
-  signupPastDueNote: string;
-  /** A failed read contributes here ONLY — never silently folded into either count above, never treated as
-   * "no debt" (REMAINING-LEDGER-CONSUMERS-BRIEF.md §6.2's approved partial-read-failure policy). */
-  unknownCount: number;
-};
-
-/**
- * REMAINING-LEDGER-CONSUMERS-BRIEF.md §2.1/Decision 1/Decision 2 (dashboard overdue panel): two independent
- * counts — `monthlyPastGrace` and `signupPastDue` — a student can appear in BOTH (never deduplicated into one
- * "unique affected students" total, never summed together into one number). The population this is called over
- * includes inactive/archived students with qualifying old debt (Decision 2); their status is labeled in the
- * joined-names note whenever it is not `"ACTIVE"`, never presented indistinguishably from an active student's
- * debt. Pure — no I/O — so the real batched read (`listRosterPaymentFacts`) and this aggregation are two
- * separately verifiable steps, mirroring `toRosterLedgerDisplay`'s own pure-function precedent.
- */
-function summarizeLedgerOverdue(
-  students: Array<{ id: string; firstName: string; lastName: string; status: StudentStatus }>,
-  byStudentId: Map<string, RosterPaymentFact>,
-  tStatus: (status: string) => string,
-): LedgerOverdueSummary {
-  const monthlyNames: string[] = [];
-  const signupNames: string[] = [];
-  let unknownCount = 0;
-
-  for (const student of students) {
-    const fact = byStudentId.get(student.id);
-    if (!fact?.ok) {
-      unknownCount++;
-      continue;
-    }
-    const display = toRosterLedgerDisplay(fact.facts, fact.todayIso);
-    const label =
-      student.status === "ACTIVE" ? `${student.firstName} ${student.lastName}` : `${student.firstName} ${student.lastName} (${tStatus(student.status)})`;
-    if (display.flags.monthlyPastGrace) monthlyNames.push(label);
-    if (display.flags.signupPastDue) signupNames.push(label);
-  }
-
-  return {
-    monthlyPastGraceCount: monthlyNames.length,
-    monthlyPastGraceNote: joinNames(monthlyNames),
-    signupPastDueCount: signupNames.length,
-    signupPastDueNote: joinNames(signupNames),
-    unknownCount,
-  };
 }
 
 export default async function DashboardPage() {

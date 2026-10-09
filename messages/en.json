@@ -1958,7 +1958,9 @@
     },
     "weeklyDigest": {
       "title": "Weekly digest — {academyName}",
-      "body": "{academyName}: {attendanceCount} check-ins in the last 7 days, {inactiveCount} students inactive 30+ days, {overduePayments} overdue payments."
+      "body": "{academyName}: {attendanceCount} check-ins in the last 7 days, {inactiveCount} students inactive 30+ days, {overduePayments} overdue payments.",
+      "bodyLedger": "{academyName}: {attendanceCount} check-ins in the last 7 days, {inactiveCount} students inactive 30+ days, {monthlyPastGrace} students past monthly grace, {signupPastDue} students past signup due.",
+      "unknownSuffix": " {count, plural, one {(# student's ledger data unknown)} other {(# students' ledger data unknown)}}"
     }
   },
   "platform": {

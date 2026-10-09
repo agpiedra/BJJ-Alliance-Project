@@ -1958,7 +1958,9 @@
     },
     "weeklyDigest": {
       "title": "Resumen semanal — {academyName}",
-      "body": "{academyName}: {attendanceCount} asistencias en los últimos 7 días, {inactiveCount} estudiantes inactivos por 30+ días, {overduePayments} pagos atrasados."
+      "body": "{academyName}: {attendanceCount} asistencias en los últimos 7 días, {inactiveCount} estudiantes inactivos por 30+ días, {overduePayments} pagos atrasados.",
+      "bodyLedger": "{academyName}: {attendanceCount} asistencias en los últimos 7 días, {inactiveCount} estudiantes inactivos por 30+ días, {monthlyPastGrace} estudiantes en gracia mensual vencida, {signupPastDue} estudiantes con inscripción vencida.",
+      "unknownSuffix": " {count, plural, one {(# estudiante con datos de saldo desconocidos)} other {(# estudiantes con datos de saldo desconocidos)}}"
     }
   },
   "platform": {
