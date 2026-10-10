@@ -147,6 +147,9 @@
     "panel": {
       "academyJoin": "y",
       "sub": "{academy} · {attendance} asistencias esta semana, {promotions} alumnos listos para grado.",
+      "needsAttention": {
+        "heading": "Requiere atención"
+      },
       "stats": {
         "activeStudents": {
           "label": "Alumnos activos"
@@ -192,7 +195,7 @@
       },
       "beltDistribution": {
         "heading": "Distribución de cinturones",
-        "caption": "Promedio de asistencias por grado: {white} blanca · {blue} azul · {purple} morada · {brown} café",
+        "caption": "Asistencias requeridas por franja: {white} blanca · {blue} azul · {purple} morada · {brown} café",
         "empty": "No hay alumnos activos para mostrar la distribución de cinturones."
       },
       "franjaHeatmap": {
