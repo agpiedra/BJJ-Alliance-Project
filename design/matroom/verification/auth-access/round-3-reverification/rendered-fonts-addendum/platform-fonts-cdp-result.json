@@ -1,0 +1,107 @@
+[
+  {
+    "label": "heading",
+    "page": "/es/o/alliance-cr/login",
+    "selector": "[data-slot=\"card-title\"]",
+    "computed": {
+      "text": "Iniciar sesión",
+      "fontFamily": "ibmPlexSans, \"ibmPlexSans Fallback\"",
+      "fontWeight": "500"
+    },
+    "platformFonts": {
+      "fonts": [
+        {
+          "familyName": "IBM Plex Sans Medm",
+          "postScriptName": "IBMPlexSans-Medm",
+          "isCustomFont": true,
+          "glyphCount": 14
+        }
+      ]
+    },
+    "screenshot": "C:\\Users\\iGaming\\Desktop\\BJJ Project\\BJJ Alliance Project\\.playwright-mcp\\rendered-fonts-heading.png"
+  },
+  {
+    "label": "label",
+    "page": "/es/o/alliance-cr/login",
+    "selector": "label span",
+    "computed": {
+      "text": "Correo electrónico",
+      "fontFamily": "ibmPlexSans, \"ibmPlexSans Fallback\"",
+      "fontWeight": "400"
+    },
+    "platformFonts": {
+      "fonts": [
+        {
+          "familyName": "IBM Plex Sans",
+          "postScriptName": "IBMPlexSans",
+          "isCustomFont": true,
+          "glyphCount": 18
+        }
+      ]
+    },
+    "screenshot": "C:\\Users\\iGaming\\Desktop\\BJJ Project\\BJJ Alliance Project\\.playwright-mcp\\rendered-fonts-label.png"
+  },
+  {
+    "label": "link",
+    "page": "/es/o/alliance-cr/login",
+    "selector": "a.text-sm.underline",
+    "computed": {
+      "text": "¿Olvidaste tu contraseña?",
+      "fontFamily": "ibmPlexSans, \"ibmPlexSans Fallback\"",
+      "fontWeight": "400"
+    },
+    "platformFonts": {
+      "fonts": [
+        {
+          "familyName": "IBM Plex Sans",
+          "postScriptName": "IBMPlexSans",
+          "isCustomFont": true,
+          "glyphCount": 25
+        }
+      ]
+    },
+    "screenshot": "C:\\Users\\iGaming\\Desktop\\BJJ Project\\BJJ Alliance Project\\.playwright-mcp\\rendered-fonts-link.png"
+  },
+  {
+    "label": "button",
+    "page": "/es/o/alliance-cr/login",
+    "selector": "button[type=\"submit\"]",
+    "computed": {
+      "text": "Entrar",
+      "fontFamily": "ibmPlexSans, \"ibmPlexSans Fallback\"",
+      "fontWeight": "600"
+    },
+    "platformFonts": {
+      "fonts": [
+        {
+          "familyName": "IBM Plex Sans SmBld",
+          "postScriptName": "IBMPlexSans-SmBld",
+          "isCustomFont": true,
+          "glyphCount": 6
+        }
+      ]
+    },
+    "screenshot": "C:\\Users\\iGaming\\Desktop\\BJJ Project\\BJJ Alliance Project\\.playwright-mcp\\rendered-fonts-button.png"
+  },
+  {
+    "label": "paragraph",
+    "page": "/en/accept-invitation?token=rendered-fonts-diagnostic-invalid",
+    "selector": "p",
+    "computed": {
+      "text": "This invitation link is invalid or has expired.",
+      "fontFamily": "ibmPlexSans, \"ibmPlexSans Fallback\"",
+      "fontWeight": "400"
+    },
+    "platformFonts": {
+      "fonts": [
+        {
+          "familyName": "IBM Plex Sans",
+          "postScriptName": "IBMPlexSans",
+          "isCustomFont": true,
+          "glyphCount": 47
+        }
+      ]
+    },
+    "screenshot": "C:\\Users\\iGaming\\Desktop\\BJJ Project\\BJJ Alliance Project\\.playwright-mcp\\rendered-fonts-paragraph.png"
+  }
+]

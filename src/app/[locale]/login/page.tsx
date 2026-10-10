@@ -1,4 +1,3 @@
-import { BrandBanner } from "@/components/brand/brand-banner";
 import { LoginForm } from "./login-form";
 
 /**
@@ -8,13 +7,10 @@ import { LoginForm } from "./login-form";
  * promised when it was built: real per-org routing now exists
  * (`/o/[orgSlug]/login`), so bare `/login` no longer needs to guess which
  * organization's branding to show — it's the generic entry point for
- * someone who didn't arrive via their organization's own link.
+ * someone who didn't arrive via their organization's own link. No `brand`
+ * prop passed: `LoginForm`/`AuthCard` fall back to the generic platform
+ * wordmark, same as before.
  */
 export default function LoginPage() {
-  return (
-    <>
-      <BrandBanner />
-      <LoginForm />
-    </>
-  );
+  return <LoginForm />;
 }

@@ -441,7 +441,8 @@
       "role": {
         "ADMIN": "Dueño",
         "DIRECTOR": "Director de sede",
-        "INSTRUCTOR": "Instructor"
+        "INSTRUCTOR": "Instructor",
+        "STUDENT": "Alumno"
       },
       "platform": "Plataforma",
       "myTraining": "Mi entrenamiento",

@@ -127,11 +127,13 @@ describe("describeInvitation tells the accept page whether a password is needed"
       userIds.push(user.id);
       const token = await issue(email);
       const render = async () => {
+        // MATROOM Phase 1 round 2 — the page now returns the form element directly (no
+        // BrandBanner-wrapping fragment; branding moved inside AuthCard, rendered by the form).
         const tree = (await AcceptInvitationPage({
           params: Promise.resolve({ locale: "en" }),
           searchParams: Promise.resolve({ token }),
-        })) as { props: { children: Array<{ props: { summary: { alreadySignedIn?: boolean } } }> } };
-        return tree.props.children[1].props.summary.alreadySignedIn;
+        })) as { props: { summary: { alreadySignedIn?: boolean } } };
+        return tree.props.summary.alreadySignedIn;
       };
 
       currentSession = { user: { email } };
