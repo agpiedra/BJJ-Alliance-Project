@@ -210,21 +210,21 @@ function statTileHasFlag(html: string, label: string): boolean {
  *
  * A qualifying debtor's full name can ALSO appear earlier on the page, inside a "Monthly past grace"/"Signup
  * past due" stat-tile note (`joinNames` only truncates past its 3-name cap — below that, every name it lists is
- * literally rendered). The first occurrence found by `indexOf` is that note mention, which sits before the
- * page's very first `<tr>`: `lastIndexOf("<tr", start)` then returns -1, and `String.prototype.slice` treats a
- * negative start as counting from the END of the string rather than "not found", silently returning a bogus (or
- * empty) slice instead of throwing. Demonstrated directly below. Scans forward through EVERY occurrence of the
- * name and returns the first one actually enclosed by a `<tr>...</tr>` pair, so a note mention is skipped in
- * favor of the real row — and a name that is never inside any row still correctly returns "". */
+ * literally rendered) or in the plain text between two tables. An earlier `indexOf`-plus-`lastIndexOf`/`indexOf`
+ * version picked the nearest preceding `<tr` and the nearest following `</tr>` around whichever occurrence it
+ * found first — which, when the name sits between an already-CLOSED earlier row and a later, unrelated row,
+ * spans both and returns a slice that isn't really any single row's content (and when no `<tr` precedes the
+ * occurrence at all, `lastIndexOf` returns -1, which `String.prototype.slice` treats as counting from the END
+ * of the string rather than "not found" — a second, now-superseded way this used to misfire).
+ *
+ * Scans complete `<tr>...</tr>` fragments instead (table rows never nest, so each fragment is a real, whole
+ * row) and returns the first one that actually contains the name — never spanning past a `</tr>`, never
+ * matching a mention that sits outside every row. */
 function contactRow(html: string, fullName: string): string {
-  let start = html.indexOf(fullName);
-  while (start !== -1) {
-    const rowStart = html.lastIndexOf("<tr", start);
-    const rowEnd = html.indexOf("</tr>", start);
-    if (rowStart !== -1 && rowEnd !== -1 && rowEnd > rowStart) {
-      return html.slice(rowStart, rowEnd);
-    }
-    start = html.indexOf(fullName, start + 1);
+  const rowRe = /<tr[\s\S]*?<\/tr>/g;
+  let match: RegExpExecArray | null;
+  while ((match = rowRe.exec(html))) {
+    if (match[0].includes(fullName)) return match[0];
   }
   return "";
 }
@@ -244,6 +244,28 @@ describe("contactRow: a name mentioned earlier on the page never shadows its rea
       '<div>Monthly past grace: DashRender NoteShadow-2</div>' +
       '<table><tbody><tr><td>Someone Else</td></tr></tbody></table>';
     expect(contactRow(html, "DashRender NoteShadow-2")).toBe("");
+  });
+
+  it("REQUIRED: a name between an already-closed earlier row and an unrelated later row returns empty, not a span across both", () => {
+    const html =
+      '<table><tbody><tr><td>Someone Else</td><td>$ 10.00</td></tr></tbody></table>' +
+      '<div>DashRender RowSpan-1 mentioned outside any row</div>' +
+      '<table><tbody><tr><td>Another Person</td><td>$ 20.00</td></tr></tbody></table>';
+    expect(contactRow(html, "DashRender RowSpan-1")).toBe("");
+  });
+
+  it("REQUIRED: the same sequence followed by the target's actual row returns only that row, not the ones around it", () => {
+    const html =
+      '<table><tbody><tr><td>Someone Else</td><td>$ 10.00</td></tr></tbody></table>' +
+      '<div>DashRender RowSpan-2 mentioned outside any row</div>' +
+      '<table><tbody>' +
+      '<tr><td>Another Person</td><td>$ 20.00</td></tr>' +
+      '<tr><td>DashRender RowSpan-2</td><td>$ 30.00</td></tr>' +
+      '</tbody></table>';
+    const row = contactRow(html, "DashRender RowSpan-2");
+    expect(row).toBe('<tr><td>DashRender RowSpan-2</td><td>$ 30.00</td></tr>');
+    expect(row).not.toContain("Someone Else");
+    expect(row).not.toContain("Another Person");
   });
 });
 
