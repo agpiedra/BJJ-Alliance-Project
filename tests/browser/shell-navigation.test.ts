@@ -5,6 +5,7 @@ import { prisma } from "../../src/lib/prisma";
 import { hashSecret, generateRandomToken } from "../../src/lib/crypto";
 import { seedOrganizationDefaults } from "../../src/lib/organizations/seed-defaults";
 import { SMOKE_BASE_URL, mintSessionCookie } from "../helpers/smoke";
+import { cleanupDisposableOrgFixture } from "../helpers/fixture-cleanup";
 
 /**
  * Rendered-browser coverage for the Phase 2.5 shell & navigation phone pattern
@@ -334,13 +335,11 @@ describe("StaffTopBar: a long organization name does not overflow or overlap con
   });
 
   afterAll(async () => {
-    await prisma.organizationMembership.deleteMany({ where: { organizationId: longOrgId } });
-    await prisma.academy.deleteMany({ where: { organizationId: longOrgId } });
-    await prisma.promotionConfig.deleteMany({ where: { organizationId: longOrgId } });
-    await prisma.beltRank.deleteMany({ where: { organizationId: longOrgId } });
-    await prisma.organizationBranding.deleteMany({ where: { organizationId: longOrgId } });
-    await prisma.organization.delete({ where: { id: longOrgId } });
-    await prisma.user.delete({ where: { id: longOrgUserId } });
+    // Guarded: see fixture-cleanup.ts — never issues a deleteMany/delete with
+    // an undefined id, which Prisma would silently turn into an unscoped
+    // table-wide delete when setup fails before longOrgId/longOrgUserId is
+    // assigned.
+    await cleanupDisposableOrgFixture(prisma, { organizationId: longOrgId, userId: longOrgUserId });
   });
 
   it("REQUIRED: no horizontal overflow, the breadcrumb never overlaps the theme/notification/avatar controls, and the header genuinely grows", async () => {
