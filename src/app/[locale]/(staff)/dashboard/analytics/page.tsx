@@ -311,7 +311,9 @@ export default async function AnalyticsPage({
                   // heavier and darker text, not a 1.2:1 fill alone.
                   "px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground aria-pressed:bg-muted aria-pressed:font-semibold aria-pressed:text-foreground",
                   index > 0 && "border-l border-input",
-                  "max-[400px]:flex max-[400px]:min-h-11 max-[400px]:items-center max-[400px]:justify-center max-[400px]:rounded-md max-[400px]:border max-[400px]:border-l-0 max-[400px]:border-input max-[400px]:px-2 max-[400px]:whitespace-nowrap max-[400px]:aria-pressed:border-foreground",
+                  // Below 400px each pill stands alone in a 2x2 grid (not a segmented bar), so all four
+                  // need a complete border — the desktop divider's border-l-0 cancellation does not apply here.
+                  "max-[400px]:flex max-[400px]:min-h-11 max-[400px]:items-center max-[400px]:justify-center max-[400px]:rounded-md max-[400px]:border max-[400px]:border-input max-[400px]:px-2 max-[400px]:whitespace-nowrap max-[400px]:aria-pressed:border-foreground",
                 )}
               >
                 {range.label}

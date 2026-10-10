@@ -195,22 +195,82 @@ function splitStatsRegion(html: string): { before: string; statsRegion: string; 
 interface TileTuple {
   label: string;
   value: string;
+  deltaDirection: "up" | "down" | null;
+  deltaLabel: string | null;
   note: string | null;
 }
 
-/** Pulls every StatTile's (label, value, note) out of a stat-tile region, ignoring which row/wrapper it sits in
- * and ignoring the flag span (already stripped by the caller) — the content-level equivalence this test falls
- * back to once byte-identity is no longer possible for this region. */
+/** Pulls every StatTile's (label, value, delta, note) out of a stat-tile region, ignoring which row/wrapper it
+ * sits in and ignoring the flag span (already stripped by the caller) — the content-level equivalence this test
+ * falls back to once byte-identity is no longer possible for this region. `StatTile` (stat-tile.tsx) can render
+ * BOTH a delta div (`text-[11.5px] text-ok|text-bad`) and a note div (`text-[11.5px] text-muted-foreground`) on
+ * the same tile — two independent optional groups, each anchored on its own distinguishing class, not one shared
+ * slot that only ever captures whichever comes first. */
 function extractStatTiles(statsRegionHtml: string): TileTuple[] {
   const tileRe =
-    /<div class="text-xs text-muted-foreground">([^<]*)<\/div><div class="font-heading text-\[30px\] leading-none font-semibold tabular-nums">([^<]*)<\/div>(?:<div class="text-\[11\.5px\][^"]*">([^<]*)<\/div>)?/g;
+    /<div class="text-xs text-muted-foreground">([^<]*)<\/div><div class="font-heading text-\[30px\] leading-none font-semibold tabular-nums">([^<]*)<\/div>(?:<div class="text-\[11\.5px\] (text-ok|text-bad)">([^<]*)<\/div>)?(?:<div class="text-\[11\.5px\] text-muted-foreground">([^<]*)<\/div>)?/g;
   const tiles: TileTuple[] = [];
   let match: RegExpExecArray | null;
   while ((match = tileRe.exec(statsRegionHtml))) {
-    tiles.push({ label: match[1]!, value: match[2]!, note: match[3] ?? null });
+    tiles.push({
+      label: match[1]!,
+      value: match[2]!,
+      deltaDirection: match[3] === "text-ok" ? "up" : match[3] === "text-bad" ? "down" : null,
+      deltaLabel: match[4] ?? null,
+      note: match[5] ?? null,
+    });
   }
   return tiles.sort((x, y) => x.label.localeCompare(y.label));
 }
+
+/** Builds the exact two-to-four-div fragment `StatTile` renders for one tile (stat-tile.tsx), so the unit tests
+ * below exercise `extractStatTiles` against real markup shape rather than a toy string. */
+function fakeStatTileHtml(opts: {
+  label: string;
+  value: string;
+  deltaDirection?: "up" | "down" | null;
+  deltaLabel?: string | null;
+  note?: string | null;
+}): string {
+  const deltaHtml = opts.deltaDirection
+    ? `<div class="text-[11.5px] ${opts.deltaDirection === "up" ? "text-ok" : "text-bad"}">${opts.deltaLabel}</div>`
+    : "";
+  const noteHtml = opts.note ? `<div class="text-[11.5px] text-muted-foreground">${opts.note}</div>` : "";
+  return `<div class="text-xs text-muted-foreground">${opts.label}</div><div class="font-heading text-[30px] leading-none font-semibold tabular-nums">${opts.value}</div>${deltaHtml}${noteHtml}`;
+}
+
+describe("extractStatTiles: delta and note are captured independently (regression for a shared single-slot capture)", () => {
+  it("REQUIRED: a non-vacuous tile with both delta and note captures both, not just whichever comes first", () => {
+    const html = fakeStatTileHtml({ label: "Both", value: "7", deltaDirection: "up", deltaLabel: "+2 vs last week", note: "Escazú" });
+    expect(extractStatTiles(html)).toEqual([
+      { label: "Both", value: "7", deltaDirection: "up", deltaLabel: "+2 vs last week", note: "Escazú" },
+    ]);
+  });
+
+  it("REQUIRED: changing delta direction alone is detected, note untouched", () => {
+    const up = extractStatTiles(fakeStatTileHtml({ label: "Both", value: "7", deltaDirection: "up", deltaLabel: "+2 vs last week", note: "Escazú" }));
+    const down = extractStatTiles(fakeStatTileHtml({ label: "Both", value: "7", deltaDirection: "down", deltaLabel: "+2 vs last week", note: "Escazú" }));
+    expect(down).not.toEqual(up);
+    expect(down[0]!.deltaDirection).toBe("down");
+    expect(down[0]!.note).toBe(up[0]!.note);
+  });
+
+  it("REQUIRED: removing the note alone is detected, delta untouched", () => {
+    const withNote = extractStatTiles(fakeStatTileHtml({ label: "Both", value: "7", deltaDirection: "up", deltaLabel: "+2 vs last week", note: "Escazú" }));
+    const withoutNote = extractStatTiles(fakeStatTileHtml({ label: "Both", value: "7", deltaDirection: "up", deltaLabel: "+2 vs last week", note: null }));
+    expect(withoutNote).not.toEqual(withNote);
+    expect(withoutNote[0]!.note).toBeNull();
+    expect(withoutNote[0]!.deltaLabel).toBe(withNote[0]!.deltaLabel);
+  });
+
+  it("REQUIRED: removing the delta alone is detected, note untouched", () => {
+    const withDelta = extractStatTiles(fakeStatTileHtml({ label: "Both", value: "7", deltaDirection: "up", deltaLabel: "+2 vs last week", note: "Escazú" }));
+    const withoutDelta = extractStatTiles(fakeStatTileHtml({ label: "Both", value: "7", deltaDirection: null, deltaLabel: null, note: "Escazú" }));
+    expect(withoutDelta).not.toEqual(withDelta);
+    expect(withoutDelta[0]!.deltaDirection).toBeNull();
+    expect(withoutDelta[0]!.note).toBe(withDelta[0]!.note);
+  });
+});
 
 describe("dashboard/page.tsx: inactive-ledger render against the pre-PR3 baseline (stat-tile region normalized, rest byte-for-byte)", () => {
   it("REQUIRED: same stat-tile content (regrouped under the approved 'Needs attention' heading) and byte-identical everything else", async () => {
