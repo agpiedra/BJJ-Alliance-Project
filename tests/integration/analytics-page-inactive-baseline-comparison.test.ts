@@ -203,8 +203,18 @@ function withProvider(page: unknown): string {
   return renderToStaticMarkup(createElement(NextIntlClientProvider, { locale: "en", messages: enMessages } as never, page as never));
 }
 
-describe("dashboard/analytics/page.tsx: inactive-path render EQUIVALENCE against the pre-PR6 baseline (main@d594e03)", () => {
-  it("REQUIRED: current inactive render is equivalent to the real pre-PR6 implementation, including its own contemporaneous headline-tiles.ts/locations.ts — not the current ones", async () => {
+/** MATROOM Phase 3 (approved prototype, stage E/H filters-row breakpoint): the quick-range control's `<a>`/group
+ * `<div>` gained purely-additive `max-[400px]:*` utility classes (a sub-400px 2x2 pill-grid layout) — an
+ * intentional, approved responsive change, not present at BASELINE_REF. These tokens never change which
+ * element exists or its text content, only its class list, so stripping them (and the double space left behind)
+ * is enough to keep comparing every real byte of content and markup structure, while staying blind to the one
+ * already-approved class-list addition. */
+function stripNarrowFilterClasses(html: string): string {
+  return html.replace(/\s?max-\[400px\]:[^\s"]+/g, "").replace(/ {2,}/g, " ");
+}
+
+describe("dashboard/analytics/page.tsx: inactive-path render against the pre-PR6 baseline (main@d594e03, narrow-filter classes normalized)", () => {
+  it("REQUIRED: current inactive render matches the real pre-PR6 implementation byte-for-byte once the approved sub-400px filter classes are normalized away", async () => {
     currentSession = { user: { id: org.admin.id }, activeOrganizationId: org.org.id };
     const baselineHtml = normalizeReactGeneratedIds(withProvider(await BaselinePage({ searchParams: Promise.resolve({}) })));
     const currentHtml = normalizeReactGeneratedIds(withProvider(await CurrentPage({ searchParams: Promise.resolve({}) })));
@@ -213,6 +223,9 @@ describe("dashboard/analytics/page.tsx: inactive-path render EQUIVALENCE against
     // Non-vacuous: real, meaningful nonzero content, not an empty shell.
     expect(baselineHtml).toContain("Payment health (current month)");
     expect(baselineHtml).toContain("50%"); // 1 healthy (paidActive) / 2 enrolled, the legacy formula's own exact value
-    expect(currentHtml).toBe(baselineHtml);
+    expect(stripNarrowFilterClasses(currentHtml)).toBe(stripNarrowFilterClasses(baselineHtml));
+    // The approved addition itself, asserted directly rather than merely tolerated away.
+    expect(currentHtml).toContain("max-[400px]:grid");
+    expect(baselineHtml).not.toContain("max-[400px]:grid");
   });
 });

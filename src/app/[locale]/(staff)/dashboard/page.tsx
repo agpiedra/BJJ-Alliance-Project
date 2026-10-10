@@ -452,6 +452,13 @@ export default async function DashboardPage() {
     showBrandingReminder = !organization?.brandingReminderDismissedAt && !branding.logoUrl;
   }
 
+  // MATROOM Phase 3 (approved prototype stage A, "Needs attention"): Ready to grade is unconditional; the
+  // overdue/ledger tiles add 1 (legacy) or 2 (ledger-active) more, only when canViewOverduePayments. StatRow's
+  // `columns` prop only accepts 2-6 — 3 sizes this row to its real content without a fixed-width grid leaving
+  // empty cells for roles/paths with fewer tiles.
+  const needsAttentionCount = 1 + (canViewOverduePayments ? (ledgerActive ? 2 : 1) : 0);
+  const needsAttentionColumns = needsAttentionCount >= 3 ? 3 : 2;
+
   return (
     <main className="flex flex-col gap-6 p-4 sm:p-6">
       <header className="flex flex-col gap-1">
@@ -480,10 +487,12 @@ export default async function DashboardPage() {
         )}
       </div>
 
-      {/* §4.1 Task 1: stat row of 4 (3 for INSTRUCTOR, who never sees the
-          overdue-payments tile — see canViewOverduePayments's doc comment),
-          plus 2 more for Phase 3c-iii's kids/adults breakdown. */}
-      <StatRow columns={canViewOverduePayments ? 6 : 5}>
+      {/* §4.1 Task 1: general-activity stat row — always 4 tiles (Phase 3c-iii's kids/adults breakdown
+          alongside the pre-existing active-students/weekly-attendance pair). Split from the "needs attention"
+          row below (MATROOM Phase 3, approved prototype stage A): these two never carried the same meaning —
+          one is a snapshot, the other is a signal that something needs action — so they're no longer one
+          undifferentiated row of tiles. */}
+      <StatRow columns={4}>
         <StatTile label={t("panel.stats.activeStudents.label")} value={activeStudentCount} note={academyLabel} />
         <StatTile label={t("panel.stats.activeKids.label")} value={activeKidsCount} note={academyLabel} />
         <StatTile label={t("panel.stats.activeAdults.label")} value={activeAdultsCount} note={academyLabel} />
@@ -492,55 +501,67 @@ export default async function DashboardPage() {
           value={weeklyAttendanceCount}
           delta={attendanceDelta}
         />
-        {/* MATROOM Phase 3 (approved prototype, review finding): colour is a signal for a count that needs
-            action — it must never paint a healthy zero the same as an urgent non-zero. `flag` is now
-            conditional on the value itself, not a static prop, for every tile below that can legitimately be
-            zero. This changes presentation only; the counts, queries, and role gates above are untouched. */}
-        <StatTile
-          label={t("panel.stats.readyToGrade.label")}
-          value={promotionQueue.length}
-          flag={promotionQueue.length > 0 ? "accent" : undefined}
-          note={readyNote || undefined}
-        />
-        {/* §2.1/§6: the legacy single "Atrasado" tile — replaced wholesale when `ledgerActive`, never shown
-            alongside the two ledger tiles below (the same replacement ternary every other current-status
-            consumer in this cutover already follows). */}
-        {canViewOverduePayments && !ledgerActive && (
-          <StatTile
-            label={t("panel.stats.overdue.label")}
-            value={overdueStudents.length}
-            flag={overdueStudents.length > 0 ? "bad" : undefined}
-            note={overdueNote || undefined}
-          />
-        )}
-        {/* Decision 1: two separate, never-merged counts — a student can appear in both. §6.2: a non-zero
-            unknownCount is shown alongside EACH count (both come from the same read, so a failure affects both
-            equally), never silently dropped. */}
-        {canViewOverduePayments && ledgerActive && (
-          <>
-            <StatTile
-              label={tLedgerFilters("monthlyPastGrace")}
-              value={ledgerOverdue.monthlyPastGraceCount}
-              flag={ledgerOverdue.monthlyPastGraceCount > 0 ? "bad" : undefined}
-              note={
-                [ledgerOverdue.monthlyPastGraceNote, ledgerOverdue.unknownCount > 0 ? t("panel.stats.unknownSuffix", { count: ledgerOverdue.unknownCount }) : ""]
-                  .filter(Boolean)
-                  .join(" · ") || undefined
-              }
-            />
-            <StatTile
-              label={tLedgerFilters("signupPastDue")}
-              value={ledgerOverdue.signupPastDueCount}
-              flag={ledgerOverdue.signupPastDueCount > 0 ? "bad" : undefined}
-              note={
-                [ledgerOverdue.signupPastDueNote, ledgerOverdue.unknownCount > 0 ? t("panel.stats.unknownSuffix", { count: ledgerOverdue.unknownCount }) : ""]
-                  .filter(Boolean)
-                  .join(" · ") || undefined
-              }
-            />
-          </>
-        )}
       </StatRow>
+
+      {/* MATROOM Phase 3 (approved prototype stage A, "Needs attention"): every tile that can carry a colour
+          flag — Ready to grade is unconditional (every role reaches it); the overdue/ledger tiles are gated by
+          canViewOverduePayments exactly as before. `needsAttentionColumns` sizes the row to its real tile count
+          (1 for INSTRUCTOR, 2 for legacy ADMIN/DIRECTOR, 3 for ledger-active ADMIN/DIRECTOR) rather than a fixed
+          6-wide grid that would leave empty cells — StatRow has no "1" column option, so a lone tile (INSTRUCTOR)
+          takes the narrowest available (2), identical to the prototype's own A1/A3 per-count-width boxes. */}
+      <div className="flex flex-col gap-2">
+        <h2 className="font-heading text-base leading-snug font-medium">{t("panel.needsAttention.heading")}</h2>
+        <StatRow columns={needsAttentionColumns}>
+          {/* MATROOM Phase 3 (approved prototype, review finding): colour is a signal for a count that needs
+              action — it must never paint a healthy zero the same as an urgent non-zero. `flag` is now
+              conditional on the value itself, not a static prop, for every tile below that can legitimately be
+              zero. This changes presentation only; the counts, queries, and role gates above are untouched. */}
+          <StatTile
+            label={t("panel.stats.readyToGrade.label")}
+            value={promotionQueue.length}
+            flag={promotionQueue.length > 0 ? "accent" : undefined}
+            note={readyNote || undefined}
+          />
+          {/* §2.1/§6: the legacy single "Atrasado" tile — replaced wholesale when `ledgerActive`, never shown
+              alongside the two ledger tiles below (the same replacement ternary every other current-status
+              consumer in this cutover already follows). */}
+          {canViewOverduePayments && !ledgerActive && (
+            <StatTile
+              label={t("panel.stats.overdue.label")}
+              value={overdueStudents.length}
+              flag={overdueStudents.length > 0 ? "bad" : undefined}
+              note={overdueNote || undefined}
+            />
+          )}
+          {/* Decision 1: two separate, never-merged counts — a student can appear in both. §6.2: a non-zero
+              unknownCount is shown alongside EACH count (both come from the same read, so a failure affects both
+              equally), never silently dropped. */}
+          {canViewOverduePayments && ledgerActive && (
+            <>
+              <StatTile
+                label={tLedgerFilters("monthlyPastGrace")}
+                value={ledgerOverdue.monthlyPastGraceCount}
+                flag={ledgerOverdue.monthlyPastGraceCount > 0 ? "bad" : undefined}
+                note={
+                  [ledgerOverdue.monthlyPastGraceNote, ledgerOverdue.unknownCount > 0 ? t("panel.stats.unknownSuffix", { count: ledgerOverdue.unknownCount }) : ""]
+                    .filter(Boolean)
+                    .join(" · ") || undefined
+                }
+              />
+              <StatTile
+                label={tLedgerFilters("signupPastDue")}
+                value={ledgerOverdue.signupPastDueCount}
+                flag={ledgerOverdue.signupPastDueCount > 0 ? "bad" : undefined}
+                note={
+                  [ledgerOverdue.signupPastDueNote, ledgerOverdue.unknownCount > 0 ? t("panel.stats.unknownSuffix", { count: ledgerOverdue.unknownCount }) : ""]
+                    .filter(Boolean)
+                    .join(" · ") || undefined
+                }
+              />
+            </>
+          )}
+        </StatRow>
+      </div>
 
       {/* §4.1 Task 2: weekly attendance trend + belt distribution. */}
       {canViewOverduePayments && (

@@ -147,6 +147,9 @@
     "panel": {
       "academyJoin": "y",
       "sub": "{academy} · {attendance} asistencias esta semana, {promotions} alumnos listos para grado.",
+      "needsAttention": {
+        "heading": "Requiere atención"
+      },
       "stats": {
         "activeStudents": {
           "label": "Alumnos activos"

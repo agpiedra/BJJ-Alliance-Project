@@ -160,32 +160,85 @@ function normalizeReactGeneratedIds(html: string): string {
   return html.replace(/«[^»]*»/g, "«ID»");
 }
 
-/** MATROOM Phase 3 (approved prototype, review finding) made each StatTile's colour flag conditional on its own
- * value instead of a static prop (`dashboard/page.tsx`) — an intentional, approved visual change, not a
- * regression. The pre-PR3 baseline predates that change and always renders the old static flag markup (e.g.
- * "Ready to grade" is `flag="accent"` unconditionally at BASELINE_REF, confirmed via `git show`), so with a
- * zero count it diverges from the current page's now-flagless render. Strip the flag span and its conditional
- * `pl-5` class from both sides before comparing: this keeps the test's real purpose — byte equivalence of every
- * tile's value, note, and the rest of the page (financial calculations, contact list, role gating) — intact
- * while staying blind to the one already-approved, presentation-only difference. */
+/** MATROOM Phase 3 (approved prototype stage A) restructured the stat-tile region twice, both approved, neither
+ * present at BASELINE_REF: (1) each StatTile's colour flag became conditional on its own value instead of a
+ * static prop; (2) the single 6-tile row split into a general-activity row plus a separate "Needs attention"
+ * row under its own heading. Neither is a regression this test should catch — they're the change this PR ships
+ * — so true byte-identity against the pre-PR3 baseline is no longer possible for that one region. This file is
+ * NOT a byte-identical comparison any more: it normalizes the stat-tile region explicitly (this function), then
+ * falls back to a value-level comparison there (same tiles, same values, same notes, just regrouped) while
+ * keeping a genuine byte-for-byte comparison for literally everything else on the page — proving Phase 3
+ * touched only the stat-tile region and nothing downstream (financial calculations, contact list, role gating,
+ * charts, promotion queue) regressed. */
 function stripStatTileFlagMarkup(html: string): string {
   return html
     .replace(/ pl-5(?=")/g, "")
     .replace(/<span aria-hidden="true" class="absolute inset-y-0 left-0 w-\[3px\] bg-(?:bad|brand-gold)"><\/span>/g, "");
 }
 
-describe("dashboard/page.tsx: inactive-ledger render EQUIVALENCE against the pre-PR3 baseline", () => {
-  it("REQUIRED: current inactive render is byte-identical to the real pre-PR3 implementation", async () => {
+/** StatRow's own hardcoded class prefix (`stat-tile.tsx`) — identical regardless of its `columns` prop, so this
+ * reliably locates the start of the stat-tile region on both the single-row baseline and the two-row current
+ * page without depending on which column-count class follows it. */
+const STAT_ROW_PREFIX = '<div class="grid grid-cols-1 gap-px overflow-hidden rounded-lg border border-border bg-border';
+/** The next unchanged section heading after the stat-tile region on both sides — marks where it ends. */
+const NEXT_SECTION_MARKER = ">Weekly attendance<";
+
+function splitStatsRegion(html: string): { before: string; statsRegion: string; after: string } {
+  const start = html.indexOf(STAT_ROW_PREFIX);
+  const end = html.indexOf(NEXT_SECTION_MARKER);
+  if (start === -1 || end === -1 || end <= start) {
+    throw new Error("Could not locate the stat-tile region's start/end markers in rendered HTML");
+  }
+  return { before: html.slice(0, start), statsRegion: html.slice(start, end), after: html.slice(end) };
+}
+
+interface TileTuple {
+  label: string;
+  value: string;
+  note: string | null;
+}
+
+/** Pulls every StatTile's (label, value, note) out of a stat-tile region, ignoring which row/wrapper it sits in
+ * and ignoring the flag span (already stripped by the caller) — the content-level equivalence this test falls
+ * back to once byte-identity is no longer possible for this region. */
+function extractStatTiles(statsRegionHtml: string): TileTuple[] {
+  const tileRe =
+    /<div class="text-xs text-muted-foreground">([^<]*)<\/div><div class="font-heading text-\[30px\] leading-none font-semibold tabular-nums">([^<]*)<\/div>(?:<div class="text-\[11\.5px\][^"]*">([^<]*)<\/div>)?/g;
+  const tiles: TileTuple[] = [];
+  let match: RegExpExecArray | null;
+  while ((match = tileRe.exec(statsRegionHtml))) {
+    tiles.push({ label: match[1]!, value: match[2]!, note: match[3] ?? null });
+  }
+  return tiles.sort((x, y) => x.label.localeCompare(y.label));
+}
+
+describe("dashboard/page.tsx: inactive-ledger render against the pre-PR3 baseline (stat-tile region normalized, rest byte-for-byte)", () => {
+  it("REQUIRED: same stat-tile content (regrouped under the approved 'Needs attention' heading) and byte-identical everything else", async () => {
     currentSession = { user: { id: a.admin.id }, activeOrganizationId: a.org.id };
-    const baselineHtml = withProvider(await BaselineDashboardPage());
-    const currentHtml = withProvider(await CurrentDashboardPage());
+    const baselineHtml = normalizeReactGeneratedIds(withProvider(await BaselineDashboardPage()));
+    const currentHtml = normalizeReactGeneratedIds(withProvider(await CurrentDashboardPage()));
     currentSession = null;
 
     // Non-vacuous: real financial content, not an empty shell.
     expect(baselineHtml).toContain("Overdue");
     expect(baselineHtml).toContain("Paid");
-    expect(stripStatTileFlagMarkup(normalizeReactGeneratedIds(currentHtml))).toBe(
-      stripStatTileFlagMarkup(normalizeReactGeneratedIds(baselineHtml)),
-    );
+
+    const baselineSplit = splitStatsRegion(baselineHtml);
+    const currentSplit = splitStatsRegion(currentHtml);
+
+    // Nothing before or after the stat-tile region moved — proves Phase 3's grouping/flag change is scoped to
+    // exactly the region it claims to touch.
+    expect(currentSplit.before).toBe(baselineSplit.before);
+    expect(currentSplit.after).toBe(baselineSplit.after);
+
+    // Same tiles, same values, same notes — regrouped into "Needs attention", not altered.
+    const baselineTiles = extractStatTiles(stripStatTileFlagMarkup(baselineSplit.statsRegion));
+    const currentTiles = extractStatTiles(stripStatTileFlagMarkup(currentSplit.statsRegion));
+    expect(currentTiles).toEqual(baselineTiles);
+    expect(baselineTiles.length).toBeGreaterThan(0);
+
+    // The approved structural change itself, asserted directly rather than merely tolerated.
+    expect(baselineSplit.statsRegion).not.toContain(">Needs attention<");
+    expect(currentSplit.statsRegion).toContain(">Needs attention<");
   });
 });
