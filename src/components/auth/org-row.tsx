@@ -29,9 +29,11 @@ export function OrgRow({
       >
         {mark}
       </span>
+      {/* No truncation: the approved prototype's .org-meta .name/.role have no overflow/ellipsis rule —
+          a long organization name is meant to wrap, not hide the text that distinguishes it from another row. */}
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-sm font-semibold text-foreground">{name}</span>
-        <span className="block truncate text-xs text-muted-foreground">{role}</span>
+        <span className="block text-sm font-semibold text-foreground">{name}</span>
+        <span className="block text-xs text-muted-foreground">{role}</span>
       </span>
     </span>
   );
