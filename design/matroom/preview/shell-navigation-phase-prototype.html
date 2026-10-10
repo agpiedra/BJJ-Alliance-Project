@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Phase 2.5 · Shell &amp; navigation prototype · MATROOM</title>
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="preview.css">
+<style>
+  /* Phase 2.5 additions only — everything else reuses preview.css (the approved Phase 1 preview's own CSS) as-is. */
+  .phase-banner { margin: 16px 0 0; padding: 10px 14px; border: 1px dashed var(--field); border-radius: var(--r-md); background: var(--paper); font-size: 14px; }
+  .phase-banner b { font-weight: 600; }
+  .decision-box { border: 1px solid var(--field); border-radius: var(--r-md); padding: 16px 18px; background: var(--paper); margin: 16px 0; }
+  .decision-box h3 { font: 600 16px/1.3 var(--sans); margin-bottom: 8px; }
+  .decision-box ul { margin: 8px 0 0; padding-left: 20px; }
+  .decision-box li { margin: 4px 0; }
+  .bug-fix-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
+  .bug-fix-row .cap { font: 600 13px/1.3 var(--mono); margin-bottom: 8px; text-transform: uppercase; letter-spacing: .04em; }
+  .cap.bug { color: var(--bad); }
+  .cap.fix { color: var(--ok); }
+
+  /* Academy / branch switcher — two real states from academy-switcher.tsx: a clickable dropdown
+     (ADMIN with 2+ branches) vs. plain read-only text (DIRECTOR/INSTRUCTOR always; ADMIN too at
+     exactly one branch — "nothing to switch between", same component, no dropdown affordance). */
+  .switcher { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; min-height: 40px; padding: 6px 10px; border: 1px solid var(--sidebar-line); border-radius: var(--r-sm); background: var(--sidebar); color: var(--sidebar-ink); font-size: 13.5px; cursor: pointer; }
+  .switcher .stack { display: flex; min-width: 0; flex: 1; flex-direction: column; text-align: left; }
+  .switcher .cur { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+  .switcher .sub2 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; opacity: .7; }
+  .switcher svg { flex: none; opacity: .7; }
+  .switcher-ro { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 40px; padding: 6px 10px; color: var(--sidebar-ink); font-size: 13.5px; }
+  .switcher-ro .label { overflow: hidden; text-overflow: ellipsis; white-space: normal; line-height: 1.3; font-weight: 500; }
+  .sw-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--brand); flex: none; }
+  .org-switch-link { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 0 12px; border-radius: var(--r-sm); color: var(--sidebar-ink); font-size: 14px; text-decoration: none; }
+  .org-switch-link:hover { background: color-mix(in srgb, var(--sidebar-ink) 9%, var(--sidebar)); }
+
+  /* Avatar dropdown mock */
+  .menu-pop { position: absolute; top: 52px; right: 16px; width: 240px; background: var(--paper); border: 1px solid var(--line); border-radius: var(--r-md); box-shadow: 0 8px 24px rgba(0,0,0,.14); padding: 6px; z-index: 20; }
+  .menu-pop .mi-label { padding: 8px 10px 4px; }
+  .menu-pop .mi-label .who { font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .menu-pop .mi-label .role { font-size: 12.5px; color: var(--muted); }
+  .menu-pop hr { border: 0; border-top: 1px solid var(--line); margin: 6px 0; }
+  .menu-pop .mi { display: flex; align-items: center; min-height: 40px; padding: 0 10px; border-radius: var(--r-sm); font-size: 14px; text-decoration: none; color: var(--ink); }
+  .menu-pop .mi:hover { background: var(--hover); }
+
+  /* Staff app sheet — a dedicated header (brand + close), matching the student portal's own .sheet pattern (parity, per D6's "student and staff" wording) instead of the bare sidebar reuse the first Phase-1 preview showed. */
+  .app .sheet { background: var(--sidebar); color: var(--sidebar-ink); flex-direction: column; padding: 0; }
+  .app .sheet .sheet-top { display: flex; align-items: center; justify-content: space-between; padding: 10px 10px 10px 14px; border-bottom: 1px solid var(--sidebar-line); }
+  .app .sheet .sheet-body { padding: 10px 12px; overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 4px; }
+  .app.is-open .sheet { display: flex; position: absolute; z-index: 6; top: 0; bottom: 0; left: 0; width: min(300px, 86%); }
+  .app .sheet .navitem { color: var(--sidebar-ink); }
+  .app .sheet .navitem:hover { background: color-mix(in srgb, var(--sidebar-ink) 9%, var(--sidebar)); }
+  .app .sheet .navitem[aria-current="page"] { background: var(--sidebar-active); color: var(--sidebar-active-ink); }
+  .app .sheet .grouplabel { color: var(--sidebar-muted); padding-left: 8px; }
+  .app .sheet .foot { margin-top: auto; border-top: 1px solid var(--sidebar-line); padding: 10px 8px; display: flex; flex-direction: column; gap: 2px; }
+  .app .sheet .foot .navitem { font-weight: 400; }
+
+  /* Bug-state sheet: deliberately NOT theme/tenant-scoped (simulates the portal-escapes-BrandingScope defect) */
+  .bug-scope .sheet { background: #fffefa !important; color: #1d392b !important; }
+  .bug-scope .sheet .navitem[aria-current="page"] { background: #e6ebdd !important; color: #1d392b !important; }
+  .bug-scope .sheet .sheet-top, .bug-scope .sheet .foot { border-color: #d8ded3 !important; }
+
+  /* Tenant scope demo: a fictional organization's stored colours, applied the real way BrandingScope does (override --brand-gold/--sidebar*) */
+  [data-tenant-demo] { --brand: #8a3b12; --on-brand: #fffefa; --field: #8a3b12; --sidebar: #241208; --sidebar-ink: #fbe9dd; --sidebar-active: #4a2a16; --sidebar-active-ink: #fbe9dd; --sidebar-line: #4a2a16; --action: #8a3b12; --action-fg: #fffefa; --action-edge: #8a3b12; }
+  [data-theme="dark"][data-tenant-demo] { --sidebar: #2c1810; }
+
+  .platform-topbar-links { display: flex; align-items: center; gap: 4px; }
+  .platform-topbar-links a { padding: 8px 12px; border-radius: var(--r-sm); font-size: 14px; text-decoration: none; color: var(--ink); min-height: 44px; display: flex; align-items: center; }
+  .platform-topbar-links a:hover { background: var(--hover); }
+  .platform-topbar-links a[aria-current="page"] { background: var(--soft); font-weight: 600; }
+</style>
+</head>
+<body data-theme="light">
+<div class="chrome">
+<header>
+  <p class="mono muted" style="font-size:13px">MATROOM Phase 2.5 · Shell &amp; navigation · proposal/prototype only — nothing here is in the app</p>
+  <h1>Shell &amp; navigation — D6 proposal</h1>
+  <p class="lede">The staff and platform shells' sidebar, top bar and phone navigation chrome. D6's recommended pattern (top bar + menu button + sheet, no bottom navigation) made concrete against the real nav structure, real role-visibility rules and real tenant branding — plus the documented phone-sidebar tenant-colour fix.</p>
+  <p class="sample-banner"><b>Illustrative sample data.</b> "Harbor Jiu-Jitsu" (a fictional tenant with an invented orange theme) and all names/counts are invented for this prototype. Every nav label, role group and visibility rule shown is copied verbatim from the real app's current <code>src/components/staff-sidebar/nav-items.ts</code> and <code>messages/en.json</code>/<code>es.json</code> — not invented. No app file, token, component or route was changed to build this.</p>
+</header>
+
+<h2 class="section">What's being decided</h2>
+<div class="decision-box">
+  <h3>D6 (DESIGN.md): "Phone navigation: top bar, menu button and sheet for student and staff, no bottom navigation, two new strings ('Menu', 'Close menu')."</h3>
+  <p>This prototype proposes D6 applies to <b>staff and platform</b> shells too (student portal already shipped this pattern in the portal phase). Concretely:</p>
+  <ul>
+    <li><b>Desktop:</b> unchanged in substance from what exists today — collapsible left sidebar (<code>src/components/ui/sidebar.tsx</code>, already built, already themed) + a persistent top bar.</li>
+    <li><b>Phone:</b> the sidebar becomes a <i>dedicated</i> sheet with its own header (brand + close button) and a footer for secondary actions (theme, sign out) — not a bare reuse of the desktop sidebar's own markup, which is what the very first Phase-1 preview showed for staff and what today's real `Sheet`-based mobile sidebar still does. This brings staff into parity with the <i>student portal's own</i> already-shipped sheet pattern (section B below), per D6's own "student and staff" wording.</li>
+    <li><b>Two new strings:</b> "Menu" / "Close menu" (<code>shellNav.menuOpen</code> / <code>shellNav.menuClose</code> proposed keys) — the only new copy this phase needs.</li>
+    <li><b>Platform shell currently has none of this</b> — section D shows it gaining the same top-bar + sheet pattern, scaled down to its 3 real nav links and single role.</li>
+  </ul>
+</div>
+
+<h2 class="section">A — Staff shell, desktop (unchanged in substance)</h2>
+<p class="note">Sidebar expanded, ADMIN role (every nav group visible — 9 items across Operations / Analytics / Academy), light + dark. This is the real <code>StaffSidebar</code>/<code>StaffTopBar</code> structure already in production; shown here only so the mobile sections below read as "the same shell, narrower," not a different design.</p>
+<div class="grid2">
+<div class="stage" data-theme="light" style="height:740px;container-type:normal">
+  <div class="app">
+    <div class="sidebar">
+      <div class="side-brand"><span class="wordmark"><svg class="mark-svg" width="18" height="22" viewBox="0 -3 24 30" fill="currentColor"><polygon points="0,2.55 24,-2.55 24,-0.55 0,4.55"/><polygon points="0,24.55 24,19.45 24,21.45 0,26.55"/></svg>MATROOM</span></div>
+      <div style="padding:0 2px 10px"><button class="switcher" type="button"><span class="sw-dot" aria-hidden="true"></span><span class="stack"><span class="cur">All locations</span><span class="sub2">View all locations</span></span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></button></div>
+      <div class="grouplabel">Operations</div>
+      <a class="navitem" href="#" aria-current="page"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>Panel</a>
+      <a class="navitem" href="#"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>Students</a>
+      <a class="navitem" href="#"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect width="20" height="14" x="2" y="5" rx="2"/><line x1="2" x2="22" y1="10" y2="10"/></svg>Payments</a>
+      <div class="grouplabel">Analytics</div>
+      <a class="navitem" href="#"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg>Analytics</a>
+      <div class="grouplabel">Academy</div>
+      <a class="navitem" href="#"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M3 10h18"/></svg>Schedule</a>
+      <a class="navitem" href="#"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>Kiosk</a>
+      <a class="navitem" href="#"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><circle cx="13.5" cy="6.5" r="2.5"/><circle cx="19" cy="17" r="2"/><circle cx="6" cy="17" r="3"/></svg>Branding</a>
+      <a class="navitem" href="#"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="m22 11-2 2 2 2"/></svg>Staff</a>
+      <a class="navitem" href="#"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>Locations</a>
+      <div class="foot">Sign out</div>
+    </div>
+    <div class="main">
+      <div class="topbar">
+        <span class="crumb">Alliance Jiu-Jitsu Costa Rica · Panel</span>
+        <span class="grow"></span>
+        <button class="iconbtn" aria-label="Theme"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79Z"/></svg></button>
+        <div class="avatar">AD</div>
+      </div>
+      <div class="page"><h1>Panel</h1><p class="sub">Desktop sidebar — unchanged shape, shown only for context. Switcher: ADMIN with 2+ branches, so it's the real clickable dropdown (bold current selection + "View all locations" hint + chevron, <code>academy-switcher.tsx</code>'s own two-line trigger).</p></div>
+    </div>
+  </div>
+</div>
+<div class="stage" data-theme="dark" style="height:740px;container-type:normal">
+  <div class="app">
+    <div class="sidebar">
+      <div class="side-brand"><span class="wordmark"><svg class="mark-svg" width="18" height="22" viewBox="0 -3 24 30" fill="currentColor"><polygon points="0,2.55 24,-2.55 24,-0.55 0,4.55"/><polygon points="0,24.55 24,19.45 24,21.45 0,26.55"/></svg>MATROOM</span></div>
+      <div style="padding:0 2px 10px"><button class="switcher" type="button"><span class="sw-dot" aria-hidden="true"></span><span class="stack"><span class="cur">All locations</span><span class="sub2">View all locations</span></span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></button></div>
+      <div class="grouplabel">Operations</div>
+      <a class="navitem" href="#" aria-current="page"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>Panel</a>
+      <a class="navitem" href="#"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>Students</a>
+      <a class="navitem" href="#"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect width="20" height="14" x="2" y="5" rx="2"/><line x1="2" x2="22" y1="10" y2="10"/></svg>Payments</a>
+      <div class="grouplabel">Analytics</div>
+      <a class="navitem" href="#"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg>Analytics</a>
+      <div class="grouplabel">Academy</div>
+      <a class="navitem" href="#"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M3 10h18"/></svg>Schedule</a>
+      <a class="navitem" href="#"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>Kiosk</a>
+      <a class="navitem" href="#"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><circle cx="13.5" cy="6.5" r="2.5"/><circle cx="19" cy="17" r="2"/><circle cx="6" cy="17" r="3"/></svg>Branding</a>
+      <a class="navitem" href="#"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="m22 11-2 2 2 2"/></svg>Staff</a>
+      <a class="navitem" href="#"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>Locations</a>
+      <div class="foot">Sign out</div>
+    </div>
+    <div class="main">
+      <div class="topbar">
+        <span class="crumb">Alliance Jiu-Jitsu Costa Rica · Panel</span>
+        <span class="grow"></span>
+        <button class="iconbtn" aria-label="Theme"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2"/></svg></button>
+        <div class="avatar">AD</div>
+      </div>
+      <div class="page"><h1>Panel</h1><p class="sub">Dark theme, same structure.</p></div>
+    </div>
+  </div>
+</div>
+</div>
+
+<h2 class="section">B — Staff shell, phone: role visibility (the actual proof, not assumed)</h2>
+<p class="note">390px frames, light theme. Four real scenarios from <code>nav-items.ts</code>' <code>visible()</code> rules and <code>academy-switcher.tsx</code>'s own read-only/dropdown split — not a mockup simplification. <b>ADMIN</b> always sees all 9 items regardless of branch count; only the switcher's affordance changes (dropdown when there's something to switch between, plain text when there isn't).</p>
+
+<p class="stage-label"><b>ADMIN, 2+ branches — closed → open → open, scrolled to bottom</b></p>
+<p class="tiny muted">9 items / 3 groups. Switcher: real two-line dropdown trigger (bold current selection, "View all locations" hint, chevron) — clickable, matches the desktop sidebar's own trigger in Section A.</p>
+<div class="phones">
+<div class="cell"><div class="stage phone" data-theme="light" style="height:620px"><div class="app"><div class="main"><div class="topbar"><button class="iconbtn only-narrow" aria-label="Menu" aria-expanded="false"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M4 5h16M4 12h16M4 19h16"/></svg></button><span class="grow brandline"><svg class="mark-svg" width="18" height="22" viewBox="0 -3 24 30" fill="currentColor"><polygon points="0,2.55 24,-2.55 24,-0.55 0,4.55"/><polygon points="0,24.55 24,19.45 24,21.45 0,26.55"/></svg><span class="name">Panel</span></span><div class="avatar">AD</div></div><div class="page"><h1 style="font-size:22px">Panel</h1><p class="sub">ADMIN — closed</p></div></div></div></div></div>
+<div class="cell"><div class="stage phone" data-theme="light" style="height:620px"><div class="app is-open"><div class="sheet"><div class="sheet-top"><span class="wordmark" style="font-size:16px"><svg class="mark-svg" width="16" height="20" viewBox="0 -3 24 30" fill="currentColor"><polygon points="0,2.55 24,-2.55 24,-0.55 0,4.55"/><polygon points="0,24.55 24,19.45 24,21.45 0,26.55"/></svg>MATROOM</span><button class="iconbtn" aria-label="Close menu"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div><div class="sheet-body"><button class="switcher" type="button" style="margin-bottom:6px"><span class="sw-dot" aria-hidden="true"></span><span class="stack"><span class="cur">All locations</span><span class="sub2">View all locations</span></span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></button><div class="grouplabel">Operations</div><a class="navitem" href="#" aria-current="page">Panel</a><a class="navitem" href="#">Students</a><a class="navitem" href="#">Payments</a><div class="grouplabel">Analytics</div><a class="navitem" href="#">Analytics</a><div class="grouplabel">Academy</div><a class="navitem" href="#">Schedule</a><a class="navitem" href="#">Kiosk</a><a class="navitem" href="#">Branding</a><a class="navitem" href="#">Staff</a><a class="navitem" href="#">Locations</a><div class="foot"><button class="navitem" type="button" style="width:100%;justify-content:flex-start;border:0;background:none;text-align:left">Theme</button><button class="navitem" type="button" style="width:100%;justify-content:flex-start;border:0;background:none;text-align:left">Sign out</button></div></div></div><div class="sheet-scrim" style="display:block;position:absolute;inset:0;z-index:5;background:rgba(8,14,11,.55)"></div></div></div></div>
+<div class="cell"><div class="stage phone" data-theme="light" style="height:620px"><div class="app is-open"><div class="sheet"><div class="sheet-top"><span class="wordmark" style="font-size:16px"><svg class="mark-svg" width="16" height="20" viewBox="0 -3 24 30" fill="currentColor"><polygon points="0,2.55 24,-2.55 24,-0.55 0,4.55"/><polygon points="0,24.55 24,19.45 24,21.45 0,26.55"/></svg>MATROOM</span><button class="iconbtn" aria-label="Close menu"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div><div class="sheet-body"><p class="tiny muted" style="margin:0 8px 4px;border-top:1px dashed var(--sidebar-line);padding-top:6px">↑ scrolled past Operations, Analytics, Schedule, Kiosk</p><a class="navitem" href="#">Branding</a><a class="navitem" href="#">Staff</a><a class="navitem" href="#">Locations</a><div class="foot"><button class="navitem" type="button" style="width:100%;justify-content:flex-start;border:0;background:none;text-align:left">Theme</button><button class="navitem" type="button" style="width:100%;justify-content:flex-start;border:0;background:none;text-align:left">Sign out</button></div></div></div><div class="sheet-scrim" style="display:block;position:absolute;inset:0;z-index:5;background:rgba(8,14,11,.55)"></div></div></div>
+<p class="tiny muted" style="margin-top:4px;text-align:center">scrolled to bottom</p></div>
+</div>
+
+<p class="stage-label" style="margin-top:28px"><b>ADMIN, exactly 1 branch — closed → open</b></p>
+<p class="tiny muted">Still all 9 items — role visibility never depends on branch count. Switcher: the <i>same component</i> as above, but with nothing to switch between it renders the plain read-only text (no chevron, not clickable) — "an Owner sees the location's name like a director does" (<code>academy-switcher.tsx</code>'s own comment).</p>
+<div class="phones">
+<div class="cell"><div class="stage phone" data-theme="light" style="height:620px"><div class="app"><div class="main"><div class="topbar"><button class="iconbtn only-narrow" aria-label="Menu" aria-expanded="false"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M4 5h16M4 12h16M4 19h16"/></svg></button><span class="grow brandline"><svg class="mark-svg" width="18" height="22" viewBox="0 -3 24 30" fill="currentColor"><polygon points="0,2.55 24,-2.55 24,-0.55 0,4.55"/><polygon points="0,24.55 24,19.45 24,21.45 0,26.55"/></svg><span class="name">Panel</span></span><div class="avatar">AD</div></div><div class="page"><h1 style="font-size:22px">Panel</h1><p class="sub">ADMIN, 1 branch — closed</p></div></div></div></div></div>
+<div class="cell"><div class="stage phone" data-theme="light" style="height:620px"><div class="app is-open"><div class="sheet"><div class="sheet-top"><span class="wordmark" style="font-size:16px"><svg class="mark-svg" width="16" height="20" viewBox="0 -3 24 30" fill="currentColor"><polygon points="0,2.55 24,-2.55 24,-0.55 0,4.55"/><polygon points="0,24.55 24,19.45 24,21.45 0,26.55"/></svg>MATROOM</span><button class="iconbtn" aria-label="Close menu"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div><div class="sheet-body"><div class="switcher-ro" style="margin-bottom:6px"><span class="sw-dot" aria-hidden="true"></span><span class="label">Alliance San José</span></div><div class="grouplabel">Operations</div><a class="navitem" href="#" aria-current="page">Panel</a><a class="navitem" href="#">Students</a><a class="navitem" href="#">Payments</a><div class="grouplabel">Analytics</div><a class="navitem" href="#">Analytics</a><div class="grouplabel">Academy</div><a class="navitem" href="#">Schedule</a><a class="navitem" href="#">Kiosk</a><a class="navitem" href="#">Branding</a><a class="navitem" href="#">Staff</a><a class="navitem" href="#">Locations</a><div class="foot"><button class="navitem" type="button" style="width:100%;justify-content:flex-start;border:0;background:none;text-align:left">Theme</button><button class="navitem" type="button" style="width:100%;justify-content:flex-start;border:0;background:none;text-align:left">Sign out</button></div></div></div><div class="sheet-scrim" style="display:block;position:absolute;inset:0;z-index:5;background:rgba(8,14,11,.55)"></div></div></div></div>
+</div>
+
+<p class="stage-label" style="margin-top:28px"><b>DIRECTOR — closed → open</b></p>
+<p class="tiny muted">6 items / 3 groups — no Schedule (ADMIN-only), no Staff, no Locations. Switcher: read-only, DIRECTOR's own single assigned branch (never "All locations" — that label is ADMIN-only, per <code>academy-choice.ts</code>'s <code>academyScopeLabel</code>).</p>
+<div class="phones">
+<div class="cell"><div class="stage phone" data-theme="light" style="height:650px"><div class="app"><div class="main"><div class="topbar"><button class="iconbtn only-narrow" aria-label="Menu" aria-expanded="false"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M4 5h16M4 12h16M4 19h16"/></svg></button><span class="grow brandline"><svg class="mark-svg" width="18" height="22" viewBox="0 -3 24 30" fill="currentColor"><polygon points="0,2.55 24,-2.55 24,-0.55 0,4.55"/><polygon points="0,24.55 24,19.45 24,21.45 0,26.55"/></svg><span class="name">Panel</span></span><div class="avatar">DR</div></div><div class="page"><h1 style="font-size:22px">Panel</h1><p class="sub">DIRECTOR — closed</p></div></div></div></div></div>
+<div class="cell"><div class="stage phone" data-theme="light" style="height:650px"><div class="app is-open"><div class="sheet"><div class="sheet-top"><span class="wordmark" style="font-size:16px"><svg class="mark-svg" width="16" height="20" viewBox="0 -3 24 30" fill="currentColor"><polygon points="0,2.55 24,-2.55 24,-0.55 0,4.55"/><polygon points="0,24.55 24,19.45 24,21.45 0,26.55"/></svg>MATROOM</span><button class="iconbtn" aria-label="Close menu"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div><div class="sheet-body"><div class="switcher-ro" style="margin-bottom:6px"><span class="sw-dot" aria-hidden="true"></span><span class="label">Alliance Heredia</span></div><div class="grouplabel">Operations</div><a class="navitem" href="#" aria-current="page">Panel</a><a class="navitem" href="#">Students</a><a class="navitem" href="#">Payments</a><div class="grouplabel">Analytics</div><a class="navitem" href="#">Analytics</a><div class="grouplabel">Academy</div><a class="navitem" href="#">Kiosk</a><a class="navitem" href="#">Branding</a><div class="foot"><button class="navitem" type="button" style="width:100%;justify-content:flex-start;border:0;background:none;text-align:left">Theme</button><button class="navitem" type="button" style="width:100%;justify-content:flex-start;border:0;background:none;text-align:left">Sign out</button></div></div></div><div class="sheet-scrim" style="display:block;position:absolute;inset:0;z-index:5;background:rgba(8,14,11,.55)"></div></div></div></div>
+</div>
+
+<p class="stage-label" style="margin-top:28px"><b>INSTRUCTOR — closed → open</b></p>
+<p class="tiny muted">3 items / 1 group — no "Analytics" or "Academy" section at all. Switcher: read-only, same pattern as DIRECTOR.</p>
+<div class="phones">
+<div class="cell"><div class="stage phone" data-theme="light" style="height:650px"><div class="app"><div class="main"><div class="topbar"><button class="iconbtn only-narrow" aria-label="Menu" aria-expanded="false"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M4 5h16M4 12h16M4 19h16"/></svg></button><span class="grow brandline"><svg class="mark-svg" width="18" height="22" viewBox="0 -3 24 30" fill="currentColor"><polygon points="0,2.55 24,-2.55 24,-0.55 0,4.55"/><polygon points="0,24.55 24,19.45 24,21.45 0,26.55"/></svg><span class="name">Panel</span></span><div class="avatar">IN</div></div><div class="page"><h1 style="font-size:22px">Panel</h1><p class="sub">INSTRUCTOR — closed</p></div></div></div></div></div>
+<div class="cell"><div class="stage phone" data-theme="light" style="height:650px"><div class="app is-open"><div class="sheet"><div class="sheet-top"><span class="wordmark" style="font-size:16px"><svg class="mark-svg" width="16" height="20" viewBox="0 -3 24 30" fill="currentColor"><polygon points="0,2.55 24,-2.55 24,-0.55 0,4.55"/><polygon points="0,24.55 24,19.45 24,21.45 0,26.55"/></svg>MATROOM</span><button class="iconbtn" aria-label="Close menu"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div><div class="sheet-body"><div class="switcher-ro" style="margin-bottom:6px"><span class="sw-dot" aria-hidden="true"></span><span class="label">Alliance Escazú</span></div><div class="grouplabel">Operations</div><a class="navitem" href="#" aria-current="page">Panel</a><a class="navitem" href="#">Students</a><a class="navitem" href="#">Payments</a><div class="foot"><button class="navitem" type="button" style="width:100%;justify-content:flex-start;border:0;background:none;text-align:left">Theme</button><button class="navitem" type="button" style="width:100%;justify-content:flex-start;border:0;background:none;text-align:left">Sign out</button></div></div></div><div class="sheet-scrim" style="display:block;position:absolute;inset:0;z-index:5;background:rgba(8,14,11,.55)"></div></div></div></div>
+</div>
+
+<h2 class="section">C — Tenant-colour fix (DESIGN.md §7.10)</h2>
+<p class="note"><b>Confirmed root cause</b> (traced in the real code, not assumed): <code>src/components/ui/sheet.tsx</code>'s <code>SheetContent</code> wraps in <code>SheetPortal</code> → Base UI's <code>Dialog.Portal</code>, which renders into <code>document.body</code> by default. <code>BrandingScope</code> (<code>src/components/branding/branding-scope.tsx</code>) overrides <code>--sidebar*</code>/<code>--brand-gold*</code> via a <code>&lt;style&gt;</code> block scoped to a <code>[data-branding="org-…"]</code> wrapper <i>in the DOM</i> — correct for the desktop sidebar (a real DOM descendant) but the portaled mobile sheet is a React-tree descendant only, not a DOM one, so the override never reaches it. <b>Proposed fix</b> (implementation phase, not this one): pass Base UI's <code>Dialog.Portal</code> a <code>container</code> ref pointing at a node rendered inside <code>BrandingScope</code>, so the portaled sheet becomes a real DOM descendant of the branded wrapper again.</p>
+<div class="bug-fix-row" data-tenant-demo>
+<div>
+  <p class="cap bug">Bug (today's real behaviour)</p>
+  <div class="stage phone bug-scope" data-theme="light" style="height:650px"><div class="app is-open"><div class="sheet"><div class="sheet-top"><span class="wordmark" style="font-size:16px"><svg class="mark-svg" width="16" height="20" viewBox="0 -3 24 30" fill="currentColor"><polygon points="0,2.55 24,-2.55 24,-0.55 0,4.55"/><polygon points="0,24.55 24,19.45 24,21.45 0,26.55"/></svg>MATROOM</span><button class="iconbtn" aria-label="Close menu"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div><div class="sheet-body"><div class="grouplabel">Operations</div><a class="navitem" href="#" aria-current="page">Panel</a><a class="navitem" href="#">Students</a><a class="navitem" href="#">Payments</a><div class="foot"><button class="navitem" type="button" style="width:100%;justify-content:flex-start;border:0;background:none;text-align:left">Sign out</button></div></div></div></div></div>
+  <p class="tiny muted" style="margin-top:6px">Sheet portals outside <code>BrandingScope</code> → always the default MATROOM paper/forest, regardless of Harbor Jiu-Jitsu's own orange theme (visible in the desktop sidebar on the right).</p>
+</div>
+<div>
+  <p class="cap fix">Fixed (proposed)</p>
+  <div class="stage phone" data-theme="light" data-tenant-demo style="height:650px"><div class="app is-open"><div class="sheet"><div class="sheet-top"><span class="wordmark" style="font-size:16px"><svg class="mark-svg" width="16" height="20" viewBox="0 -3 24 30" fill="currentColor"><polygon points="0,2.55 24,-2.55 24,-0.55 0,4.55"/><polygon points="0,24.55 24,19.45 24,21.45 0,26.55"/></svg>MATROOM</span><button class="iconbtn" aria-label="Close menu"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div><div class="sheet-body"><div class="grouplabel">Operations</div><a class="navitem" href="#" aria-current="page">Panel</a><a class="navitem" href="#">Students</a><a class="navitem" href="#">Payments</a><div class="foot"><button class="navitem" type="button" style="width:100%;justify-content:flex-start;border:0;background:none;text-align:left">Sign out</button></div></div></div></div></div>
+  <p class="tiny muted" style="margin-top:6px">Portal container moved inside <code>BrandingScope</code> → Harbor's stored orange reaches the sheet, matching the desktop sidebar exactly.</p>
+</div>
+</div>
+<p class="stage-label" style="margin-top:20px"><b>For reference — the desktop sidebar today, same fictional tenant (already correctly themed, not part of this bug)</b></p>
+<div class="stage" data-theme="light" data-tenant-demo style="height:260px;max-width:300px;container-type:normal">
+  <div class="app" style="min-height:260px;grid-template-columns:1fr">
+    <div class="sidebar">
+      <div class="side-brand"><span class="wordmark"><svg class="mark-svg" width="18" height="22" viewBox="0 -3 24 30" fill="currentColor"><polygon points="0,2.55 24,-2.55 24,-0.55 0,4.55"/><polygon points="0,24.55 24,19.45 24,21.45 0,26.55"/></svg>MATROOM</span></div>
+      <div class="grouplabel">Operations</div>
+      <a class="navitem" href="#" aria-current="page">Panel</a>
+      <a class="navitem" href="#">Students</a>
+      <div class="foot">Sign out</div>
+    </div>
+  </div>
+</div>
+
+<h2 class="section">D — Platform shell (new: currently has no responsive treatment at all)</h2>
+<p class="note">Today's real <code>platform/layout.tsx</code> is a plain <code>BrandBanner</code> with three inline links (Overview, Organizations, Admins) — no hamburger, no sheet, nothing narrow-aware. This applies the same top-bar + sheet pattern, scaled to platform's own shape: no sidebar needed for 3 links, no academy switcher, no role variation (every platform screen is superadmin-only).</p>
+<div class="grid2">
+<div class="stage" data-theme="light" style="height:200px;container-type:normal">
+  <div class="topbar"><span class="wordmark" style="font-size:16px"><svg class="mark-svg" width="16" height="20" viewBox="0 -3 24 30" fill="currentColor"><polygon points="0,2.55 24,-2.55 24,-0.55 0,4.55"/><polygon points="0,24.55 24,19.45 24,21.45 0,26.55"/></svg>MATROOM</span><span class="grow"></span><nav class="platform-topbar-links only-wide"><a href="#" aria-current="page">Overview</a><a href="#">Organizations</a><a href="#">Admins</a></nav><button class="iconbtn" aria-label="Theme"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79Z"/></svg></button><button class="btn btn-secondary btn-sm">Sign out</button></div>
+  <div class="page"><h1 style="font-size:22px">Platform overview</h1><p class="sub">Desktop — links inline, as today, just themed and sized consistently with the staff topbar.</p></div>
+</div>
+<div class="stage" data-theme="dark" style="height:200px;container-type:normal">
+  <div class="topbar"><span class="wordmark" style="font-size:16px"><svg class="mark-svg" width="16" height="20" viewBox="0 -3 24 30" fill="currentColor"><polygon points="0,2.55 24,-2.55 24,-0.55 0,4.55"/><polygon points="0,24.55 24,19.45 24,21.45 0,26.55"/></svg>MATROOM</span><span class="grow"></span><nav class="platform-topbar-links only-wide"><a href="#" aria-current="page">Overview</a><a href="#">Organizations</a><a href="#">Admins</a></nav><button class="iconbtn" aria-label="Theme"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2"/></svg></button><button class="btn btn-secondary btn-sm">Sign out</button></div>
+  <div class="page"><h1 style="font-size:22px">Platform overview</h1><p class="sub">Dark theme.</p></div>
+</div>
+</div>
+<p class="stage-label" style="margin-top:24px"><b>Phone — closed → open</b></p>
+<div class="phones">
+<div class="cell"><div class="stage phone" data-theme="light" style="height:650px"><div class="app"><div class="main"><div class="topbar"><button class="iconbtn only-narrow" aria-label="Menu" aria-expanded="false"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M4 5h16M4 12h16M4 19h16"/></svg></button><span class="grow brandline"><svg class="mark-svg" width="18" height="22" viewBox="0 -3 24 30" fill="currentColor"><polygon points="0,2.55 24,-2.55 24,-0.55 0,4.55"/><polygon points="0,24.55 24,19.45 24,21.45 0,26.55"/></svg><span class="name">Overview</span></span></div><div class="page"><h1 style="font-size:20px">Platform overview</h1></div></div></div></div></div>
+<div class="cell"><div class="stage phone" data-theme="light" style="height:650px"><div class="app is-open"><div class="sheet"><div class="sheet-top"><span class="wordmark" style="font-size:16px"><svg class="mark-svg" width="16" height="20" viewBox="0 -3 24 30" fill="currentColor"><polygon points="0,2.55 24,-2.55 24,-0.55 0,4.55"/><polygon points="0,24.55 24,19.45 24,21.45 0,26.55"/></svg>MATROOM</span><button class="iconbtn" aria-label="Close menu"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div><div class="sheet-body"><a class="navitem" href="#" aria-current="page">Overview</a><a class="navitem" href="#">Organizations</a><a class="navitem" href="#">Admins</a><div class="foot"><button class="navitem" type="button" style="width:100%;justify-content:flex-start;border:0;background:none;text-align:left">Theme</button><button class="navitem" type="button" style="width:100%;justify-content:flex-start;border:0;background:none;text-align:left">Sign out</button></div></div></div><div class="sheet-scrim" style="display:block;position:absolute;inset:0;z-index:5;background:rgba(8,14,11,.55)"></div></div></div></div>
+</div>
+
+<h2 class="section">E — Spanish, long labels, and the avatar/org menu</h2>
+<p class="note">Spanish nav labels (real strings from <code>messages/es.json</code>), role DIRECTOR throughout (6 items, read-only branch switcher). <b>Organization and branch are deliberately different fixtures here</b> — the breadcrumb shows the <i>organization's</i> name (<code>orgName</code>, real prop on <code>staff-top-bar.tsx</code>); the switcher pill and the avatar's role line show the <i>branch</i> name (<code>academyLabel</code>) — two different real values, never interchangeable, so nothing here should be read as "the org name is available from the switcher or the avatar."</p>
+
+<p class="stage-label"><b>E1 — breadcrumb: growing header, no control overlap</b></p>
+<p class="tiny muted">Organization only, avatar closed. <code>.topbar</code> uses <code>min-height</code> (not a fixed height) with <code>align-items:center</code>, so wrapping the breadcrumb to 2 lines grows the whole bar instead of clipping or sliding under the theme toggle / avatar — both stay fully visible, vertically centered against the taller bar.</p>
+<div class="stage" data-theme="light" style="max-width:480px">
+  <div class="topbar"><span class="crumb" style="white-space:normal">Academia Internacional de Jiu-Jitsu Río Grande · Panel</span><span class="grow"></span><button class="iconbtn" aria-label="Tema"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79Z"/></svg></button><div class="avatar">DT</div></div>
+  <div class="page"><h1 style="font-size:22px">Panel</h1><p class="sub"><b>Proposed change, owner decision:</b> today <code>staff-top-bar.tsx</code>'s breadcrumb span truncates with an ellipsis (<code>className="truncate …"</code>) — this long organization name would be clipped there. This mock instead wraps it, matching the no-truncation rule already approved for the switcher pill and <code>OrgRow</code>. Nothing is lost either way (the full name is also visible via the browser tab/page title); this phase can keep truncation as-is or adopt wrapping — not yet decided.</p></div>
+</div>
+
+<p class="stage-label" style="margin-top:24px"><b>E2 — avatar menu: role + branch, never the org name</b></p>
+<p class="tiny muted">Same organization in the breadcrumb; the open menu's second line is <code>role · academyLabel</code> — DIRECTOR's own single branch, "Alliance Heredia" (same branch fixture as Section B's DIRECTOR example), not the organization name above it.</p>
+<div class="stage" data-theme="light" style="height:220px;position:relative">
+  <div class="topbar"><span class="crumb">Academia Internacional de Jiu-Jitsu Río Grande · Panel</span><span class="grow"></span><button class="iconbtn" aria-label="Tema"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79Z"/></svg></button><div class="avatar">DT</div></div>
+  <div class="page"></div>
+  <div class="menu-pop">
+    <div class="mi-label"><div class="who">director@academiario.cr</div><div class="role">Director de sede · Alliance Heredia</div></div>
+    <hr>
+    <a class="mi" href="#">Mi entrenamiento</a>
+    <a class="mi" href="#">Cerrar sesión</a>
+  </div>
+</div>
+
+<p class="stage-label" style="margin-top:24px"><b>E3 — phone sheet: DIRECTOR, 6 items, read-only branch switcher</b></p>
+<p class="tiny muted">A longer branch name ("Sede San Pedro – Mall San Pedro, Local 204") wraps inside the read-only switcher rather than clipping — same wrap-don't-truncate principle, proven here for a <i>branch</i> name specifically, distinct from the organization-name test in E1.</p>
+<div class="stage phone" data-theme="light" style="height:650px">
+  <div class="app is-open"><div class="sheet"><div class="sheet-top"><span class="wordmark" style="font-size:16px"><svg class="mark-svg" width="16" height="20" viewBox="0 -3 24 30" fill="currentColor"><polygon points="0,2.55 24,-2.55 24,-0.55 0,4.55"/><polygon points="0,24.55 24,19.45 24,21.45 0,26.55"/></svg>MATROOM</span><button class="iconbtn" aria-label="Cerrar menú"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>
+  <div class="sheet-body">
+    <div class="switcher-ro" style="margin-bottom:6px"><span class="sw-dot" aria-hidden="true"></span><span class="label">Sede San Pedro – Mall San Pedro, Local 204</span></div>
+    <div class="grouplabel">Operación</div>
+    <a class="navitem" href="#" aria-current="page">Panel</a>
+    <a class="navitem" href="#">Alumnos</a>
+    <a class="navitem" href="#">Pagos</a>
+    <div class="grouplabel">Análisis</div>
+    <a class="navitem" href="#">Análisis</a>
+    <div class="grouplabel">Academia</div>
+    <a class="navitem" href="#">Kiosco</a>
+    <a class="navitem" href="#">Marca</a>
+    <div class="foot"><button class="navitem" type="button" style="width:100%;justify-content:flex-start;border:0;background:none;text-align:left">Tema</button><button class="navitem" type="button" style="width:100%;justify-content:flex-start;border:0;background:none;text-align:left">Cerrar sesión</button></div>
+  </div></div>
+</div>
+
+<h2 class="section">F — Organization switching (preserved, not redesigned)</h2>
+<p class="note">A user who belongs to 2+ <i>organizations</i> (not branches) is routed to the real, already-shipped full-page <code>/select-organization</code> screen (Phase 1) — this phase does not touch that mechanism or add an in-shell org switcher. The switcher pill shown above is the <b>branch/academy</b> switcher (<code>AcademySwitcher</code>, already in production, unrelated to multi-organization membership) — same component, unchanged behaviour, just inside the new sheet header instead of only the desktop sidebar header.</p>
+
+<h2 class="section">What this is not</h2>
+<p class="note">No app file, token, component or route was changed to build this. Every colour is a real token or a real org's stored value (the orange "Harbor Jiu-Jitsu" theme is fictional, its hex values invented but applied exactly the way <code>BrandingScope</code> applies a real one). "Panel"/"Alumnos"/"Horario" etc. are the app's real current strings, not reworded for this prototype. Screen <i>content</i> (dashboard tiles, student tables, etc.) is explicitly out of this phase's scope — the stub pages above exist only to show the shell around them.</p>
+
+</div>
+</body>
+</html>

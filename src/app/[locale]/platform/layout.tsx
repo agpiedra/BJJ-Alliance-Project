@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { getTranslations } from "next-intl/server";
 import { requireSuperAdmin } from "@/lib/auth/require-super-admin";
 import { BrandBanner } from "@/components/brand/brand-banner";
+import { PlatformNav } from "./platform-nav";
 import { signOutPlatformAdmin } from "./sign-out-action";
 
 /**
@@ -25,22 +26,30 @@ export default async function PlatformLayout({ children, params }: { children: R
   await requireSuperAdmin();
   const { locale } = await params;
   const t = await getTranslations("platform.nav");
+  const signOutAction = signOutPlatformAdmin.bind(null, locale);
+  const navLinks = [
+    { href: `/${locale}/platform`, label: t("overview") },
+    { href: `/${locale}/platform/organizations`, label: t("organizations") },
+    { href: `/${locale}/platform/admins`, label: t("admins") },
+  ];
 
   return (
     <>
       <BrandBanner>
-        <nav className="flex flex-1 items-center gap-4 text-sm">
-          <a href={`/${locale}/platform`} className="font-medium">
-            {t("overview")}
-          </a>
-          <a href={`/${locale}/platform/organizations`}>{t("organizations")}</a>
-          <a href={`/${locale}/platform/admins`}>{t("admins")}</a>
-          <form action={signOutPlatformAdmin.bind(null, locale)} className="ml-auto">
-            <button type="submit" className="underline">
-              {t("signOut")}
-            </button>
-          </form>
-        </nav>
+        {/* D6 (DESIGN.md) — this shell had zero responsive treatment before this
+            phase. PlatformNav renders both the desktop inline links (hidden
+            below md) and the phone top-bar + sheet pattern the staff shell
+            uses, deriving which link is active from the real pathname (review
+            finding 1) instead of hardcoding "Overview". */}
+        <PlatformNav
+          navLinks={navLinks}
+          signOutLabel={t("signOut")}
+          signOutAction={signOutAction}
+          menuLabel={t("menu")}
+          closeMenuLabel={t("closeMenu")}
+          navigationTitle={t("navigationTitle")}
+          navigationDescription={t("navigationDescription")}
+        />
       </BrandBanner>
       <main className="flex flex-col gap-6 p-4 sm:p-6">{children}</main>
     </>

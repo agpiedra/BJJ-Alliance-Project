@@ -3,7 +3,9 @@
 import { useTransition } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
-import { SidebarTrigger } from "@/components/ui/sidebar";
+import { useSidebar } from "@/components/ui/sidebar";
+import { Button } from "@/components/ui/button";
+import { PanelLeftIcon } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -80,6 +82,7 @@ export function StaffTopBar({
   const tSidebar = useTranslations("staffSidebar");
   const activeItem = findActiveNavItem(pathname, locale, navItems);
   const [isSigningOut, startSignOut] = useTransition();
+  const { toggleSidebar } = useSidebar();
 
   function handleSignOut() {
     startSignOut(async () => {
@@ -88,10 +91,18 @@ export function StaffTopBar({
   }
 
   return (
-    <header className="flex h-12 items-center justify-between gap-3 border-b px-4">
+    <header className="flex min-h-12 items-center justify-between gap-3 border-b px-4">
       <div className="flex min-w-0 items-center gap-3">
-        <SidebarTrigger />
-        <span className="truncate font-mono text-[10.5px] tracking-[.11em] text-muted-foreground uppercase">
+        {/* D6 (DESIGN.md) — "Menu" (not SidebarTrigger's hardcoded, untranslated
+            "Toggle Sidebar"): the same toggleSidebar() handler, same button this
+            was before, only the accessible name changes. */}
+        <Button variant="ghost" size="icon-sm" aria-label={t("menu")} onClick={toggleSidebar}>
+          <PanelLeftIcon aria-hidden="true" />
+        </Button>
+        {/* D6 — no truncation: a long organization name wraps instead of
+            clipping (round 2 owner decision), and `min-h-12` above lets the
+            header grow with it instead of overlapping the controls on the right. */}
+        <span className="font-mono text-[10.5px] tracking-[.11em] text-muted-foreground uppercase">
           {orgName ?? PLATFORM_NAME}
           {activeItem ? ` · ${tSidebar(activeItem.labelKey)}` : null}
         </span>

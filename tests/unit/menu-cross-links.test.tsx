@@ -18,7 +18,7 @@ import esMessages from "../../messages/es.json";
 const push = vi.fn();
 vi.mock("next/navigation", () => ({ usePathname: () => "/en/dashboard", useRouter: () => ({ push }) }));
 vi.mock("@/lib/auth/sign-out-actions", () => ({ signOutStaff: vi.fn(), signOutStudent: vi.fn() }));
-vi.mock("@/components/ui/sidebar", () => ({ SidebarTrigger: () => null }));
+vi.mock("@/components/ui/sidebar", () => ({ useSidebar: () => ({ toggleSidebar: vi.fn() }) }));
 vi.mock("@/components/theme/theme-toggle", () => ({ ThemeToggle: () => null }));
 vi.mock("@/components/brand/brand-banner", () => ({
   BrandBanner: ({ children }: { children: React.ReactNode }) => <header>{children}</header>,

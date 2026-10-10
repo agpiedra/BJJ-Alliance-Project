@@ -433,6 +433,10 @@
   },
   "staffShell": {
     "themeToggle": "Theme",
+    "menu": "Menu",
+    "closeMenu": "Close menu",
+    "navigationTitle": "Navigation",
+    "navigationDescription": "Browse staff sections, switch branches, and sign out.",
     "academySwitcher": {
       "bothLabel": "View all locations",
       "bothSelected": "All locations"
@@ -1975,7 +1979,11 @@
       "overview": "Overview",
       "organizations": "Organizations",
       "admins": "Platform admins",
-      "signOut": "Sign out"
+      "signOut": "Sign out",
+      "menu": "Menu",
+      "closeMenu": "Close menu",
+      "navigationTitle": "Navigation",
+      "navigationDescription": "Browse platform sections and sign out."
     },
     "status": {
       "PENDING": "Pending",

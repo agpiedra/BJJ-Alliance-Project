@@ -1,6 +1,9 @@
-import type { ReactNode } from "react";
+"use client";
+
+import { useRef, type ReactNode } from "react";
 import type { ResolvedBranding } from "@/lib/branding/get-branding";
 import { resolveTenantPresentation } from "@/lib/theme";
+import { BrandingPortalContext } from "@/components/branding/branding-portal-context";
 
 /**
  * MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 4 — the one place a resolved
@@ -41,6 +44,11 @@ import { resolveTenantPresentation } from "@/lib/theme";
  */
 export function BrandingScope({ branding, children }: { branding: ResolvedBranding; children: ReactNode }) {
   const scopeAttr = `org-${branding.organizationId}`;
+  // DESIGN.md §7.10 — a ref to this wrapper so `Sheet` (src/components/ui/sheet.tsx)
+  // can portal into it instead of `document.body`, keeping a portaled popup (e.g. the
+  // mobile sidebar sheet) a real DOM descendant of the branded `[data-branding]`
+  // selector below.
+  const containerRef = useRef<HTMLDivElement>(null);
   // MATROOM Phase 1 (design/matroom/DESIGN.md "Tenant branding"): three PRESENTATION tokens on top of the stored colours,
   // derived here at render time and never persisted. The stored colours below are emitted exactly as stored.
   //  - --action-edge: a 1px boundary on the tenant's buttons in the theme where their fill is under 3:1 against the surface.
@@ -49,7 +57,7 @@ export function BrandingScope({ branding, children }: { branding: ResolvedBrandi
   //    definition would otherwise keep mixing the default sidebar's colours instead of this tenant's.
   const presentation = resolveTenantPresentation(branding.primary.background);
   return (
-    <div data-branding={scopeAttr} className="contents">
+    <div data-branding={scopeAttr} className="contents" ref={containerRef}>
       <style>{`
         [data-branding="${scopeAttr}"] {
           --brand-gold: ${branding.primary.background};
@@ -70,7 +78,7 @@ export function BrandingScope({ branding, children }: { branding: ResolvedBrandi
           --brand-data: ${presentation.dark.brandData};
         }
       `}</style>
-      {children}
+      <BrandingPortalContext.Provider value={containerRef}>{children}</BrandingPortalContext.Provider>
     </div>
   );
 }
