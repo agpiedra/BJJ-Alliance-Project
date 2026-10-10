@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { useTransition } from "react";
+import { useEffect, useTransition } from "react";
 import { usePathname } from "next/navigation";
 import { useTranslations } from "next-intl";
 import {
@@ -18,7 +18,7 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from "@/components/ui/sidebar";
-import { Sheet, SheetClose, SheetContent } from "@/components/ui/sheet";
+import { Sheet, SheetClose, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { BrandBanner } from "@/components/brand/brand-banner";
 import { MatroomWordmark } from "@/components/brand/matroom-mark";
@@ -84,6 +84,18 @@ export function StaffSidebar({ locale, navItems, academySwitcher, logo }: StaffS
   // D6 (DESIGN.md) / use-mobile.ts's existing 768px breakpoint, shared via
   // SidebarProvider's own context — not a second, independent check.
   const { isMobile, openMobile, setOpenMobile } = useSidebar();
+
+  // Review finding 3 (the staff-shell equivalent) — isMobile:true→false
+  // unmounts this whole branch in favour of the desktop <Sidebar> below,
+  // which correctly closes the open Dialog, but SidebarProvider's own
+  // `openMobile` state (ui/sidebar.tsx — not editable here, see that file's
+  // own "swap it out here instead" convention) is untouched by that unmount
+  // and stays `true`. Without this, resizing back down to mobile later
+  // re-rendered straight into an already-open sheet. Only ever closes, never
+  // opens, so it can't fight the real "Menu" trigger.
+  useEffect(() => {
+    if (!isMobile) setOpenMobile(false);
+  }, [isMobile, setOpenMobile]);
 
   function handleSignOut() {
     startSignOut(async () => {
@@ -177,6 +189,14 @@ export function StaffSidebar({ locale, navItems, academySwitcher, logo }: StaffS
           className="flex w-(--sidebar-width) flex-col gap-0 bg-sidebar p-0 text-sidebar-foreground"
           style={{ "--sidebar-width": "18rem" } as React.CSSProperties}
         >
+          {/* Review finding 2 — sr-only accessible name/description for the
+              Dialog, same pattern every other real Sheet caller in this
+              codebase already uses (the visible wordmark below is decorative
+              chrome, not wired to aria-labelledby on its own). */}
+          <SheetHeader className="sr-only">
+            <SheetTitle>{tShell("navigationTitle")}</SheetTitle>
+            <SheetDescription>{tShell("navigationDescription")}</SheetDescription>
+          </SheetHeader>
           <div className="flex items-center justify-between border-b border-sidebar-border px-4 py-3">
             <MatroomWordmark size={16} />
             <SheetClose render={<Button variant="ghost" size="icon-sm" aria-label={tShell("closeMenu")} />}>

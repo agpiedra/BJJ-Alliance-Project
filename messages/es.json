@@ -435,6 +435,8 @@
     "themeToggle": "Tema",
     "menu": "Menú",
     "closeMenu": "Cerrar menú",
+    "navigationTitle": "Navegación",
+    "navigationDescription": "Explora las secciones del personal, cambia de sede y cierra sesión.",
     "academySwitcher": {
       "bothLabel": "Ver todas las sedes",
       "bothSelected": "Todas las sedes"
@@ -1979,7 +1981,9 @@
       "admins": "Administradores de plataforma",
       "signOut": "Cerrar sesión",
       "menu": "Menú",
-      "closeMenu": "Cerrar menú"
+      "closeMenu": "Cerrar menú",
+      "navigationTitle": "Navegación",
+      "navigationDescription": "Explora las secciones de la plataforma y cierra sesión."
     },
     "status": {
       "PENDING": "Pendiente",
