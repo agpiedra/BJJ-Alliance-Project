@@ -5,6 +5,7 @@ import { Dialog as SheetPrimitive } from "@base-ui/react/dialog"
 import { cn } from "cn"
 
 import { Button } from "@/components/ui/button"
+import { BrandingPortalContext } from "@/components/branding/branding-portal-context"
 import { XIcon } from "lucide-react"
 
 function Sheet({ ...props }: SheetPrimitive.Root.Props) {
@@ -46,8 +47,18 @@ function SheetContent({
   side?: "top" | "right" | "bottom" | "left"
   showCloseButton?: boolean
 }) {
+  // DESIGN.md §7.10 — portal into the nearest BrandingScope wrapper (if any) instead
+  // of Base UI's document.body default, so a tenant's --sidebar-*/--brand-gold*
+  // overrides reach a portaled sheet the same way they already reach non-portaled
+  // content. `?? undefined`, not the raw `null` default: Base UI's Dialog.Portal
+  // treats an explicit `container={null}` as "not resolved yet, render nothing"
+  // (see its useFloatingPortalNode), not "use the default" — only `undefined`
+  // falls through to its own document.body default, which is what every Sheet
+  // without a BrandingScope ancestor (this file's other callers; an unbranded
+  // org) must keep doing, unchanged.
+  const brandingContainer = React.useContext(BrandingPortalContext) ?? undefined
   return (
-    <SheetPortal>
+    <SheetPortal container={brandingContainer}>
       <SheetOverlay />
       <SheetPrimitive.Popup
         data-slot="sheet-content"

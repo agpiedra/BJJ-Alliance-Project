@@ -433,6 +433,8 @@
   },
   "staffShell": {
     "themeToggle": "Theme",
+    "menu": "Menu",
+    "closeMenu": "Close menu",
     "academySwitcher": {
       "bothLabel": "View all locations",
       "bothSelected": "All locations"
@@ -1975,7 +1977,9 @@
       "overview": "Overview",
       "organizations": "Organizations",
       "admins": "Platform admins",
-      "signOut": "Sign out"
+      "signOut": "Sign out",
+      "menu": "Menu",
+      "closeMenu": "Close menu"
     },
     "status": {
       "PENDING": "Pending",

@@ -2,6 +2,8 @@ import type { ReactNode } from "react";
 import { getTranslations } from "next-intl/server";
 import { requireSuperAdmin } from "@/lib/auth/require-super-admin";
 import { BrandBanner } from "@/components/brand/brand-banner";
+import { ThemeToggle } from "@/components/theme/theme-toggle";
+import { PlatformMobileNav } from "./platform-mobile-nav";
 import { signOutPlatformAdmin } from "./sign-out-action";
 
 /**
@@ -25,22 +27,41 @@ export default async function PlatformLayout({ children, params }: { children: R
   await requireSuperAdmin();
   const { locale } = await params;
   const t = await getTranslations("platform.nav");
+  const signOutAction = signOutPlatformAdmin.bind(null, locale);
+  const navLinks = [
+    { href: `/${locale}/platform`, label: t("overview"), active: true },
+    { href: `/${locale}/platform/organizations`, label: t("organizations") },
+    { href: `/${locale}/platform/admins`, label: t("admins") },
+  ];
 
   return (
     <>
       <BrandBanner>
-        <nav className="flex flex-1 items-center gap-4 text-sm">
-          <a href={`/${locale}/platform`} className="font-medium">
-            {t("overview")}
-          </a>
-          <a href={`/${locale}/platform/organizations`}>{t("organizations")}</a>
-          <a href={`/${locale}/platform/admins`}>{t("admins")}</a>
-          <form action={signOutPlatformAdmin.bind(null, locale)} className="ml-auto">
+        {/* D6 (DESIGN.md) — this shell had zero responsive treatment before this
+            phase. Desktop keeps the inline links exactly as they were, just
+            hidden below md; phone gets the same top-bar + sheet pattern the
+            staff shell uses (PlatformMobileNav), not a second design. */}
+        <nav className="hidden flex-1 items-center gap-4 text-sm md:flex">
+          {navLinks.map((link) => (
+            <a key={link.href} href={link.href} className={link.active ? "font-medium" : undefined}>
+              {link.label}
+            </a>
+          ))}
+          <ThemeToggle />
+          <form action={signOutAction} className="ml-auto">
             <button type="submit" className="underline">
               {t("signOut")}
             </button>
           </form>
         </nav>
+        <PlatformMobileNav
+          className="md:hidden"
+          navLinks={navLinks}
+          signOutLabel={t("signOut")}
+          signOutAction={signOutAction}
+          menuLabel={t("menu")}
+          closeMenuLabel={t("closeMenu")}
+        />
       </BrandBanner>
       <main className="flex flex-col gap-6 p-4 sm:p-6">{children}</main>
     </>
