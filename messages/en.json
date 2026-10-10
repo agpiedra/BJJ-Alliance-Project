@@ -192,7 +192,7 @@
       },
       "beltDistribution": {
         "heading": "Belt distribution",
-        "caption": "Average attendances per grade: {white} white · {blue} blue · {purple} purple · {brown} brown",
+        "caption": "Attendances required per stripe: {white} white · {blue} blue · {purple} purple · {brown} brown",
         "empty": "No active students to show a belt distribution for."
       },
       "franjaHeatmap": {

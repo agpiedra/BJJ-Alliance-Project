@@ -189,6 +189,22 @@ function statTileUnknownCount(html: string, label: string): number {
   return match ? Number(match[1]) : 0;
 }
 
+/** MATROOM Phase 3 (approved prototype, review finding): a stat tile's colour flag is now conditional on its
+ * own value, not a static prop — this checks for the flag's own indicator span (`bg-bad`/`bg-brand-gold` on
+ * the `aria-hidden` rail StatTile renders only when `flag` is set) inside that specific tile's own fragment,
+ * bounded the same way `statTileNote`/`statTileCount` already bound themselves to one tile by its label. */
+function statTileHasFlag(html: string, label: string): boolean {
+  const labelIndex = html.indexOf(`>${label}</div>`);
+  if (labelIndex === -1) throw new Error(`Stat tile "${label}" not found in rendered HTML`);
+  // Anchor to the tile's own outer <div>, not the label's own nested one — StatTile's outer class list always
+  // contains "bg-card p-4" (with or without "pl-5"), a fragment unique to a tile's own opening tag, never to its
+  // label/value/note children or the flag span itself.
+  const tileStart = html.lastIndexOf("bg-card p-4", labelIndex);
+  if (tileStart === -1) throw new Error(`Stat tile "${label}" has no enclosing tile markup in rendered HTML`);
+  const segment = html.slice(tileStart, labelIndex);
+  return segment.includes("bg-bad") || segment.includes("bg-brand-gold");
+}
+
 /** The contact-list row for one student, bounded to its own `<tr>...</tr>` — other rows (shared fixtures
  * accumulate across tests in this file) must never leak into a single row's assertions. */
 function contactRow(html: string, fullName: string): string {
@@ -218,6 +234,10 @@ describe("dashboard: MONTHLY-only, SIGNUP-only, and overlapping students counted
     // into one total (would be 3 unique students, or 4 if double-counted — neither 2 nor 2).
     expect(statTileCount(html, "Monthly past grace")).toBe(2);
     expect(statTileCount(html, "Signup past due")).toBe(2);
+    // MATROOM Phase 3 (review finding): colour flag reflects the real non-zero count here — the zero case is
+    // covered separately below, against a genuinely empty org, not asserted by omission in this shared-fixture one.
+    expect(statTileHasFlag(html, "Monthly past grace")).toBe(true);
+    expect(statTileHasFlag(html, "Signup past due")).toBe(true);
 
     const monthlyNote = statTileNote(html, "Monthly past grace");
     const signupNote = statTileNote(html, "Signup past due");
@@ -446,5 +466,39 @@ describe("dashboard: active path skips legacy payment calculations entirely (§6
       overdueSpy.mockRestore();
       listOverdueSpy.mockRestore();
     }
+  });
+});
+
+describe("dashboard: StatTile colour flag is absent for a genuinely zero count (MATROOM Phase 3 review finding)", () => {
+  // Its own dedicated, genuinely empty org — zero students — rather than asserting "zero" against the shared
+  // `a`/`otherOrg` fixtures above, which accumulate debtors across this file's other tests. Zero students means
+  // zero of every count this page computes (promotion queue, legacy overdue, both ledger tiles); no plan/policy/
+  // obligation fixture is needed to prove that.
+  let empty: Fixture;
+
+  beforeAll(async () => {
+    empty = await makeAccountingOrg("CUMULATIVE", "dashrender-empty");
+  }, 30_000);
+
+  afterAll(async () => {
+    if (empty) await empty.drop();
+  }, 30_000);
+
+  it("REQUIRED: zero ready-to-grade and zero legacy overdue render with no colour flag", async () => {
+    mockActive = false;
+    const html = await renderAs(empty.admin.id, empty.org.id);
+    expect(statTileCount(html, "Ready to grade")).toBe(0);
+    expect(statTileHasFlag(html, "Ready to grade")).toBe(false);
+    expect(statTileCount(html, "Overdue monthly dues")).toBe(0);
+    expect(statTileHasFlag(html, "Overdue monthly dues")).toBe(false);
+  });
+
+  it("REQUIRED: zero on both ledger-active tiles renders with no colour flag", async () => {
+    mockActive = true;
+    const html = await renderAs(empty.admin.id, empty.org.id);
+    expect(statTileCount(html, "Monthly past grace")).toBe(0);
+    expect(statTileHasFlag(html, "Monthly past grace")).toBe(false);
+    expect(statTileCount(html, "Signup past due")).toBe(0);
+    expect(statTileHasFlag(html, "Signup past due")).toBe(false);
   });
 });

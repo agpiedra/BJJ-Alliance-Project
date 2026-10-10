@@ -160,6 +160,20 @@ function normalizeReactGeneratedIds(html: string): string {
   return html.replace(/«[^»]*»/g, "«ID»");
 }
 
+/** MATROOM Phase 3 (approved prototype, review finding) made each StatTile's colour flag conditional on its own
+ * value instead of a static prop (`dashboard/page.tsx`) — an intentional, approved visual change, not a
+ * regression. The pre-PR3 baseline predates that change and always renders the old static flag markup (e.g.
+ * "Ready to grade" is `flag="accent"` unconditionally at BASELINE_REF, confirmed via `git show`), so with a
+ * zero count it diverges from the current page's now-flagless render. Strip the flag span and its conditional
+ * `pl-5` class from both sides before comparing: this keeps the test's real purpose — byte equivalence of every
+ * tile's value, note, and the rest of the page (financial calculations, contact list, role gating) — intact
+ * while staying blind to the one already-approved, presentation-only difference. */
+function stripStatTileFlagMarkup(html: string): string {
+  return html
+    .replace(/ pl-5(?=")/g, "")
+    .replace(/<span aria-hidden="true" class="absolute inset-y-0 left-0 w-\[3px\] bg-(?:bad|brand-gold)"><\/span>/g, "");
+}
+
 describe("dashboard/page.tsx: inactive-ledger render EQUIVALENCE against the pre-PR3 baseline", () => {
   it("REQUIRED: current inactive render is byte-identical to the real pre-PR3 implementation", async () => {
     currentSession = { user: { id: a.admin.id }, activeOrganizationId: a.org.id };
@@ -170,6 +184,8 @@ describe("dashboard/page.tsx: inactive-ledger render EQUIVALENCE against the pre
     // Non-vacuous: real financial content, not an empty shell.
     expect(baselineHtml).toContain("Overdue");
     expect(baselineHtml).toContain("Paid");
-    expect(normalizeReactGeneratedIds(currentHtml)).toBe(normalizeReactGeneratedIds(baselineHtml));
+    expect(stripStatTileFlagMarkup(normalizeReactGeneratedIds(currentHtml))).toBe(
+      stripStatTileFlagMarkup(normalizeReactGeneratedIds(baselineHtml)),
+    );
   });
 });

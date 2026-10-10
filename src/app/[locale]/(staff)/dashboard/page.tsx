@@ -492,10 +492,14 @@ export default async function DashboardPage() {
           value={weeklyAttendanceCount}
           delta={attendanceDelta}
         />
+        {/* MATROOM Phase 3 (approved prototype, review finding): colour is a signal for a count that needs
+            action — it must never paint a healthy zero the same as an urgent non-zero. `flag` is now
+            conditional on the value itself, not a static prop, for every tile below that can legitimately be
+            zero. This changes presentation only; the counts, queries, and role gates above are untouched. */}
         <StatTile
           label={t("panel.stats.readyToGrade.label")}
           value={promotionQueue.length}
-          flag="accent"
+          flag={promotionQueue.length > 0 ? "accent" : undefined}
           note={readyNote || undefined}
         />
         {/* §2.1/§6: the legacy single "Atrasado" tile — replaced wholesale when `ledgerActive`, never shown
@@ -505,7 +509,7 @@ export default async function DashboardPage() {
           <StatTile
             label={t("panel.stats.overdue.label")}
             value={overdueStudents.length}
-            flag="bad"
+            flag={overdueStudents.length > 0 ? "bad" : undefined}
             note={overdueNote || undefined}
           />
         )}
@@ -517,7 +521,7 @@ export default async function DashboardPage() {
             <StatTile
               label={tLedgerFilters("monthlyPastGrace")}
               value={ledgerOverdue.monthlyPastGraceCount}
-              flag="bad"
+              flag={ledgerOverdue.monthlyPastGraceCount > 0 ? "bad" : undefined}
               note={
                 [ledgerOverdue.monthlyPastGraceNote, ledgerOverdue.unknownCount > 0 ? t("panel.stats.unknownSuffix", { count: ledgerOverdue.unknownCount }) : ""]
                   .filter(Boolean)
@@ -527,7 +531,7 @@ export default async function DashboardPage() {
             <StatTile
               label={tLedgerFilters("signupPastDue")}
               value={ledgerOverdue.signupPastDueCount}
-              flag="bad"
+              flag={ledgerOverdue.signupPastDueCount > 0 ? "bad" : undefined}
               note={
                 [ledgerOverdue.signupPastDueNote, ledgerOverdue.unknownCount > 0 ? t("panel.stats.unknownSuffix", { count: ledgerOverdue.unknownCount }) : ""]
                   .filter(Boolean)
