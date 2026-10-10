@@ -206,14 +206,46 @@ function statTileHasFlag(html: string, label: string): boolean {
 }
 
 /** The contact-list row for one student, bounded to its own `<tr>...</tr>` — other rows (shared fixtures
- * accumulate across tests in this file) must never leak into a single row's assertions. */
+ * accumulate across tests in this file) must never leak into a single row's assertions.
+ *
+ * A qualifying debtor's full name can ALSO appear earlier on the page, inside a "Monthly past grace"/"Signup
+ * past due" stat-tile note (`joinNames` only truncates past its 3-name cap — below that, every name it lists is
+ * literally rendered). The first occurrence found by `indexOf` is that note mention, which sits before the
+ * page's very first `<tr>`: `lastIndexOf("<tr", start)` then returns -1, and `String.prototype.slice` treats a
+ * negative start as counting from the END of the string rather than "not found", silently returning a bogus (or
+ * empty) slice instead of throwing. Demonstrated directly below. Scans forward through EVERY occurrence of the
+ * name and returns the first one actually enclosed by a `<tr>...</tr>` pair, so a note mention is skipped in
+ * favor of the real row — and a name that is never inside any row still correctly returns "". */
 function contactRow(html: string, fullName: string): string {
-  const start = html.indexOf(fullName);
-  if (start === -1) return "";
-  const rowStart = html.lastIndexOf("<tr", start);
-  const rowEnd = html.indexOf("</tr>", start);
-  return html.slice(rowStart, rowEnd);
+  let start = html.indexOf(fullName);
+  while (start !== -1) {
+    const rowStart = html.lastIndexOf("<tr", start);
+    const rowEnd = html.indexOf("</tr>", start);
+    if (rowStart !== -1 && rowEnd !== -1 && rowEnd > rowStart) {
+      return html.slice(rowStart, rowEnd);
+    }
+    start = html.indexOf(fullName, start + 1);
+  }
+  return "";
 }
+
+describe("contactRow: a name mentioned earlier on the page never shadows its real <tr> row (regression)", () => {
+  it("REQUIRED: a stat-tile note mention before the table does not make the real row unreachable", () => {
+    const html =
+      '<div>Monthly past grace: DashRender NoteShadow-1</div>' +
+      '<table><tbody><tr><td>DashRender NoteShadow-1</td><td>$ 50.00</td></tr></tbody></table>';
+    const row = contactRow(html, "DashRender NoteShadow-1");
+    expect(row).not.toBe("");
+    expect(row).toContain("$");
+  });
+
+  it("REQUIRED: a name that never appears inside any row still returns empty, not a neighboring row's content", () => {
+    const html =
+      '<div>Monthly past grace: DashRender NoteShadow-2</div>' +
+      '<table><tbody><tr><td>Someone Else</td></tr></tbody></table>';
+    expect(contactRow(html, "DashRender NoteShadow-2")).toBe("");
+  });
+});
 
 describe("dashboard: MONTHLY-only, SIGNUP-only, and overlapping students counted correctly (Decision 1)", () => {
   it("REQUIRED: two independent, never-merged counts — a student with both facts counts toward both, never deduplicated into one total", async () => {
