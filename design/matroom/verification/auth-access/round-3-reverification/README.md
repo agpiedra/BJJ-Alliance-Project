@@ -2,29 +2,31 @@
 
 Two items, both against the **isolated test database** (never dev), both on **round 2's corrected layout** (branding-inside-card, OrgRow, non-truncating names). Round 1 and round 2's screenshots predate this layout and are kept as their own rounds' record, not re-used as proof here.
 
-## Item 1 — font finding, re-investigated properly
+## Item 1 — font finding, properly substantiated (corrected)
 
-Round 2 concluded the serif rendering was "a first-paint/font-swap artifact specific to this session's long-running automated browser" — hedged, not independently confirmed. This round removes every variable that hedge depended on:
+**This section replaces the original Item 1 above the line below.** The first pass at this item used `getComputedStyle` (the declared CSS value, not what actually rasterized the pixels) and 1x-resolution screenshots, then concluded the serif appearance was a session-specific artifact. On review, the saved screenshots (`font-03-light-es-full.png`, `mobile-06-accept-invitation-setpassword-dark-en.png`) did not clearly show clean sans-serif glyphs at normal viewing size — the claim outran its own evidence. This section redoes the check with the right tool and keeps both the old and new evidence so the discrepancy is visible, not hidden.
 
-- **Genuinely fresh browser process**, not a reused Playwright session: `chrome-devtools` MCP (a separate tool, separate underlying Chrome process) with `isolatedContext` — a browser context that has never loaded this app before, sharing no cache, cookies, or renderer state with any earlier session in this conversation.
-- **Production build**, not the Turbopack dev server: `next build` + `next start -p 3002`, pointed at the test database. No HMR, no dev-mode recompilation, the exact artifact production users get.
-- **Real existing elements only** — `[data-slot="card-title"]` (the real heading), the real `<label>` text, the real "forgot password" `<a>`, the real submit `<button>`. Nothing was created or injected to "prove" a result; every value below comes from an element the page itself rendered.
-- Waited for `await document.fonts.ready` before reading anything.
+**Method — `CSS.getPlatformFontsForNode`, the real "Rendered Fonts" data**, not `getComputedStyle`:
 
-Result, on `/es/o/alliance-cr/login` (the exact route/theme/locale combination round 1's screenshot showed as serif):
+- A standalone script (`scripts/tmp-rendered-fonts.ts`, `tmp-rendered-fonts-2.ts` — not committed, this project's own `playwright-core` + system-Chrome pattern from `tests/browser/*.test.ts`) launched a genuinely fresh Chrome process against the production build (`next build && next start -p 3002`, test database), waited for `document.fonts.ready`, then called the Chrome DevTools Protocol command behind the DevTools "Rendered Fonts" panel — `CSS.getPlatformFontsForNode` — against five real, already-rendered text nodes: the heading, a label, a link, a submit button, and a plain paragraph (`accept-invitation`'s invalid-token message). This reports the font that **actually drew the glyphs**, with an `isCustomFont` flag and the font's own PostScript name — not the CSS cascade value.
+- Full raw result: `rendered-fonts-addendum/platform-fonts-cdp-result.json`. Summary:
 
-| Element | Computed `font-family` | Computed `font-weight` |
-|---|---|---|
-| Heading ("Iniciar sesión") | `ibmPlexSans, "ibmPlexSans Fallback"` | 500 |
-| Label ("Correo electrónico") | `ibmPlexSans, "ibmPlexSans Fallback"` | 400 |
-| Link ("¿Olvidaste tu contraseña?") | `ibmPlexSans, "ibmPlexSans Fallback"` | 400 |
-| Button ("Entrar") | `ibmPlexSans, "ibmPlexSans Fallback"` | 600 |
+| Element | Real text | `CSS.getPlatformFontsForNode` | `isCustomFont` | Computed weight |
+|---|---|---|---|---|
+| Heading | "Iniciar sesión" | **IBM Plex Sans Medm** (`IBMPlexSans-Medm`) | true | 500 |
+| Label | "Correo electrónico" | **IBM Plex Sans** (`IBMPlexSans`) | true | 400 |
+| Link | "¿Olvidaste tu contraseña?" | **IBM Plex Sans** (`IBMPlexSans`) | true | 400 |
+| Button | "Entrar" | **IBM Plex Sans SmBld** (`IBMPlexSans-SmBld`) | true | 600 |
+| Paragraph | "This invitation link is invalid or has expired." | **IBM Plex Sans** (`IBMPlexSans`) | true | 400 |
+| Paragraph (2nd check) | "You've been invited to Alliance Jiu-Jitsu Costa Rica as Instructor." (the exact text in the disputed `mobile-06` screenshot) | **IBM Plex Sans** (`IBMPlexSans`) | true | 400 |
 
-Visually confirmed in both themes and both languages (`font-01` through `font-04`) — every heading renders as genuine IBM Plex Sans: a plain vertical-stroke "I," no terminal serifs, no slab structure, matching the font exactly as it renders when loaded directly outside the app (round 2's isolation test).
+Every one of the five categories the instruction named — heading, label, link, button, paragraph — is confirmed, by the browser's own authoritative font-matching report, to be drawn by the real, correctly-weighted IBM Plex Sans static instance. `isCustomFont: true` rules out a system-font substitution; the exact PostScript names (`IBMPlexSans`, `-Medm`, `-SmBld`) rule out a generic/fallback face standing in silently.
 
-**Corrected conclusion: the serif rendering in round 1's screenshots does not reproduce in a production build in a fresh browser process. It was specific to round 1/2's single long-running Turbopack dev-server session** (consistent with round 2's hedge, now confirmed rather than assumed) **— not a defect in the font files, the `@font-face` declarations, the design tokens, or this phase's code.** No shared CSS was touched; portal/kiosk need no regression check because nothing shared was changed.
+**Corrected screenshots that actually substantiate this**, replacing reliance on the ambiguous ones: `rendered-fonts-addendum/01` through `05` (tight element crops at 2x device scale) and `06`/`07` (full re-shoots of the exact two disputed scenarios — `/es/o/alliance-cr/login` light theme, and a fresh real `setPassword` invitation at 390×844 dark — both at 2x instead of 1x). At 2x these are unambiguous: no terminal serifs, no slab structure, on every element.
 
-**Residual, disclosed honestly:** this round did not reproduce the dev-server condition to directly confirm *that* is the trigger (doing so would mean deliberately leaving a dev server running for hours again). The production-build result is the one that matters for real users and CI (CI builds and serves production for its own smoke/browser steps), so it's treated as dispositive for this phase without that extra step.
+**Determined cause of the dispute: capture provenance, not a font/rendering defect.** The CDP ground truth and the 2x screenshots agree the production build genuinely renders IBM Plex Sans everywhere checked. The original `font-03`/`mobile-06` screenshots were captured at **1x device scale factor** — small, `text-muted-foreground`-colored text at 1x anti-aliases roughly enough to be legitimately misread as serif by eye, even though the underlying glyph program is sans-serif. That is a real limitation of those specific screenshots, not a rendering bug; it is corrected here by re-capturing at 2x and by using API-level ground truth instead of eyeballing a screenshot.
+
+**Round 1's original screenshot is a separate, still-open question.** This round confirms the *current production build* renders correctly, with authoritative evidence. It does not re-examine round 1's own screenshot with CDP (that session is gone), so round 2's specific claim that round 1's appearance was caused by "a long-running dev-server session" is **withdrawn as unconfirmed** rather than repeated — it was never checked with this tool either, only inferred from a fresh-element-vs-old-element comparison that, per this same lesson, is not strong enough evidence on its own. What's confirmed: the shipped code, as it actually renders in production today, uses the correct font throughout. No shared CSS, token, or font-pipeline change was made (none was warranted), so portal and kiosk need no regression check.
 
 ## Item 2 — mobile / theme / locale re-verification on the corrected layout
 
