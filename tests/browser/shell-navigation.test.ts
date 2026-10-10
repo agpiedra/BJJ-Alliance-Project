@@ -2,6 +2,8 @@ import "dotenv/config";
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright-core";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { prisma } from "../../src/lib/prisma";
+import { hashSecret, generateRandomToken } from "../../src/lib/crypto";
+import { seedOrganizationDefaults } from "../../src/lib/organizations/seed-defaults";
 import { SMOKE_BASE_URL, mintSessionCookie } from "../helpers/smoke";
 
 /**
@@ -16,7 +18,15 @@ import { SMOKE_BASE_URL, mintSessionCookie } from "../helpers/smoke";
  */
 const MOBILE = { width: 390, height: 844 } as const;
 const DESKTOP = { width: 1280, height: 900 } as const;
-const SHORT = { width: 390, height: 560 } as const;
+// 260, not a rounder number: platform's real content (header + 3 links +
+// theme toggle + sign out) measures ~301px tall. 560 (a plausible "short
+// phone" guess) never actually got tight enough to need the overflow-y-auto
+// fix below — empirically confirmed by trying to break it at 560 and failing.
+// 260 is the first height where the real Sign out button's bottom edge
+// (measured via getBoundingClientRect, not isVisible()) sits below the
+// viewport when the fix is removed, with body's scroll lock (overflow:
+// hidden) making it genuinely unreachable, not just scrolled offscreen.
+const SHORT = { width: 390, height: 260 } as const;
 
 let browser: Browser;
 let adminCookie: string;
@@ -200,13 +210,27 @@ describe("mobile to desktop resize while the sheet is open (review finding 3)", 
 });
 
 describe("platform short-screen footer reachability (review finding 3)", () => {
-  it("REQUIRED: Sign out is reachable (visible, or reachable by scrolling the nav) on a short viewport", async () => {
+  it("REQUIRED: Sign out's real box sits inside the viewport after scrolling, and it passes an actionability check — not just isVisible()", async () => {
     const page = await pageWithCookie(superAdminCookie, SHORT);
     await page.goto(`${SMOKE_BASE_URL}/en/platform`, { waitUntil: "networkidle" });
     await page.getByRole("button", { name: "Menu" }).click();
     const signOut = page.getByRole("button", { name: "Sign out" });
     await signOut.scrollIntoViewIfNeeded();
-    expect(await signOut.isVisible(), "Sign out must be reachable, not clipped off the short viewport with no scroll path").toBe(true);
+
+    // isVisible() only checks CSS visibility/display, not actual on-screen position — an
+    // element can be "visible" and still sit outside the viewport or behind another node.
+    // Measure the real box and require it to fit entirely inside SHORT's dimensions.
+    const box = await signOut.boundingBox();
+    expect(box, "Sign out must have a real, measurable box after scrolling").not.toBeNull();
+    expect(box!.y, "top edge is on-screen").toBeGreaterThanOrEqual(0);
+    expect(box!.x, "left edge is on-screen").toBeGreaterThanOrEqual(0);
+    expect(box!.y + box!.height, "bottom edge is on-screen, not clipped below the short viewport").toBeLessThanOrEqual(SHORT.height);
+    expect(box!.x + box!.width, "right edge is on-screen").toBeLessThanOrEqual(SHORT.width);
+
+    // trial:true runs Playwright's actionability checks (visible, stable, receives pointer
+    // events — i.e. nothing else is stacked on top of it) and stops before performing the
+    // click, so this proves it is really reachable/clickable without actually signing out.
+    await signOut.click({ trial: true });
   });
 });
 
@@ -253,5 +277,104 @@ describe("role visibility and server authorization are unchanged (preserved, not
     }
     expect(await dialog.getByRole("button", { name: /Alliance Escaz/ }).count(), "the switcher must be read-only text, not a button, for DIRECTOR").toBe(0);
     expect(await dialog.getByText("Alliance Escazú").isVisible()).toBe(true);
+  });
+});
+
+describe("StaffTopBar: a long organization name does not overflow or overlap controls (real render, isolated fixture)", () => {
+  // An isolated, disposable organization — NOT a rename of Alliance or any other
+  // seeded dev org. Created fresh here and torn down in afterAll, same convention
+  // tests/integration/describe-invitation.test.ts already uses for scoped fixtures.
+  // No seeded org's real name is long enough to force this at a phone width, and
+  // renaming one to find out would leave dev data in a state nobody asked for.
+  const LONG_ORG_NAME = "Academia Internacional de Artes Marciales Mixtas y Jiu-Jitsu Brasileño del Pacífico Sur";
+  const suffix = `long-name-${Date.now()}`;
+  let longOrgId: string;
+  let longOrgUserId: string;
+  let longOrgCookie: string;
+
+  beforeAll(async () => {
+    // Organization + its OrganizationBranding row created together, in one transaction —
+    // the real shape every org has (seed-defaults.ts's own doc comment: "created
+    // transactionally alongside every Organization"), not an org missing the row it
+    // should never be missing. Without this, orgName falls back to a generic default
+    // string instead of this org's real (long) name, defeating the whole test.
+    const org = await prisma.$transaction(async (tx) => {
+      const created = await tx.organization.create({
+        data: {
+          slug: `browser-test-${suffix}`,
+          name: LONG_ORG_NAME,
+          status: "ACTIVE",
+          contactEmail: `browser-test-${suffix}@example.test`,
+          onboardingCompletedAt: new Date(),
+        },
+      });
+      await seedOrganizationDefaults(tx, created.id);
+      return created;
+    });
+    longOrgId = org.id;
+    await prisma.academy.create({
+      data: {
+        organizationId: org.id,
+        name: "Sede Central",
+        slug: `${org.slug}-sede`,
+        kioskTokenHash: await hashSecret(`unused-${suffix}`),
+      },
+    });
+    const user = await prisma.user.create({
+      data: {
+        email: `browser-test-${suffix}-admin@example.test`,
+        passwordHash: await hashSecret(generateRandomToken()),
+        role: "ADMIN",
+        active: true,
+      },
+    });
+    longOrgUserId = user.id;
+    await prisma.organizationMembership.create({ data: { userId: user.id, organizationId: org.id, role: "ADMIN" } });
+    longOrgCookie = await mintSessionCookie(user.id);
+  });
+
+  afterAll(async () => {
+    await prisma.organizationMembership.deleteMany({ where: { organizationId: longOrgId } });
+    await prisma.academy.deleteMany({ where: { organizationId: longOrgId } });
+    await prisma.promotionConfig.deleteMany({ where: { organizationId: longOrgId } });
+    await prisma.beltRank.deleteMany({ where: { organizationId: longOrgId } });
+    await prisma.organizationBranding.deleteMany({ where: { organizationId: longOrgId } });
+    await prisma.organization.delete({ where: { id: longOrgId } });
+    await prisma.user.delete({ where: { id: longOrgUserId } });
+  });
+
+  it("REQUIRED: no horizontal overflow, the breadcrumb never overlaps the theme/notification/avatar controls, and the header genuinely grows", async () => {
+    const page = await pageWithCookie(longOrgCookie, MOBILE);
+    await page.goto(`${SMOKE_BASE_URL}/en/dashboard`, { waitUntil: "networkidle" });
+    await page.getByRole("heading", { name: "Dashboard" }).waitFor();
+
+    // Real StaffTopBar, real right-side controls (ThemeToggle + the NotificationBell
+    // slot + the avatar dropdown) — not a prototype mock and not a class-name check.
+    const result = await page.evaluate(() => {
+      const header = document.querySelector("header");
+      if (!header) return null;
+      const crumb = header.querySelector("span.font-mono");
+      const controls = header.lastElementChild;
+      if (!crumb || !controls) return null;
+      const h = header.getBoundingClientRect();
+      const c = crumb.getBoundingClientRect();
+      const r = controls.getBoundingClientRect();
+      const overlaps = !(c.right < r.left || c.left > r.right || c.bottom < r.top || c.top > r.bottom);
+      return {
+        scrollWidth: document.documentElement.scrollWidth,
+        innerWidth: window.innerWidth,
+        headerHeight: h.height,
+        crumbText: crumb.textContent,
+        controlsChildCount: controls.children.length,
+        overlaps,
+      };
+    });
+
+    expect(result, "header, breadcrumb and controls must all be present in the real DOM").not.toBeNull();
+    expect(result!.crumbText, "the long organization name must actually be the one rendered").toContain("Academia Internacional de Artes Marciales Mixtas");
+    expect(result!.controlsChildCount, "the real right-side controls (theme/notifications/avatar) must be present, not an empty stand-in").toBeGreaterThan(0);
+    expect(result!.scrollWidth, "the long name must not force horizontal page overflow").toBeLessThanOrEqual(result!.innerWidth);
+    expect(result!.overlaps, "the wrapped breadcrumb must not overlap the theme/notification/avatar controls").toBe(false);
+    expect(result!.headerHeight, "the header must grow beyond the single-line 48px (min-h-12) baseline to fit the wrapped name").toBeGreaterThan(48);
   });
 });
