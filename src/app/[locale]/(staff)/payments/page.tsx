@@ -200,6 +200,15 @@ export default async function PaymentsPage() {
         </Card>
       )}
 
+      {/* Phase 5 approved prototype: groups the three ledger-writer cards under one heading so the page reads
+          as one coherent list instead of three unrelated cards. Purely a label — `ledgerActive` still gates
+          the whole group exactly as each card already gated itself. */}
+      {canRecordPayments && ledgerActive && (
+        <p className="font-mono text-[13px] font-semibold tracking-[.08em] text-muted-foreground uppercase">
+          {t("groupLabels.newLedgerPayments")}
+        </p>
+      )}
+
       {/* Ordinary payment-entry UI brief §0: a NEW, clearly separate, inactive-gated card on this SAME page,
           never a new top-level route, alongside (not replacing) the legacy RecordPaymentForm card above. */}
       {canRecordPayments && ledgerActive && (
@@ -257,6 +266,13 @@ export default async function PaymentsPage() {
         </Card>
       )}
 
+      {/* Phase 5 approved prototype: "Corrections" group label, same pattern as "New ledger payments" above. */}
+      {context.organizationRole === "ADMIN" && ledgerActive && (
+        <p className="font-mono text-[13px] font-semibold tracking-[.08em] text-muted-foreground uppercase">
+          {t("groupLabels.corrections")}
+        </p>
+      )}
+
       {/* Owner financial-corrections UI brief §0: a NEW, separate, inactive-gated card, ADMIN-only display (all three
           composed writers — correctLateFeeAndSettle/reversePayment/waiveLateFee — are hard-coded ADMIN-only
           themselves), mounted alongside the three ledger-writing cards above, never on `payments/plans/page.tsx`. */}
@@ -272,6 +288,15 @@ export default async function PaymentsPage() {
             />
           </CardContent>
         </Card>
+      )}
+
+      {/* Phase 5 approved prototype: "Debt status" group label above the status card, shown for every role
+          (unlike the two write-action labels above, this card itself isn't role-gated) — only when the ledger
+          is active, matching the prototype's populated view. The legacy view has no equivalent heading. */}
+      {ledgerActive && (
+        <p className="font-mono text-[13px] font-semibold tracking-[.08em] text-muted-foreground uppercase">
+          {t("groupLabels.debtStatus")}
+        </p>
       )}
 
       {/* §2.4: the active-path ledger table REPLACES this card's legacy table wholesale — the two are never
