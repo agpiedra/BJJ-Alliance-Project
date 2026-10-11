@@ -127,6 +127,17 @@ jobs:
           BROWSER_EXECUTABLE_PATH: /usr/bin/google-chrome
         run: pnpm test:browser
 
+      # Diagnostics only: a trace+screenshot per failing browser test (tests/helpers/browser-failure-capture.ts).
+      # Nothing is written here on a clean run. `if: always()` so the upload isn't skipped by the failing step above.
+      - name: Upload browser-test failure captures (trace + screenshot), if any
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-test-failure-captures
+          path: test-results/browser-failures/
+          if-no-files-found: ignore
+          retention-days: 14
+
       - name: Stop the dev server
         if: always()
         run: kill "$(cat /tmp/dev-server.pid)" 2>/dev/null || true
