@@ -112,6 +112,29 @@ describe("isWithinCheckInWindow", () => {
   });
 });
 
+/**
+ * Regression for the portal browser-suite fixture (tests/browser/portal.test.ts): it used to capture one `now`,
+ * derive a single shared weekday from it, then build a second class 5 minutes later. Within 5 minutes of CR
+ * midnight that later start crosses into the next CR calendar day while keeping the earlier day's weekday label -
+ * mislabeling an occurrence meant to open in 5 minutes as one that happened almost 24h earlier, closed for hours by
+ * the time the test asserted on it (CI run 38115450649). The fix: derive each occurrence's dayOfWeek from its own
+ * start, never from a separate reference instant.
+ */
+describe("dayOfWeek must come from the occurrence's own start, not a shared reference instant", () => {
+  // 2026-10-10T23:57:00 CR (Saturday); 5 minutes later is 2026-10-11T00:02:00 CR (Sunday).
+  const fiveMinutesLater = new Date("2026-10-11T06:02:00.000Z");
+
+  it("is closed when the later occurrence reuses the earlier instant's weekday (the bug)", () => {
+    const mislabeledAsSaturday = { dayOfWeek: "SATURDAY" as const, startTime: "00:02", durationMinutes: 60 };
+    expect(isWithinCheckInWindow(mislabeledAsSaturday, fiveMinutesLater)).toBe(false);
+  });
+
+  it("is open once the occurrence's weekday is derived from its own start (the fix)", () => {
+    const labeledFromItsOwnStart = { dayOfWeek: "SUNDAY" as const, startTime: "00:02", durationMinutes: 60 };
+    expect(isWithinCheckInWindow(labeledFromItsOwnStart, fiveMinutesLater)).toBe(true);
+  });
+});
+
 describe("openOccurrences", () => {
   // Back-to-back hourly classes: 18:00-19:00 is open 17:30-19:30 CR and 19:00-20:00 is open 18:30-20:30, so they
   // OVERLAP for an hour (18:30-19:30). Overlaps are expected; the kiosk asks the student which class they attended

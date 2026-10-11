@@ -53,12 +53,15 @@ beforeAll(async () => {
 
   // Two classes open right now (each opens 30 minutes before its start and closes 30 minutes after its end, so these overlap).
   const now = DateTime.now().setZone(ZONE);
-  const day = now.setLocale("en").toFormat("cccc").toUpperCase();
   const specs = [
     { suffix: "A", start: now.minus({ minutes: 10 }) },
     { suffix: "B", start: now.plus({ minutes: 5 }) },
   ];
   for (const { suffix, start } of specs) {
+    // Each class's dayOfWeek MUST come from its own `start`, not from `now`: near local midnight, A's or B's start
+    // can land on a different CR calendar date than `now`, and a shared weekday would mislabel the occurrence as
+    // ~24h away from the one actually being inserted, closing its check-in window by the time the test asserts on it.
+    const day = start.setLocale("en").toFormat("cccc").toUpperCase();
     const id = `browser-test-${suffix}-${Date.now()}`;
     fixtureIds.push(id);
     await prisma.$executeRaw`INSERT INTO "ClassSession" (id, "academyId", "organizationId", "dayOfWeek", "startTime", "durationMinutes", name, type, "countsTowardPromotion", active, "createdAt", "updatedAt")
