@@ -206,14 +206,68 @@ function statTileHasFlag(html: string, label: string): boolean {
 }
 
 /** The contact-list row for one student, bounded to its own `<tr>...</tr>` — other rows (shared fixtures
- * accumulate across tests in this file) must never leak into a single row's assertions. */
+ * accumulate across tests in this file) must never leak into a single row's assertions.
+ *
+ * A qualifying debtor's full name can ALSO appear earlier on the page, inside a "Monthly past grace"/"Signup
+ * past due" stat-tile note (`joinNames` only truncates past its 3-name cap — below that, every name it lists is
+ * literally rendered) or in the plain text between two tables. An earlier `indexOf`-plus-`lastIndexOf`/`indexOf`
+ * version picked the nearest preceding `<tr` and the nearest following `</tr>` around whichever occurrence it
+ * found first — which, when the name sits between an already-CLOSED earlier row and a later, unrelated row,
+ * spans both and returns a slice that isn't really any single row's content (and when no `<tr` precedes the
+ * occurrence at all, `lastIndexOf` returns -1, which `String.prototype.slice` treats as counting from the END
+ * of the string rather than "not found" — a second, now-superseded way this used to misfire).
+ *
+ * Scans complete `<tr>...</tr>` fragments instead (table rows never nest, so each fragment is a real, whole
+ * row) and returns the first one that actually contains the name — never spanning past a `</tr>`, never
+ * matching a mention that sits outside every row. */
 function contactRow(html: string, fullName: string): string {
-  const start = html.indexOf(fullName);
-  if (start === -1) return "";
-  const rowStart = html.lastIndexOf("<tr", start);
-  const rowEnd = html.indexOf("</tr>", start);
-  return html.slice(rowStart, rowEnd);
+  const rowRe = /<tr[\s\S]*?<\/tr>/g;
+  let match: RegExpExecArray | null;
+  while ((match = rowRe.exec(html))) {
+    if (match[0].includes(fullName)) return match[0];
+  }
+  return "";
 }
+
+describe("contactRow: a name mentioned earlier on the page never shadows its real <tr> row (regression)", () => {
+  it("REQUIRED: a stat-tile note mention before the table does not make the real row unreachable", () => {
+    const html =
+      '<div>Monthly past grace: DashRender NoteShadow-1</div>' +
+      '<table><tbody><tr><td>DashRender NoteShadow-1</td><td>$ 50.00</td></tr></tbody></table>';
+    const row = contactRow(html, "DashRender NoteShadow-1");
+    expect(row).not.toBe("");
+    expect(row).toContain("$");
+  });
+
+  it("REQUIRED: a name that never appears inside any row still returns empty, not a neighboring row's content", () => {
+    const html =
+      '<div>Monthly past grace: DashRender NoteShadow-2</div>' +
+      '<table><tbody><tr><td>Someone Else</td></tr></tbody></table>';
+    expect(contactRow(html, "DashRender NoteShadow-2")).toBe("");
+  });
+
+  it("REQUIRED: a name between an already-closed earlier row and an unrelated later row returns empty, not a span across both", () => {
+    const html =
+      '<table><tbody><tr><td>Someone Else</td><td>$ 10.00</td></tr></tbody></table>' +
+      '<div>DashRender RowSpan-1 mentioned outside any row</div>' +
+      '<table><tbody><tr><td>Another Person</td><td>$ 20.00</td></tr></tbody></table>';
+    expect(contactRow(html, "DashRender RowSpan-1")).toBe("");
+  });
+
+  it("REQUIRED: the same sequence followed by the target's actual row returns only that row, not the ones around it", () => {
+    const html =
+      '<table><tbody><tr><td>Someone Else</td><td>$ 10.00</td></tr></tbody></table>' +
+      '<div>DashRender RowSpan-2 mentioned outside any row</div>' +
+      '<table><tbody>' +
+      '<tr><td>Another Person</td><td>$ 20.00</td></tr>' +
+      '<tr><td>DashRender RowSpan-2</td><td>$ 30.00</td></tr>' +
+      '</tbody></table>';
+    const row = contactRow(html, "DashRender RowSpan-2");
+    expect(row).toBe('<tr><td>DashRender RowSpan-2</td><td>$ 30.00</td></tr>');
+    expect(row).not.toContain("Someone Else");
+    expect(row).not.toContain("Another Person");
+  });
+});
 
 describe("dashboard: MONTHLY-only, SIGNUP-only, and overlapping students counted correctly (Decision 1)", () => {
   it("REQUIRED: two independent, never-merged counts — a student with both facts counts toward both, never deduplicated into one total", async () => {
