@@ -19,14 +19,35 @@ import { onTestFailed } from "vitest";
 const OUT_DIR = path.resolve(__dirname, "../../test-results/browser-failures");
 let seq = 0;
 
+/**
+ * Exported so tests/browser/browser-failure-capture-sanitization.test.ts exercises the EXACT same
+ * options production uses -- never a hand-copied duplicate that could silently drift from it.
+ *
+ * snapshots: true is shorthand for { dom: true }, which Playwright documents as capturing a DOM
+ * snapshot on every action "and record[ing] network activity" -- that network recording embeds
+ * real request/response headers (Cookie, Set-Cookie, Authorization) in trace.network, including
+ * this suite's real signed session token (confirmed present with the old `snapshots: true` config,
+ * confirmed absent -- trace.network empty, 0 bytes -- with this one). { screen: true } instead gives
+ * a per-action screenshot (the actual visual diagnostic this capture exists for) with no DOM/network
+ * recording bundled in.
+ */
+export const TRACING_START_OPTIONS = { screenshots: true, snapshots: { screen: true } } as const;
+
 export function captureOnFailure(context: BrowserContext, page: Page, label = "page"): void {
-  const tracingStarted = context.tracing.start({ screenshots: true, snapshots: true });
+  const tracingStarted = context.tracing.start(TRACING_START_OPTIONS);
 
   onTestFailed(async () => {
     await tracingStarted;
     mkdirSync(OUT_DIR, { recursive: true });
     const id = `${Date.now()}-${++seq}-${label.replace(/[^a-z0-9]+/gi, "-").toLowerCase().slice(0, 60)}`;
-    await context.tracing.stop({ path: path.join(OUT_DIR, `${id}.trace.zip`) }).catch(() => {});
-    await page.screenshot({ path: path.join(OUT_DIR, `${id}.png`), fullPage: true }).catch(() => {});
+    // Concise, non-sensitive warnings on save failure -- a broken capture must be visibly
+    // distinguishable in the test log from "nothing failed, so nothing was written" (the normal
+    // pass case). Logs only the error's own message/type, never page content or trace internals.
+    await context.tracing
+      .stop({ path: path.join(OUT_DIR, `${id}.trace.zip`) })
+      .catch((err) => console.warn(`[browser-failure-capture] trace save failed for ${id}:`, err instanceof Error ? err.message : err));
+    await page
+      .screenshot({ path: path.join(OUT_DIR, `${id}.png`), fullPage: true })
+      .catch((err) => console.warn(`[browser-failure-capture] screenshot save failed for ${id}:`, err instanceof Error ? err.message : err));
   });
 }
