@@ -1010,6 +1010,11 @@
       "ledgerHeading": "Estado de pagos",
       "ledgerNote": "{academy}"
     },
+    "groupLabels": {
+      "newLedgerPayments": "Nuevos pagos en bitácora",
+      "corrections": "Correcciones",
+      "debtStatus": "Estado de deuda"
+    },
     "method": {
       "SINPE": "SINPE Móvil",
       "TRANSFERENCIA": "Transferencia",

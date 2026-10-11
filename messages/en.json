@@ -1010,6 +1010,11 @@
       "ledgerHeading": "Payment status",
       "ledgerNote": "{academy}"
     },
+    "groupLabels": {
+      "newLedgerPayments": "New ledger payments",
+      "corrections": "Corrections",
+      "debtStatus": "Debt status"
+    },
     "method": {
       "SINPE": "SINPE Mobile",
       "TRANSFERENCIA": "Bank transfer",

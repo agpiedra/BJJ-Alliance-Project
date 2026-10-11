@@ -536,4 +536,49 @@ describe("payments/page.tsx: ledger status table (page-level)", () => {
       spy.mockRestore();
     }
   });
+
+  // Phase 5 approved prototype: three group-label headings ("New ledger payments" / "Corrections" / "Debt
+  // status") grouping the existing cards — the only real production change this round made. Proves they render
+  // in the right place under the right role gates, via a real render of this exact page.
+  it("REQUIRED: ADMIN, ledger active — all three group labels render, each before its own card group", async () => {
+    mockActive = true;
+    const html = await renderAs(fixture.admin.id, fixture.org.id);
+
+    expect(html).toContain("New ledger payments");
+    expect(html).toContain("Corrections");
+    expect(html).toContain("Debt status");
+
+    const iNewLedger = html.indexOf("New ledger payments");
+    const iLedgerEntryCard = html.indexOf(enMessages.payments.ledgerEntry.heading);
+    const iCorrectionsLabel = html.indexOf("Corrections");
+    const iCorrectionsCard = html.indexOf(enMessages.payments.financialCorrections.heading);
+    const iDebtStatusLabel = html.lastIndexOf("Debt status");
+    const iStatusCard = html.indexOf(enMessages.payments.statusCard.ledgerHeading);
+
+    expect(iNewLedger).toBeGreaterThanOrEqual(0);
+    expect(iNewLedger).toBeLessThan(iLedgerEntryCard);
+    expect(iCorrectionsCard).toBeGreaterThan(-1);
+    expect(iCorrectionsLabel).toBeLessThan(iCorrectionsCard);
+    expect(iDebtStatusLabel).toBeLessThan(iStatusCard);
+  });
+
+  it("REQUIRED: DIRECTOR, ledger active — 'New ledger payments' and 'Debt status' render, 'Corrections' does not (ADMIN-only card)", async () => {
+    mockActive = true;
+    const html = await renderAs(director.id, fixture.org.id);
+
+    expect(html).toContain("New ledger payments");
+    expect(html).toContain("Debt status");
+    expect(html).not.toContain("Corrections");
+    expect(html).not.toContain(enMessages.payments.financialCorrections.heading);
+  });
+
+  it("REQUIRED: ADMIN, ledger inactive (today's real production state) — no group labels render at all", async () => {
+    mockActive = false;
+    const html = await renderAs(fixture.admin.id, fixture.org.id);
+
+    expect(html).not.toContain("New ledger payments");
+    expect(html).not.toContain("Corrections");
+    expect(html).not.toContain("Debt status");
+    expect(html).toContain(enMessages.payments.recordCard.heading);
+  });
 });
