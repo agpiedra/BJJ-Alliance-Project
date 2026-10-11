@@ -6,6 +6,7 @@ import { hashSecret, generateRandomToken } from "../../src/lib/crypto";
 import { seedOrganizationDefaults } from "../../src/lib/organizations/seed-defaults";
 import { SMOKE_BASE_URL, mintSessionCookie } from "../helpers/smoke";
 import { cleanupDisposableOrgFixture } from "../helpers/fixture-cleanup";
+import { captureOnFailure } from "../helpers/browser-failure-capture";
 
 /**
  * Rendered-browser coverage for the Phase 2.5 shell & navigation phone pattern
@@ -37,12 +38,14 @@ let superAdminCookie: string;
 let allianceOrgId: string;
 const contexts: BrowserContext[] = [];
 
-async function pageWithCookie(cookie: string, viewport: { width: number; height: number }): Promise<Page> {
+async function pageWithCookie(cookie: string, viewport: { width: number; height: number }, label = "page"): Promise<Page> {
   const context = await browser.newContext({ viewport });
   contexts.push(context);
   const [name, ...rest] = cookie.split("=");
   await context.addCookies([{ name, value: rest.join("="), url: SMOKE_BASE_URL }]);
-  return context.newPage();
+  const page = await context.newPage();
+  captureOnFailure(context, page, label); // diagnostics-only: trace+screenshot on failure, discarded on pass
+  return page;
 }
 
 beforeAll(async () => {
@@ -212,7 +215,7 @@ describe("mobile to desktop resize while the sheet is open (review finding 3)", 
 
 describe("platform short-screen footer reachability (review finding 3)", () => {
   it("REQUIRED: Sign out's real box sits inside the viewport after scrolling, and it passes an actionability check — not just isVisible()", async () => {
-    const page = await pageWithCookie(superAdminCookie, SHORT);
+    const page = await pageWithCookie(superAdminCookie, SHORT, "footer-reachability");
     await page.goto(`${SMOKE_BASE_URL}/en/platform`, { waitUntil: "networkidle" });
     await page.getByRole("button", { name: "Menu" }).click();
     const signOut = page.getByRole("button", { name: "Sign out" });
@@ -222,6 +225,26 @@ describe("platform short-screen footer reachability (review finding 3)", () => {
     // element can be "visible" and still sit outside the viewport or behind another node.
     // Measure the real box and require it to fit entirely inside SHORT's dimensions.
     const box = await signOut.boundingBox();
+
+    // Diagnostics-only (not an assertion): state AT this exact instant, since it's only
+    // meaningful measured here, not reconstructable after the fact from a failure handler.
+    // Logged unconditionally so it's visible in the CI step log on either outcome; this does
+    // not gate or alter any assertion below.
+    const sheetState = await page.evaluate(() => {
+      const dialog = document.querySelector('[role="dialog"]');
+      if (!dialog) return null;
+      const cs = getComputedStyle(dialog);
+      const animations =
+        typeof dialog.getAnimations === "function"
+          ? dialog.getAnimations().map((a) => ({ playState: a.playState, currentTime: a.currentTime }))
+          : [];
+      return { transform: cs.transform, transition: cs.transition, animations };
+    });
+    console.log(
+      "[footer-reachability diagnostics]",
+      JSON.stringify({ viewport: page.viewportSize(), box, scroll: await page.evaluate(() => ({ x: window.scrollX, y: window.scrollY })), sheet: sheetState }),
+    );
+
     expect(box, "Sign out must have a real, measurable box after scrolling").not.toBeNull();
     expect(box!.y, "top edge is on-screen").toBeGreaterThanOrEqual(0);
     expect(box!.x, "left edge is on-screen").toBeGreaterThanOrEqual(0);
