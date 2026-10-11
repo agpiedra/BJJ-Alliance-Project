@@ -214,8 +214,18 @@ describe("AddExchangeRateForm: three distinct stale-target states — loading, f
 describe("CorrectExchangeRateForm: stale-form preservation (mocked \"stale\" response)", () => {
   it("preserves the owner's typed value, never discarding it, after a mocked stale refusal", async () => {
     enterOrCorrectExchangeRate.mockResolvedValue({ error: "stale" });
-    getCurrentExchangeRate.mockResolvedValue(ROW_2);
-    getExchangeRateCorrectionWarning.mockResolvedValue(3);
+    // Deferred, not resolved up front: controls exactly when the refreshed row (ROW_2) arrives, so "the alert
+    // banner is showing" and "the q2 refetch has actually happened" can be told apart instead of conflated.
+    let resolveRefresh!: (value: typeof ROW_2) => void;
+    const refreshPending = new Promise<typeof ROW_2>((resolve) => {
+      resolveRefresh = resolve;
+    });
+    getCurrentExchangeRate.mockReturnValue(refreshPending);
+    // Different counts per target id — a single shared count would let a stale q1 read satisfy the same assertion
+    // a genuine q2 read would, hiding exactly the race this test exists to catch.
+    getExchangeRateCorrectionWarning.mockImplementation((_organizationId: string, forId: string) =>
+      Promise.resolve(forId === ROW_2.id ? 3 : 1),
+    );
 
     render(withMessages(<CorrectExchangeRateForm organizationId="org-1" row={ROW_1} />));
     fireEvent.click(screen.getByText(enMessages.payments.plans.exchangeRate.correct.open));
@@ -223,13 +233,24 @@ describe("CorrectExchangeRateForm: stale-form preservation (mocked \"stale\" res
     fireEvent.change(valueInput, { target: { value: "999.99" } });
     fireEvent.click(screen.getByText(enMessages.payments.plans.exchangeRate.correct.submit));
 
+    // The refresh is genuinely still in flight: only q1's (the original row's) warning has been requested so far.
+    await waitFor(() => expect(screen.getByText(enMessages.payments.plans.exchangeRate.correct.staleLoading)).toBeTruthy());
+    expect(getExchangeRateCorrectionWarning).toHaveBeenCalledWith("org-1", ROW_1.id);
+    expect(getExchangeRateCorrectionWarning).not.toHaveBeenCalledWith("org-1", ROW_2.id);
+
+    resolveRefresh(ROW_2);
+
     // The refreshed current-value banner (fed by the mocked getCurrentExchangeRate) must appear...
     await waitFor(() => expect(screen.getByRole("alert")).toBeTruthy());
     // ...while the owner's own typed value is untouched (useDuesAction only resets on ok: true, never on "stale").
     expect(valueInput.value).toBe("999.99");
-    // The warning count shown must match the NEW target (ROW_2's id), fetched a second time after the refresh.
-    expect(getExchangeRateCorrectionWarning).toHaveBeenCalledWith("org-1", ROW_2.id);
-    await waitFor(() => expect(screen.getByText(/3/)).toBeTruthy());
+    // The warning count shown must match the NEW target (ROW_2's id) — waited for explicitly, not inferred from
+    // the alert alone: the alert and the warning refetch are two independent effects that commit on the same
+    // render but resolve on separate microtasks, so the refetch can still be pending once the alert is visible.
+    await waitFor(() => expect(getExchangeRateCorrectionWarning).toHaveBeenCalledWith("org-1", ROW_2.id));
+    // count=3 renders the plural "other" form ("3 settled payments used…"); count=1 (q1's figure) renders "one
+    // settled payment used…" — distinct text, so this can only pass once q2's own count is actually displayed.
+    await waitFor(() => expect(screen.getByText(/3 settled payments used/)).toBeTruthy());
   });
 
   it("never calls getCurrentExchangeRate (the refresh read) when the result is not stale", async () => {
