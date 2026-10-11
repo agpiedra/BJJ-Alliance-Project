@@ -247,34 +247,57 @@ export function PromocionesCard(props: PromocionesCardProps) {
           {props.history.length === 0 ? (
             <p className="text-sm text-muted-foreground">{tHistory("empty")}</p>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-sm">
-                <thead>
-                  <tr className="text-muted-foreground">
-                    <th className="pb-2 pr-4 font-medium">{tHistory("columnDate")}</th>
-                    <th className="pb-2 pr-4 font-medium">{tHistory("columnChange")}</th>
-                    <th className="pb-2 pr-4 font-medium">{tHistory("columnBy")}</th>
-                    <th className="pb-2 pr-4 font-medium">{tHistory("columnSource")}</th>
-                    <th className="pb-2 font-medium">{tHistory("columnNotes")}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {props.history.map((row) => (
-                    <tr key={row.id} className="border-t">
-                      <td className="py-2 pr-4 align-top whitespace-nowrap">{row.awardedAtFormatted}</td>
-                      <td className="py-2 pr-4 align-top whitespace-nowrap">
-                        {row.fromBeltLabel} {row.fromStripes} → {row.toBeltLabel} {row.toStripes}
-                      </td>
-                      <td className="py-2 pr-4 align-top">{row.awardedByName}</td>
-                      <td className="py-2 pr-4 align-top">
-                        <Badge variant="outline">{tHistory(`source${row.source}` as "sourceMANUAL")}</Badge>
-                      </td>
-                      <td className="py-2 align-top whitespace-pre-wrap">{row.notes ?? "—"}</td>
+            <>
+              {/* ≥400px: full table, same as every other history table on this page. Below 400px a `whitespace-nowrap`
+                  Date cell sitting directly beside a `whitespace-nowrap` Change cell in a horizontally-scrolled table
+                  reads as one run-together line until the viewer notices the scrollbar — the date and the rank
+                  change need to be visually separate at a glance, not just separate <td>s a scroll reveals. Same
+                  `props.history` rows, just laid out as a stacked block below the breakpoint instead of a second,
+                  differently-sourced "mobile" list. */}
+              <div className="hidden overflow-x-auto min-[400px]:block">
+                <table className="w-full text-left text-sm">
+                  <thead>
+                    <tr className="text-muted-foreground">
+                      <th className="pb-2 pr-4 font-medium">{tHistory("columnDate")}</th>
+                      <th className="pb-2 pr-4 font-medium">{tHistory("columnChange")}</th>
+                      <th className="pb-2 pr-4 font-medium">{tHistory("columnBy")}</th>
+                      <th className="pb-2 pr-4 font-medium">{tHistory("columnSource")}</th>
+                      <th className="pb-2 font-medium">{tHistory("columnNotes")}</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody>
+                    {props.history.map((row) => (
+                      <tr key={row.id} className="border-t">
+                        <td className="py-2 pr-4 align-top whitespace-nowrap">{row.awardedAtFormatted}</td>
+                        <td className="py-2 pr-4 align-top whitespace-nowrap">
+                          {row.fromBeltLabel} {row.fromStripes} → {row.toBeltLabel} {row.toStripes}
+                        </td>
+                        <td className="py-2 pr-4 align-top">{row.awardedByName}</td>
+                        <td className="py-2 pr-4 align-top">
+                          <Badge variant="outline">{tHistory(`source${row.source}` as "sourceMANUAL")}</Badge>
+                        </td>
+                        <td className="py-2 align-top whitespace-pre-wrap">{row.notes ?? "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <ul className="flex flex-col gap-3 min-[400px]:hidden">
+                {props.history.map((row) => (
+                  <li key={row.id} className="flex flex-col gap-1 border-t pt-3 first:border-t-0 first:pt-0">
+                    <span className="font-medium">{row.awardedAtFormatted}</span>
+                    <span>
+                      {row.fromBeltLabel} {row.fromStripes} → {row.toBeltLabel} {row.toStripes}
+                    </span>
+                    <span className="text-muted-foreground">{row.awardedByName}</span>
+                    <Badge variant="outline" className="self-start">
+                      {tHistory(`source${row.source}` as "sourceMANUAL")}
+                    </Badge>
+                    {row.notes && <span className="whitespace-pre-wrap text-muted-foreground">{row.notes}</span>}
+                  </li>
+                ))}
+              </ul>
+            </>
           )}
         </div>
       </CardContent>
