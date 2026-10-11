@@ -110,7 +110,6 @@ function BeltVisual({ belt, stripes, label, size = "lg", className }: BeltGraphi
   const edgeId = useId();
 
   const width = SIZE_WIDTH[size];
-  const height = width / (VIEW_W / VIEW_H);
   const showWeave = size !== "xs";
   const showDepth = size !== "xs";
   const allStitchRows = size === "xs" ? [0.33, 0.67] : [0.25, 0.5, 0.75];
@@ -139,10 +138,14 @@ function BeltVisual({ belt, stripes, label, size = "lg", className }: BeltGraphi
     <svg
       viewBox={`0 0 ${VIEW_W} ${VIEW_H}`}
       width={width}
-      height={height}
       role="img"
       aria-label={label}
       className={className}
+      // height intentionally NOT a fixed attribute: a caller's className (e.g. "w-40") must be able to shrink
+      // the rendered width below `width`, and this keeps height following it proportionally (aspect-ratio = the
+      // same VIEW_W/VIEW_H ratio the old fixed `height` used, so a caller that never overrides width renders at
+      // the exact same pixel height as before).
+      style={{ aspectRatio: `${VIEW_W} / ${VIEW_H}`, height: "auto" }}
     >
       <defs>
         <clipPath id={clipId}>
@@ -233,8 +236,11 @@ function BeltVisual({ belt, stripes, label, size = "lg", className }: BeltGraphi
 export function BeltGraphic(props: BeltGraphicProps) {
   return (
     <figure className="flex flex-col gap-1">
-      <BeltVisual {...props} size={props.size ?? "lg"} className={undefined} />
-      <figcaption className={props.className ?? "text-sm"}>{props.label}</figcaption>
+      {/* The caller's className sizes the belt itself (e.g. a card with narrow available width) — it must reach
+          the <svg>, not just the caption below it. A caller that passes none keeps the figcaption's own
+          default text styling, same as before. */}
+      <BeltVisual {...props} size={props.size ?? "lg"} className={props.className} />
+      <figcaption className="text-sm">{props.label}</figcaption>
     </figure>
   );
 }

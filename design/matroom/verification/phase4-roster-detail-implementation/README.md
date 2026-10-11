@@ -12,9 +12,24 @@ These are notes about the **real application**, rendered from an isolated dev se
 
 ## What changed in production
 
-One file: `src/app/[locale]/(staff)/students/[id]/promociones-card.tsx`. See commit `126cbb7` for the full diff.
+Two files across two commits:
 
-Below ~400px, the promotion-history table's Date and Change cells render as a stacked `<ul>` instead, with date/rank-change/awarded-by/source/notes each their own line. At ≥400px the original table is unchanged.
+- `src/app/[locale]/(staff)/students/[id]/promociones-card.tsx` (commit `126cbb7`) — below ~400px, the promotion-history table's Date and Change cells render as a stacked `<ul>` instead, with date/rank-change/awarded-by/source/notes each their own line. At ≥400px the original table is unchanged.
+- `src/components/belt-graphic/belt-graphic.tsx` + `tests/unit/belt-graphic.test.tsx` (this commit) — see "Belt-graphic clipping defect and fix" below.
+
+### Belt-graphic clipping defect and fix
+
+Found during this pass's real-rendering reconciliation (not by the earlier, code-reading-only "already correct" claim this README previously made about belt graphics — that claim was wrong, and is corrected below). At 320px, the Promotions card's hero belt (`promociones-card.tsx:154`, `<BeltGraphic ... className="w-40" />`) rendered at its full unconstrained intrinsic width (320px for the default `lg` size) instead of the caller's intended 160px, overflowing the card and clipping its rank bar and stripes off-screen.
+
+**Root cause** (`src/components/belt-graphic/belt-graphic.tsx`): `BeltGraphic` passed the caller's `className` to the `<figcaption>` underneath the belt, while `BeltVisual` (the actual `<svg>`) was always called with `className={undefined}` — so no caller's sizing class could ever reach the element it needed to constrain. The `<svg>` also had a fixed pixel `height` attribute independent of its `width`, so simply threading `className` through without also fixing sizing would have let a width override distort (squash) the belt instead of scaling it proportionally.
+
+**Fix**: `BeltGraphic` now passes `className` to `BeltVisual`'s `<svg>` (figcaption keeps a fixed `"text-sm"` default, no longer borrowing the caller's class). `BeltVisual`'s `<svg>` replaced its fixed `height` attribute with `style={{ aspectRatio: "360 / 40", height: "auto" }}` (360×40 is `VIEW_W`/`VIEW_H`, the same ratio the old fixed-height formula used) — a caller with no `className` renders at the exact same pixel size as before (same `width` attribute, same computed height), while a caller that DOES constrain width (like `promociones-card.tsx`'s `w-40`) now gets a proportionally-scaled belt instead of an oversized, clipped one.
+
+**Consumer audit**: grepped every `<BeltGraphic`/`<BeltBar` call site in `src/`. Only `promociones-card.tsx` ever passes a `className` to `BeltGraphic` — every other consumer (kiosk check-in confirmation, portal progress card, dashboard, the marketing homepage, `/dev/belts`, and every `BeltBar` caller) never passes one, so this fix cannot change their rendered output at all (confirmed by the math above: their default path is pixel-identical).
+
+**A desktop appearance change, found to be correct, not a regression**: the belt's `className="w-40"` has no responsive variant — it was always meant to apply at every width, not just mobile. The bug meant it never applied anywhere, so the *previously-approved* desktop screenshot (`10-detail-desktop-light-en-admin-promotions.png`, now recaptured) was itself showing the same unconstrained ~320px belt, just without visible clipping since desktop has the width to spare. The fix now correctly renders the belt at its always-intended 160px at every width, including desktop — card layout, position, and proportions are otherwise unchanged. Verified via `getBoundingClientRect` at desktop (1280px)/390px/320px: SVG renders at exactly 160×17.77px at all three, `document.documentElement.scrollWidth === clientWidth` at all three (no page overflow), and the rank bar remains visible even with 0 stripes (the black-belt example used, `seed-student-024`/Patricia Elizondo, has 0 current stripes).
+
+**Regression test**: `tests/unit/belt-graphic.test.tsx`, new describe block "a caller's className sizes the belt itself, not just its caption" — asserts the `<svg>` (not the figcaption) receives the caller's className, that the figcaption keeps its default styling regardless, and that the svg's `aspectRatio`/`height: auto` style is present (the mechanism that makes a width override scale proportionally rather than distort or clip). Not a literal-string check of implementation detail — it asserts the className lands on the element that actually controls rendered size.
 
 **Correcting this README's own prior attribution**: an earlier version of this document (and the commit message/PR body, which still carry the original, slightly-too-confident phrasing) described this as something "found" by reasoning about production's CSS (`whitespace-nowrap` cells inside an `overflow-x-auto` wrapper) plus the prototype's demonstrated 320px defect — without ever having actually rendered the real, pre-fix production table at a narrow width, since the dev DB was broken at the time that commit was written. That gap is now closed: this pass **directly rendered the real pre-fix table** by temporarily swapping in the pre-Phase-4 version of `promociones-card.tsx` (from commit `a307d2e`, main's tip before this PR) into the isolated dev server, screenshotting it, then restoring the real fix (confirmed via `git diff --stat src/` returning empty afterward — no stray changes left behind). The result: **`12-detail-320-BEFORE-pre-phase4-pairing.png`** — at 320px, the pre-fix table shows only "Date" and "Change" as the two reachable columns (e.g. "10/10/2026 White 2 → Black 2" on one effective line), with Awarded-by/Source/Notes scrolled off-screen inside the table's own `overflow-x-auto` region. So: the run-together risk was *demonstrated first in the prototype's markup* (as the user's correction states), and is now *also directly confirmed in real pre-fix production* by this pass — both are true, and are no longer conflated as the same piece of evidence. The fixed state is `13-detail-390-light-en-promotions.png` / `14-detail-320-light-en-promotions.png`.
 
@@ -24,7 +39,7 @@ Everything else — roster table columns/density, detail card order (Promotions 
 
 | Area | Prototype proposed | Real production, rendered this pass | Evidence |
 |---|---|---|---|
-| Belt graphics | Black belt: red bar + white degree marks; white–brown: black bar + white stripes; bar visible at 0 stripes | Confirmed exact match — black belt renders a red bar with 2 white degree marks (real `BeltGraphic`, untouched) | `10-detail-desktop-light-en-admin-promotions.png` |
+| Belt graphics | Black belt: red bar; white–brown: black bar + white stripes; bar visible at 0 stripes; no clipping at any width | **Corrected this pass** — the shared `BeltGraphic` component HAD a real clipping bug at 320px (see "Belt-graphic clipping defect and fix" above); fixed, and now confirmed: black belt renders a visible red bar at 0 stripes, white belt renders a visible black bar + correct stripe count, no clipping and no distortion at desktop/390/320 (measured `getBoundingClientRect`, not eyeballed) | `10-…png` (desktop), `13-…png` (390), `14-…png` (320, white belt + 4 stripes) |
 | Roster density/columns | Compact rows, belt bar + stripe count, progress bar, payment/flag badges | Already matches — same columns, same density, same badge styling | `01-roster-desktop-light-en-admin.png` |
 | Detail card order | Promotions → Profile → Attendance → Legacy history → Ledger → actions | Confirmed via real render (Promotions, Profile, Attendance history, Payment history all present and ordered as proposed) | `10-…png`, full-page scroll confirmed in-session |
 | Promotion history ≥400px | Table, Date/Change/Awarded-by/Source/Notes as columns | Confirmed — real table, all 5 columns, long notes wrap without breaking layout | `10-detail-desktop-light-en-admin-promotions.png` |
@@ -37,14 +52,14 @@ Everything else — roster table columns/density, detail card order (Promotions 
 | Required-reason fields | Represented in the prototype as a disclosure + textarea | Confirmed present and functioning in the real app (Void entry's real "Reason (required)" field, expanded) | `18-detail-void-expanded-required-reason.png` |
 | Keyboard focus | — | Confirmed: tab order is sane (location switcher → nav links in document order), and a real, visible focus ring exists (`box-shadow` layer `rgb(239,241,233) 0 0 0 2px`, not just a transparent default) — measured via computed style, not assumed | measured in-session, no separate screenshot |
 
-No area required a new code change beyond the one already in `126cbb7` — every other proposed presentation detail was already true of `main`, now confirmed by rendering it rather than by reading its source.
+One area — belt graphics — required a genuine new code change this pass (the clipping defect above), found only once actually rendered rather than read; every other row in this table needed no change beyond the one already in `126cbb7`, now confirmed by rendering it rather than by reading its source.
 
 ## What IS verified
 
 - `tsc --noEmit`: clean.
-- ESLint on the changed file: clean.
-- Full unit suite: 117 files / 1653 tests passed.
-- Full integration suite, run only after the manual isolated-dev-server session above was torn down: the harness killed this run partway through for host-level memory pressure (not a test failure, not caused by this change) after 97/149 files and 1458/1919 tests had passed with zero failures observed. It was **not** re-run locally per the host's own guidance not to restart a memory-pressure-killed process speculatively. CI runs the full suite in its own clean environment on every push to this PR and is the authoritative full-suite verdict for this commit — see the PR/commit for its result.
+- ESLint on the changed files: clean.
+- Full unit suite: 117 files / 1656 tests passed (1653 + 3 new belt-graphic regression tests, this commit).
+- Full integration suite, run only after the manual isolated-dev-server session above was torn down: 149 files / 1919 tests passed, full local run, no memory-pressure interruption this time.
 - `git status --porcelain src/ prisma/`: clean — no schema/migration files touched, no stray changes left from the temporary before/after file swap.
 - Real-browser rendering of the live roster and detail pages: desktop (1280px), intermediate (960px), 390px, 320px; light and dark theme (measured, not guessed); EN and ES; ADMIN/DIRECTOR/INSTRUCTOR logins; a real expanded form with its required-reason field; keyboard focus/tab order.
 - CI (`.github/workflows` on this PR) — its result is reported in the PR/commit alongside this file.

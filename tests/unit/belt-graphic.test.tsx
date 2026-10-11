@@ -169,6 +169,31 @@ describe("BeltGraphic — degree clamping", () => {
   });
 });
 
+describe("BeltGraphic — a caller's className sizes the belt itself, not just its caption (320px clipping fix)", () => {
+  it("reaches the <svg> (not the figcaption) so a width-constraining class can actually shrink the rendered belt", () => {
+    const { container } = render(<BeltGraphic belt={SOLID} stripes={2} label="Blue belt" className="w-40" />);
+    expect(container.querySelector("svg")).toHaveClass("w-40");
+    // The old bug sent it here instead — must stay the default caption styling regardless of the caller's class.
+    expect(container.querySelector("figcaption")).toHaveClass("text-sm");
+    expect(container.querySelector("figcaption")).not.toHaveClass("w-40");
+  });
+
+  it("lets height track a narrower width proportionally (aspect-ratio), rather than clipping at a fixed height", () => {
+    const { container } = render(<BeltGraphic belt={SOLID} stripes={2} label="Blue belt" className="w-40" />);
+    const svg = container.querySelector("svg") as SVGSVGElement;
+    // VIEW_W/VIEW_H's ratio, not a fixed pixel height — so a CSS width override (from the caller's class)
+    // resizes height to match instead of leaving it fixed at the unconstrained-width's height.
+    expect(svg.style.aspectRatio).toBe("360 / 40");
+    expect(svg.style.height).toBe("auto");
+  });
+
+  it("without a className, the figcaption keeps its default text styling and the svg has no class at all", () => {
+    const { container } = render(<BeltGraphic belt={SOLID} stripes={2} label="Blue belt" />);
+    expect(container.querySelector("figcaption")).toHaveClass("text-sm");
+    expect(container.querySelector("svg")).not.toHaveAttribute("class");
+  });
+});
+
 describe("BeltBar — the compact list-row wrapper", () => {
   it("is aria-hidden (the caller's own adjacent text carries the accessible label, per REDESIGN_BRIEF.md Phase 3)", () => {
     const { container } = render(<BeltBar belt={SOLID} stripes={2} />);
