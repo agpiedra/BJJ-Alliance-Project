@@ -2145,6 +2145,7 @@
           "cancel": "Cancelar academia",
           "cancelNotePlaceholder": "Motivo de la cancelación (nota interna)",
           "confirmSuspend": "¿Suspender esta academia? Sus miembros perderán acceso en su próxima solicitud.",
+          "suspendDialogCancel": "No, gracias",
           "confirmCancel": "Esto cancela la academia permanentemente. ¿Continuar?",
           "confirmCancelButton": "Confirmar cancelación",
           "cancelDialogCancel": "No, gracias",
