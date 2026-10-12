@@ -2145,6 +2145,7 @@
           "cancel": "Cancel organization",
           "cancelNotePlaceholder": "Reason for cancellation (internal note)",
           "confirmSuspend": "Suspend this organization? Its members will lose access on their next request.",
+          "suspendDialogCancel": "Never mind",
           "confirmCancel": "This permanently cancels the organization. Continue?",
           "confirmCancelButton": "Confirm cancellation",
           "cancelDialogCancel": "Never mind",
