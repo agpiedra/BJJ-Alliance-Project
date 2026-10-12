@@ -19,6 +19,19 @@ import enMessages from "../../messages/en.json";
  * The baseline source is git-extracted to a throwaway SIBLING scratch file so its own `./relative` imports
  * (`./portal-top-bar`, `./todays-classes-card`, `./get-promotion-history`, etc. — none touched by this PR)
  * resolve against the real, unchanged neighboring files, deleted in `afterAll` regardless of outcome.
+ *
+ * Phase 2.6 PR 1 (bottom-phone/top-desktop tab bar) made exactly one approved, intentional change to this
+ * page's own markup: `<main>`'s padding classes, to reserve room for `PortalTabs`' new fixed bottom bar below
+ * `sm`. From this PR onward, the comparison below is equivalence AFTER that one explicitly-listed, narrowly
+ * scoped normalization — not raw byte identity — see `normalizeApprovedMainPadding` below for exactly what it
+ * does and does not touch.
+ *
+ * IMPORTANT caveat this test does NOT prove: only `page.tsx` is git-extracted for the baseline side. Its
+ * `./portal-tabs` import is never extracted, so BOTH the "baseline" and "current" renders below import the
+ * SAME real, current `PortalTabs` component — this comparison cannot independently demonstrate anything about
+ * old-vs-new tab-bar rendering or behavior. That proof lives in `tests/unit/portal-tabs.test.tsx` and this PR's
+ * own real-browser evidence. This test's job is strictly to prove the REST of the page — content, financial
+ * data, everything besides the one approved padding difference — did not silently change.
  */
 const prisma = getTestPrismaClient();
 const BASELINE_REF = "87c706b33c6633ada6a003aa3d7ed105312cafd0";
@@ -128,16 +141,51 @@ function normalizeReactGeneratedIds(html: string): string {
   return html.replace(/«[^»]*»/g, "«ID»");
 }
 
-describe("portal/page.tsx: inactive-ledger render EQUIVALENCE against the pre-PR baseline (87c706b)", () => {
-  it("REQUIRED: current inactive render is byte-identical to the real pre-integration implementation", async () => {
-    currentSession = { user: { id: studentUser.id }, activeOrganizationId: a.org.id };
-    const baselineHtml = withProvider(await BaselinePortalPage({ params: Promise.resolve({ locale: "en" }) }));
-    const currentHtml = withProvider(await CurrentPortalPage({ params: Promise.resolve({ locale: "en" }) }));
-    currentSession = null;
+/** The ONE approved, intentional difference Phase 2.6 PR 1 introduces to this page's own markup — see the
+ * file-level comment above and `page.tsx`'s own comment at this className. Scoped to the EXACT class string on
+ * EXACTLY the one `<main>` element; this is a targeted string replacement, not a general class/whitespace
+ * normalizer, and it touches nothing else in the rendered tree. */
+const APPROVED_MAIN_CLASS_BASELINE = "mx-auto flex w-full max-w-[1120px] flex-col px-4 py-5 sm:px-6 lg:px-8 lg:py-6";
+const APPROVED_MAIN_CLASS_CURRENT =
+  "mx-auto flex w-full max-w-[1120px] flex-col px-4 pt-5 pb-[calc(3.5rem+env(safe-area-inset-bottom))] sm:px-6 sm:pt-5 sm:pb-5 lg:px-8 lg:pt-6 lg:pb-6";
+function normalizeApprovedMainPadding(html: string): string {
+  return html.split(APPROVED_MAIN_CLASS_BASELINE).join(APPROVED_MAIN_CLASS_CURRENT);
+}
 
-    // Non-vacuous: real financial content is actually present in both renders.
+describe("portal/page.tsx: inactive-ledger render EQUIVALENCE against the pre-PR baseline (87c706b), after the one approved <main> padding normalization — not raw byte identity", () => {
+  let baselineHtml: string;
+  let currentHtml: string;
+
+  beforeAll(async () => {
+    currentSession = { user: { id: studentUser.id }, activeOrganizationId: a.org.id };
+    baselineHtml = withProvider(await BaselinePortalPage({ params: Promise.resolve({ locale: "en" }) }));
+    currentHtml = withProvider(await CurrentPortalPage({ params: Promise.resolve({ locale: "en" }) }));
+    currentSession = null;
+  });
+
+  it("REQUIRED: real financial content is non-vacuously present in both renders", () => {
     expect(baselineHtml).toContain("Payment status");
     expect(baselineHtml).toContain("Paid");
-    expect(normalizeReactGeneratedIds(currentHtml)).toBe(normalizeReactGeneratedIds(baselineHtml));
+  });
+
+  it("REQUIRED: both the old and new <main> padding classes are exactly where expected, asserted BEFORE normalizing — unexpected drift on either side fails loudly instead of the normalization silently matching nothing", () => {
+    expect(baselineHtml).toContain(APPROVED_MAIN_CLASS_BASELINE);
+    expect(currentHtml).toContain(APPROVED_MAIN_CLASS_CURRENT);
+  });
+
+  it("REQUIRED: current render matches baseline once the one approved <main> padding difference is normalized — everything else is unchanged", () => {
+    expect(normalizeReactGeneratedIds(currentHtml)).toBe(normalizeReactGeneratedIds(normalizeApprovedMainPadding(baselineHtml)));
+  });
+
+  it("REQUIRED: an unrelated class change is NOT swallowed by the normalization — comparison still fails", () => {
+    const tamperedCurrent = currentHtml.replace("text-2xl font-bold", "text-2xl font-bold tampered-unrelated-class");
+    expect(tamperedCurrent).not.toBe(currentHtml);
+    expect(normalizeReactGeneratedIds(tamperedCurrent)).not.toBe(normalizeReactGeneratedIds(normalizeApprovedMainPadding(baselineHtml)));
+  });
+
+  it("REQUIRED: a financial text/value change is NOT swallowed by the normalization — comparison still fails", () => {
+    const tamperedCurrent = currentHtml.replace("Paid", "Overdue");
+    expect(tamperedCurrent).not.toBe(currentHtml);
+    expect(normalizeReactGeneratedIds(tamperedCurrent)).not.toBe(normalizeReactGeneratedIds(normalizeApprovedMainPadding(baselineHtml)));
   });
 });
