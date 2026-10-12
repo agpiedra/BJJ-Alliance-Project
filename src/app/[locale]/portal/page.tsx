@@ -407,7 +407,10 @@ export default async function StudentPortalPage({
           displayName: branding.displayName,
         }}
       />
-      <main className="mx-auto flex w-full max-w-[1120px] flex-col px-4 py-5 sm:px-6 lg:px-8 lg:py-6">
+      {/* Bottom padding below `sm` reserves room for `PortalTabs`' fixed bottom tab bar (its own height plus the
+          device safe area) so the last content in a panel is never hidden behind it; `sm` and up the tab bar is
+          back in normal flow at the top, so padding returns to the original symmetric py-5/lg:py-6. */}
+      <main className="mx-auto flex w-full max-w-[1120px] flex-col px-4 pt-5 pb-[calc(3.5rem+env(safe-area-inset-bottom))] sm:px-6 sm:pt-5 sm:pb-5 lg:px-8 lg:pt-6 lg:pb-6">
         <h1 className="text-2xl font-bold">{t("greeting", { name: student.firstName })}</h1>
         <p className="mb-4 text-sm text-muted-foreground">{student.homeAcademy.name}</p>
         <PortalTabs

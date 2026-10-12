@@ -68,7 +68,14 @@ export function PortalTabs({ listLabel, labels, panels }: { listLabel: string; l
 
   return (
     <PortalTabsContext.Provider value={{ select }}>
-      <div role="tablist" aria-label={listLabel} className="-mx-4 mb-4 flex border-b border-border px-4 sm:mx-0 sm:px-0 lg:mb-5">
+      {/* Phone: fixed to the viewport bottom (bottom-tab convention), safe-area padding below the labels so a
+          device's home-indicator/gesture bar never overlaps them. `sm` and up: back in normal flow at the top,
+          exactly as before — `fixed` only ever applies below `sm`. */}
+      <div
+        role="tablist"
+        aria-label={listLabel}
+        className="fixed inset-x-0 bottom-0 z-10 flex border-t border-border bg-background px-4 pb-[env(safe-area-inset-bottom)] sm:static sm:inset-auto sm:z-auto sm:mb-4 sm:border-t-0 sm:border-b sm:bg-transparent sm:px-0 sm:pb-0 lg:mb-5"
+      >
         {TAB_IDS.map((id, index) => (
           <button
             key={id}
@@ -84,8 +91,8 @@ export function PortalTabs({ listLabel, labels, panels }: { listLabel: string; l
             onClick={() => select(id)}
             onKeyDown={(event) => onKeyDown(event, index)}
             className={cn(
-              "-mb-px inline-flex min-h-11 flex-1 items-center justify-center border-b-[3px] border-transparent px-4 text-sm font-medium text-muted-foreground transition-colors sm:flex-none",
-              "hover:bg-muted hover:text-foreground aria-selected:border-foreground aria-selected:font-semibold aria-selected:text-foreground",
+              "inline-flex min-h-11 flex-1 items-center justify-center px-4 text-sm font-medium text-muted-foreground transition-colors sm:-mb-px sm:flex-none sm:border-b-[3px] sm:border-transparent",
+              "hover:bg-muted hover:text-foreground aria-selected:font-semibold aria-selected:text-foreground sm:aria-selected:border-foreground",
             )}
           >
             {labels[id]}
