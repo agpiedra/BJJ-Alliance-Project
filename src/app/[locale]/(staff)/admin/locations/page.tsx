@@ -44,34 +44,27 @@ export default async function LocationsPage() {
           <p className="text-sm text-muted-foreground">{t("sub")}</p>
         </header>
 
+        {/* Phase 6 approved prototype (Option B): the reference's card grid, replacing the former <table> —
+            same fields (name/address/status/added) and the same Badge component, just regrouped per location
+            instead of per column. No new capability. */}
         <Card>
           <CardHeader className="border-b">
             <CardTitle>{t("heading")}</CardTitle>
           </CardHeader>
           <CardContent className="pt-4">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-sm">
-                <thead>
-                  <tr className="text-muted-foreground">
-                    <th className="pb-2 pr-4 font-medium">{t("columns.name")}</th>
-                    <th className="pb-2 pr-4 font-medium">{t("columns.address")}</th>
-                    <th className="pb-2 pr-4 font-medium">{t("columns.status")}</th>
-                    <th className="pb-2 font-medium">{t("columns.added")}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {academies.map((academy) => (
-                    <tr key={academy.id} className="border-t">
-                      <td className="py-2 pr-4 align-top font-medium">{academy.name}</td>
-                      <td className="py-2 pr-4 align-top">{academy.address ?? t("noAddress")}</td>
-                      <td className="py-2 pr-4 align-top">
-                        <Badge variant="outline">{academy.active ? t("status.active") : t("status.inactive")}</Badge>
-                      </td>
-                      <td className="py-2 align-top whitespace-nowrap">{dateFormat.format(academy.createdAt)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {academies.map((academy) => (
+                <div key={academy.id} className="flex flex-col gap-2 rounded-lg border border-border p-4">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className="font-medium">{academy.name}</span>
+                    <Badge variant="outline">{academy.active ? t("status.active") : t("status.inactive")}</Badge>
+                  </div>
+                  <span className="text-sm text-muted-foreground">{academy.address ?? t("noAddress")}</span>
+                  <span className="mt-1 border-t border-border pt-2 text-xs text-muted-foreground">
+                    {t("columns.added")} {dateFormat.format(academy.createdAt)}
+                  </span>
+                </div>
+              ))}
             </div>
           </CardContent>
         </Card>
