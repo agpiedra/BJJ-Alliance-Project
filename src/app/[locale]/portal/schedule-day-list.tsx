@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { useTranslations } from "next-intl";
 import { cn } from "cn";
 import type { WeekCalendarBlock, WeekCalendarDay } from "@/components/ui/week-calendar";
@@ -11,6 +11,10 @@ import type { WeekCalendarBlock, WeekCalendarDay } from "@/components/ui/week-ca
  * own props, so the two can never disagree, and touches no schedule data or query. Day-tabs are always
  * selectable (unlike the old stacked-sections layout, which hid a day entirely when it had no classes) — a
  * selected empty day shows an explicit "no classes" message instead of disappearing.
+ *
+ * ACCESSIBLE TABS (WAI-ARIA tabs pattern, automatic activation), same convention as `PortalTabs`: a labelled
+ * `tablist`, `role="tab"` buttons with `aria-selected`/`aria-controls` and a roving tabindex (Left/Right wrap,
+ * Home/End jump, each move both focuses and selects), and a `role="tabpanel"` labelled by its tab.
  */
 export function ScheduleDayList({
   days,
@@ -42,10 +46,28 @@ export function ScheduleDayList({
   const activeBlocks = blocks.filter((b) => b.dayKey === activeDay.key).sort((a, b) => a.startRow - b.startRow);
   const isEmptySunday = activeDay.key === "SUNDAY" && !sundayHasClasses;
 
+  function select(key: string, options?: { focus?: boolean }) {
+    setSelected(key);
+    if (options?.focus) tabRefs.current[key]?.focus();
+  }
+
+  function onKeyDown(event: KeyboardEvent<HTMLButtonElement>, index: number) {
+    const last = days.length - 1;
+    const next =
+      event.key === "ArrowRight" ? (index === last ? 0 : index + 1)
+      : event.key === "ArrowLeft" ? (index === 0 ? last : index - 1)
+      : event.key === "Home" ? 0
+      : event.key === "End" ? last
+      : null;
+    if (next === null) return;
+    event.preventDefault();
+    select(days[next].key, { focus: true });
+  }
+
   return (
     <div className="flex flex-col gap-3 p-4 md:hidden" data-testid="schedule-day-list">
       <div role="tablist" aria-label={t("label")} className="flex gap-2 overflow-x-auto pb-1">
-        {days.map((day) => {
+        {days.map((day, index) => {
           const isActive = day.key === selected;
           return (
             <button
@@ -55,9 +77,13 @@ export function ScheduleDayList({
               }}
               type="button"
               role="tab"
+              id={`schedule-day-tab-${day.key}`}
               aria-selected={isActive}
+              aria-controls={`schedule-day-panel-${day.key}`}
               aria-current={day.isToday ? "date" : undefined}
-              onClick={() => setSelected(day.key)}
+              tabIndex={isActive ? 0 : -1}
+              onClick={() => select(day.key)}
+              onKeyDown={(event) => onKeyDown(event, index)}
               className={cn(
                 "flex min-h-16 min-w-14 shrink-0 flex-col items-center justify-center gap-0.5 rounded-md border px-2 text-sm font-medium",
                 isActive ? "border-foreground bg-foreground text-background" : "border-border text-muted-foreground",
@@ -70,7 +96,13 @@ export function ScheduleDayList({
         })}
       </div>
 
-      <section aria-current={activeDay.isToday ? "date" : undefined} className="flex flex-col gap-2">
+      <section
+        role="tabpanel"
+        id={`schedule-day-panel-${activeDay.key}`}
+        aria-labelledby={`schedule-day-tab-${activeDay.key}`}
+        aria-current={activeDay.isToday ? "date" : undefined}
+        className="flex flex-col gap-2"
+      >
         <h3 className="flex items-baseline gap-2 text-sm font-semibold">
           <span>{dateHeadings[activeDay.key] ?? `${activeDay.label} ${activeDay.dateNumber}`}</span>
           {activeDay.isToday && <span className="rounded-full border border-foreground px-2 py-0.5 text-xs font-medium">{tCalendar("today")}</span>}
