@@ -82,19 +82,43 @@ key press).
   code itself (`PortalTabs`'s `env(safe-area-inset-bottom)` rule) is unchanged by PR 2, so PR #114's own
   verification of that mechanism still applies; this PR only re-confirmed content clearance at the 0px value
   this environment produces by default.
-- **Day-tabs are Tab/Enter/Space-operable native buttons, not a roving-tabindex arrow-key widget** — unlike the
-  outer Home/Attendance/Schedule tabs (which do implement that pattern and are unchanged). Arrow-key roving
-  between day-tabs was not implemented; this is a simplification, not an oversight, and is named here rather
-  than silently assumed equivalent.
 - Dark theme and ES were checked on Home/Attendance/Schedule as covered above; a full light+dark × EN+ES ×
   every-width matrix was not exhaustively captured for every combination.
+
+## Correction round (this PR, same branch) — fixes to the above
+
+A prior reviewer flagged three gaps in the original round above, now addressed:
+
+1. **Day-tabs now implement the same accessible-tabs pattern as the outer Home/Attendance/Schedule tabs**
+   (`schedule-day-list.tsx`): roving tabindex, ArrowLeft/ArrowRight wrap, Home/End jump, `aria-controls`/
+   `aria-labelledby` id-linking to a real `role="tabpanel"`. The "not implemented" note above is no longer
+   accurate and is superseded by this section. Verified LIVE with real keyboard events (CDP, not jsdom) at
+   390px in a fresh registered org/student with real class sessions: ArrowRight moved focus+selection with a
+   visible focus ring and updated panel content correctly across a populated day, an empty weekday, and the
+   preserved "No classes on Sunday" day; Home/End correctly jumped to the first/last day-tab; `display:none`
+   at desktop width was re-confirmed unchanged. New behavioral tests in `tests/unit/schedule-day-list.test.tsx`
+   (10 tests) cover the same mechanics in jsdom. See `tests/unit/portal-tabs.test.tsx` for the convention this
+   follows.
+2. **The baseline-comparison test's disclosure was incomplete.** It only named `PortalTabs` as a
+   current-on-both-sides import; `AttendanceHistorySection` and `ScheduleDayList` are equally current-on-both-
+   sides (confirmed directly against the git-extracted baseline source, which already names all three by the
+   same relative import paths) and the test's own description of what it proves about the Attendance/Schedule
+   panels overclaimed ("unchanged") what a shared-current-import comparison can actually show. Both the
+   file-level comment and the specific test description in
+   `tests/integration/portal-page-inactive-baseline-comparison.test.tsx` now name this precisely, and the test
+   now also states explicitly that its empty-attendance fixture exercises neither the new monthly-stats feature
+   nor populated month-grouping — that proof is `tests/integration/attendance-month-totals.test.ts` and this
+   PR's own real-browser evidence (above), never that file.
+3. **The test claimed "plan name ... is still shown" in prose without ever asserting the literal plan-name
+   string.** It now asserts the fixture's actual plan name (`` `PortalBaseline plan ${suffix}` ``) is present in
+   both the baseline and current renders, not just the generic "Payment status"/"Paid" labels.
 
 ## Checks
 
 - [x] `tsc --noEmit` clean
 - [x] ESLint clean on all changed files
-- [x] Full unit suite: 118 files / 1673 tests passed
-- [x] Full integration suite: 150 files / 1936 tests passed (including the new
-      `tests/integration/attendance-month-totals.test.ts` and the baseline-comparison test reconciled for
-      Home's approved restructure — see that file's own comments for how)
-- [x] Real-browser verification as documented above
+- [x] Full unit suite: 119 files / 1683 tests passed (includes the new `tests/unit/schedule-day-list.test.tsx`)
+- [x] Full integration suite: including `tests/integration/attendance-month-totals.test.ts` and the corrected
+      `portal-page-inactive-baseline-comparison.test.tsx` (10/10 passing with the new plan-name and disclosure
+      corrections) — see that file's own comments for exactly what it does and does not prove
+- [x] Real-browser verification as documented above, plus the correction round's live keyboard verification

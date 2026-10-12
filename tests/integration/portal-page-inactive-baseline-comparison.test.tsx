@@ -37,11 +37,26 @@ import enMessages from "../../messages/en.json";
  * See `splitHomePanel` below.
  *
  * IMPORTANT caveat this test does NOT prove: only `page.tsx` is git-extracted for the baseline side. Its
- * `./portal-tabs` import is never extracted, so BOTH the "baseline" and "current" renders below import the
- * SAME real, current `PortalTabs` component — this comparison cannot independently demonstrate anything about
- * old-vs-new tab-bar rendering or behavior. That proof lives in `tests/unit/portal-tabs.test.tsx` and this PR's
- * own real-browser evidence. This test's job is strictly to prove the REST of the page — content, financial
- * data, everything besides the one approved padding difference — did not silently change.
+ * `./portal-tabs`, `./attendance-history-section` and `./schedule-day-list` imports are never extracted, so
+ * BOTH the "baseline" and "current" renders below import the SAME real, current `PortalTabs`,
+ * `AttendanceHistorySection` and `ScheduleDayList` components — confirmed directly against the git-extracted
+ * baseline source, which already names all three by the same relative import paths this repo's current
+ * `page.tsx` uses. This comparison cannot independently demonstrate anything about old-vs-new rendering or
+ * behavior for ANY of those three components — not tab-bar markup, not Attendance's new monthly-stats feature,
+ * not Schedule's new day-tab keyboard pattern. That proof lives in their own dedicated tests
+ * (`tests/unit/portal-tabs.test.tsx`, `tests/unit/schedule-day-list.test.tsx`,
+ * `tests/unit/attendance-history-section.test.tsx`, `tests/integration/attendance-month-totals.test.ts`) and
+ * this PR's own real-browser evidence — never this file. This test's job is strictly to prove page.tsx's OWN
+ * surrounding markup — which component gets mounted where, in what order, wrapped in what shell — did not
+ * silently change outside the one approved `<main>` padding difference and the Home panel's approved restructure.
+ *
+ * A further limitation specific to this fixture: it creates no `AttendanceRecord` rows at all, so the
+ * Attendance panel renders with zero entries on both sides — the new `getAttendanceMonthTotals` read returns
+ * zero this-month/last-month counts, and no populated month-grouped list (multiple `<ul>`s, month headers,
+ * newest-first ordering) is ever exercised here. That behavior is proven separately by
+ * `tests/integration/attendance-month-totals.test.ts` and this PR's real-browser evidence (real cross-month
+ * data, real "2 this month / 2 last month" counts) — not by this file, which this fixture structurally cannot
+ * exercise.
  */
 const prisma = getTestPrismaClient();
 const BASELINE_REF = "87c706b33c6633ada6a003aa3d7ed105312cafd0";
@@ -204,9 +219,16 @@ describe("portal/page.tsx: inactive-ledger render EQUIVALENCE against the pre-PR
     ({ home: homeCurrent, rest: restCurrent } = splitHomePanel(currentHtml));
   });
 
-  it("REQUIRED: real financial content is non-vacuously present in both renders", () => {
+  it("REQUIRED: real financial content, including the fixture's actual plan name (not just the generic 'Payment status'/'Paid' labels), is non-vacuously present in both renders", () => {
     expect(baselineHtml).toContain("Payment status");
     expect(baselineHtml).toContain("Paid");
+    // The real fixture plan name (`makeAccountingOrg`'s `PortalBaseline plan ${suffix}`, rendered via
+    // `currentPaymentPeriod.planName` = `period.plan.name` — see src/lib/payments/get-current-period.ts) —
+    // asserted literally, not just claimed in prose, so a regression that drops the plan name from the legacy
+    // card would actually fail this test.
+    const planName = `PortalBaseline plan ${suffix}`;
+    expect(baselineHtml).toContain(planName);
+    expect(currentHtml).toContain(planName);
   });
 
   it("REQUIRED: exactly one expected <main> tag is present on each side, asserted BEFORE normalizing — zero or duplicate matches fail loudly instead of the anchored replace silently matching nothing or ambiguously matching more than intended", () => {
@@ -214,7 +236,7 @@ describe("portal/page.tsx: inactive-ledger render EQUIVALENCE against the pre-PR
     expect(countOccurrences(currentHtml, MAIN_TAG_CURRENT)).toBe(1);
   });
 
-  it("REQUIRED: outside the Home panel, current matches baseline once the one approved <main> padding difference is normalized — the shell, tab bar, Attendance panel and Schedule panel are all unchanged", () => {
+  it("REQUIRED: outside the Home panel, current matches baseline once the one approved <main> padding difference is normalized — page.tsx's OWN surrounding markup (shell, tab-bar wiring, which component is mounted where) is unchanged. This does NOT independently prove the Attendance or Schedule PANEL CONTENTS are unchanged: both renders mount the same current AttendanceHistorySection/ScheduleDayList (see the file-level caveat above), and this fixture's zero attendance rows mean neither panel's real content differs here regardless.", () => {
     expect(normalizeReactGeneratedIds(restCurrent)).toBe(normalizeReactGeneratedIds(normalizeApprovedMainPadding(restBaseline)));
   });
 
