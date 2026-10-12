@@ -41,7 +41,15 @@ function ensureCommitFetched(ref: string) {
     execFileSync("git", ["cat-file", "-e", `${ref}^{commit}`], { stdio: "ignore" });
   } catch {
     // Not present locally (a shallow CI clone) — fetch exactly this one commit from origin.
-    execFileSync("git", ["fetch", "--depth=1", "origin", ref], { stdio: "ignore" });
+    try {
+      execFileSync("git", ["fetch", "--depth=1", "origin", ref], { stdio: ["ignore", "ignore", "pipe"], encoding: "utf8" });
+    } catch (err) {
+      // A genuine fetch failure is not expected — surface git's real reason, bounded and stripped of
+      // any credential-bearing URL, instead of the opaque "Command failed" exit-code-only error.
+      const rawStderr = err && typeof err === "object" && "stderr" in err ? String((err as { stderr?: unknown }).stderr ?? "") : "";
+      const sanitized = rawStderr.replace(/https?:\/\/[^\s@/]+@/g, "https://[redacted]@").trim().slice(0, 1000);
+      throw new Error(`git fetch --depth=1 origin ${ref} failed${sanitized ? `: ${sanitized}` : " (no stderr captured)"}`);
+    }
   }
 }
 
