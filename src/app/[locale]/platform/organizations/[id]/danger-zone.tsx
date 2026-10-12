@@ -75,7 +75,18 @@ export function DangerZone({ organizationId, status }: { organizationId: string;
           this dialog, not left to the default previously-focused-element guess. */}
       <AlertDialog
         open={suspendOpen}
-        onOpenChange={setSuspendOpen}
+        onOpenChange={(open, eventDetails) => {
+          // A user-driven close (Escape -- outside-press is already disabled by AlertDialog
+          // itself) while the suspend request is in flight would hide a later server error with
+          // no dialog left to show it in. Both trigger buttons are already `disabled={isPending}`,
+          // so only one dialog can ever be open while a request is pending -- blocking dismissal
+          // on the shared `isPending` flag is correct for both dialogs, not a cross-action bug.
+          if (!open && isPending) {
+            eventDetails.cancel();
+            return;
+          }
+          setSuspendOpen(open);
+        }}
       >
         <AlertDialogPopup initialFocus={suspendCancelRef} finalFocus={suspendTriggerRef}>
           <AlertDialogTitle>{t("suspend")}</AlertDialogTitle>
@@ -107,7 +118,13 @@ export function DangerZone({ organizationId, status }: { organizationId: string;
           message and the user's typed note are never lost (no setCancelOpen(false) on failure). */}
       <AlertDialog
         open={cancelOpen}
-        onOpenChange={(open) => {
+        onOpenChange={(open, eventDetails) => {
+          // Same pending-dismissal guard as the suspend dialog above: Escape while the
+          // cancellation request is in flight must not clear the note or hide a later error.
+          if (!open && isPending) {
+            eventDetails.cancel();
+            return;
+          }
           if (open) setCancelOpen(true);
           else closeCancelDialog();
         }}
@@ -115,15 +132,22 @@ export function DangerZone({ organizationId, status }: { organizationId: string;
         <AlertDialogPopup initialFocus={noteInputRef} finalFocus={cancelTriggerRef}>
           <AlertDialogTitle>{t("cancel")}</AlertDialogTitle>
           <AlertDialogDescription>{t("confirmCancel")}</AlertDialogDescription>
-          <Input
-            ref={noteInputRef}
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-            placeholder={t("cancelNotePlaceholder")}
-            disabled={isPending}
-            className="mt-3"
-          />
-          {error && <p className="mt-2 text-sm text-destructive">{t(error as "confirmCancel")}</p>}
+          <label className="mt-3 flex flex-col gap-1 text-sm font-medium">
+            {t("cancelNotePlaceholder")}
+            <Input
+              ref={noteInputRef}
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              disabled={isPending}
+              aria-invalid={error ? "true" : undefined}
+              aria-describedby={error ? "danger-zone-cancel-error" : undefined}
+            />
+          </label>
+          {error && (
+            <p id="danger-zone-cancel-error" className="mt-2 text-sm text-destructive">
+              {t(error as "confirmCancel")}
+            </p>
+          )}
           <AlertDialogActions>
             <Button variant="ghost" size="sm" disabled={isPending} onClick={closeCancelDialog}>
               {t("cancelDialogCancel")}
