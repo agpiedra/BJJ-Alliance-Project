@@ -14,8 +14,9 @@ export const dynamic = "force-dynamic";
 /**
  * MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 4 — "Configuración → Academia."
  * ADMIN/DIRECTOR, matching the doc's own page-level gate; the logo upload/
- * remove actions this page renders narrow further to ADMIN-only themselves
- * (item 2), enforced server-side, not by hiding either control here.
+ * remove actions this page renders are also ADMIN or DIRECTOR (widened from
+ * ADMIN-only in PR 1 — see `actions.ts`'s own doc comments on each), enforced
+ * server-side, not by hiding either control here.
  *
  * Reads the RAW row directly (not through `getOrganizationBranding`'s
  * cache) because the edit form needs the true nullable override fields —
