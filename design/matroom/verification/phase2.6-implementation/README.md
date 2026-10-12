@@ -112,13 +112,23 @@ A prior reviewer flagged three gaps in the original round above, now addressed:
 3. **The test claimed "plan name ... is still shown" in prose without ever asserting the literal plan-name
    string.** It now asserts the fixture's actual plan name (`` `PortalBaseline plan ${suffix}` ``) is present in
    both the baseline and current renders, not just the generic "Payment status"/"Paid" labels.
+4. **The new monthly-stat read's failure path was untested through the real page.** New
+   `tests/integration/portal-page-monthly-stat-failure.test.tsx` renders the actual `portal/page.tsx` with
+   `getAttendanceMonthTotals` forced to reject (every other export of the same module left real, via
+   `importOriginal` passthrough) and proves: the panel shows the exact "Couldn't load this month's totals."
+   text (not a false "0", not an uncaught exception — console confirms `page.tsx`'s own try/catch genuinely
+   fires) for both the this-month and last-month stats, and the rest of the page — payments, the schedule
+   panel's heading, and the attendance history list's own real row — still renders correctly despite that one
+   failed read. A control-case test (the same render with the read succeeding) proves the forced-failure case
+   is a genuine difference, not a tautology.
 
 ## Checks
 
 - [x] `tsc --noEmit` clean
 - [x] ESLint clean on all changed files
 - [x] Full unit suite: 119 files / 1683 tests passed (includes the new `tests/unit/schedule-day-list.test.tsx`)
-- [x] Full integration suite: including `tests/integration/attendance-month-totals.test.ts` and the corrected
+- [x] Full integration suite: including `tests/integration/attendance-month-totals.test.ts`, the corrected
       `portal-page-inactive-baseline-comparison.test.tsx` (10/10 passing with the new plan-name and disclosure
-      corrections) — see that file's own comments for exactly what it does and does not prove
+      corrections), and the new `portal-page-monthly-stat-failure.test.tsx` (3/3 passing) — see each file's own
+      comments for exactly what it does and does not prove
 - [x] Real-browser verification as documented above, plus the correction round's live keyboard verification
