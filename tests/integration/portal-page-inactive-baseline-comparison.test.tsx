@@ -142,14 +142,23 @@ function normalizeReactGeneratedIds(html: string): string {
 }
 
 /** The ONE approved, intentional difference Phase 2.6 PR 1 introduces to this page's own markup — see the
- * file-level comment above and `page.tsx`'s own comment at this className. Scoped to the EXACT class string on
- * EXACTLY the one `<main>` element; this is a targeted string replacement, not a general class/whitespace
- * normalizer, and it touches nothing else in the rendered tree. */
+ * file-level comment above and `page.tsx`'s own comment at this className. Scoped to the EXACT `<main class="...">`
+ * opening tag — anchored to the tag itself, not a bare class-value replace — so a coincidental occurrence of the
+ * same class string on some OTHER element is never touched; this is a targeted string replacement, not a general
+ * class/whitespace normalizer. */
 const APPROVED_MAIN_CLASS_BASELINE = "mx-auto flex w-full max-w-[1120px] flex-col px-4 py-5 sm:px-6 lg:px-8 lg:py-6";
 const APPROVED_MAIN_CLASS_CURRENT =
   "mx-auto flex w-full max-w-[1120px] flex-col px-4 pt-5 pb-[calc(3.5rem+env(safe-area-inset-bottom))] sm:px-6 sm:pt-5 sm:pb-5 lg:px-8 lg:pt-6 lg:pb-6";
+const MAIN_TAG_BASELINE = `<main class="${APPROVED_MAIN_CLASS_BASELINE}">`;
+const MAIN_TAG_CURRENT = `<main class="${APPROVED_MAIN_CLASS_CURRENT}">`;
+/** Number of times a literal (non-regex) substring occurs in `html` — used to assert "exactly one `<main>`
+ * tag" before normalizing, so a render with zero or more than one match fails loudly instead of the anchored
+ * replace below silently matching nothing or ambiguously matching more than intended. */
+function countOccurrences(html: string, literal: string): number {
+  return html.split(literal).length - 1;
+}
 function normalizeApprovedMainPadding(html: string): string {
-  return html.split(APPROVED_MAIN_CLASS_BASELINE).join(APPROVED_MAIN_CLASS_CURRENT);
+  return html.split(MAIN_TAG_BASELINE).join(MAIN_TAG_CURRENT);
 }
 
 describe("portal/page.tsx: inactive-ledger render EQUIVALENCE against the pre-PR baseline (87c706b), after the one approved <main> padding normalization — not raw byte identity", () => {
@@ -168,9 +177,9 @@ describe("portal/page.tsx: inactive-ledger render EQUIVALENCE against the pre-PR
     expect(baselineHtml).toContain("Paid");
   });
 
-  it("REQUIRED: both the old and new <main> padding classes are exactly where expected, asserted BEFORE normalizing — unexpected drift on either side fails loudly instead of the normalization silently matching nothing", () => {
-    expect(baselineHtml).toContain(APPROVED_MAIN_CLASS_BASELINE);
-    expect(currentHtml).toContain(APPROVED_MAIN_CLASS_CURRENT);
+  it("REQUIRED: exactly one expected <main> tag is present on each side, asserted BEFORE normalizing — zero or duplicate matches fail loudly instead of the anchored replace silently matching nothing or ambiguously matching more than intended", () => {
+    expect(countOccurrences(baselineHtml, MAIN_TAG_BASELINE)).toBe(1);
+    expect(countOccurrences(currentHtml, MAIN_TAG_CURRENT)).toBe(1);
   });
 
   it("REQUIRED: current render matches baseline once the one approved <main> padding difference is normalized — everything else is unchanged", () => {
@@ -187,5 +196,16 @@ describe("portal/page.tsx: inactive-ledger render EQUIVALENCE against the pre-PR
     const tamperedCurrent = currentHtml.replace("Paid", "Overdue");
     expect(tamperedCurrent).not.toBe(currentHtml);
     expect(normalizeReactGeneratedIds(tamperedCurrent)).not.toBe(normalizeReactGeneratedIds(normalizeApprovedMainPadding(baselineHtml)));
+  });
+
+  it("REQUIRED: normalization is scoped to the <main> tag only — the same class string on a different element is left untouched", () => {
+    const decoy = `<div class="${APPROVED_MAIN_CLASS_BASELINE}">decoy</div>`;
+    const tamperedBaseline = decoy + baselineHtml;
+    const normalized = normalizeApprovedMainPadding(tamperedBaseline);
+    // The decoy element is NOT <main> — its class string must survive verbatim, untouched.
+    expect(normalized).toContain(decoy);
+    // The real <main> tag in the same string is still correctly normalized to the current form.
+    expect(normalized).toContain(MAIN_TAG_CURRENT);
+    expect(normalized).not.toContain(MAIN_TAG_BASELINE);
   });
 });
