@@ -24,6 +24,7 @@ const row = (n: number, over: Partial<AttendanceRow> = {}): AttendanceRow => ({
 });
 
 const TOTALS = { total: 61, entryCount: 60, checkIns: 50, staffDays: 10, otherAdjustments: { count: 1, net: 1 } };
+const MONTHLY_STATS = { thisMonth: { ok: true as const, totals: { total: 5, checkIns: 5, staffDays: 0, otherAdjustments: { count: 0, net: 0 } } }, lastMonth: { ok: true as const, totals: { total: 8, checkIns: 8, staffDays: 0, otherAdjustments: { count: 0, net: 0 } } } };
 
 function renderSection(locale: "en" | "es", props: Partial<React.ComponentProps<typeof AttendanceHistorySection>> = {}) {
   return render(
@@ -34,6 +35,7 @@ function renderSection(locale: "en" | "es", props: Partial<React.ComponentProps<
         initialCursor="cursor-1"
         totals={TOTALS}
         creditedClasses={0}
+        monthlyStats={MONTHLY_STATS}
         {...props}
       />
     </NextIntlClientProvider>,
@@ -113,6 +115,46 @@ describe("AttendanceHistorySection", () => {
     fireEvent.click(screen.getByRole("button", { name: "Show older attendance" }));
     await waitFor(() => expect(screen.getByText("Showing 4 of 60 entries")).toBeInTheDocument());
     expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("shows the server's own this-month/last-month totals, not something computed from the few rows actually loaded", () => {
+    // Only 3 rows are loaded (far fewer than the real monthly totals below) - proves the stat row reads
+    // `monthlyStats`, never derives from `rows.length` or similar.
+    renderSection("en");
+    const stats = within(screen.getByTestId("attendance-month-stats"));
+    expect(stats.getByText("5 attendances this month")).toBeInTheDocument();
+    expect(stats.getByText("8 attendances last month")).toBeInTheDocument();
+  });
+
+  it("a failed monthly-stat read shows an explicit unavailable message, never a false 0", () => {
+    renderSection("en", { monthlyStats: { thisMonth: { ok: false }, lastMonth: MONTHLY_STATS.lastMonth } });
+    const stats = within(screen.getByTestId("attendance-month-stats"));
+    expect(stats.getByText("Couldn't load this month's totals.")).toBeInTheDocument();
+    expect(stats.queryByText(/0 attendances this month/)).toBeNull();
+    expect(stats.getByText("8 attendances last month")).toBeInTheDocument();
+  });
+
+  it("groups entries by month with a visible header only when the loaded rows actually span more than one month", () => {
+    // Single-month fixture (the default `row()` helper): no redundant header.
+    renderSection("en");
+    expect(screen.queryByText(/2026$/)).toBeNull();
+  });
+
+  it("rows spanning two calendar months render as two separate lists, each under its own month header, in the order given", () => {
+    const decRow = (n: number): AttendanceRow => ({
+      id: `dec${n}`, iso: `2025-12-${String(31 - n).padStart(2, "0")}T18:00:00.000Z`, whenLabel: `12/${String(31 - n).padStart(2, "0")}/2025, 12:00`,
+      kind: "class_checkin", className: "Evening GI", reason: null, delta: 1,
+    });
+    renderSection("en", {
+      initialRows: [row(1), row(2), decRow(1), decRow(2)],
+      totals: { total: 61, entryCount: 4, checkIns: 61, staffDays: 0, otherAdjustments: { count: 0, net: 0 } },
+    });
+    const lists = screen.getAllByRole("list", { name: "Attendance entries" });
+    expect(lists).toHaveLength(2);
+    expect(within(lists[0]).getAllByRole("listitem")).toHaveLength(2);
+    expect(within(lists[1]).getAllByRole("listitem")).toHaveLength(2);
+    expect(screen.getByText("January 2026")).toBeInTheDocument();
+    expect(screen.getByText("December 2025")).toBeInTheDocument();
   });
 
   it("is fully translated: Spanish total, breakdown, entry labels and control", () => {
