@@ -53,6 +53,8 @@
       "heading": "Iniciar sesión",
       "email": "Correo electrónico",
       "password": "Contraseña",
+      "showPassword": "Mostrar contraseña",
+      "hidePassword": "Ocultar contraseña",
       "submit": "Entrar",
       "invalidCredentials": "Correo o contraseña incorrectos.",
       "forgotPassword": "¿Olvidaste tu contraseña?",

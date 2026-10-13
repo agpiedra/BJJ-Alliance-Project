@@ -53,6 +53,8 @@
       "heading": "Sign in",
       "email": "Email",
       "password": "Password",
+      "showPassword": "Show password",
+      "hidePassword": "Hide password",
       "submit": "Sign in",
       "invalidCredentials": "Incorrect email or password.",
       "forgotPassword": "Forgot your password?",
