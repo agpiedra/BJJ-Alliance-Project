@@ -5,9 +5,11 @@ import { OrgRow } from "../../src/components/auth/org-row";
 
 /**
  * MATROOM Phase 1 round 3 — the approved prototype's `.org-meta .name`/`.role`
- * have no overflow/ellipsis/nowrap rule (design/matroom/preview/auth-access-phase-prototype.html);
- * a long organization name is meant to wrap, not hide the text that distinguishes
- * it from another row. Round 2 shipped `truncate` by mistake; this guards the fix.
+ * (now `.org-card .name`/`.small` in the Phase 2.6 card-with-chevron prototype,
+ * design/matroom/preview/phase2.6-app/organization-selection.html) have no
+ * overflow/ellipsis/nowrap rule; a long organization name is meant to wrap,
+ * not hide the text that distinguishes it from another row. Round 2 shipped
+ * `truncate` by mistake; this guards the fix.
  */
 describe("OrgRow", () => {
   it("REQUIRED: renders a long organization name in full, not truncated", () => {
@@ -30,5 +32,16 @@ describe("OrgRow", () => {
   it("uses the secondary mark tone when requested", () => {
     render(<OrgRow mark="NI" markTone="secondary" name="Org" role="Owner" />);
     expect(screen.getByText("NI").className).toMatch(/\bbg-secondary\b/);
+  });
+
+  it("renders a decorative trailing chevron, hidden from assistive tech", () => {
+    const { container } = render(<OrgRow mark="AJ" name="Alliance Jiu-Jitsu Costa Rica" role="Owner" />);
+    const chevron = container.querySelector("svg[aria-hidden='true']");
+    expect(chevron).toBeTruthy();
+  });
+
+  it("renders the mark badge at 44px (card-with-chevron treatment)", () => {
+    render(<OrgRow mark="AJ" name="Alliance Jiu-Jitsu Costa Rica" role="Owner" />);
+    expect(screen.getByText("AJ").className).toMatch(/\bsize-11\b/);
   });
 });
