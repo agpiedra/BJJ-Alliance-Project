@@ -118,9 +118,11 @@ the queued check-in created a real `AttendanceRecord` with `source: "KIOSK"`.
   and `es.json`, confirmed by direct file read, but not re-screenshotted in Spanish).
 - Dark theme was checked on the Entry screen only, as a representative sample, matching this project's established
   per-round sampling convention — not across Picker/Success.
-- The picker's bounded-scroll-with-overflow behavior at the 2-column breakpoint was confirmed structurally
+- ~~The picker's bounded-scroll-with-overflow behavior at the 2-column breakpoint was confirmed structurally
   (`max-height`/`overflow-y: auto` present and measured) but not re-stress-tested with 5+ real cards in this
-  round — see the Picker section above.
+  round — see the Picker section above.~~ **Historical — superseded.** Discharged by the PR #118 correction
+  round's real 6-card test (see the Picker section above and §5 below): the overflow, scroll-to-last-card,
+  keyboard focus and real click-activation were all proven against the real component, not the prototype.
 - No real test of the rate-limit/lockout path against the new `open-classes` route specifically — it has no rate
   limiting by design (see §1), so there is nothing to test there; this is a deliberate omission, not a gap.
 
@@ -134,9 +136,12 @@ Three corrections made after the first review, on top of the work above:
   tab, a slow render). It now captures `deadline = Date.now() + ms` once in `armReset`, and the interval only
   re-reads `deadline - Date.now()` on every tick — a display refresher, never a second clock, and never itself a
   reset trigger. `tests/unit/kiosk-redesign.test.tsx` now also fakes `Date` (it previously faked only the timer
-  functions, so a deadline computed from `Date.now()` would never have moved under `advanceTimersByTimeAsync`)
-  and adds a regression that jumps fake time by a single 3000ms step (skipping ~12 would-be 250ms ticks) and
-  confirms the display still lands on the correct "3s", proving it reads elapsed time rather than counting ticks.
+  functions, so a deadline computed from `Date.now()` would never have moved under `advanceTimersByTimeAsync`).
+  **Correction (§6 below): the regression test added in this round did not actually prove the claim above** —
+  `advanceTimersByTimeAsync` executes every intervening 250ms tick as it advances rather than skipping them, so a
+  tick-counting implementation would have passed it too. Fixed in the PR #118 second correction round using
+  `vi.setSystemTime` to jump the clock without firing the pending tick at all, then letting exactly one real tick
+  fire — see §6.
 - **Open-classes freshness hardened.** `getOpenClassesNow` now also returns `refreshAt` —
   `nextBoundaryAfter(sessions, now)` over the SAME sessions/now already used for `openOccurrences`, no second
   query — and the Entry panel schedules its next refetch exactly there instead of a blind 60s poll, clearing to
@@ -154,3 +159,41 @@ Three corrections made after the first review, on top of the work above:
 
 Full suites after this round: `pnpm test:unit` — 1705/1705 pass (120 files, +3 from this round). `pnpm
 test:integration` — 1946/1946 pass (152 files, +1 from this round). `tsc --noEmit` — clean.
+
+## 6. PR #118 second correction round
+
+Two further corrections, on top of §5:
+
+- **Open-class boundary scheduling is now clock-skew-resilient.** The client previously scheduled its refetch as
+  `new Date(refreshAt).getTime() - Date.now()` — correct only if the browser's clock agrees with the server's.
+  `getOpenClassesNow` now also returns `serverNow` — the SAME `now` instant already used for
+  `openOccurrences`/`nextBoundaryAfter`, round-tripped — and the client measures its own clock's offset from it
+  once per response (`offset = Date.parse(serverNow) - Date.now()`), then schedules against `Date.now() + offset`
+  rather than the raw browser clock. This is the SAME convention `src/lib/portal/todays-classes.ts` /
+  `todays-classes-card.tsx`'s `useRefreshAtBoundary` already use for the portal's own boundary refresh — reused,
+  not reinvented, down to the same `BOUNDARY_MARGIN_MS = 250` and the same self-rechecking schedule-then-verify
+  loop (fire only once `serverTime() >= target`, otherwise reschedule). Not extracted into one shared helper: the
+  portal's version is a hook driven by props and a `refresh` callback ref; the kiosk's lives inside a fetch effect
+  that also owns sequential-fetch and loading-state concerns the hook doesn't have — the two don't factor into one
+  shape without forcing an abstraction neither side needs, though the boundary math itself is identical.
+  Sequential-only fetches, the `cancelled` teardown guard, and the "clear to loading before refetch" boundary
+  invalidation from §5 are all preserved unchanged. Two new tests in `tests/unit/kiosk-redesign.test.tsx` prove a
+  server clock 5s AHEAD and 5s BEHIND the browser's both still refetch at the TRUE server-relative delay (not the
+  browser's naive, wrong one), with exactly one extra fetch call at the correct instant and none before it — no
+  immediate-request loop in either direction. `tests/integration/kiosk-open-classes-route.test.ts` gained a test
+  pinning `serverNow` to the fixture's own captured `now`.
+- **The delayed-tick regression test from §5 is fixed, and its claim corrected.** As noted in §5, the original
+  test's `advanceTimersByTimeAsync(3000)` executes every intervening 250ms tick rather than skipping any, so it
+  never actually exercised a missed tick. Confirmed empirically (a scratch probe, deleted after use, never
+  committed) that `vi.setSystemTime(...)` jumps the faked clock with ZERO timer callbacks firing, and that a
+  subsequent small `advanceTimersByTimeAsync` then fires the one already-pending, now-overdue interval callback
+  exactly ONCE, at the jumped clock position — a genuine skipped-tick scenario. The test now does exactly that:
+  jump 3000ms via `setSystemTime`, then `advance(250)` to let that one tick fire, and asserts "3s". **Proved the
+  test is meaningful before trusting it**: temporarily reverted only the countdown effect in `kiosk-client.tsx` to
+  the old per-tick `remainingMs -= TICK_MS` logic (uncommitted, local only), ran just this one test, and confirmed
+  it failed — the old logic showed "6s" (one decrement of 250ms against a 6000ms base still rounds up to 6),
+  exactly as predicted, against the fixed test's "3s" expectation. Restored the real fix immediately after;
+  `git diff --stat` before and after the experiment was byte-for-byte identical, confirming zero residue.
+
+Full suites after this round: `pnpm test:unit` — 1707/1707 pass (120 files, +2 net from this round: 3 new, 1
+rewritten in place). `pnpm test:integration` — pending final count, see the PR report. `tsc --noEmit` — clean.

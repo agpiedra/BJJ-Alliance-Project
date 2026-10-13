@@ -13,12 +13,15 @@ import { getOpenClassesNow } from "@/lib/kiosk/open-classes";
  * with the same deliberately indistinguishable failure shapes, as `check-in/route.ts` and `reassign/route.ts`.
  *
  *   POST { academySlug, token }
- *     -> 200 { ok: true, openClasses: OpenClassEntry[], refreshAt: string }
+ *     -> 200 { ok: true, openClasses: OpenClassEntry[], refreshAt: string, serverNow: string }
  *                                                           an empty array is a normal, successful "nothing open
  *                                                           right now" — NOT an error. `refreshAt` (ISO) is the
  *                                                           next instant this result is known to go stale
  *                                                           (`nextBoundaryAfter`) — the client refetches there
- *                                                           instead of polling blind.
+ *                                                           instead of polling blind. `serverNow` (ISO) is the
+ *                                                           SAME instant `refreshAt` was computed from, so the
+ *                                                           client can measure its own clock's skew against it
+ *                                                           rather than trust its unadjusted `Date.now()`.
  *     -> 401/404 { ok: false, error: "invalid_token" }     bad token / unknown academy slug, same indistinguishable
  *                                                           shape the other two routes already use.
  *     -> 403 { ok: false, error: "org_unavailable" }       organization is PENDING/SUSPENDED/CANCELLED — same gate
@@ -60,6 +63,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false, error: "org_unavailable" }, { status: 403 });
   }
 
-  const { classes, refreshAt } = await getOpenClassesNow(academy.id, academy.organizationId, new Date());
-  return NextResponse.json({ ok: true, openClasses: classes, refreshAt: refreshAt.toISOString() }, { status: 200 });
+  const { classes, refreshAt, serverNow } = await getOpenClassesNow(academy.id, academy.organizationId, new Date());
+  return NextResponse.json(
+    { ok: true, openClasses: classes, refreshAt: refreshAt.toISOString(), serverNow: serverNow.toISOString() },
+    { status: 200 },
+  );
 }

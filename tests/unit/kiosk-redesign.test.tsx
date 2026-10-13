@@ -68,7 +68,7 @@ beforeEach(() => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"] });
   fetchMock.mockReset();
   openClassesMock.mockReset();
-  openClassesMock.mockImplementation(() => respond(200, { ok: true, openClasses: [] }));
+  openClassesMock.mockImplementation(() => respond(200, { ok: true, openClasses: [], serverNow: new Date().toISOString() }));
   enqueue.mockReset();
   flush.mockReset();
   flush.mockResolvedValue({ dropped: 0 });
@@ -189,8 +189,9 @@ describe("PR #118 correction: open-classes freshness", () => {
   });
 
   it("refreshes automatically at the server's reported boundary, and does not keep showing the expired list as confirmed while the refresh is in flight", async () => {
+    const now = new Date().toISOString();
     const soon = new Date(Date.now() + 5000).toISOString();
-    openClassesMock.mockImplementationOnce(() => respond(200, { ok: true, openClasses: [CLASS_A], refreshAt: soon }));
+    openClassesMock.mockImplementationOnce(() => respond(200, { ok: true, openClasses: [CLASS_A], refreshAt: soon, serverNow: now }));
     let resolveSecond!: (value: Response) => void;
     openClassesMock.mockImplementationOnce(() => new Promise<Response>((resolve) => (resolveSecond = resolve)));
 
@@ -200,11 +201,70 @@ describe("PR #118 correction: open-classes freshness", () => {
     });
     expect(screen.getByText("Fundamentals")).toBeTruthy();
 
-    await advance(5000); // crosses the boundary refreshAt named — the second fetch is now in flight
+    await advance(5250); // crosses the boundary (refreshAt + the same BOUNDARY_MARGIN_MS the schedule uses) — the second fetch is now in flight
     expect(screen.queryByText("Fundamentals")).toBeNull(); // not presented as confirmed while stale/refreshing
 
     await act(async () => {
-      resolveSecond(await respond(200, { ok: true, openClasses: [CLASS_B] }));
+      resolveSecond(await respond(200, { ok: true, openClasses: [CLASS_B], serverNow: new Date().toISOString() }));
+      await Promise.resolve();
+    });
+    expect(screen.getByText("Advanced No-Gi")).toBeTruthy();
+  });
+
+  it("a server clock AHEAD of the browser's still refreshes at the server-true delay, not the browser's naive (too-late) one", async () => {
+    const browserNow = Date.now();
+    const serverNow = new Date(browserNow + 5000).toISOString(); // server clock is 5s fast
+    const refreshAt = new Date(browserNow + 5000 + 3000).toISOString(); // server says "3s from its own now"
+    openClassesMock.mockImplementationOnce(() => respond(200, { ok: true, openClasses: [CLASS_A], refreshAt, serverNow }));
+    let resolveSecond!: (value: Response) => void;
+    openClassesMock.mockImplementationOnce(() => new Promise<Response>((resolve) => (resolveSecond = resolve)));
+
+    renderKiosk();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.getByText("Fundamentals")).toBeTruthy();
+    expect(openClassesMock).toHaveBeenCalledTimes(1);
+
+    // The naive (unadjusted) calc would wait ~8s (refreshAt - browser's Date.now()); the offset-corrected one
+    // waits the TRUE ~3s the server meant. Confirm no refetch yet just before 3s + margin...
+    await advance(3000 + 250 - 1);
+    expect(openClassesMock).toHaveBeenCalledTimes(1); // no request-loop, no early refetch
+    // ...and exactly one more fetch once the true delay (plus the standard boundary margin) has elapsed.
+    await advance(1);
+    expect(openClassesMock).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      resolveSecond(await respond(200, { ok: true, openClasses: [CLASS_B], serverNow: new Date().toISOString() }));
+      await Promise.resolve();
+    });
+    expect(screen.getByText("Advanced No-Gi")).toBeTruthy();
+  });
+
+  it("a server clock BEHIND the browser's still refreshes at the server-true delay, not an immediate (too-early) one", async () => {
+    const browserNow = Date.now();
+    const serverNow = new Date(browserNow - 5000).toISOString(); // server clock is 5s slow
+    const refreshAt = new Date(browserNow - 5000 + 3000).toISOString(); // server says "3s from its own now"
+    openClassesMock.mockImplementationOnce(() => respond(200, { ok: true, openClasses: [CLASS_A], refreshAt, serverNow }));
+    let resolveSecond!: (value: Response) => void;
+    openClassesMock.mockImplementationOnce(() => new Promise<Response>((resolve) => (resolveSecond = resolve)));
+
+    renderKiosk();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.getByText("Fundamentals")).toBeTruthy();
+    expect(openClassesMock).toHaveBeenCalledTimes(1);
+
+    // The naive (unadjusted) calc would already be negative (refreshAt is 2s before the browser's own now) and
+    // fire immediately/loop; the offset-corrected one still waits out the TRUE ~3s the server meant.
+    await advance(3000 + 250 - 1);
+    expect(openClassesMock).toHaveBeenCalledTimes(1); // no immediate-request loop
+    await advance(1);
+    expect(openClassesMock).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      resolveSecond(await respond(200, { ok: true, openClasses: [CLASS_B], serverNow: new Date().toISOString() }));
       await Promise.resolve();
     });
     expect(screen.getByText("Advanced No-Gi")).toBeTruthy();
@@ -337,17 +397,25 @@ describe("Phase 2.6 PR 5: the success screen's numeric countdown and Done button
     expect(bar()!.getAttribute("data-timeout-ms")).toBe("6000"); // the bar's own deadline is unchanged
   });
 
-  it("the countdown catches up to the real deadline even if a tick is delayed, because it reads elapsed time, not a tick count", async () => {
+  it("the countdown catches up to the real deadline after a genuinely skipped tick, because it recomputes from a live deadline rather than counting elapsed ticks", async () => {
     fetchMock.mockReturnValueOnce(respond(200, SUCCESS));
     renderKiosk();
     enterCode();
     await advance(0);
     expect(screen.getByText("Ready for the next person in 6s")).toBeTruthy();
 
-    // A single 3000ms jump stands in for a backgrounded tab or a slow render that skipped roughly twelve would-be
-    // 250ms ticks. A tick-counting implementation would still show ~6s (it only decremented once); a
-    // deadline-reading one lands on exactly 3s because it re-reads real elapsed time on whichever tick does fire.
-    await advance(3000);
+    // `advanceTimersByTimeAsync` executes every intervening 250ms tick as it advances — it does not skip them —
+    // so it cannot stand in for a genuinely missed tick (a backgrounded tab, a delayed render). `setSystemTime`
+    // jumps the observed clock forward WITHOUT firing the pending interval callback at all (confirmed empirically:
+    // zero fires from the jump itself); the next `advance` then lets that one already-scheduled, now-overdue
+    // callback fire exactly once, at the jumped clock position — a real skipped-tick scenario, not many real ones.
+    await act(async () => {
+      vi.setSystemTime(new Date(Date.now() + 3000));
+    });
+    await advance(250); // the one pending tick fires, 3250ms after the deadline was armed
+
+    // A tick-COUNTING implementation only ever decremented once here (6000 - 250 = 5750ms -> still rounds to
+    // "6s"); a deadline-READING one recomputes the real elapsed 3250ms and lands on "3s".
     expect(screen.getByText("Ready for the next person in 3s")).toBeTruthy();
   });
 

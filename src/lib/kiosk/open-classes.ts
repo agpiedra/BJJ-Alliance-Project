@@ -11,16 +11,19 @@ import { toOpenClassEntry, type OpenClassEntry } from "@/lib/kiosk/perform-check
  *
  * `refreshAt` is `nextBoundaryAfter` over the SAME `sessions` and the SAME `now` already read above — no second
  * query, no second clock read — so the client can refetch exactly when this result is known to go stale, instead
- * of polling blind.
+ * of polling blind. `serverNow` is that SAME `now`, round-tripped so the client can measure its own clock's skew
+ * against it before trusting `refreshAt` — the same convention `listTodaysClasses`/`useRefreshAtBoundary` already
+ * use for the portal's own boundary refresh.
  */
 export async function getOpenClassesNow(
   academyId: string,
   organizationId: string,
   now: Date,
-): Promise<{ classes: OpenClassEntry[]; refreshAt: Date }> {
+): Promise<{ classes: OpenClassEntry[]; refreshAt: Date; serverNow: Date }> {
   const sessions = await prisma.classSession.findMany({ where: { academyId, organizationId, active: true } });
   return {
     classes: openOccurrences(sessions, now).map(toOpenClassEntry),
     refreshAt: nextBoundaryAfter(sessions, now),
+    serverNow: now,
   };
 }

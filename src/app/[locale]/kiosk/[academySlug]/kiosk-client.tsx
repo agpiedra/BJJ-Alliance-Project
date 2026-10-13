@@ -246,9 +246,15 @@ export function KioskClient({
   // "Open for check-in now" panel (Phase 2.6 PR 5) — a best-effort, read-only ambient status for the keypad screen.
   // Never blocks or affects check-in itself: a failed fetch just omits the panel, the PIN pad is unaffected either
   // way. The server returns `refreshAt` — the next instant ITS OWN already-loaded sessions say this result goes
-  // stale (`nextBoundaryAfter`) — and each successful fetch reschedules the next one there instead of polling
-  // blind. A fixed retry (60s) is used only as a fallback when there is nothing to anchor to (no successful "ok"
-  // result yet, or the fetch itself failed).
+  // stale (`nextBoundaryAfter`) — plus `serverNow`, the SAME instant `refreshAt` was computed from. The client
+  // measures its own clock's offset from `serverNow` once per response and schedules against THAT, never the
+  // browser's raw `Date.now()` — the same clock-skew-safe convention `todays-classes-card.tsx`'s
+  // `useRefreshAtBoundary` already uses for the portal's own boundary refresh (not reused as a shared helper: that
+  // one is a hook driven by props and a `refresh` callback ref; this one lives inside a fetch effect that also owns
+  // its own loading/unavailable state and a sequential fetch guard — the two don't factor into one shape without
+  // forcing an abstraction neither side needs, but the boundary math itself is identical). A fixed retry (60s) is
+  // used only as a fallback when there is nothing to anchor to (no successful "ok" result yet, or the fetch itself
+  // failed).
   const [openNow, setOpenNow] = useState<{ kind: "loading" } | { kind: "ok"; classes: OpenClass[] } | { kind: "unavailable" }>({ kind: "loading" });
   useEffect(() => {
     // The ONE guard against a stale response overwriting a newer result: `cancelled` flips the moment this effect
@@ -259,11 +265,40 @@ export function KioskClient({
     let cancelled = false;
     let scheduled: ReturnType<typeof setTimeout> | null = null;
     const FALLBACK_RETRY_MS = 60_000;
+    // Same margin `todays-classes-card.tsx`'s `useRefreshAtBoundary` uses: a small allowance past the boundary so
+    // the refresh always lands on the far side of it, never a moment before.
+    const BOUNDARY_MARGIN_MS = 250;
 
     const scheduleNext = (ms: number) => {
       if (scheduled) clearTimeout(scheduled);
       if (cancelled) return;
       scheduled = setTimeout(() => void load(false), Math.max(0, ms));
+    };
+
+    /** Re-check against the server-adjusted clock before actually refetching — never fire early, and if the
+     * margin wasn't enough (a delayed timer), reschedule instead of refetching too soon. */
+    const scheduleBoundary = (refreshAtIso: string, serverNowIso: string | null) => {
+      const target = Date.parse(refreshAtIso);
+      if (!Number.isFinite(target)) {
+        scheduleNext(FALLBACK_RETRY_MS);
+        return;
+      }
+      const parsedServerNow = serverNowIso ? Date.parse(serverNowIso) : NaN;
+      // Trust the browser's own clock (offset 0) if the server didn't send a usable `serverNow` — defensive,
+      // matching this file's existing `Number.isFinite(...) ? ... : fallback` convention.
+      const offset = Number.isFinite(parsedServerNow) ? parsedServerNow - Date.now() : 0;
+      const serverTime = () => Date.now() + offset;
+
+      const attempt = () => {
+        if (cancelled) return;
+        if (serverTime() >= target) {
+          void load(false);
+          return;
+        }
+        scheduled = setTimeout(attempt, Math.max(0, target - serverTime() + BOUNDARY_MARGIN_MS));
+      };
+      if (scheduled) clearTimeout(scheduled);
+      scheduled = setTimeout(attempt, Math.max(0, target - serverTime() + BOUNDARY_MARGIN_MS));
     };
 
     const load = async (isFirst: boolean) => {
@@ -295,8 +330,10 @@ export function KioskClient({
       const record = typeof body === "object" && body !== null ? (body as Record<string, unknown>) : null;
       if (record?.ok === true) {
         setOpenNow({ kind: "ok", classes: readPicklist(body, "openClasses") });
-        const refreshAt = typeof record.refreshAt === "string" ? Date.parse(record.refreshAt) : NaN;
-        scheduleNext(Number.isFinite(refreshAt) ? refreshAt - Date.now() : FALLBACK_RETRY_MS);
+        const refreshAtIso = typeof record.refreshAt === "string" ? record.refreshAt : null;
+        const serverNowIso = typeof record.serverNow === "string" ? record.serverNow : null;
+        if (refreshAtIso) scheduleBoundary(refreshAtIso, serverNowIso);
+        else scheduleNext(FALLBACK_RETRY_MS);
       } else {
         setOpenNow({ kind: "unavailable" });
         scheduleNext(FALLBACK_RETRY_MS);

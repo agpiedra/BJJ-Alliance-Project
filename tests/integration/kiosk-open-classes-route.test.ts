@@ -82,6 +82,7 @@ describe("empty vs unavailable are distinct outcomes", () => {
     expect(json.ok).toBe(true);
     expect(json.openClasses).toEqual([]);
     expect(typeof json.refreshAt).toBe("string");
+    expect(json.serverNow).toBe(mon(15, 0).toISOString());
   });
 
   it("refreshAt is nextBoundaryAfter over the SAME sessions and the SAME now the route already used — never re-derived here", async () => {
@@ -91,6 +92,14 @@ describe("empty vs unavailable are distinct outcomes", () => {
     expect(status).toBe(200);
     const expected = nextBoundaryAfter(f.sessions, now);
     expect(json.refreshAt).toBe(expected.toISOString());
+  });
+
+  it("serverNow is the SAME now already used for openClasses/refreshAt — a client can measure its own clock's skew against it", async () => {
+    const f = await fixture();
+    const now = mon(18, 0);
+    const { status, json } = await call(now, f.academy.slug, f.token);
+    expect(status).toBe(200);
+    expect(json.serverNow).toBe(now.toISOString());
   });
 
   it("an unknown academy slug: the same indistinguishable invalid_token shape as the other kiosk routes", async () => {
