@@ -3,6 +3,7 @@ import { getTestPrismaClient } from "../helpers/test-db";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { requireEnv } from "../../src/lib/env";
 import { digestLookupSecret } from "../../src/lib/crypto";
+import { nextBoundaryAfter } from "../../src/lib/scheduling/check-in-window";
 import { cleanupClassFixtures, makeClassAcademy } from "../helpers/class-fixtures";
 
 /**
@@ -78,7 +79,18 @@ describe("empty vs unavailable are distinct outcomes", () => {
     const f = await fixture();
     const { status, json } = await call(mon(15, 0), f.academy.slug, f.token);
     expect(status).toBe(200);
-    expect(json).toEqual({ ok: true, openClasses: [] });
+    expect(json.ok).toBe(true);
+    expect(json.openClasses).toEqual([]);
+    expect(typeof json.refreshAt).toBe("string");
+  });
+
+  it("refreshAt is nextBoundaryAfter over the SAME sessions and the SAME now the route already used — never re-derived here", async () => {
+    const f = await fixture();
+    const now = mon(15, 0);
+    const { status, json } = await call(now, f.academy.slug, f.token);
+    expect(status).toBe(200);
+    const expected = nextBoundaryAfter(f.sessions, now);
+    expect(json.refreshAt).toBe(expected.toISOString());
   });
 
   it("an unknown academy slug: the same indistinguishable invalid_token shape as the other kiosk routes", async () => {

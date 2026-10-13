@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import { openOccurrences } from "@/lib/scheduling/check-in-window";
+import { nextBoundaryAfter, openOccurrences } from "@/lib/scheduling/check-in-window";
 import { toOpenClassEntry, type OpenClassEntry } from "@/lib/kiosk/perform-check-in";
 
 /**
@@ -8,8 +8,19 @@ import { toOpenClassEntry, type OpenClassEntry } from "@/lib/kiosk/perform-check
  * scoping every other kiosk read already uses (`reassign/route.ts`'s picklist query), and the SAME `openOccurrences`
  * the real check-in itself evaluates against — so what this panel shows is exactly what the server will accept,
  * never a second, divergent notion of "open."
+ *
+ * `refreshAt` is `nextBoundaryAfter` over the SAME `sessions` and the SAME `now` already read above — no second
+ * query, no second clock read — so the client can refetch exactly when this result is known to go stale, instead
+ * of polling blind.
  */
-export async function getOpenClassesNow(academyId: string, organizationId: string, now: Date): Promise<OpenClassEntry[]> {
+export async function getOpenClassesNow(
+  academyId: string,
+  organizationId: string,
+  now: Date,
+): Promise<{ classes: OpenClassEntry[]; refreshAt: Date }> {
   const sessions = await prisma.classSession.findMany({ where: { academyId, organizationId, active: true } });
-  return openOccurrences(sessions, now).map(toOpenClassEntry);
+  return {
+    classes: openOccurrences(sessions, now).map(toOpenClassEntry),
+    refreshAt: nextBoundaryAfter(sessions, now),
+  };
 }

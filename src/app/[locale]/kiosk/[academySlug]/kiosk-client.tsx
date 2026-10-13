@@ -158,12 +158,14 @@ export function KioskClient({
   // The visible timeout indicator. It is driven by the SAME number that arms the reset (armReset below), so it can never disagree
   // with the real timeout: it exists only while a reset is pending, restarts every time one is armed (a new epoch remounts it) and
   // is removed the moment the timer is cleared (a correction being saved has no pending reset, so it shows no bar).
+  // `deadline` (epoch ms, captured once in armReset) is the ONE source of truth for "how much time is left" — the
+  // success countdown below reads it on every tick rather than keeping its own decrementing counter, so it can
+  // never drift from the real `setTimeout(resetToEntry, ms)` armed alongside it.
   const epochRef = useRef(0);
-  const [pendingReset, setPendingReset] = useState<{ ms: number; epoch: number } | null>(null);
-  // Ticking seconds-remaining for the success screen's numeric countdown — seeded from the SAME `ms` the
-  // decorative bar's CSS animation duration already uses and ticking down in lockstep with it, never a second,
-  // independently-clocked timer. Only ticks on the success phase (per the approved mock, other phases keep only
-  // the decorative bar).
+  const [pendingReset, setPendingReset] = useState<{ ms: number; epoch: number; deadline: number } | null>(null);
+  // Ticking seconds-remaining for the success screen's numeric countdown, re-derived from `pendingReset.deadline`
+  // on every tick (never decremented locally). Only ticks on the success phase (per the approved mock, other
+  // phases keep only the decorative bar).
   const [countdownSeconds, setCountdownSeconds] = useState<number | null>(null);
 
   const clearTimers = useCallback(() => {
@@ -219,40 +221,57 @@ export function KioskClient({
     (ms: number) => {
       timeoutRef.current = setTimeout(resetToEntry, ms);
       epochRef.current += 1;
-      setPendingReset({ ms, epoch: epochRef.current });
+      setPendingReset({ ms, epoch: epochRef.current, deadline: Date.now() + ms });
     },
     [resetToEntry],
   );
 
-  // Success-only numeric countdown, seeded from `pendingReset.ms` — the SAME total duration the decorative bar's
-  // CSS animation already uses — and ticking down every 250ms in lockstep with it via its own interval, never
-  // read from the wall clock and never a second independently-clocked timer. Ticks only while the success phase
-  // holds a pending reset; any other phase (or no pending reset at all) clears it. This effect never calls
-  // `resetToEntry` itself — the real auto-reset stays the one `setTimeout` already armed above.
+  // Success-only numeric countdown. The interval below is a DISPLAY REFRESHER, not a clock: on every tick it
+  // re-reads `pendingReset.deadline - Date.now()` from scratch, so a delayed or skipped tick (a backgrounded tab,
+  // a slow render) still catches up to the right number on the next tick instead of drifting. It never decrements
+  // a local counter and never calls `resetToEntry` itself — the real auto-reset stays the one `setTimeout` armed
+  // above. Ticks only while the success phase holds a pending reset; any other phase (or no pending reset) clears it.
   useEffect(() => {
     if (!pendingReset || phase.kind !== "success") {
       setCountdownSeconds(null);
       return;
     }
     const TICK_MS = 250;
-    let remainingMs = pendingReset.ms;
-    setCountdownSeconds(Math.ceil(remainingMs / 1000));
-    const id = setInterval(() => {
-      remainingMs = Math.max(0, remainingMs - TICK_MS);
-      setCountdownSeconds(Math.ceil(remainingMs / 1000));
-    }, TICK_MS);
+    const tick = () => setCountdownSeconds(Math.ceil(Math.max(0, pendingReset.deadline - Date.now()) / 1000));
+    tick();
+    const id = setInterval(tick, TICK_MS);
     return () => clearInterval(id);
   }, [pendingReset, phase.kind]);
 
   // "Open for check-in now" panel (Phase 2.6 PR 5) — a best-effort, read-only ambient status for the keypad screen.
   // Never blocks or affects check-in itself: a failed fetch just omits the panel, the PIN pad is unaffected either
-  // way. Polled on a fixed interval (like the wall clock below) rather than wired to `nextBoundaryAfter` — that
-  // helper needs every session's full timing, not just the already-open subset this screen fetches, so computing
-  // it client-side here would mean a second network round-trip for data this screen doesn't otherwise need.
+  // way. The server returns `refreshAt` — the next instant ITS OWN already-loaded sessions say this result goes
+  // stale (`nextBoundaryAfter`) — and each successful fetch reschedules the next one there instead of polling
+  // blind. A fixed retry (60s) is used only as a fallback when there is nothing to anchor to (no successful "ok"
+  // result yet, or the fetch itself failed).
   const [openNow, setOpenNow] = useState<{ kind: "loading" } | { kind: "ok"; classes: OpenClass[] } | { kind: "unavailable" }>({ kind: "loading" });
   useEffect(() => {
+    // The ONE guard against a stale response overwriting a newer result: `cancelled` flips the moment this effect
+    // instance is torn down (a prop change or unmount), and every `setOpenNow` below checks it first. A second,
+    // same-instance race is impossible by construction: the next `load()` is only ever scheduled from inside the
+    // PREVIOUS one's own continuation, after it has already settled — so this effect never has two fetches in
+    // flight at once to reorder in the first place.
     let cancelled = false;
-    const load = async () => {
+    let scheduled: ReturnType<typeof setTimeout> | null = null;
+    const FALLBACK_RETRY_MS = 60_000;
+
+    const scheduleNext = (ms: number) => {
+      if (scheduled) clearTimeout(scheduled);
+      if (cancelled) return;
+      scheduled = setTimeout(() => void load(false), Math.max(0, ms));
+    };
+
+    const load = async (isFirst: boolean) => {
+      // A refresh (never the first load) fires exactly at the instant the previous "ok" result's own
+      // `refreshAt` says it goes stale — so clear it to loading before the new fetch resolves, rather than
+      // keep presenting known-expired data as confirmed while the refresh is in flight.
+      if (!isFirst) setOpenNow((current) => (current.kind === "ok" ? { kind: "loading" } : current));
+
       let body: unknown;
       try {
         const response = await fetch("/api/kiosk/open-classes", {
@@ -262,26 +281,31 @@ export function KioskClient({
         });
         if (response.status !== 200) {
           if (!cancelled) setOpenNow({ kind: "unavailable" });
+          scheduleNext(FALLBACK_RETRY_MS);
           return;
         }
         body = await response.json();
       } catch {
         if (!cancelled) setOpenNow({ kind: "unavailable" });
+        scheduleNext(FALLBACK_RETRY_MS);
         return;
       }
       if (cancelled) return;
+
       const record = typeof body === "object" && body !== null ? (body as Record<string, unknown>) : null;
       if (record?.ok === true) {
         setOpenNow({ kind: "ok", classes: readPicklist(body, "openClasses") });
+        const refreshAt = typeof record.refreshAt === "string" ? Date.parse(record.refreshAt) : NaN;
+        scheduleNext(Number.isFinite(refreshAt) ? refreshAt - Date.now() : FALLBACK_RETRY_MS);
       } else {
         setOpenNow({ kind: "unavailable" });
+        scheduleNext(FALLBACK_RETRY_MS);
       }
     };
-    void load();
-    const id = setInterval(() => void load(), 60_000);
+    void load(true);
     return () => {
       cancelled = true;
-      clearInterval(id);
+      if (scheduled) clearTimeout(scheduled);
     };
   }, [academySlug, token]);
 

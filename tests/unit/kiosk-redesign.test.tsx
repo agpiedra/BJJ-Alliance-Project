@@ -62,7 +62,10 @@ const bar = () => screen.queryByTestId("kiosk-timeout");
 const prompt = () => screen.queryByText("Enter your 4-digit code");
 
 beforeEach(() => {
-  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval"] });
+  // "Date" is faked too: the success countdown now reads `Date.now()` against a captured deadline (see
+  // kiosk-client.tsx's armReset/countdown effect), so advancing fake timers must move the faked clock in
+  // lockstep or the countdown would never see simulated time pass.
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"] });
   fetchMock.mockReset();
   openClassesMock.mockReset();
   openClassesMock.mockImplementation(() => respond(200, { ok: true, openClasses: [] }));
@@ -150,6 +153,61 @@ describe("Phase 2.6 PR 5: the Entry screen's 'open for check-in now' panel", () 
     expect(screen.queryByText("Open for check-in now")).toBeNull();
     expect(screen.queryByTestId("kiosk-open-now")).toBeNull();
     expect(screen.getByRole("button", { name: "Enter" })).toBeTruthy(); // the PIN pad still works
+  });
+});
+
+describe("PR #118 correction: open-classes freshness", () => {
+  it("a slow response from before a prop change never overwrites what the new academySlug/token fetched", async () => {
+    let resolveFirst!: (value: Response) => void;
+    openClassesMock.mockImplementationOnce(() => new Promise<Response>((resolve) => (resolveFirst = resolve)));
+    openClassesMock.mockImplementationOnce(() => respond(200, { ok: true, openClasses: [CLASS_B] }));
+
+    const tree = (slug: string, token: string) => (
+      <NextIntlClientProvider locale="en" messages={enMessages}>
+        <KioskClient academyId="acad-1" academyName="Heredia" academySlug={slug} token={token} />
+      </NextIntlClientProvider>
+    );
+    const { rerender } = render(tree("heredia", "tok-old"));
+    await act(async () => {
+      await Promise.resolve();
+    }); // the first academy's fetch is in flight, not yet resolved
+
+    rerender(tree("heredia", "tok-new")); // tears down the first effect instance (cancelled = true) and starts a new one
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.getByText("Advanced No-Gi")).toBeTruthy();
+
+    // The torn-down instance's stale fetch finally resolves, with DIFFERENT (now-irrelevant) data.
+    await act(async () => {
+      resolveFirst(await respond(200, { ok: true, openClasses: [CLASS_A] }));
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText("Advanced No-Gi")).toBeTruthy(); // unchanged — the stale response never landed
+    expect(screen.queryByText("Fundamentals")).toBeNull();
+  });
+
+  it("refreshes automatically at the server's reported boundary, and does not keep showing the expired list as confirmed while the refresh is in flight", async () => {
+    const soon = new Date(Date.now() + 5000).toISOString();
+    openClassesMock.mockImplementationOnce(() => respond(200, { ok: true, openClasses: [CLASS_A], refreshAt: soon }));
+    let resolveSecond!: (value: Response) => void;
+    openClassesMock.mockImplementationOnce(() => new Promise<Response>((resolve) => (resolveSecond = resolve)));
+
+    renderKiosk();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.getByText("Fundamentals")).toBeTruthy();
+
+    await advance(5000); // crosses the boundary refreshAt named — the second fetch is now in flight
+    expect(screen.queryByText("Fundamentals")).toBeNull(); // not presented as confirmed while stale/refreshing
+
+    await act(async () => {
+      resolveSecond(await respond(200, { ok: true, openClasses: [CLASS_B] }));
+      await Promise.resolve();
+    });
+    expect(screen.getByText("Advanced No-Gi")).toBeTruthy();
   });
 });
 
@@ -277,6 +335,20 @@ describe("Phase 2.6 PR 5: the success screen's numeric countdown and Done button
     await advance(1000);
     expect(screen.getByText("Ready for the next person in 5s")).toBeTruthy();
     expect(bar()!.getAttribute("data-timeout-ms")).toBe("6000"); // the bar's own deadline is unchanged
+  });
+
+  it("the countdown catches up to the real deadline even if a tick is delayed, because it reads elapsed time, not a tick count", async () => {
+    fetchMock.mockReturnValueOnce(respond(200, SUCCESS));
+    renderKiosk();
+    enterCode();
+    await advance(0);
+    expect(screen.getByText("Ready for the next person in 6s")).toBeTruthy();
+
+    // A single 3000ms jump stands in for a backgrounded tab or a slow render that skipped roughly twelve would-be
+    // 250ms ticks. A tick-counting implementation would still show ~6s (it only decremented once); a
+    // deadline-reading one lands on exactly 3s because it re-reads real elapsed time on whichever tick does fire.
+    await advance(3000);
+    expect(screen.getByText("Ready for the next person in 3s")).toBeTruthy();
   });
 
   it("the picker (several classes open) has no countdown text, only the shared decorative bar", async () => {

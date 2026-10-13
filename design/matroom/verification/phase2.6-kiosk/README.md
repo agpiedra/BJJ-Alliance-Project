@@ -77,14 +77,20 @@ network control) — this is genuine browser behavior, not a static prototype or
 - Portrait 390×844, same 3 classes: `display: flex`, `flex-direction: column` (single column, unchanged
   production behavior), no horizontal overflow (`scrollWidth === innerWidth === 390`).
   `picker-390-portrait-stacked.png`.
-- **Not independently stress-tested with 5+ cards against the real component in this round** — the earlier
-  planning-phase prototype already stress-tested the same CSS shape (8 cards, confirmed real scroll via
-  `scrollHeight > clientHeight`, §8.4/§9.2 of the proposal); this round confirms the real component applies the
-  same grid/bound/scroll rules with 3 real cards, which fit without triggering scroll. Treat the "many classes
-  scroll, not clip" claim as inherited from the prototype's stress test, not re-proven here with >4 real cards —
-  disclosed, not hidden.
 - Real click activation of a picker card (not just programmatic): confirmed — selecting "Fundamentals" produced
   the real success screen with `matchedClass.name === "Fundamentals"`.
+- **PR #118 correction round — 6-card overflow, now stress-tested against the real component (the limitation
+  above is discharged):** a real seeded academy with 6 real overlapping open classes, landscape 1024×768.
+  `getComputedStyle` on the grid measured `display: grid`, `grid-template-columns: 316px 316px`, `max-height:
+  548px`, `overflow-y: auto`, `scrollHeight: 597` vs `clientHeight: 548` — a real, measured overflow, not
+  inferred (`picker-1024x768-landscape-6cards-before-scroll.png`). The last card ("Competition Team") was
+  scrolled into view with `scrollIntoView`, confirmed fully inside the viewport afterward
+  (`picker-1024x768-landscape-6cards-scrolled-to-last.png`), given real keyboard focus (`el.focus()` →
+  `document.activeElement === el`), and activated with a real click — the resulting success screen showed
+  `"Attendance saved to" / "Competition Team"`, the exact last card, not a nearer one. The same 6-card fixture
+  was also run at 390×844 portrait: all 6 cards render single-column stacked (unchanged production behavior),
+  `scrollWidth (375) <= innerWidth (390)`, no horizontal overflow
+  (`picker-390-portrait-6cards-stacked.png`).
 
 **Success — countdown + Done:**
 - Real success screen after a real check-in: belt graphic, progress fraction, "Attendance saved to", "Not this
@@ -117,3 +123,34 @@ the queued check-in created a real `AttendanceRecord` with `source: "KIOSK"`.
   round — see the Picker section above.
 - No real test of the rate-limit/lockout path against the new `open-classes` route specifically — it has no rate
   limiting by design (see §1), so there is nothing to test there; this is a deliberate omission, not a gap.
+
+## 5. PR #118 correction round
+
+Three corrections made after the first review, on top of the work above:
+
+- **Countdown is now deadline-derived, not tick-counted.** The original effect (§3 below is corrected to match)
+  decremented a local `remainingMs` by 250ms every interval tick — a second, independent clock that could drift
+  from the real `setTimeout(resetToEntry, ms)` and would under-correct after any delayed tick (a backgrounded
+  tab, a slow render). It now captures `deadline = Date.now() + ms` once in `armReset`, and the interval only
+  re-reads `deadline - Date.now()` on every tick — a display refresher, never a second clock, and never itself a
+  reset trigger. `tests/unit/kiosk-redesign.test.tsx` now also fakes `Date` (it previously faked only the timer
+  functions, so a deadline computed from `Date.now()` would never have moved under `advanceTimersByTimeAsync`)
+  and adds a regression that jumps fake time by a single 3000ms step (skipping ~12 would-be 250ms ticks) and
+  confirms the display still lands on the correct "3s", proving it reads elapsed time rather than counting ticks.
+- **Open-classes freshness hardened.** `getOpenClassesNow` now also returns `refreshAt` —
+  `nextBoundaryAfter(sessions, now)` over the SAME sessions/now already used for `openOccurrences`, no second
+  query — and the Entry panel schedules its next refetch exactly there instead of a blind 60s poll, clearing to
+  "loading" at that instant rather than keep showing the now-provably-stale list as confirmed. Same-instance
+  response reordering cannot happen by construction (the next fetch is only ever scheduled from inside the
+  previous one's own continuation); the one real race — a prop change tearing down an in-flight fetch — is
+  covered by the pre-existing `cancelled` flag. Both are proven in `tests/unit/kiosk-redesign.test.tsx`'s new
+  "PR #118 correction: open-classes freshness" block: a torn-down instance's stale, later-arriving response never
+  overwrites what the new instance fetched, and a boundary crossing triggers a real automatic refetch while
+  correctly hiding the expired list in between. `tests/integration/kiosk-open-classes-route.test.ts` gained a
+  test pinning `refreshAt` to `nextBoundaryAfter` over the fixture's own sessions — not re-derived, reused.
+- **Picker 6-card overflow, real-browser proven** — see §2 above; the prior round's disclosed "not independently
+  stress-tested with 5+ cards" limitation is now discharged with the real component, not just the planning-phase
+  prototype.
+
+Full suites after this round: `pnpm test:unit` — 1705/1705 pass (120 files, +3 from this round). `pnpm
+test:integration` — 1946/1946 pass (152 files, +1 from this round). `tsc --noEmit` — clean.
