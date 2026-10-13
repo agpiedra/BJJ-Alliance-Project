@@ -93,7 +93,7 @@ function success(sum: Summary, extra: { thresholdReached?: boolean; progressOutc
 function renderView(sum: Summary, extra: Parameters<typeof success>[1] = {}) {
   render(
     <NextIntlClientProvider locale="en" messages={enMessages}>
-      <SuccessView result={success(sum, extra)} onCorrect={() => {}} />
+      <SuccessView result={success(sum, extra)} onCorrect={() => {}} onDone={() => {}} />
     </NextIntlClientProvider>,
   );
 }

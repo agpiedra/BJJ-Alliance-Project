@@ -1782,6 +1782,9 @@
   "kiosk": {
     "enterCode": "Ingresa tu código de 4 dígitos",
     "codeStatus": "{count} de {total} dígitos ingresados",
+    "openNowLabel": "Abierto para registrar ahora",
+    "readyForNextIn": "Listo para la próxima persona en {seconds}s",
+    "done": "Listo",
     "offline": "Sin conexión",
     "clear": "Borrar",
     "enter": "Entrar",

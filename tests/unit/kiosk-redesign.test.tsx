@@ -28,6 +28,9 @@ const OPEN = [CLASS_A, CLASS_B];
 
 const fetchMock = vi.fn();
 const respond = (status: number, body: unknown) => Promise.resolve({ status, json: async () => body } as Response);
+/** The Entry screen's background "open for check-in now" fetch — kept off `fetchMock`'s own call history/queue so
+ * it never steals a `mockReturnValueOnce` meant for the check-in/reassign flow a test is actually exercising. */
+const openClassesMock = vi.fn(() => respond(200, { ok: true, openClasses: [] }));
 
 const SUCCESS = {
   ok: true,
@@ -59,12 +62,19 @@ const bar = () => screen.queryByTestId("kiosk-timeout");
 const prompt = () => screen.queryByText("Enter your 4-digit code");
 
 beforeEach(() => {
-  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval"] });
+  // "Date" is faked too: the success countdown now reads `Date.now()` against a captured deadline (see
+  // kiosk-client.tsx's armReset/countdown effect), so advancing fake timers must move the faked clock in
+  // lockstep or the countdown would never see simulated time pass.
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"] });
   fetchMock.mockReset();
+  openClassesMock.mockReset();
+  openClassesMock.mockImplementation(() => respond(200, { ok: true, openClasses: [], serverNow: new Date().toISOString() }));
   enqueue.mockReset();
   flush.mockReset();
   flush.mockResolvedValue({ dropped: 0 });
-  vi.stubGlobal("fetch", fetchMock);
+  vi.stubGlobal("fetch", (url: string, init?: RequestInit) =>
+    typeof url === "string" && url.includes("/api/kiosk/open-classes") ? openClassesMock() : fetchMock(url, init),
+  );
   Object.defineProperty(navigator, "onLine", { configurable: true, value: true });
 });
 afterEach(() => {
@@ -110,6 +120,154 @@ describe.each(["en", "es"] as const)("digit-count status and keys (%s)", (locale
     expect(key(locale === "en" ? "Clear" : "Borrar")).not.toContain("bg-brand-gold");
     expect(key("7")).toContain("bg-card");
     expect(key("7")).not.toContain("bg-brand-gold");
+  });
+});
+
+describe("Phase 2.6 PR 5: the Entry screen's 'open for check-in now' panel", () => {
+  it("shows the open classes' names, joined, once the background fetch resolves", async () => {
+    openClassesMock.mockImplementation(() => respond(200, { ok: true, openClasses: OPEN }));
+    renderKiosk();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.getByText("Open for check-in now")).toBeTruthy();
+    expect(screen.getByText("Fundamentals · Advanced No-Gi")).toBeTruthy();
+  });
+
+  it("confirmed-empty (no class open right now) omits the panel — a normal state, not an error", async () => {
+    openClassesMock.mockImplementation(() => respond(200, { ok: true, openClasses: [] }));
+    renderKiosk();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.queryByText("Open for check-in now")).toBeNull();
+    expect(screen.queryByTestId("kiosk-open-now")).toBeNull();
+  });
+
+  it("an unavailable fetch (rejected) also omits the panel — never a false 'nothing open' claim, and the keypad is unaffected", async () => {
+    openClassesMock.mockImplementation(() => Promise.reject(new Error("network down")));
+    renderKiosk();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.queryByText("Open for check-in now")).toBeNull();
+    expect(screen.queryByTestId("kiosk-open-now")).toBeNull();
+    expect(screen.getByRole("button", { name: "Enter" })).toBeTruthy(); // the PIN pad still works
+  });
+});
+
+describe("PR #118 correction: open-classes freshness", () => {
+  it("a slow response from before a prop change never overwrites what the new academySlug/token fetched", async () => {
+    let resolveFirst!: (value: Response) => void;
+    openClassesMock.mockImplementationOnce(() => new Promise<Response>((resolve) => (resolveFirst = resolve)));
+    openClassesMock.mockImplementationOnce(() => respond(200, { ok: true, openClasses: [CLASS_B] }));
+
+    const tree = (slug: string, token: string) => (
+      <NextIntlClientProvider locale="en" messages={enMessages}>
+        <KioskClient academyId="acad-1" academyName="Heredia" academySlug={slug} token={token} />
+      </NextIntlClientProvider>
+    );
+    const { rerender } = render(tree("heredia", "tok-old"));
+    await act(async () => {
+      await Promise.resolve();
+    }); // the first academy's fetch is in flight, not yet resolved
+
+    rerender(tree("heredia", "tok-new")); // tears down the first effect instance (cancelled = true) and starts a new one
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.getByText("Advanced No-Gi")).toBeTruthy();
+
+    // The torn-down instance's stale fetch finally resolves, with DIFFERENT (now-irrelevant) data.
+    await act(async () => {
+      resolveFirst(await respond(200, { ok: true, openClasses: [CLASS_A] }));
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText("Advanced No-Gi")).toBeTruthy(); // unchanged — the stale response never landed
+    expect(screen.queryByText("Fundamentals")).toBeNull();
+  });
+
+  it("refreshes automatically at the server's reported boundary, and does not keep showing the expired list as confirmed while the refresh is in flight", async () => {
+    const now = new Date().toISOString();
+    const soon = new Date(Date.now() + 5000).toISOString();
+    openClassesMock.mockImplementationOnce(() => respond(200, { ok: true, openClasses: [CLASS_A], refreshAt: soon, serverNow: now }));
+    let resolveSecond!: (value: Response) => void;
+    openClassesMock.mockImplementationOnce(() => new Promise<Response>((resolve) => (resolveSecond = resolve)));
+
+    renderKiosk();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.getByText("Fundamentals")).toBeTruthy();
+
+    await advance(5250); // crosses the boundary (refreshAt + the same BOUNDARY_MARGIN_MS the schedule uses) — the second fetch is now in flight
+    expect(screen.queryByText("Fundamentals")).toBeNull(); // not presented as confirmed while stale/refreshing
+
+    await act(async () => {
+      resolveSecond(await respond(200, { ok: true, openClasses: [CLASS_B], serverNow: new Date().toISOString() }));
+      await Promise.resolve();
+    });
+    expect(screen.getByText("Advanced No-Gi")).toBeTruthy();
+  });
+
+  it("a server clock AHEAD of the browser's still refreshes at the server-true delay, not the browser's naive (too-late) one", async () => {
+    const browserNow = Date.now();
+    const serverNow = new Date(browserNow + 5000).toISOString(); // server clock is 5s fast
+    const refreshAt = new Date(browserNow + 5000 + 3000).toISOString(); // server says "3s from its own now"
+    openClassesMock.mockImplementationOnce(() => respond(200, { ok: true, openClasses: [CLASS_A], refreshAt, serverNow }));
+    let resolveSecond!: (value: Response) => void;
+    openClassesMock.mockImplementationOnce(() => new Promise<Response>((resolve) => (resolveSecond = resolve)));
+
+    renderKiosk();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.getByText("Fundamentals")).toBeTruthy();
+    expect(openClassesMock).toHaveBeenCalledTimes(1);
+
+    // The naive (unadjusted) calc would wait ~8s (refreshAt - browser's Date.now()); the offset-corrected one
+    // waits the TRUE ~3s the server meant. Confirm no refetch yet just before 3s + margin...
+    await advance(3000 + 250 - 1);
+    expect(openClassesMock).toHaveBeenCalledTimes(1); // no request-loop, no early refetch
+    // ...and exactly one more fetch once the true delay (plus the standard boundary margin) has elapsed.
+    await advance(1);
+    expect(openClassesMock).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      resolveSecond(await respond(200, { ok: true, openClasses: [CLASS_B], serverNow: new Date().toISOString() }));
+      await Promise.resolve();
+    });
+    expect(screen.getByText("Advanced No-Gi")).toBeTruthy();
+  });
+
+  it("a server clock BEHIND the browser's still refreshes at the server-true delay, not an immediate (too-early) one", async () => {
+    const browserNow = Date.now();
+    const serverNow = new Date(browserNow - 5000).toISOString(); // server clock is 5s slow
+    const refreshAt = new Date(browserNow - 5000 + 3000).toISOString(); // server says "3s from its own now"
+    openClassesMock.mockImplementationOnce(() => respond(200, { ok: true, openClasses: [CLASS_A], refreshAt, serverNow }));
+    let resolveSecond!: (value: Response) => void;
+    openClassesMock.mockImplementationOnce(() => new Promise<Response>((resolve) => (resolveSecond = resolve)));
+
+    renderKiosk();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.getByText("Fundamentals")).toBeTruthy();
+    expect(openClassesMock).toHaveBeenCalledTimes(1);
+
+    // The naive (unadjusted) calc would already be negative (refreshAt is 2s before the browser's own now) and
+    // fire immediately/loop; the offset-corrected one still waits out the TRUE ~3s the server meant.
+    await advance(3000 + 250 - 1);
+    expect(openClassesMock).toHaveBeenCalledTimes(1); // no immediate-request loop
+    await advance(1);
+    expect(openClassesMock).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      resolveSecond(await respond(200, { ok: true, openClasses: [CLASS_B], serverNow: new Date().toISOString() }));
+      await Promise.resolve();
+    });
+    expect(screen.getByText("Advanced No-Gi")).toBeTruthy();
   });
 });
 
@@ -226,6 +384,75 @@ describe("the timeout bar shows the REAL timeout", () => {
   });
 });
 
+describe("Phase 2.6 PR 5: the success screen's numeric countdown and Done button", () => {
+  it("the countdown ticks down from the SAME deadline the bar already uses, and only on the success screen", async () => {
+    fetchMock.mockReturnValueOnce(respond(200, SUCCESS));
+    renderKiosk();
+    enterCode();
+    await advance(0);
+    expect(screen.getByText("Ready for the next person in 6s")).toBeTruthy();
+
+    await advance(1000);
+    expect(screen.getByText("Ready for the next person in 5s")).toBeTruthy();
+    expect(bar()!.getAttribute("data-timeout-ms")).toBe("6000"); // the bar's own deadline is unchanged
+  });
+
+  it("the countdown catches up to the real deadline after a genuinely skipped tick, because it recomputes from a live deadline rather than counting elapsed ticks", async () => {
+    fetchMock.mockReturnValueOnce(respond(200, SUCCESS));
+    renderKiosk();
+    enterCode();
+    await advance(0);
+    expect(screen.getByText("Ready for the next person in 6s")).toBeTruthy();
+
+    // `advanceTimersByTimeAsync` executes every intervening 250ms tick as it advances — it does not skip them —
+    // so it cannot stand in for a genuinely missed tick (a backgrounded tab, a delayed render). `setSystemTime`
+    // jumps the observed clock forward WITHOUT firing the pending interval callback at all (confirmed empirically:
+    // zero fires from the jump itself); the next `advance` then lets that one already-scheduled, now-overdue
+    // callback fire exactly once, at the jumped clock position — a real skipped-tick scenario, not many real ones.
+    await act(async () => {
+      vi.setSystemTime(new Date(Date.now() + 3000));
+    });
+    await advance(250); // the one pending tick fires, 3250ms after the deadline was armed
+
+    // A tick-COUNTING implementation only ever decremented once here (6000 - 250 = 5750ms -> still rounds to
+    // "6s"); a deadline-READING one recomputes the real elapsed 3250ms and lands on "3s".
+    expect(screen.getByText("Ready for the next person in 3s")).toBeTruthy();
+  });
+
+  it("the picker (several classes open) has no countdown text, only the shared decorative bar", async () => {
+    fetchMock.mockReturnValueOnce(respond(400, { ok: false, error: "class_selection_required", openClasses: OPEN }));
+    renderKiosk();
+    enterCode();
+    await advance(0);
+    expect(screen.queryByText(/Ready for the next person/)).toBeNull();
+    expect(bar()).not.toBeNull();
+  });
+
+  it("Done triggers the identical resetToEntry() transition the timeout fires, with no additional network call", async () => {
+    fetchMock.mockReturnValueOnce(respond(200, SUCCESS));
+    renderKiosk();
+    enterCode();
+    await advance(0);
+    expect(prompt()).toBeNull();
+    const callsBeforeDone = fetchMock.mock.calls.length;
+
+    press("Done");
+    await advance(0);
+
+    expect(prompt()).not.toBeNull(); // back at the keypad, the exact effect the 6s timeout produces on its own
+    expect(bar()).toBeNull();
+    expect(fetchMock.mock.calls.length).toBe(callsBeforeDone); // no extra write — resetToEntry only clears local state
+  });
+
+  it("no Done button on the picker/lockout/error screens", async () => {
+    fetchMock.mockReturnValueOnce(respond(429, { ok: false, error: "rate_limited", retryAfterSeconds: 3 }));
+    renderKiosk();
+    enterCode();
+    await advance(0);
+    expect(screen.queryByRole("button", { name: "Done" })).toBeNull();
+  });
+});
+
 describe.each(["en", "es"] as const)("sync warning banner (%s)", (locale) => {
   it("is in the page flow directly above the keypad (not a fixed overlay), says how many were lost, and stays until dismissed", async () => {
     flush.mockResolvedValue({ dropped: 2 });
@@ -297,7 +524,7 @@ describe.each(["en", "es"] as const)("success view: progress area (%s)", (locale
   const show = (sum: Record<string, unknown>, extra: Record<string, unknown> = {}) =>
     render(
       <NextIntlClientProvider locale={locale} messages={messages}>
-        <SuccessView result={{ ...SUCCESS, ...extra, summary: sum } as unknown as Result} onCorrect={() => {}} />
+        <SuccessView result={{ ...SUCCESS, ...extra, summary: sum } as unknown as Result} onCorrect={() => {}} onDone={() => {}} />
       </NextIntlClientProvider>,
     );
   const TIME = { mode: "TIME", target: null, remainingAttendance: null, percent: 20, atBeltCount: 12 };

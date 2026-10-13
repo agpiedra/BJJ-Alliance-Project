@@ -1782,6 +1782,9 @@
   "kiosk": {
     "enterCode": "Enter your 4-digit code",
     "codeStatus": "{count} of {total} digits entered",
+    "openNowLabel": "Open for check-in now",
+    "readyForNextIn": "Ready for the next person in {seconds}s",
+    "done": "Done",
     "offline": "Offline",
     "clear": "Clear",
     "enter": "Enter",
