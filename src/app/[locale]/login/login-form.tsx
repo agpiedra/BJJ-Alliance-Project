@@ -1,6 +1,7 @@
 "use client";
 
-import { Suspense, useActionState } from "react";
+import { Suspense, useActionState, useId, useState } from "react";
+import { Eye, EyeOff } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { useParams, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
@@ -42,6 +43,12 @@ function LoginFormInner({ brand }: { brand?: LogoMarkProps }) {
     INITIAL_ACTION_STATE,
   );
 
+  // Concealed by default (§ scope: "Password starts concealed"). Toggling never submits the form (type="button")
+  // and must keep focus on the password field itself, not the toggle - refocused explicitly after each click
+  // since a clicked <button> otherwise keeps the browser's default focus.
+  const [showPassword, setShowPassword] = useState(false);
+  const passwordInputId = useId();
+
   return (
     <AuthCard
       title={t("heading")}
@@ -57,10 +64,32 @@ function LoginFormInner({ brand }: { brand?: LogoMarkProps }) {
           <span>{t("email")}</span>
           <Input type="email" name="email" required />
         </label>
-        <label className="flex flex-col gap-1">
-          <span>{t("password")}</span>
-          <Input type="password" name="password" required />
-        </label>
+        <div className="flex flex-col gap-1">
+          <label htmlFor={passwordInputId}>{t("password")}</label>
+          <div className="relative">
+            <Input
+              id={passwordInputId}
+              type={showPassword ? "text" : "password"}
+              name="password"
+              required
+              className="pr-10"
+            />
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              className="absolute inset-y-0 right-1 my-auto"
+              aria-pressed={showPassword}
+              aria-label={showPassword ? t("hidePassword") : t("showPassword")}
+              onClick={() => {
+                setShowPassword((prev) => !prev);
+                document.getElementById(passwordInputId)?.focus();
+              }}
+            >
+              {showPassword ? <EyeOff aria-hidden="true" /> : <Eye aria-hidden="true" />}
+            </Button>
+          </div>
+        </div>
         {state.error && <p className="text-sm text-destructive">{t(state.error)}</p>}
         <Button type="submit" variant="primary" disabled={isPending}>
           {t("submit")}
