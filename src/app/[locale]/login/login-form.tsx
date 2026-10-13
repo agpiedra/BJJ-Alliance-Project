@@ -64,8 +64,8 @@ function LoginFormInner({ brand }: { brand?: LogoMarkProps }) {
           <span>{t("email")}</span>
           <Input type="email" name="email" required />
         </label>
-        <label className="flex flex-col gap-1">
-          <span>{t("password")}</span>
+        <div className="flex flex-col gap-1">
+          <label htmlFor={passwordInputId}>{t("password")}</label>
           <div className="relative">
             <Input
               id={passwordInputId}
@@ -89,7 +89,7 @@ function LoginFormInner({ brand }: { brand?: LogoMarkProps }) {
               {showPassword ? <EyeOff aria-hidden="true" /> : <Eye aria-hidden="true" />}
             </Button>
           </div>
-        </label>
+        </div>
         {state.error && <p className="text-sm text-destructive">{t(state.error)}</p>}
         <Button type="submit" variant="primary" disabled={isPending}>
           {t("submit")}

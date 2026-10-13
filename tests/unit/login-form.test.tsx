@@ -86,19 +86,20 @@ describe("login password show/hide toggle", () => {
     expect(document.activeElement).toBe(passwordInput());
   });
 
-  it("REQUIRED: the toggle is keyboard-reachable and operable via Tab, matching this file's other keyboard conventions", () => {
+  it("REQUIRED: the password input is accessible by its localized label, and the toggle follows it in DOM order and is programmatically focusable", () => {
     renderForm();
     const emailInput = screen.getByLabelText("Email");
     const toggle = screen.getByRole("button", { name: "Show password" });
-    // Real DOM order proves real Tab order: email -> password -> toggle -> ... -> "Forgot it?"
-    // (the v2 keyboard-order fix from the approved proposal, already true of production's existing
-    // submit-before-forgot-link order; the toggle sits immediately after the password field).
+    // DOM order only (email -> password -> toggle -> ... -> "Forgot it?"), not a claim of real Tab-key
+    // navigation - that's proven separately by this PR's real-browser evidence (see
+    // design/matroom/verification/phase2.6-login-toggle/README.md), not by jsdom here.
     const label = emailInput.closest("form") as HTMLFormElement;
     const focusables = Array.from(label.querySelectorAll("input, button, a"));
     expect(focusables.indexOf(toggle)).toBeGreaterThan(focusables.indexOf(passwordInput()));
     expect(focusables.indexOf(passwordInput())).toBeGreaterThan(focusables.indexOf(emailInput));
     const forgotLink = screen.getByRole("link", { name: "Forgot your password?" });
     expect(focusables.indexOf(forgotLink)).toBeGreaterThan(focusables.indexOf(toggle));
+    // Programmatic focusability only - not a simulated Tab keypress.
     toggle.focus();
     expect(document.activeElement).toBe(toggle);
   });

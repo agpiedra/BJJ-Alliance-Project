@@ -103,3 +103,18 @@ events) in a resized real browser window:
   `currentColor` icons) as every other control on this already-dark-mode-verified page from prior phases, so
   this is a reasonable gap, not a claimed-but-undone check.
 - **Android/other mobile browsers were not checked** — only Chrome (desktop + DevTools-resized viewports).
+
+## Correction round — password label markup
+
+The password field was originally wrapped in a `<label>` that also enclosed the show/hide toggle button,
+associating the label with an unrelated interactive control alongside the input. Fixed: the outer `<label>`
+is now a plain `<div>`, and an explicit `<label htmlFor={passwordInputId}>` labels only the `<Input>`; the
+toggle stays in the same `relative` wrapper, as a sibling of the label, not nested inside it. Purely a markup
+restructuring — no change to visual layout, value retention, localization, non-submit behavior, or focus
+handling. Re-verified live in the isolated test-DB browser environment: clicking the "Password" label text
+focuses the password input (not the toggle), the field's visual layout/spacing is unchanged, and Tab order /
+toggle operability are unchanged from the original real-browser evidence above.
+
+The unit test previously named "the toggle is keyboard-reachable and operable via Tab" has been renamed to
+accurately describe what it proves — DOM order and programmatic `.focus()`, not real Tab-key navigation.
+Real Tab-order proof remains the real-browser evidence in this document, not that unit test.
