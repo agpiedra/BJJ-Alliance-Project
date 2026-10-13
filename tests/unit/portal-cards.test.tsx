@@ -1,5 +1,5 @@
 /** @vitest-environment jsdom */
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
 import { afterEach, describe, expect, it } from "vitest";
 import enMessages from "../../messages/en.json";
@@ -141,28 +141,48 @@ describe.each(["en", "es"] as const)("RecentAttendanceCard (%s)", (locale) => {
   });
 });
 
-describe.each(["en", "es"] as const)("ScheduleDayList (%s)", (locale) => {
+describe.each(["en", "es"] as const)("ScheduleDayList (day-tab picker) (%s)", (locale) => {
   afterEach(cleanup);
   const days = ["SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY"].map((key, i) => ({ key, label: key.slice(0, 3), dateNumber: 20 + i, isToday: key === "TUESDAY", isOff: false }));
   const block = (id: string, dayKey: string, title: string, startRow: number) => ({ id, dayKey, title, timeLabel: "18:00 – 19:00", startRow, endRow: startRow + 4, colorClassName: "bg-class-gi" });
+  const dateHeadings = { SUNDAY: "Sunday, Sep 20", MONDAY: "Monday, Sep 21", TUESDAY: "Tuesday, Sep 22", WEDNESDAY: "Wednesday, Sep 23" };
   const render_ = (blocks: ReturnType<typeof block>[], sundayHasClasses: boolean) =>
     render(
       <NextIntlClientProvider locale={locale} messages={locale === "en" ? enMessages : esMessages}>
-        <ScheduleDayList days={days} blocks={blocks} sundayHasClasses={sundayHasClasses} />
+        <ScheduleDayList days={days} blocks={blocks} sundayHasClasses={sundayHasClasses} dateHeadings={dateHeadings} />
       </NextIntlClientProvider>,
     );
 
-  it("lists each day's classes in time order, marks today with text and aria-current, and skips days with none", () => {
-    const { container } = render_([block("b", "TUESDAY", "Late", 20), block("a", "TUESDAY", "Early", 4), block("c", "MONDAY", "Mon class", 8)], true);
-    const headings = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent);
-    expect(headings).toHaveLength(2); // Wednesday has no classes and is left out
-    const tuesday = container.querySelector('[aria-current="date"]') as HTMLElement;
-    expect(within(tuesday).getByText(locale === "en" ? "Today" : "Hoy")).toBeTruthy();
-    expect(within(tuesday).getAllByRole("listitem").map((li) => li.textContent)).toEqual([expect.stringContaining("Early"), expect.stringContaining("Late")]);
+  it("selects today by default, shows its classes in time order, and marks it with text and aria-current", () => {
+    render_([block("b", "TUESDAY", "Late", 20), block("a", "TUESDAY", "Early", 4), block("c", "MONDAY", "Mon class", 8)], true);
+    const active = document.querySelector("section") as HTMLElement;
+    expect(within(active).getByText(locale === "en" ? "Today" : "Hoy")).toBeTruthy();
+    expect(within(active).getAllByRole("listitem").map((li) => li.textContent)).toEqual([expect.stringContaining("Early"), expect.stringContaining("Late")]);
+    expect(within(active).getByText("Tuesday, Sep 22")).toBeTruthy();
   });
 
-  it("keeps the calendar's Sunday note when Sunday has no classes", () => {
+  it("clicking a different day-tab selects it, moving the active section and aria-current", () => {
+    render_([block("c", "MONDAY", "Mon class", 8)], true);
+    fireEvent.click(screen.getByRole("tab", { name: /Mon/i }));
+    const active = document.querySelector("section") as HTMLElement;
+    expect(within(active).getByText("Monday, Sep 21")).toBeTruthy();
+    expect(within(active).getByText("Mon class")).toBeTruthy();
+  });
+
+  it("keeps the calendar's Sunday note when Sunday is selected and has no classes", () => {
     render_([block("c", "MONDAY", "Mon class", 8)], false);
+    fireEvent.click(screen.getByRole("tab", { name: /Sun/i }));
     expect(screen.getByText(locale === "en" ? "No classes on Sunday" : "Domingo sin clases")).toBeTruthy();
+  });
+
+  it("a non-Sunday day with no classes shows an explicit 'no classes' message instead of disappearing", () => {
+    render_([block("c", "MONDAY", "Mon class", 8)], true);
+    fireEvent.click(screen.getByRole("tab", { name: /Wed/i }));
+    expect(screen.getByText(locale === "en" ? "No classes that day." : "No hay clases ese día.")).toBeTruthy();
+  });
+
+  it("every day-tab is always present and selectable, even one with no classes (unlike the old stacked layout, which hid it)", () => {
+    render_([block("c", "MONDAY", "Mon class", 8)], true);
+    expect(screen.getAllByRole("tab")).toHaveLength(4);
   });
 });

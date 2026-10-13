@@ -875,7 +875,8 @@
       "balanceSummary": {
         "heading": "Current balance",
         "noDebt": "No outstanding debt.",
-        "unavailable": "Couldn't load current balance."
+        "unavailable": "Couldn't load current balance.",
+        "topAlert": "You have an outstanding balance. See below for details."
       },
       "pendingReceipt": {
         "heading": "Pending receipt",
@@ -1720,6 +1721,11 @@
         "unmatched_checkin": "Attendance (no class matched)",
         "staff_day": "Added by staff",
         "adjustment": "Adjustment"
+      },
+      "monthStats": {
+        "thisMonth": "{count, plural, one {# attendance this month} other {# attendances this month}}",
+        "lastMonth": "{count, plural, one {# attendance last month} other {# attendances last month}}",
+        "unavailable": "Couldn't load this month's totals."
       }
     },
     "promotionHistory": {
@@ -1764,7 +1770,11 @@
     },
     "schedule": {
       "heading": "This week's schedule",
-      "description": "{academyName} · {count, plural, one {# class this week} other {# classes this week}}"
+      "description": "{academyName} · {count, plural, one {# class this week} other {# classes this week}}",
+      "dayPicker": {
+        "label": "Choose a day",
+        "noClasses": "No classes that day."
+      }
     }
   },
   "kiosk": {

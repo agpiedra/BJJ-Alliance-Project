@@ -93,19 +93,19 @@ describe.each(WIDTHS)("portal layout at %ipx", (width) => {
     }
   });
 
-  it(width >= 1024 ? "puts progress beside the check-in card (two columns)" : "stacks progress directly under the check-in card, before recent attendance", async () => {
+  it("puts the belt hero above the check-in card, full width, not confined to either column (Phase 2.6 PR 2)", async () => {
     const page = await open(width, width >= 1024 ? 900 : 844, false);
-    const progress = await box(page, "portal-progress");
+    const hero = await box(page, "portal-home-hero");
     const checkIn = (await page.getByRole("list", { name: "Today's classes" }).boundingBox())!;
     const recent = await box(page, "portal-recent-attendance");
+    expect(hero.y, "hero sits above the check-in card").toBeLessThan(checkIn.y);
     if (width >= 1024) {
-      expect(progress.x, "progress is in the right-hand column").toBeGreaterThan(checkIn.x + checkIn.width - 1);
-      expect(Math.abs(progress.y - checkIn.y), "both columns start together").toBeLessThan(140);
+      // Full-width above the two-column grid, not confined to either column's own width.
+      expect(hero.width, "hero spans wider than a single column").toBeGreaterThan(checkIn.width * 1.5);
     } else {
-      expect(progress.y, "progress is below the check-in card").toBeGreaterThan(checkIn.y);
-      expect(recent.y, "recent attendance comes after progress").toBeGreaterThan(progress.y);
-      // The point of the compact rows: progress starts on the first screen of a phone even with several classes today.
-      if (width <= 390) expect(progress.y, "progress is reachable without scrolling").toBeLessThan(844);
+      expect(recent.y, "recent attendance comes after the check-in card").toBeGreaterThan(checkIn.y);
+      // The point of the compact rows: the hero starts on the first screen of a phone even with several classes today.
+      if (width <= 390) expect(hero.y, "hero is reachable without scrolling").toBeLessThan(844);
     }
   });
 });

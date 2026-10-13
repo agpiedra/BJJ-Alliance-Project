@@ -1,5 +1,7 @@
+import { DateTime } from "luxon";
 import { prisma } from "@/lib/prisma";
 import { AttendanceType } from "@/generated/prisma/client";
+import { ZONE } from "@/lib/scheduling/zone";
 
 /**
  * What one row of a student's ledger IS, so the history can say it plainly instead of showing a bare signed number:
@@ -150,6 +152,46 @@ export async function getAttendanceTotals(studentId: string, organizationId: str
   return {
     total: checkInTotal + staffDayTotal + otherNet,
     entryCount: checkIns._count + staffDays._count + other._count,
+    checkIns: checkInTotal,
+    staffDays: staffDayTotal,
+    otherAdjustments: { count: other._count, net: otherNet },
+  };
+}
+
+/** Same three-way split as `AttendanceTotals`, over one calendar month only — never the whole ledger. */
+export interface AttendanceMonthTotals {
+  total: number;
+  checkIns: number;
+  staffDays: number;
+  otherAdjustments: { count: number; net: number };
+}
+
+/**
+ * The same three-way aggregate `getAttendanceTotals` computes over the whole ledger, narrowed to one calendar
+ * month in the academy's own zone (`ZONE`, America/Costa_Rica — the same zone `attendance-rows.ts`'s
+ * `whenLabel` already uses, never a UTC month boundary). `monthStart` is any instant within the target month;
+ * its CR-zoned month is what gets queried, so a caller passes "now" for the current month or `now.minus({months:1})`
+ * for the previous one.
+ *
+ * This is the ONLY source of truth for an exact monthly count. A page of `getAttendanceHistoryPage` rows is
+ * never enough on its own: a student who has not scrolled back far enough would otherwise see an undercounted
+ * "this month" total computed from whatever happens to be loaded client-side.
+ */
+export async function getAttendanceMonthTotals(studentId: string, organizationId: string, monthStart: Date): Promise<AttendanceMonthTotals> {
+  const zonedMonth = DateTime.fromJSDate(monthStart, { zone: "utc" }).setZone(ZONE).startOf("month");
+  const rangeStart = zonedMonth.toJSDate();
+  const rangeEnd = zonedMonth.plus({ months: 1 }).toJSDate();
+  const valid = { studentId, organizationId, voidedAt: null, occurredAt: { gte: rangeStart, lt: rangeEnd } } as const;
+  const [checkIns, staffDays, other] = await Promise.all([
+    prisma.attendanceRecord.aggregate({ where: { ...valid, type: AttendanceType.CHECKIN }, _sum: { delta: true }, _count: true }),
+    prisma.attendanceRecord.aggregate({ where: { ...valid, type: AttendanceType.ADJUSTMENT, delta: 1 }, _sum: { delta: true }, _count: true }),
+    prisma.attendanceRecord.aggregate({ where: { ...valid, type: AttendanceType.ADJUSTMENT, NOT: { delta: 1 } }, _sum: { delta: true }, _count: true }),
+  ]);
+  const checkInTotal = checkIns._sum.delta ?? 0;
+  const staffDayTotal = staffDays._sum.delta ?? 0;
+  const otherNet = other._sum.delta ?? 0;
+  return {
+    total: checkInTotal + staffDayTotal + otherNet,
     checkIns: checkInTotal,
     staffDays: staffDayTotal,
     otherAdjustments: { count: other._count, net: otherNet },

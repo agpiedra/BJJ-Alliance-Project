@@ -18,7 +18,8 @@ import { rowFor } from "@/components/ui/week-calendar-grid";
 import { getAtBeltSummary } from "@/lib/students/attendance-summary";
 import { buildProgressView } from "@/lib/promotion/progress-view";
 import { resolvePromotionConfigMap } from "@/lib/promotion/config";
-import { getAttendanceHistoryPage, getAttendanceTotals } from "@/lib/students/attendance-history";
+import { getAttendanceHistoryPage, getAttendanceMonthTotals, getAttendanceTotals } from "@/lib/students/attendance-history";
+import type { MonthlyAttendanceStat } from "./attendance-history-section";
 import { ATTENDANCE_PAGE_SIZE, toAttendanceRow } from "@/lib/portal/attendance-rows";
 import { listTodaysClasses } from "@/lib/portal/todays-classes";
 import { getOwnPromotionHistory } from "./get-promotion-history";
@@ -36,6 +37,7 @@ import { AttendanceHistorySection } from "./attendance-history-section";
 import { PortalTopBar } from "./portal-top-bar";
 import { PortalTabs } from "./portal-tabs";
 import { ProgressCard } from "./progress-card";
+import { HomeHero } from "./home-hero";
 import { RecentAttendanceCard } from "./recent-attendance-card";
 import { ScheduleDayList } from "./schedule-day-list";
 import { getOrganizationBranding } from "@/lib/branding/get-branding";
@@ -146,6 +148,26 @@ export default async function StudentPortalPage({
   // Today's classes for the student's own academy (Costa Rica day and boundaries), each with its honest state.
   const todays = await listTodaysClasses({ context, academyId: student.homeAcademy.id, studentId });
 
+  // Attendance's this-month/last-month stat row: a genuinely new, narrow, date-ranged read (never derivable from
+  // whatever rows happen to be paginated). Failure here must never render as a false "0" - it degrades to an
+  // explicit unavailable state instead of throwing the whole page, since the rest of the portal (payments,
+  // schedule, the full history list) is unaffected by this one stat row failing to load.
+  let thisMonthStat: MonthlyAttendanceStat;
+  let lastMonthStat: MonthlyAttendanceStat;
+  try {
+    const nowCr = DateTime.now().setZone(ZONE);
+    const [thisMonthTotals, lastMonthTotals] = await Promise.all([
+      getAttendanceMonthTotals(studentId, context.organizationId, nowCr.toJSDate()),
+      getAttendanceMonthTotals(studentId, context.organizationId, nowCr.minus({ months: 1 }).toJSDate()),
+    ]);
+    thisMonthStat = { ok: true, totals: thisMonthTotals };
+    lastMonthStat = { ok: true, totals: lastMonthTotals };
+  } catch (error) {
+    console.error("[portal] failed to load monthly attendance stats", { organizationId: context.organizationId, error });
+    thisMonthStat = { ok: false };
+    lastMonthStat = { ok: false };
+  }
+
   // §3.1/§3.3: pending receipts and payment history are genuinely NEW information categories — gated entirely
   // behind `ledgerActive`, never interleaved with the legacy card above. Mirrors `[id]/page.tsx`'s identical
   // "ledger facts, then history" fetch shape (lines 98-124 there), reused here for the self-scoped functions.
@@ -202,6 +224,14 @@ export default async function StudentPortalPage({
       isOff: !hasClassesByDay.get(dayOfWeek),
     };
   });
+  // The phone day-picker's selected-day heading shows the FULL date (weekday + month + day), never abbreviated
+  // down to the day-tab's own short label - `shortWeekdayLabel`'s 3-letter form stays on the tab only.
+  const dateHeadings: Record<string, string> = Object.fromEntries(
+    weekDates.map((date, index) => [
+      SUNDAY_FIRST_DAYS[index],
+      new Intl.DateTimeFormat(locale === "es" ? "es-CR" : "en-US", { weekday: "long", month: "long", day: "numeric" }).format(date.toJSDate()),
+    ]),
+  );
   const calendarBlocks: WeekCalendarBlock[] = sessions.map((s) => {
     const [hour, minute] = s.startTime.split(":").map(Number);
     const end = addMinutesToClockTime(s.startTime, s.durationMinutes);
@@ -246,13 +276,21 @@ export default async function StudentPortalPage({
       serverNow={todays.serverNow}
     />
   );
-  const progressCard = <ProgressCard locale={locale} summary={summary} view={progressView} dueDateLabel={dueDateFormatted} />;
+  // The belt hero below reuses this exact data (buildProgressView, unchanged) in a page-level treatment; the
+  // bordered-card `ProgressCard` itself is still used, unchanged, in the Attendance panel's side column.
+  const homeHero = <HomeHero locale={locale} summary={summary} view={progressView} dueDateLabel={dueDateFormatted} />;
 
   // §3.1: a ternary replacement, exactly like the roster's own pill replacement — never two possibly-disagreeing
   // "is my payment current" sources rendered side by side. Inactive renders this exact legacy card, byte-for-byte.
   // Review fix: `isOverdue`/the status computation are now INSIDE this `!ledgerActive` branch, never invoked at
   // all when active — not merely computed-and-discarded (currentPaymentPeriod was already null when active via
   // the skipped fetch above, but isOverdue/paymentPillVariant/paymentStatusLabel were still being CALLED).
+  // Top-of-page alert: moved out of the payment card below, never duplicated. Each branch fires ONLY on a
+  // positive, already-known flaggable fact of that exact branch - never on `null`/"unavailable" (that stays
+  // inside the card itself, via `StudentBalanceSummary`'s own `display === null` branch) and never on "no debt"
+  // (an empty `totals` array is not a flag). The two branches read two independently-computed facts and are
+  // never merged into one combined signal.
+  let topPaymentAlert: ReactNode = null;
   let legacyPaymentCard: ReactNode = null;
   if (!ledgerActive) {
     const overdue = isOverdue(currentPaymentPeriod, currentCrDateParts());
@@ -261,6 +299,13 @@ export default async function StudentPortalPage({
       : currentPaymentPeriod
         ? currentPaymentPeriod.status
         : "NOT_RECORDED";
+    if (overdue) {
+      topPaymentAlert = (
+        <p role="alert" className="rounded-md border border-destructive bg-destructive/10 px-4 py-2 text-sm text-destructive">
+          {t("paymentStatus.overdueNotice")}
+        </p>
+      );
+    }
     legacyPaymentCard = (
       <Card>
         <CardHeader className="border-b">
@@ -271,9 +316,16 @@ export default async function StudentPortalPage({
             <span className="text-muted-foreground">{currentPaymentPeriod?.planName ?? "—"}</span>
             <Pill variant={paymentPillVariant(paymentStatus)}>{paymentStatusLabel(paymentStatus, t, tPaymentStatus)}</Pill>
           </div>
-          {overdue && <p className="text-sm text-muted-foreground">{t("paymentStatus.overdueNotice")}</p>}
         </CardContent>
       </Card>
+    );
+  } else if (ledgerBalanceDisplay && ledgerBalanceDisplay.totals.length > 0) {
+    // Real, known debt under the active ledger - the ledger-equivalent of `overdue` above. `ledgerBalanceDisplay
+    // === null` (fetch failed) and an empty `totals` array (no debt) both correctly produce no alert here.
+    topPaymentAlert = (
+      <p role="alert" className="rounded-md border border-destructive bg-destructive/10 px-4 py-2 text-sm text-destructive">
+        {tStudents("ledger.balanceSummary.topAlert")}
+      </p>
     );
   }
   const ledgerPaymentCard = (
@@ -324,24 +376,28 @@ export default async function StudentPortalPage({
     </Card>
   );
 
-  // HOME. Two columns from `lg` (check-in and recent attendance left; progress, payment and promotions right). On narrower screens the two
-  // column wrappers dissolve (`contents`) and `order` puts the cards in priority order: check-in, progress, recent attendance, payment,
-  // promotion history, [ledger history]. Progress comes second on purpose: it is what a student looks for right after checking in.
-  // The ledger history card (order-6) is genuinely NEW content (§3.1) — it renders only when `ledgerActive`, after
+  // HOME. The belt hero and the (optional) top payment alert are page-level, full-width, above everything else.
+  // Below them, two columns from `lg` (check-in and recent attendance left; payment and promotions right); on
+  // narrower screens the two column wrappers dissolve (`contents`) and `order` puts the cards in priority order:
+  // check-in, recent attendance, payment, promotion history, [ledger history].
+  // The ledger history card (order-5) is genuinely NEW content (§3.1) — it renders only when `ledgerActive`, after
   // every other card, never interleaved with the payment card above it.
   const home = (
-    <div className="flex flex-col gap-4 lg:grid lg:grid-cols-[minmax(0,7fr)_minmax(0,5fr)] lg:items-start">
-      <div className="contents lg:flex lg:flex-col lg:gap-4">
-        <div className="order-1">{checkInCard}</div>
-        <div className="order-3">
-          <RecentAttendanceCard rows={historyRows} />
+    <div className="flex flex-col gap-4">
+      {homeHero}
+      {topPaymentAlert}
+      <div className="flex flex-col gap-4 lg:grid lg:grid-cols-[minmax(0,7fr)_minmax(0,5fr)] lg:items-start">
+        <div className="contents lg:flex lg:flex-col lg:gap-4">
+          <div className="order-1">{checkInCard}</div>
+          <div className="order-2">
+            <RecentAttendanceCard rows={historyRows} />
+          </div>
         </div>
-      </div>
-      <div className="contents lg:flex lg:flex-col lg:gap-4">
-        <div className="order-2">{progressCard}</div>
-        <div className="order-4">{paymentCard}</div>
-        <div className="order-5">{promotionCard}</div>
-        {paymentHistoryCard && <div className="order-6">{paymentHistoryCard}</div>}
+        <div className="contents lg:flex lg:flex-col lg:gap-4">
+          <div className="order-3">{paymentCard}</div>
+          <div className="order-4">{promotionCard}</div>
+          {paymentHistoryCard && <div className="order-5">{paymentHistoryCard}</div>}
+        </div>
       </div>
     </div>
   );
@@ -357,6 +413,7 @@ export default async function StudentPortalPage({
         initialCursor={historyPage.nextCursor}
         totals={attendanceTotals}
         creditedClasses={summary.creditedClasses}
+        monthlyStats={{ thisMonth: thisMonthStat, lastMonth: lastMonthStat }}
       />
       <ProgressCard locale={locale} summary={summary} view={progressView} dueDateLabel={dueDateFormatted} />
     </div>
@@ -378,7 +435,7 @@ export default async function StudentPortalPage({
           <div className="hidden md:block">
             <WeekCalendar days={calendarDays} blocks={calendarBlocks} legend={legend} legendNote={sundayHasClasses ? undefined : tAdminSchedule("calendar.sundayNote")} />
           </div>
-          <ScheduleDayList days={calendarDays} blocks={calendarBlocks} sundayHasClasses={sundayHasClasses} />
+          <ScheduleDayList days={calendarDays} blocks={calendarBlocks} sundayHasClasses={sundayHasClasses} dateHeadings={dateHeadings} />
           <div className="flex flex-wrap gap-x-4 gap-y-1 px-4 pb-4 text-xs text-muted-foreground md:hidden">
             {legend.map((item) => (
               <span key={item.label} className="inline-flex items-center gap-1.5">

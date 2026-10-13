@@ -875,7 +875,8 @@
       "balanceSummary": {
         "heading": "Saldo actual",
         "noDebt": "Sin saldo pendiente.",
-        "unavailable": "No se pudo cargar el saldo actual."
+        "unavailable": "No se pudo cargar el saldo actual.",
+        "topAlert": "Tienes un saldo pendiente. Consulta los detalles abajo."
       },
       "pendingReceipt": {
         "heading": "Recibo pendiente",
@@ -1720,6 +1721,11 @@
         "unmatched_checkin": "Asistencia (sin clase asignada)",
         "staff_day": "Agregado por el personal",
         "adjustment": "Ajuste"
+      },
+      "monthStats": {
+        "thisMonth": "{count, plural, one {# asistencia este mes} other {# asistencias este mes}}",
+        "lastMonth": "{count, plural, one {# asistencia el mes pasado} other {# asistencias el mes pasado}}",
+        "unavailable": "No se pudieron cargar los totales de este mes."
       }
     },
     "promotionHistory": {
@@ -1764,7 +1770,11 @@
     },
     "schedule": {
       "heading": "Horario de esta semana",
-      "description": "{academyName} · {count, plural, one {# clase esta semana} other {# clases esta semana}}"
+      "description": "{academyName} · {count, plural, one {# clase esta semana} other {# clases esta semana}}",
+      "dayPicker": {
+        "label": "Elige un día",
+        "noClasses": "No hay clases ese día."
+      }
     }
   },
   "kiosk": {

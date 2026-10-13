@@ -26,12 +26,37 @@ import enMessages from "../../messages/en.json";
  * scoped normalization — not raw byte identity — see `normalizeApprovedMainPadding` below for exactly what it
  * does and does not touch.
  *
+ * Phase 2.6 PR 2 (Portal content) made a real, approved, SUBSTANTIAL restructure of the Home panel specifically
+ * (belt hero, top-of-page payment alert, removed in-grid progress card, renumbered grid `order-*`) — large
+ * enough that "byte-identical modulo one normalized string" stops being a meaningful claim for that one panel
+ * (the normalization string would just BE the whole changed section). Rather than keep stretching that
+ * technique, the comparison below SPLITS the page: everything OUTSIDE the Home panel (branding, `<main>`, the
+ * tab bar, the Attendance panel, the Schedule panel) is still held to full byte equivalence (modulo the one
+ * approved `<main>` normalization, unchanged); the Home panel itself is held to targeted CONTENT assertions
+ * instead — the real financial/attendance/promotion facts it must still show correctly, not its exact markup.
+ * See `splitHomePanel` below.
+ *
  * IMPORTANT caveat this test does NOT prove: only `page.tsx` is git-extracted for the baseline side. Its
- * `./portal-tabs` import is never extracted, so BOTH the "baseline" and "current" renders below import the
- * SAME real, current `PortalTabs` component — this comparison cannot independently demonstrate anything about
- * old-vs-new tab-bar rendering or behavior. That proof lives in `tests/unit/portal-tabs.test.tsx` and this PR's
- * own real-browser evidence. This test's job is strictly to prove the REST of the page — content, financial
- * data, everything besides the one approved padding difference — did not silently change.
+ * `./portal-tabs`, `./attendance-history-section` and `./schedule-day-list` imports are never extracted, so
+ * BOTH the "baseline" and "current" renders below import the SAME real, current `PortalTabs`,
+ * `AttendanceHistorySection` and `ScheduleDayList` components — confirmed directly against the git-extracted
+ * baseline source, which already names all three by the same relative import paths this repo's current
+ * `page.tsx` uses. This comparison cannot independently demonstrate anything about old-vs-new rendering or
+ * behavior for ANY of those three components — not tab-bar markup, not Attendance's new monthly-stats feature,
+ * not Schedule's new day-tab keyboard pattern. That proof lives in their own dedicated tests
+ * (`tests/unit/portal-tabs.test.tsx`, `tests/unit/schedule-day-list.test.tsx`,
+ * `tests/unit/attendance-history-section.test.tsx`, `tests/integration/attendance-month-totals.test.ts`) and
+ * this PR's own real-browser evidence — never this file. This test's job is strictly to prove page.tsx's OWN
+ * surrounding markup — which component gets mounted where, in what order, wrapped in what shell — did not
+ * silently change outside the one approved `<main>` padding difference and the Home panel's approved restructure.
+ *
+ * A further limitation specific to this fixture: it creates no `AttendanceRecord` rows at all, so the
+ * Attendance panel renders with zero entries on both sides — the new `getAttendanceMonthTotals` read returns
+ * zero this-month/last-month counts, and no populated month-grouped list (multiple `<ul>`s, month headers,
+ * newest-first ordering) is ever exercised here. That behavior is proven separately by
+ * `tests/integration/attendance-month-totals.test.ts` and this PR's real-browser evidence (real cross-month
+ * data, real "2 this month / 2 last month" counts) — not by this file, which this fixture structurally cannot
+ * exercise.
  */
 const prisma = getTestPrismaClient();
 const BASELINE_REF = "87c706b33c6633ada6a003aa3d7ed105312cafd0";
@@ -161,20 +186,49 @@ function normalizeApprovedMainPadding(html: string): string {
   return html.split(MAIN_TAG_BASELINE).join(MAIN_TAG_CURRENT);
 }
 
-describe("portal/page.tsx: inactive-ledger render EQUIVALENCE against the pre-PR baseline (87c706b), after the one approved <main> padding normalization — not raw byte identity", () => {
+/** PR 2's real, approved restructure lives entirely inside the Home panel. `PortalTabs` always renders all
+ * three panels as direct siblings in this fixed order (home, attendance, schedule), with no whitespace between
+ * one panel's closing tag and the next panel's opening tag in `renderToStaticMarkup` output - so slicing between
+ * the two anchors below extracts EXACTLY the Home panel's full markup, nothing more, nothing less. Throws loudly
+ * if either anchor is missing (a real structural change elsewhere) rather than silently slicing the wrong thing. */
+const HOME_PANEL_START = '<div role="tabpanel" id="portal-panel-home"';
+const ATTENDANCE_PANEL_START = '<div role="tabpanel" id="portal-panel-attendance"';
+function splitHomePanel(html: string): { home: string; rest: string } {
+  const start = html.indexOf(HOME_PANEL_START);
+  const end = html.indexOf(ATTENDANCE_PANEL_START);
+  if (start === -1 || end === -1 || end <= start) {
+    throw new Error("splitHomePanel: expected tabpanel anchors not found in this order - the page's panel structure changed in a way this test doesn't account for.");
+  }
+  return { home: html.slice(start, end), rest: html.slice(0, start) + html.slice(end) };
+}
+
+describe("portal/page.tsx: inactive-ledger render EQUIVALENCE against the pre-PR baseline (87c706b) outside the Home panel, after the one approved <main> padding normalization — not raw byte identity; the Home panel itself is checked by real-fact content assertions, not byte equivalence, per its own approved restructure", () => {
   let baselineHtml: string;
   let currentHtml: string;
+  let homeBaseline: string;
+  let homeCurrent: string;
+  let restBaseline: string;
+  let restCurrent: string;
 
   beforeAll(async () => {
     currentSession = { user: { id: studentUser.id }, activeOrganizationId: a.org.id };
     baselineHtml = withProvider(await BaselinePortalPage({ params: Promise.resolve({ locale: "en" }) }));
     currentHtml = withProvider(await CurrentPortalPage({ params: Promise.resolve({ locale: "en" }) }));
     currentSession = null;
+    ({ home: homeBaseline, rest: restBaseline } = splitHomePanel(baselineHtml));
+    ({ home: homeCurrent, rest: restCurrent } = splitHomePanel(currentHtml));
   });
 
-  it("REQUIRED: real financial content is non-vacuously present in both renders", () => {
+  it("REQUIRED: real financial content, including the fixture's actual plan name (not just the generic 'Payment status'/'Paid' labels), is non-vacuously present in both renders", () => {
     expect(baselineHtml).toContain("Payment status");
     expect(baselineHtml).toContain("Paid");
+    // The real fixture plan name (`makeAccountingOrg`'s `PortalBaseline plan ${suffix}`, rendered via
+    // `currentPaymentPeriod.planName` = `period.plan.name` — see src/lib/payments/get-current-period.ts) —
+    // asserted literally, not just claimed in prose, so a regression that drops the plan name from the legacy
+    // card would actually fail this test.
+    const planName = `PortalBaseline plan ${suffix}`;
+    expect(baselineHtml).toContain(planName);
+    expect(currentHtml).toContain(planName);
   });
 
   it("REQUIRED: exactly one expected <main> tag is present on each side, asserted BEFORE normalizing — zero or duplicate matches fail loudly instead of the anchored replace silently matching nothing or ambiguously matching more than intended", () => {
@@ -182,20 +236,16 @@ describe("portal/page.tsx: inactive-ledger render EQUIVALENCE against the pre-PR
     expect(countOccurrences(currentHtml, MAIN_TAG_CURRENT)).toBe(1);
   });
 
-  it("REQUIRED: current render matches baseline once the one approved <main> padding difference is normalized — everything else is unchanged", () => {
-    expect(normalizeReactGeneratedIds(currentHtml)).toBe(normalizeReactGeneratedIds(normalizeApprovedMainPadding(baselineHtml)));
+  it("REQUIRED: outside the Home panel, current matches baseline once the one approved <main> padding difference is normalized — page.tsx's OWN surrounding markup (shell, tab-bar wiring, which component is mounted where) is unchanged. This does NOT independently prove the Attendance or Schedule PANEL CONTENTS are unchanged: both renders mount the same current AttendanceHistorySection/ScheduleDayList (see the file-level caveat above), and this fixture's zero attendance rows mean neither panel's real content differs here regardless.", () => {
+    expect(normalizeReactGeneratedIds(restCurrent)).toBe(normalizeReactGeneratedIds(normalizeApprovedMainPadding(restBaseline)));
   });
 
-  it("REQUIRED: an unrelated class change is NOT swallowed by the normalization — comparison still fails", () => {
+  it("REQUIRED: an unrelated class change OUTSIDE the Home panel is NOT swallowed by the normalization — comparison still fails", () => {
+    // The page greeting <h1> lives before the tab bar, outside every tabpanel - genuinely in `rest`.
     const tamperedCurrent = currentHtml.replace("text-2xl font-bold", "text-2xl font-bold tampered-unrelated-class");
     expect(tamperedCurrent).not.toBe(currentHtml);
-    expect(normalizeReactGeneratedIds(tamperedCurrent)).not.toBe(normalizeReactGeneratedIds(normalizeApprovedMainPadding(baselineHtml)));
-  });
-
-  it("REQUIRED: a financial text/value change is NOT swallowed by the normalization — comparison still fails", () => {
-    const tamperedCurrent = currentHtml.replace("Paid", "Overdue");
-    expect(tamperedCurrent).not.toBe(currentHtml);
-    expect(normalizeReactGeneratedIds(tamperedCurrent)).not.toBe(normalizeReactGeneratedIds(normalizeApprovedMainPadding(baselineHtml)));
+    const { rest: tamperedRest } = splitHomePanel(tamperedCurrent);
+    expect(normalizeReactGeneratedIds(tamperedRest)).not.toBe(normalizeReactGeneratedIds(normalizeApprovedMainPadding(restBaseline)));
   });
 
   it("REQUIRED: normalization is scoped to the <main> tag only — the same class string on a different element is left untouched", () => {
@@ -207,5 +257,36 @@ describe("portal/page.tsx: inactive-ledger render EQUIVALENCE against the pre-PR
     // The real <main> tag in the same string is still correctly normalized to the current form.
     expect(normalized).toContain(MAIN_TAG_CURRENT);
     expect(normalized).not.toContain(MAIN_TAG_BASELINE);
+  });
+
+  describe("Home panel — content facts, not byte equivalence (PR 2's approved restructure lives entirely here)", () => {
+    it("REQUIRED: the approved belt hero is genuinely new - absent from the pre-PR baseline, present in current", () => {
+      expect(homeBaseline).not.toContain('data-testid="portal-home-hero"');
+      expect(homeCurrent).toContain('data-testid="portal-home-hero"');
+    });
+
+    it("REQUIRED: the real payment-status fact (plan name and PAID pill) is still shown, unchanged in substance, in both the baseline's old layout and the current hero/alert layout", () => {
+      expect(homeBaseline).toContain("Payment status");
+      expect(homeBaseline).toContain("Paid");
+      expect(homeCurrent).toContain("Payment status");
+      expect(homeCurrent).toContain("Paid");
+    });
+
+    it("REQUIRED: a financial text/value change inside the Home panel is NOT invisible to a real fact check - the exact assertion above would catch it", () => {
+      const tamperedHomeCurrent = homeCurrent.replace("Paid", "Overdue");
+      expect(tamperedHomeCurrent).not.toBe(homeCurrent);
+      expect(tamperedHomeCurrent).not.toContain("Paid");
+    });
+
+    it("REQUIRED: RecentAttendanceCard's and the Promotion history card's real content are untouched by the hero/alert restructure, in both renders", () => {
+      expect(homeBaseline).toContain("No attendance recorded yet.");
+      expect(homeCurrent).toContain("No attendance recorded yet.");
+      expect(homeBaseline).toContain("No promotions yet.");
+      expect(homeCurrent).toContain("No promotions yet.");
+    });
+
+    it("REQUIRED: no top payment alert renders for this fixture's PAID (not overdue) status - the alert is genuinely conditional, not always-on", () => {
+      expect(homeCurrent).not.toContain('role="alert"');
+    });
   });
 });
