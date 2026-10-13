@@ -28,6 +28,9 @@ const OPEN = [CLASS_A, CLASS_B];
 
 const fetchMock = vi.fn();
 const respond = (status: number, body: unknown) => Promise.resolve({ status, json: async () => body } as Response);
+/** The Entry screen's background "open for check-in now" fetch — kept off `fetchMock`'s own call history/queue so
+ * it never steals a `mockReturnValueOnce` meant for the check-in/reassign flow a test is actually exercising. */
+const openClassesMock = vi.fn(() => respond(200, { ok: true, openClasses: [] }));
 
 const SUCCESS = {
   ok: true,
@@ -61,10 +64,14 @@ const prompt = () => screen.queryByText("Enter your 4-digit code");
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval"] });
   fetchMock.mockReset();
+  openClassesMock.mockReset();
+  openClassesMock.mockImplementation(() => respond(200, { ok: true, openClasses: [] }));
   enqueue.mockReset();
   flush.mockReset();
   flush.mockResolvedValue({ dropped: 0 });
-  vi.stubGlobal("fetch", fetchMock);
+  vi.stubGlobal("fetch", (url: string, init?: RequestInit) =>
+    typeof url === "string" && url.includes("/api/kiosk/open-classes") ? openClassesMock() : fetchMock(url, init),
+  );
   Object.defineProperty(navigator, "onLine", { configurable: true, value: true });
 });
 afterEach(() => {
@@ -110,6 +117,39 @@ describe.each(["en", "es"] as const)("digit-count status and keys (%s)", (locale
     expect(key(locale === "en" ? "Clear" : "Borrar")).not.toContain("bg-brand-gold");
     expect(key("7")).toContain("bg-card");
     expect(key("7")).not.toContain("bg-brand-gold");
+  });
+});
+
+describe("Phase 2.6 PR 5: the Entry screen's 'open for check-in now' panel", () => {
+  it("shows the open classes' names, joined, once the background fetch resolves", async () => {
+    openClassesMock.mockImplementation(() => respond(200, { ok: true, openClasses: OPEN }));
+    renderKiosk();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.getByText("Open for check-in now")).toBeTruthy();
+    expect(screen.getByText("Fundamentals · Advanced No-Gi")).toBeTruthy();
+  });
+
+  it("confirmed-empty (no class open right now) omits the panel — a normal state, not an error", async () => {
+    openClassesMock.mockImplementation(() => respond(200, { ok: true, openClasses: [] }));
+    renderKiosk();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.queryByText("Open for check-in now")).toBeNull();
+    expect(screen.queryByTestId("kiosk-open-now")).toBeNull();
+  });
+
+  it("an unavailable fetch (rejected) also omits the panel — never a false 'nothing open' claim, and the keypad is unaffected", async () => {
+    openClassesMock.mockImplementation(() => Promise.reject(new Error("network down")));
+    renderKiosk();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.queryByText("Open for check-in now")).toBeNull();
+    expect(screen.queryByTestId("kiosk-open-now")).toBeNull();
+    expect(screen.getByRole("button", { name: "Enter" })).toBeTruthy(); // the PIN pad still works
   });
 });
 
@@ -226,6 +266,53 @@ describe("the timeout bar shows the REAL timeout", () => {
   });
 });
 
+describe("Phase 2.6 PR 5: the success screen's numeric countdown and Done button", () => {
+  it("the countdown ticks down from the SAME deadline the bar already uses, and only on the success screen", async () => {
+    fetchMock.mockReturnValueOnce(respond(200, SUCCESS));
+    renderKiosk();
+    enterCode();
+    await advance(0);
+    expect(screen.getByText("Ready for the next person in 6s")).toBeTruthy();
+
+    await advance(1000);
+    expect(screen.getByText("Ready for the next person in 5s")).toBeTruthy();
+    expect(bar()!.getAttribute("data-timeout-ms")).toBe("6000"); // the bar's own deadline is unchanged
+  });
+
+  it("the picker (several classes open) has no countdown text, only the shared decorative bar", async () => {
+    fetchMock.mockReturnValueOnce(respond(400, { ok: false, error: "class_selection_required", openClasses: OPEN }));
+    renderKiosk();
+    enterCode();
+    await advance(0);
+    expect(screen.queryByText(/Ready for the next person/)).toBeNull();
+    expect(bar()).not.toBeNull();
+  });
+
+  it("Done triggers the identical resetToEntry() transition the timeout fires, with no additional network call", async () => {
+    fetchMock.mockReturnValueOnce(respond(200, SUCCESS));
+    renderKiosk();
+    enterCode();
+    await advance(0);
+    expect(prompt()).toBeNull();
+    const callsBeforeDone = fetchMock.mock.calls.length;
+
+    press("Done");
+    await advance(0);
+
+    expect(prompt()).not.toBeNull(); // back at the keypad, the exact effect the 6s timeout produces on its own
+    expect(bar()).toBeNull();
+    expect(fetchMock.mock.calls.length).toBe(callsBeforeDone); // no extra write — resetToEntry only clears local state
+  });
+
+  it("no Done button on the picker/lockout/error screens", async () => {
+    fetchMock.mockReturnValueOnce(respond(429, { ok: false, error: "rate_limited", retryAfterSeconds: 3 }));
+    renderKiosk();
+    enterCode();
+    await advance(0);
+    expect(screen.queryByRole("button", { name: "Done" })).toBeNull();
+  });
+});
+
 describe.each(["en", "es"] as const)("sync warning banner (%s)", (locale) => {
   it("is in the page flow directly above the keypad (not a fixed overlay), says how many were lost, and stays until dismissed", async () => {
     flush.mockResolvedValue({ dropped: 2 });
@@ -297,7 +384,7 @@ describe.each(["en", "es"] as const)("success view: progress area (%s)", (locale
   const show = (sum: Record<string, unknown>, extra: Record<string, unknown> = {}) =>
     render(
       <NextIntlClientProvider locale={locale} messages={messages}>
-        <SuccessView result={{ ...SUCCESS, ...extra, summary: sum } as unknown as Result} onCorrect={() => {}} />
+        <SuccessView result={{ ...SUCCESS, ...extra, summary: sum } as unknown as Result} onCorrect={() => {}} onDone={() => {}} />
       </NextIntlClientProvider>,
     );
   const TIME = { mode: "TIME", target: null, remainingAttendance: null, percent: 20, atBeltCount: 12 };

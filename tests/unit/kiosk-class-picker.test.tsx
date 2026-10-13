@@ -70,7 +70,13 @@ beforeEach(() => {
   enqueue.mockReset();
   flush.mockReset();
   flush.mockResolvedValue({ dropped: 0 });
-  vi.stubGlobal("fetch", fetchMock);
+  // Phase 2.6 PR 5's Entry "open for check-in now" panel fetches on mount, before any test's own
+  // fetchMock.mockReturnValueOnce(...) is queued — routed to a fixed harmless default here so it never steals a
+  // once-value meant for the check-in/reassign call the test is actually exercising, and never shows up in
+  // fetchMock's own call history/count assertions.
+  vi.stubGlobal("fetch", (url: string, init?: RequestInit) =>
+    typeof url === "string" && url.includes("/api/kiosk/open-classes") ? respond(200, { ok: true, openClasses: [] }) : fetchMock(url, init),
+  );
 });
 afterEach(() => {
   cleanup();
@@ -94,6 +100,21 @@ describe("several classes are open: the student is asked BEFORE anything is writ
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(bodies()[0].pickedClassSessionId).toBeUndefined(); // the first request carried no selection
+  });
+
+  it("Phase 2.6 PR 5: the picklist container stays single-column by default and only switches to a bounded, scrolling 2-column grid at the landscape >=900px breakpoint — jsdom cannot lay out real CSS Grid, so this only pins the class names are present, not the real rendered layout (verified separately in a real browser)", async () => {
+    fetchMock.mockReturnValueOnce(respond(400, { ok: false, error: "class_selection_required", openClasses: [CLASS_A, CLASS_B] }));
+    renderKiosk();
+    await enterCode();
+
+    const rowA = await screen.findByRole("button", { name: /Fundamentals/ });
+    const grid = rowA.parentElement as HTMLElement;
+    expect(grid.className).toMatch(/\bflex\b/);
+    expect(grid.className).toMatch(/\bflex-col\b/);
+    expect(grid.className).toMatch(/min-\[900px\]:landscape:grid\b/);
+    expect(grid.className).toMatch(/min-\[900px\]:landscape:grid-cols-2\b/);
+    expect(grid.className).toMatch(/min-\[900px\]:landscape:max-h-\[calc\(100dvh-220px\)\]/);
+    expect(grid.className).toMatch(/min-\[900px\]:landscape:overflow-y-auto\b/);
   });
 
   it("cancelling returns to the keypad and sends NOTHING more (no attendance is created)", async () => {

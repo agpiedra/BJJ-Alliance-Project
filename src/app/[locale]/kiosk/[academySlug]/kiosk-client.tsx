@@ -160,6 +160,11 @@ export function KioskClient({
   // is removed the moment the timer is cleared (a correction being saved has no pending reset, so it shows no bar).
   const epochRef = useRef(0);
   const [pendingReset, setPendingReset] = useState<{ ms: number; epoch: number } | null>(null);
+  // Ticking seconds-remaining for the success screen's numeric countdown — seeded from the SAME `ms` the
+  // decorative bar's CSS animation duration already uses and ticking down in lockstep with it, never a second,
+  // independently-clocked timer. Only ticks on the success phase (per the approved mock, other phases keep only
+  // the decorative bar).
+  const [countdownSeconds, setCountdownSeconds] = useState<number | null>(null);
 
   const clearTimers = useCallback(() => {
     if (timeoutRef.current) {
@@ -218,6 +223,67 @@ export function KioskClient({
     },
     [resetToEntry],
   );
+
+  // Success-only numeric countdown, seeded from `pendingReset.ms` — the SAME total duration the decorative bar's
+  // CSS animation already uses — and ticking down every 250ms in lockstep with it via its own interval, never
+  // read from the wall clock and never a second independently-clocked timer. Ticks only while the success phase
+  // holds a pending reset; any other phase (or no pending reset at all) clears it. This effect never calls
+  // `resetToEntry` itself — the real auto-reset stays the one `setTimeout` already armed above.
+  useEffect(() => {
+    if (!pendingReset || phase.kind !== "success") {
+      setCountdownSeconds(null);
+      return;
+    }
+    const TICK_MS = 250;
+    let remainingMs = pendingReset.ms;
+    setCountdownSeconds(Math.ceil(remainingMs / 1000));
+    const id = setInterval(() => {
+      remainingMs = Math.max(0, remainingMs - TICK_MS);
+      setCountdownSeconds(Math.ceil(remainingMs / 1000));
+    }, TICK_MS);
+    return () => clearInterval(id);
+  }, [pendingReset, phase.kind]);
+
+  // "Open for check-in now" panel (Phase 2.6 PR 5) — a best-effort, read-only ambient status for the keypad screen.
+  // Never blocks or affects check-in itself: a failed fetch just omits the panel, the PIN pad is unaffected either
+  // way. Polled on a fixed interval (like the wall clock below) rather than wired to `nextBoundaryAfter` — that
+  // helper needs every session's full timing, not just the already-open subset this screen fetches, so computing
+  // it client-side here would mean a second network round-trip for data this screen doesn't otherwise need.
+  const [openNow, setOpenNow] = useState<{ kind: "loading" } | { kind: "ok"; classes: OpenClass[] } | { kind: "unavailable" }>({ kind: "loading" });
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      let body: unknown;
+      try {
+        const response = await fetch("/api/kiosk/open-classes", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ academySlug, token }),
+        });
+        if (response.status !== 200) {
+          if (!cancelled) setOpenNow({ kind: "unavailable" });
+          return;
+        }
+        body = await response.json();
+      } catch {
+        if (!cancelled) setOpenNow({ kind: "unavailable" });
+        return;
+      }
+      if (cancelled) return;
+      const record = typeof body === "object" && body !== null ? (body as Record<string, unknown>) : null;
+      if (record?.ok === true) {
+        setOpenNow({ kind: "ok", classes: readPicklist(body, "openClasses") });
+      } else {
+        setOpenNow({ kind: "unavailable" });
+      }
+    };
+    void load();
+    const id = setInterval(() => void load(), 60_000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [academySlug, token]);
 
   const queueCheckIn = useCallback(
     async (code: string, pickedClassSessionId?: string) => {
@@ -474,10 +540,12 @@ export function KioskClient({
         {!hasOwnHeading && <h1 className="sr-only">{academyName}</h1>}
 
         {phase.kind === "entry" && (
-          <EntryView code={phase.code} submitting={phase.submitting} onDigit={pressDigit} onClear={pressClear} onEnter={pressEnter} />
+          <EntryView code={phase.code} submitting={phase.submitting} openNow={openNow} onDigit={pressDigit} onClear={pressClear} onEnter={pressEnter} />
         )}
 
-        {phase.kind === "success" && <SuccessView result={phase.result} onCorrect={() => void openCorrection(phase.result)} />}
+        {phase.kind === "success" && (
+          <SuccessView result={phase.result} onCorrect={() => void openCorrection(phase.result)} onDone={resetToEntry} />
+        )}
 
         {phase.kind === "picking" && (
           <ClassPicker
@@ -522,8 +590,15 @@ export function KioskClient({
       {/* How long until the keypad comes back by itself. The same number arms the reset (armReset), and a new arm remounts the bar so it
           restarts. Decorative (the text on screen is the message), and hidden entirely for people who ask for reduced motion. */}
       {pendingReset && phase.kind !== "entry" && (
-        <div aria-hidden="true" data-testid="kiosk-timeout" data-timeout-ms={pendingReset.ms} className="absolute inset-x-0 bottom-0 h-2 border-t border-input bg-data-track motion-reduce:hidden">
-          <div key={pendingReset.epoch} className="kiosk-timeout-fill h-full bg-data" style={{ "--kiosk-timeout-ms": `${pendingReset.ms}ms` } as CSSProperties} />
+        <div className="absolute inset-x-0 bottom-0">
+          {/* Success-only: a visible numeric read of the SAME deadline the bar below animates toward — never a
+              second independent timer. Other phases (picking/correcting/error/locked/queued) keep only the bar. */}
+          {phase.kind === "success" && countdownSeconds !== null && (
+            <p className="px-3 pb-1 text-right text-sm text-muted-foreground">{t("readyForNextIn", { seconds: countdownSeconds })}</p>
+          )}
+          <div aria-hidden="true" data-testid="kiosk-timeout" data-timeout-ms={pendingReset.ms} className="h-2 border-t border-input bg-data-track motion-reduce:hidden">
+            <div key={pendingReset.epoch} className="kiosk-timeout-fill h-full bg-data" style={{ "--kiosk-timeout-ms": `${pendingReset.ms}ms` } as CSSProperties} />
+          </div>
         </div>
       )}
     </main>
@@ -621,12 +696,14 @@ const ACTION_BUTTON_CLASS = `${KEY_SIZE_CLASS} border-2 text-lg sm:text-2xl`;
 function EntryView({
   code,
   submitting,
+  openNow,
   onDigit,
   onClear,
   onEnter,
 }: {
   code: string;
   submitting: boolean;
+  openNow: { kind: "loading" } | { kind: "ok"; classes: OpenClass[] } | { kind: "unavailable" };
   onDigit: (digit: string) => void;
   onClear: () => void;
   onEnter: () => void;
@@ -665,6 +742,16 @@ function EntryView({
         <p role="status" aria-live="polite" className="sr-only">
           {t("codeStatus", { count: code.length, total: CODE_LENGTH })}
         </p>
+
+        {/* Best-effort ambient status: omitted entirely both when confirmed-empty (no class happens to be open
+            right now — a normal, common state) and when the fetch itself failed (never a false "nothing open"
+            claim, and never a blocker for the keypad either way). */}
+        {openNow.kind === "ok" && openNow.classes.length > 0 && (
+          <div data-testid="kiosk-open-now" className="flex max-w-xs flex-col gap-1 rounded-lg border border-input bg-card px-4 py-3 text-center min-[900px]:landscape:text-left">
+            <span className="text-xs text-muted-foreground">{t("openNowLabel")}</span>
+            <span className="text-base font-semibold">{openNow.classes.map((entry) => entry.name).join(" · ")}</span>
+          </div>
+        )}
 
         {submitting && (
           <p className="flex items-center gap-2 text-xl text-muted-foreground">
@@ -743,7 +830,11 @@ function ClassPicker({
         </p>
       )}
 
-      <div className="flex w-full flex-col gap-3">
+      {/* Portrait/narrow: unchanged, single stacked column (production's current behavior at every size today).
+          Landscape >=900px (the same breakpoint Entry/Success already use): a bounded, scrolling 2-column grid —
+          a 3rd/4th+ card wraps onto further rows (ordinary CSS grid auto-placement) and stays reachable by
+          scrolling rather than being clipped when more cards exist than fit on one kiosk screen. */}
+      <div className="flex w-full flex-col gap-3 min-[900px]:landscape:grid min-[900px]:landscape:max-h-[calc(100dvh-220px)] min-[900px]:landscape:grid-cols-2 min-[900px]:landscape:gap-5 min-[900px]:landscape:overflow-y-auto min-[900px]:landscape:pr-1">
         {picklist.map((entry) => (
           <Button
             key={entry.id}
@@ -781,7 +872,7 @@ function ClassPicker({
   );
 }
 
-export function SuccessView({ result, onCorrect }: { result: CheckInSuccess; onCorrect: () => void }) {
+export function SuccessView({ result, onCorrect, onDone }: { result: CheckInSuccess; onCorrect: () => void; onDone: () => void }) {
   const t = useTranslations("kiosk");
   const tDay = useTranslations("dayOfWeek");
   const locale = useLocale();
@@ -865,6 +956,12 @@ export function SuccessView({ result, onCorrect }: { result: CheckInSuccess; onC
             )}
           </div>
         )}
+
+        {/* Manual dismiss: the SAME resetToEntry() transition the timeout already calls — a second trigger of the
+            one existing reset path, never a second path, and no additional attendance/financial write. */}
+        <Button type="button" variant="outline" className="h-auto min-h-[60px] pointer-coarse:min-h-[60px] px-8 py-4 text-lg sm:text-xl" onClick={onDone}>
+          {t("done")}
+        </Button>
       </div>
     </div>
   );
