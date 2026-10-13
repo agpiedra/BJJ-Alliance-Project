@@ -196,4 +196,5 @@ Two further corrections, on top of §5:
   `git diff --stat` before and after the experiment was byte-for-byte identical, confirming zero residue.
 
 Full suites after this round: `pnpm test:unit` — 1707/1707 pass (120 files, +2 net from this round: 3 new, 1
-rewritten in place). `pnpm test:integration` — pending final count, see the PR report. `tsc --noEmit` — clean.
+rewritten in place). `pnpm test:integration` — 1947/1947 pass (152 files, +1 from this round). `tsc --noEmit` —
+clean.
