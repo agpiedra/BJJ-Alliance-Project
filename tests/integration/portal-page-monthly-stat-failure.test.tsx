@@ -95,7 +95,7 @@ afterAll(async () => {
   vi.useRealTimers();
   currentSession = null;
   if (!a) return;
-  await prisma.attendanceRecord.deleteMany({ where: { studentId: student?.id } });
+  if (student) await prisma.attendanceRecord.deleteMany({ where: { studentId: student.id, organizationId: a.org.id } });
   await prisma.paymentPeriod.deleteMany({ where: { organizationId: a.org.id } });
   await prisma.paymentPlan.deleteMany({ where: { organizationId: a.org.id } });
   if (student) await prisma.student.deleteMany({ where: { id: student.id } });

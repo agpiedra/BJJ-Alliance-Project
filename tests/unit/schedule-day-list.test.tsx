@@ -85,9 +85,12 @@ describe.each(["en", "es"] as const)("schedule day list (%s)", (locale) => {
 
   it("activating a day via keyboard shows that day's own full date heading and classes", () => {
     renderList(locale);
-    tab(/^Wed/).focus();
-    fireEvent.keyDown(tab(/^Mon/), { key: "ArrowRight" }); // start from Monday: Right -> Tuesday, so go via click first
-    fireEvent.click(tab(/^Wed/));
+    // Tuesday is the initial selection (today). ArrowRight moves to Wednesday, which both focuses AND
+    // selects it (schedule-day-list.tsx:17) - no click anywhere in this test.
+    tab(/^Tue/).focus();
+    fireEvent.keyDown(tab(/^Tue/), { key: "ArrowRight" });
+    expect(document.activeElement).toBe(tab(/^Wed/));
+    expect(tab(/^Wed/).getAttribute("aria-selected")).toBe("true");
     expect(screen.getByText("Wednesday, September 24")).toBeTruthy();
     expect(screen.getByText("No-Gi")).toBeTruthy();
   });
