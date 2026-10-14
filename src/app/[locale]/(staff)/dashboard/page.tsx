@@ -118,6 +118,68 @@ function paymentStatusLabel(status: ContactPaymentStatus, tPaymentStatus: (key: 
   return tPaymentStatus(status);
 }
 
+type AttentionTone = "bad" | "accent" | "neutral";
+
+/** Dashboard-Proposed.dc.html's own confirmed nonzero treatment (its "Overdue dues" card:
+ * `background:#f2e5e3; border:#d23d2d`) is exactly the existing `bad-soft`/`bad-line` pair `Pill`'s `bad`
+ * variant already uses (pill.tsx) — reused here, not a new token. "accent" reuses `Pill`'s own `brand-gold/15`
+ * + `/30` border pattern for the two non-debt action cards (Ready to grade, Awaiting approval); the reference
+ * has no nonzero render of either to copy directly, so this is the nearest existing, already-approved
+ * convention, not an invented color. "neutral" is `Card`'s own unmodified default — matches the reference's
+ * zero-state cards exactly. */
+const ATTENTION_TONE_CLASS: Record<AttentionTone, string> = {
+  bad: "border-bad-line bg-bad-soft",
+  accent: "border-brand-gold/30 bg-brand-gold/15",
+  neutral: "",
+};
+
+/**
+ * One "Needs attention" card (MATROOM v4, Dashboard-Proposed.dc.html): independently bordered/rounded/spaced,
+ * reusing `Card`/`CardContent` rather than `StatRow`'s joined-strip treatment — see the call site's own
+ * comment for why. `flex-1 basis-[220px]` mirrors the reference's own `flex: 1 1 220px`, which is also what
+ * lets this row reflow at narrow widths without a fixed column count.
+ *
+ * `link`, when given, renders as its own focusable `<a>` inside the card — never the whole card as a link —
+ * so an existing keyboard-accessible control (today's pending-approvals link) is preserved exactly, not
+ * replaced with a different interaction shape.
+ */
+function AttentionCard({
+  tone,
+  label,
+  value,
+  note,
+  link,
+}: {
+  tone: AttentionTone;
+  label: string;
+  value: number;
+  note?: string;
+  link?: { href: string; label: string };
+}) {
+  return (
+    <Card data-testid="attention-card" className={cn("min-w-[220px] flex-1 basis-[220px]", ATTENTION_TONE_CLASS[tone])}>
+      <CardContent className="flex flex-col gap-1.5">
+        <span data-slot="attention-label" className="text-sm font-medium text-muted-foreground">
+          {label}
+        </span>
+        <span data-slot="attention-value" className="font-heading text-[30px] leading-none font-semibold tabular-nums">
+          {value}
+        </span>
+        {note && (
+          <span data-slot="attention-note" className="text-[11.5px] text-muted-foreground">
+            {note}
+          </span>
+        )}
+        {link && (
+          <a href={link.href} className="text-[13px] font-medium underline underline-offset-2">
+            {link.label}
+          </a>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 export default async function DashboardPage() {
   const context = await requireTenantContext(["ADMIN", "DIRECTOR", "INSTRUCTOR"]);
   const t = await getTranslations("dashboard");
@@ -452,84 +514,46 @@ export default async function DashboardPage() {
     showBrandingReminder = !organization?.brandingReminderDismissedAt && !branding.logoUrl;
   }
 
-  // MATROOM Phase 3 (approved prototype stage A, "Needs attention"): Ready to grade is unconditional; the
-  // overdue/ledger tiles add 1 (legacy) or 2 (ledger-active) more, only when canViewOverduePayments. StatRow's
-  // `columns` prop only accepts 2-6 — 3 sizes this row to its real content without a fixed-width grid leaving
-  // empty cells for roles/paths with fewer tiles.
-  const needsAttentionCount = 1 + (canViewOverduePayments ? (ledgerActive ? 2 : 1) : 0);
-  const needsAttentionColumns = needsAttentionCount >= 3 ? 3 : 2;
-
   return (
     <main className="flex flex-col gap-6 p-4 sm:p-6">
       <header className="flex flex-col gap-1">
-        <p className="font-mono text-[10.5px] tracking-[.11em] text-muted-foreground uppercase">{eyebrowDate}</p>
         <h1>{t("heading")}</h1>
-        <p className="text-sm text-muted-foreground">
-          {t("panel.sub", {
-            academy: academyLabel,
-            attendance: weeklyAttendanceCount,
-            promotions: promotionQueue.length,
-          })}
-        </p>
+        {/* MATROOM v4 (Dashboard-Proposed.dc.html): plain date + location, matching the reference exactly —
+            no restated counts (attendance/promotions are already their own cards below; this line used to
+            say both twice). `eyebrowDate` is the same value the old mono eyebrow line above `<h1>` used to
+            render on its own; it now carries the date half of this single line instead. */}
+        <p className="text-sm text-muted-foreground">{t("panel.subtitle", { date: eyebrowDate, academy: academyLabel })}</p>
       </header>
 
-      {showBrandingReminder && <BrandingReminderCard locale={locale} organizationId={context.organizationId} />}
-
-      <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-        <span>{t("pendingApprovals", { count: pendingCount })}</span>
-        <a href={`/${locale}/students?status=PENDING`} className={cn(buttonVariants({ variant: "ghost", size: "sm" }))}>
-          {t("pendingApprovalsLink")}
-        </a>
-        {canViewOverduePayments && (
-          <a href={`/${locale}/dashboard/analytics`} className={cn(buttonVariants({ variant: "ghost", size: "sm" }))}>
-            {t("analyticsLink")}
-          </a>
-        )}
-      </div>
-
-      {/* §4.1 Task 1: general-activity stat row — always 4 tiles (Phase 3c-iii's kids/adults breakdown
-          alongside the pre-existing active-students/weekly-attendance pair). Split from the "needs attention"
-          row below (MATROOM Phase 3, approved prototype stage A): these two never carried the same meaning —
-          one is a snapshot, the other is a signal that something needs action — so they're no longer one
-          undifferentiated row of tiles. */}
-      <StatRow columns={4}>
-        <StatTile label={t("panel.stats.activeStudents.label")} value={activeStudentCount} note={academyLabel} />
-        <StatTile label={t("panel.stats.activeKids.label")} value={activeKidsCount} note={academyLabel} />
-        <StatTile label={t("panel.stats.activeAdults.label")} value={activeAdultsCount} note={academyLabel} />
-        <StatTile
-          label={t("panel.stats.weeklyAttendance.label")}
-          value={weeklyAttendanceCount}
-          delta={attendanceDelta}
-        />
-      </StatRow>
-
-      {/* MATROOM Phase 3 (approved prototype stage A, "Needs attention"): every tile that can carry a colour
-          flag — Ready to grade is unconditional (every role reaches it); the overdue/ledger tiles are gated by
-          canViewOverduePayments exactly as before. `needsAttentionColumns` sizes the row to its real tile count
-          (1 for INSTRUCTOR, 2 for legacy ADMIN/DIRECTOR, 3 for ledger-active ADMIN/DIRECTOR) rather than a fixed
-          6-wide grid that would leave empty cells — StatRow has no "1" column option, so a lone tile (INSTRUCTOR)
-          takes the narrowest available (2), identical to the prototype's own A1/A3 per-count-width boxes. */}
+      {/* MATROOM v4 (Dashboard-Proposed.dc.html, "Needs attention"): the reference's own cards are
+          independently bordered/rounded/spaced — a `StatRow` (gap-px + one enclosing border + bg-border) is
+          a joined strip, the wrong container for this. `AttentionCard` below reuses `Card`/`CardContent`
+          exactly as every other card on this page does; `StatRow`/`StatTile` are untouched for their other
+          callers (the "This week" row further down keeps using `StatRow`, since the reference's own "This
+          week" container IS a joined strip). Card order follows the reference (debt first, then Ready to
+          grade, then Awaiting approval), adapted to keep the two ledger debt facts as separate cards. Every
+          count, role gate, and flag condition below is unchanged from before — only the container and tone
+          treatment changed. */}
       <div className="flex flex-col gap-2">
-        <h2 className="font-heading text-base leading-snug font-medium">{t("panel.needsAttention.heading")}</h2>
-        <StatRow columns={needsAttentionColumns}>
-          {/* MATROOM Phase 3 (approved prototype, review finding): colour is a signal for a count that needs
-              action — it must never paint a healthy zero the same as an urgent non-zero. `flag` is now
-              conditional on the value itself, not a static prop, for every tile below that can legitimately be
-              zero. This changes presentation only; the counts, queries, and role gates above are untouched. */}
-          <StatTile
-            label={t("panel.stats.readyToGrade.label")}
-            value={promotionQueue.length}
-            flag={promotionQueue.length > 0 ? "accent" : undefined}
-            note={readyNote || undefined}
-          />
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="font-heading text-base leading-snug font-medium">{t("panel.needsAttention.heading")}</h2>
+          {/* Preserved from the old pendingApprovals/analyticsLink row — same destination, same role gate,
+              just relocated: it isn't a "needs attention" count itself, so it doesn't become a card. */}
+          {canViewOverduePayments && (
+            <a href={`/${locale}/dashboard/analytics`} className="text-sm font-medium text-muted-foreground underline underline-offset-2">
+              {t("analyticsLink")}
+            </a>
+          )}
+        </div>
+        <div className="flex flex-wrap gap-3" data-testid="needs-attention-section">
           {/* §2.1/§6: the legacy single "Atrasado" tile — replaced wholesale when `ledgerActive`, never shown
               alongside the two ledger tiles below (the same replacement ternary every other current-status
               consumer in this cutover already follows). */}
           {canViewOverduePayments && !ledgerActive && (
-            <StatTile
+            <AttentionCard
+              tone={overdueStudents.length > 0 ? "bad" : "neutral"}
               label={t("panel.stats.overdue.label")}
               value={overdueStudents.length}
-              flag={overdueStudents.length > 0 ? "bad" : undefined}
               note={overdueNote || undefined}
             />
           )}
@@ -538,20 +562,20 @@ export default async function DashboardPage() {
               equally), never silently dropped. */}
           {canViewOverduePayments && ledgerActive && (
             <>
-              <StatTile
+              <AttentionCard
+                tone={ledgerOverdue.monthlyPastGraceCount > 0 ? "bad" : "neutral"}
                 label={tLedgerFilters("monthlyPastGrace")}
                 value={ledgerOverdue.monthlyPastGraceCount}
-                flag={ledgerOverdue.monthlyPastGraceCount > 0 ? "bad" : undefined}
                 note={
                   [ledgerOverdue.monthlyPastGraceNote, ledgerOverdue.unknownCount > 0 ? t("panel.stats.unknownSuffix", { count: ledgerOverdue.unknownCount }) : ""]
                     .filter(Boolean)
                     .join(" · ") || undefined
                 }
               />
-              <StatTile
+              <AttentionCard
+                tone={ledgerOverdue.signupPastDueCount > 0 ? "bad" : "neutral"}
                 label={tLedgerFilters("signupPastDue")}
                 value={ledgerOverdue.signupPastDueCount}
-                flag={ledgerOverdue.signupPastDueCount > 0 ? "bad" : undefined}
                 note={
                   [ledgerOverdue.signupPastDueNote, ledgerOverdue.unknownCount > 0 ? t("panel.stats.unknownSuffix", { count: ledgerOverdue.unknownCount }) : ""]
                     .filter(Boolean)
@@ -560,6 +584,46 @@ export default async function DashboardPage() {
               />
             </>
           )}
+          {/* Ready to grade is unconditional — every role reaches it, same as before `AttentionCard` existed. */}
+          <AttentionCard
+            tone={promotionQueue.length > 0 ? "accent" : "neutral"}
+            label={t("panel.stats.readyToGrade.label")}
+            value={promotionQueue.length}
+            note={readyNote || undefined}
+          />
+          {/* MATROOM v4: the pending-approvals control moves from a standalone text+link row into its own
+              Needs-attention card — same `pendingCount` query, same `/students?status=PENDING` destination,
+              same link text, available at zero exactly as before. The link stays its own focusable element
+              INSIDE the card (never the whole card), so this is a container change, not a new interaction. */}
+          <AttentionCard
+            tone={pendingCount > 0 ? "accent" : "neutral"}
+            label={t("panel.stats.pendingApproval.label")}
+            value={pendingCount}
+            link={{ href: `/${locale}/students?status=PENDING`, label: t("pendingApprovalsLink") }}
+          />
+        </div>
+      </div>
+
+      {/* MATROOM v4 (Dashboard-Proposed.dc.html, "This week"): the reference's own container for this section
+          IS a joined strip (shared background/border, tiles separated only by a border-right) — the same
+          shape `StatRow` already produces, so it stays unchanged here. Replaces the old always-4-tile general
+          stat row: kids/adults are no longer their own peer tiles — both counts are still fully shown, now as
+          one note line on "Active students" (matching the reference's own "{adults} adult(s) · {kids}
+          kid(s)" note), and academy scope moved to the single subtitle line above instead of being repeated on
+          every tile. Check-ins keeps its existing up/down delta, unchanged. */}
+      <div className="flex flex-col gap-2">
+        <h2 className="font-heading text-base leading-snug font-medium">{t("panel.thisWeek.heading")}</h2>
+        <StatRow columns={2}>
+          <StatTile
+            label={t("panel.stats.activeStudents.label")}
+            value={activeStudentCount}
+            note={t("panel.stats.activeStudents.breakdown", { adults: activeAdultsCount, kids: activeKidsCount })}
+          />
+          <StatTile
+            label={t("panel.stats.weeklyAttendance.label")}
+            value={weeklyAttendanceCount}
+            delta={attendanceDelta}
+          />
         </StatRow>
       </div>
 
@@ -785,6 +849,11 @@ export default async function DashboardPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* MATROOM v4 (Dashboard-Proposed.dc.html): moved from directly under the header to below every data
+          section, matching the reference's own "Finish setup" banner position (after its charts). Same
+          `showBrandingReminder` gate, same dismiss action — a JSX-position change only. */}
+      {showBrandingReminder && <BrandingReminderCard locale={locale} organizationId={context.organizationId} />}
 
       {/* /admin/kiosk-tokens and /admin/schedule were both fully built but
           reachable only by typing the URL. Shown to ADMIN sessions only,
