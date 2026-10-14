@@ -17,12 +17,18 @@ import { cn } from "cn";
  */
 export function AuthCard({
   title,
+  titleClassName,
   footer,
   children,
   brand,
   widthClassName = "max-w-sm",
 }: {
   title?: ReactNode;
+  /** Opt-in only (D2, design/matroom/DESIGN.md §7.11) — e.g. `"font-display"` on the three approved Persuade
+   * surfaces (register-academy, Login). Unset by default, so every other caller (forgot-password, reset-password,
+   * accept-invitation, select-organization, the access-denied screens, the per-org public signup form) keeps its
+   * current sans title unchanged. */
+  titleClassName?: string;
   footer?: ReactNode;
   children: ReactNode;
   brand?: LogoMarkProps;
@@ -39,7 +45,7 @@ export function AuthCard({
             {/* CardTitle renders a plain div (no implicit heading semantics) — every caller here uses it as the
                 page's own h1, so it needs an explicit heading role or screen readers lose the page structure
                 entirely (caught by accept-invitation-form.test.tsx, which asserted the pre-existing real <h1>). */}
-            <CardTitle role="heading" aria-level={1} className="text-xl">
+            <CardTitle role="heading" aria-level={1} className={cn("text-xl", titleClassName)}>
               {title}
             </CardTitle>
           </CardHeader>

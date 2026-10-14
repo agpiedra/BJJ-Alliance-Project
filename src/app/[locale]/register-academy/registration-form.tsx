@@ -3,6 +3,8 @@
 import { useActionState, useRef, useState, useTransition } from "react";
 import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
+import { Input, FIELD_CLASS } from "@/components/ui/input";
+import { AuthCard } from "@/components/auth/auth-card";
 import { isCheckableSlug, slugFeedback, slugify, type SlugCheck } from "@/lib/organizations/slug";
 import { CURRENCIES } from "@/lib/payments/format-money";
 import { registerOrganization, checkSlugAvailability, type RegistrationState } from "./actions";
@@ -45,9 +47,8 @@ export function RegistrationForm() {
   }
 
   return (
-    <main className="flex min-h-[calc(100vh-4rem)] flex-col items-center justify-center gap-4 p-6">
-      <h1 className="text-2xl font-bold">{t("heading")}</h1>
-      <form action={formAction} className="flex w-full max-w-sm flex-col gap-3">
+    <AuthCard title={t("heading")} titleClassName="font-display" widthClassName="max-w-xl">
+      <form action={formAction} className="flex flex-col gap-3">
         {/* Honeypot — hidden visually, never `type="hidden"` (some bots skip
             those). A real visitor never sees or fills this. */}
         <div className="absolute -left-[9999px]" aria-hidden="true">
@@ -59,11 +60,10 @@ export function RegistrationForm() {
 
         <label className="flex flex-col gap-1">
           <span>{t("organizationName")}</span>
-          <input
+          <Input
             type="text"
             name="organizationName"
             required
-            className="rounded border px-3 py-2"
             onChange={(e) => {
               if (slugEditedByHand) return;
               const suggested = slugify(e.target.value);
@@ -74,12 +74,11 @@ export function RegistrationForm() {
         </label>
         <label className="flex flex-col gap-1">
           <span>{t("desiredSlug")}</span>
-          <input
+          <Input
             type="text"
             name="desiredSlug"
             required
             value={slug}
-            className="rounded border px-3 py-2"
             onChange={(e) => {
               setSlugEditedByHand(true);
               const next = slugify(e.target.value);
@@ -91,60 +90,74 @@ export function RegistrationForm() {
           {feedback === "available" && <span className="text-sm text-ok">{t("slugAvailable")}</span>}
           {feedback === "taken" && <span className="text-sm text-bad">{t("slugTaken")}</span>}
         </label>
-        <label className="flex flex-col gap-1">
-          <span>{t("country")}</span>
-          <input type="text" name="country" required className="rounded border px-3 py-2" />
-        </label>
-        <label className="flex flex-col gap-1">
-          <span>{t("city")}</span>
-          <input type="text" name="city" required className="rounded border px-3 py-2" />
-        </label>
-        <label className="flex flex-col gap-1">
-          <span>{t("contactName")}</span>
-          <input type="text" name="contactName" required className="rounded border px-3 py-2" />
-        </label>
-        <label className="flex flex-col gap-1">
-          <span>{t("contactEmail")}</span>
-          <input type="email" name="contactEmail" required className="rounded border px-3 py-2" />
-        </label>
-        <label className="flex flex-col gap-1">
-          <span>{t("contactPhone")}</span>
-          <input type="tel" name="contactPhone" required className="rounded border px-3 py-2" />
-        </label>
-        <label className="flex flex-col gap-1">
-          <span>{t("studentCountBand")}</span>
-          <select name="studentCountBand" required defaultValue="" className="rounded border px-3 py-2">
-            <option value="" disabled>
-              {t("studentCountBandPlaceholder")}
-            </option>
-            {STUDENT_COUNT_BANDS.map((band) => (
-              <option key={band} value={band}>
-                {band}
+
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="flex flex-col gap-1">
+            <span>{t("country")}</span>
+            <Input type="text" name="country" required />
+          </label>
+          <label className="flex flex-col gap-1">
+            <span>{t("city")}</span>
+            <Input type="text" name="city" required />
+          </label>
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="flex flex-col gap-1">
+            <span>{t("contactName")}</span>
+            <Input type="text" name="contactName" required />
+          </label>
+          <label className="flex flex-col gap-1">
+            <span>{t("contactEmail")}</span>
+            <Input type="email" name="contactEmail" required />
+          </label>
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="flex flex-col gap-1">
+            <span>{t("contactPhone")}</span>
+            <Input type="tel" name="contactPhone" required />
+          </label>
+          <label className="flex flex-col gap-1">
+            <span>{t("studentCountBand")}</span>
+            <select name="studentCountBand" required defaultValue="" className={FIELD_CLASS}>
+              <option value="" disabled>
+                {t("studentCountBandPlaceholder")}
               </option>
-            ))}
-          </select>
-        </label>
+              {STUDENT_COUNT_BANDS.map((band) => (
+                <option key={band} value={band}>
+                  {band}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+
         <label className="flex flex-col gap-1">
           <span>{t("referralSource")}</span>
-          <input type="text" name="referralSource" className="rounded border px-3 py-2" />
+          <Input type="text" name="referralSource" />
         </label>
-        <label className="flex flex-col gap-1">
-          <span>{t("preferredLocale")}</span>
-          <select name="preferredLocale" required defaultValue="es" className="rounded border px-3 py-2">
-            <option value="es">Español</option>
-            <option value="en">English</option>
-          </select>
-        </label>
-        <label className="flex flex-col gap-1">
-          <span>{t("currency")}</span>
-          <select name="currency" required defaultValue="CRC" className="rounded border px-3 py-2">
-            {CURRENCIES.map((currency) => (
-              <option key={currency} value={currency}>
-                {t(`currencyOption.${currency}`)}
-              </option>
-            ))}
-          </select>
-        </label>
+
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="flex flex-col gap-1">
+            <span>{t("preferredLocale")}</span>
+            <select name="preferredLocale" required defaultValue="es" className={FIELD_CLASS}>
+              <option value="es">Español</option>
+              <option value="en">English</option>
+            </select>
+          </label>
+          <label className="flex flex-col gap-1">
+            <span>{t("currency")}</span>
+            <select name="currency" required defaultValue="CRC" className={FIELD_CLASS}>
+              {CURRENCIES.map((currency) => (
+                <option key={currency} value={currency}>
+                  {t(`currencyOption.${currency}`)}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+
         <label className="flex items-center gap-2">
           <input type="checkbox" name="termsAccepted" required />
           <span className="text-sm">{t("termsAccepted")}</span>
@@ -154,6 +167,6 @@ export function RegistrationForm() {
           {t("submit")}
         </Button>
       </form>
-    </main>
+    </AuthCard>
   );
 }
