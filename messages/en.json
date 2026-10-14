@@ -149,12 +149,17 @@
     "panel": {
       "academyJoin": "and",
       "sub": "{academy} · {attendance} check-ins this week, {promotions} students ready to grade.",
+      "subtitle": "{date} · {academy}",
       "needsAttention": {
         "heading": "Needs attention"
       },
+      "thisWeek": {
+        "heading": "This week"
+      },
       "stats": {
         "activeStudents": {
-          "label": "Active students"
+          "label": "Active students",
+          "breakdown": "{adults, plural, one {# adult} other {# adults}} · {kids, plural, one {# kid} other {# kids}}"
         },
         "activeKids": {
           "label": "Active kids"
@@ -163,7 +168,7 @@
           "label": "Active adults"
         },
         "weeklyAttendance": {
-          "label": "Check-ins this week",
+          "label": "Check-ins",
           "deltaUp": "+{diff} vs. last week",
           "deltaDown": "−{diff} vs. last week"
         },
@@ -172,6 +177,9 @@
         },
         "overdue": {
           "label": "Overdue monthly dues"
+        },
+        "pendingApproval": {
+          "label": "Awaiting approval"
         },
         "unknownSuffix": "{count, plural, one {# unknown} other {# unknown}}"
       },

@@ -1,5 +1,6 @@
 import "dotenv/config";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { JSDOM } from "jsdom";
 import { DateTime } from "luxon";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createElement } from "react";
@@ -54,9 +55,12 @@ type Fixture = Awaited<ReturnType<typeof makeAccountingOrg>>;
 const WRITER_NOW = new Date("2030-12-15T12:00:00-06:00");
 const writerDeps = { activation: { isActive: async () => true }, now: () => WRITER_NOW };
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
 let a: Fixture;
 let academyB: { id: string };
 let director: { id: string };
+let instructor: { id: string };
 let otherOrg: Fixture;
 const termsByAcademy: Record<string, { id: string }> = {};
 const policyByAcademy: Record<string, { id: string }> = {};
@@ -108,6 +112,22 @@ async function newAttendance(org: Fixture, studentId: string, academyId: string,
   });
 }
 
+/** `count` synthetic CHECKIN rows, one per day from `startAt` — same recipe
+ * `promotion-queue.test.ts`'s own `addAttendances` proves reaches `listPromotionQueue`'s
+ * "stripe-eligible" classification at WHITE's real 30-attendance threshold (global seed default,
+ * same `seedOrganizationDefaults(..., "ATTENDANCE")` this file's `makeAccountingOrg` fixtures use). */
+async function addSyntheticAttendances(org: Fixture, studentId: string, academyId: string, count: number, startAt: Date) {
+  if (count === 0) return;
+  const rows = Array.from({ length: count }, (_, i) => {
+    const occurredAt = new Date(startAt.getTime() + i * DAY_MS);
+    return {
+      organizationId: org.org.id, academyId, studentId, occurredAt, date: occurredAt,
+      type: "CHECKIN" as const, delta: 1, source: "STAFF" as const,
+    };
+  });
+  await prisma.attendanceRecord.createMany({ data: rows });
+}
+
 beforeAll(async () => {
   a = await makeAccountingOrg("CUMULATIVE", "dashrender-a");
   otherOrg = await makeAccountingOrg("CUMULATIVE", "dashrender-other");
@@ -117,6 +137,11 @@ beforeAll(async () => {
   await prisma.organizationMembership.create({ data: { userId: directorUser.id, organizationId: a.org.id, role: "DIRECTOR" } });
   await prisma.staffAssignment.create({ data: { userId: directorUser.id, organizationId: a.org.id, academyId: a.academy.id, role: "DIRECTOR" } });
   director = directorUser;
+
+  const instructorUser = await prisma.user.create({ data: { email: `dashrender-instructor-${suffix}@example.com`, passwordHash: await hashSecret("irrelevant-password-123"), role: "INSTRUCTOR" } });
+  await prisma.organizationMembership.create({ data: { userId: instructorUser.id, organizationId: a.org.id, role: "INSTRUCTOR" } });
+  await prisma.staffAssignment.create({ data: { userId: instructorUser.id, organizationId: a.org.id, academyId: a.academy.id, role: "INSTRUCTOR" } });
+  instructor = instructorUser;
 
   await seedPlanAndPolicy(a, a.academy.id);
   await seedPlanAndPolicy(a, academyB.id);
@@ -141,6 +166,9 @@ afterAll(async () => {
     await prisma.staffAssignment.deleteMany({ where: { userId: director.id } });
     await prisma.organizationMembership.deleteMany({ where: { userId: director.id } });
     await prisma.user.deleteMany({ where: { id: director.id } });
+    await prisma.staffAssignment.deleteMany({ where: { userId: instructor.id } });
+    await prisma.organizationMembership.deleteMany({ where: { userId: instructor.id } });
+    await prisma.user.deleteMany({ where: { id: instructor.id } });
     // a.drop() deletes every attendance/student/academy row scoped by organizationId — covers academyB too.
     await a.drop();
   }
@@ -169,18 +197,35 @@ async function renderAs(userId: string, organizationId: string): Promise<string>
   return html;
 }
 
+/**
+ * MATROOM v4: every label this file checks (Monthly past grace, Signup past due, Ready to grade, Overdue
+ * monthly dues) now lives in a "Needs attention" `AttentionCard` (dashboard/page.tsx), not a `StatTile` —
+ * `AttentionCard` reuses `Card`/`CardContent` with independent bordered cards instead of `StatRow`'s joined
+ * strip (see page.tsx's own comment on why). These four helpers keep their original names and signatures
+ * (every call site below is unchanged) but now resolve a card via jsdom instead of regexing StatTile's old
+ * markup shape — the narrowest change that keeps every existing assertion intact against the new container.
+ */
+function attentionCardElement(html: string, label: string) {
+  const dom = new JSDOM(html);
+  const labelEl = Array.from(dom.window.document.querySelectorAll('[data-slot="attention-label"]')).find(
+    (el) => el.textContent === label,
+  );
+  if (!labelEl) throw new Error(`Stat tile "${label}" not found in rendered HTML`);
+  const card = labelEl.closest('[data-testid="attention-card"]');
+  if (!card) throw new Error(`Stat tile "${label}" has no enclosing tile markup in rendered HTML`);
+  return card;
+}
+
 /** The note text right under a given stat tile's label — scopes a names check to THAT tile, since other
  * students (e.g. contact-list rows) legitimately mention the same substrings elsewhere on the page. */
 function statTileNote(html: string, label: string): string {
-  const match = html.match(new RegExp(`${label}</div><div[^>]*>\\d+</div><div[^>]*>([^<]*)</div>`));
-  return match?.[1] ?? "";
+  return attentionCardElement(html, label).querySelector('[data-slot="attention-note"]')?.textContent ?? "";
 }
 
 /** The exact rendered number for a given stat tile's label — the numeric contract itself, not just the note. */
 function statTileCount(html: string, label: string): number {
-  const match = html.match(new RegExp(`${label}</div><div[^>]*>(\\d+)</div>`));
-  if (!match) throw new Error(`Stat tile "${label}" not found in rendered HTML`);
-  return Number(match[1]);
+  const valueEl = attentionCardElement(html, label).querySelector('[data-slot="attention-value"]');
+  return Number(valueEl?.textContent ?? "");
 }
 
 /** The "N unknown" suffix inside a tile's own note (§6.2) — 0 when the note carries no such suffix at all. */
@@ -189,20 +234,14 @@ function statTileUnknownCount(html: string, label: string): number {
   return match ? Number(match[1]) : 0;
 }
 
-/** MATROOM Phase 3 (approved prototype, review finding): a stat tile's colour flag is now conditional on its
- * own value, not a static prop — this checks for the flag's own indicator span (`bg-bad`/`bg-brand-gold` on
- * the `aria-hidden` rail StatTile renders only when `flag` is set) inside that specific tile's own fragment,
- * bounded the same way `statTileNote`/`statTileCount` already bound themselves to one tile by its label. */
+/** MATROOM Phase 3 (approved prototype, review finding): a stat tile's colour flag is conditional on its own
+ * value, not a static prop. MATROOM v4 moved the flag from a 3px rail (`bg-bad`/`bg-brand-gold`) to the whole
+ * card's tone (`border-bad-line bg-bad-soft` / `border-brand-gold/30 bg-brand-gold/15`, see `AttentionCard`'s
+ * own `ATTENTION_TONE_CLASS`) — this checks the card's own class list for either tone instead of the old rail
+ * span, same "conditional on value, absent at zero" contract every call site below still exercises. */
 function statTileHasFlag(html: string, label: string): boolean {
-  const labelIndex = html.indexOf(`>${label}</div>`);
-  if (labelIndex === -1) throw new Error(`Stat tile "${label}" not found in rendered HTML`);
-  // Anchor to the tile's own outer <div>, not the label's own nested one — StatTile's outer class list always
-  // contains "bg-card p-4" (with or without "pl-5"), a fragment unique to a tile's own opening tag, never to its
-  // label/value/note children or the flag span itself.
-  const tileStart = html.lastIndexOf("bg-card p-4", labelIndex);
-  if (tileStart === -1) throw new Error(`Stat tile "${label}" has no enclosing tile markup in rendered HTML`);
-  const segment = html.slice(tileStart, labelIndex);
-  return segment.includes("bg-bad") || segment.includes("bg-brand-gold");
+  const className = attentionCardElement(html, label).getAttribute("class") ?? "";
+  return className.includes("bad-soft") || className.includes("brand-gold");
 }
 
 /** The contact-list row for one student, bounded to its own `<tr>...</tr>` — other rows (shared fixtures
@@ -554,5 +593,80 @@ describe("dashboard: StatTile colour flag is absent for a genuinely zero count (
     expect(statTileHasFlag(html, "Monthly past grace")).toBe(false);
     expect(statTileCount(html, "Signup past due")).toBe(0);
     expect(statTileHasFlag(html, "Signup past due")).toBe(false);
+  });
+});
+
+describe("dashboard: INSTRUCTOR's Needs-attention card set — no debt cards, no analytics link, pending link kept (MATROOM v4 role-coverage gap, now closed)", () => {
+  it("REQUIRED: legacy (ledger-inactive) — no Overdue card, no analytics link; Ready to grade and Awaiting approval both present with their links/values intact", async () => {
+    mockActive = false;
+    const html = await renderAs(instructor.id, a.org.id);
+    expect(html).not.toContain(">Overdue monthly dues<");
+    expect(html).not.toContain(">Monthly past grace<");
+    expect(html).not.toContain(">Signup past due<");
+    expect(html).toContain(">Ready to grade<");
+    expect(html).toContain(">Awaiting approval<");
+    expect(html).not.toContain("View analytics");
+    expect(html).toContain("View pending students");
+    expect(html).toContain('href="/en/students?status=PENDING"');
+  });
+
+  it("REQUIRED: ledger-active — neither ledger debt card reaches an INSTRUCTOR session either", async () => {
+    mockActive = true;
+    const html = await renderAs(instructor.id, a.org.id);
+    expect(html).not.toContain(">Monthly past grace<");
+    expect(html).not.toContain(">Signup past due<");
+    expect(html).toContain(">Ready to grade<");
+    expect(html).toContain(">Awaiting approval<");
+  });
+});
+
+describe("dashboard: nonzero Ready-to-grade and Awaiting-approval cards — real data, tone present (MATROOM v4 action-tone coverage gap, now closed)", () => {
+  // Phase 3's own zero-flag test above only proves the ABSENCE of tone at zero. Debt tiles' nonzero tone is
+  // proven by the Decision-1 test further up (real monthlyOnly/signupOnly/overlap debtors). Neither existing
+  // test put a real nonzero Ready-to-grade or Awaiting-approval student through the actual page render — this
+  // closes that gap with its own dedicated, isolated org (not the shared `a`/`empty` fixtures above, so a real
+  // stripe-eligible/PENDING student here can never shift another test's own count expectations).
+  let actionOrg: Fixture;
+
+  beforeAll(async () => {
+    actionOrg = await makeAccountingOrg("CUMULATIVE", "dashrender-action");
+  }, 30_000);
+
+  afterAll(async () => {
+    if (actionOrg) await actionOrg.drop();
+  }, 30_000);
+
+  it("REQUIRED: a real stripe-eligible student (exactly at WHITE's 30-attendance threshold) renders Ready to grade as 1, tone-flagged, named in its note", async () => {
+    mockActive = false;
+    const beltAwardedAt = new Date(Date.now() - 90 * DAY_MS);
+    const student = await prisma.student.create({
+      data: {
+        organizationId: actionOrg.org.id, homeAcademyId: actionOrg.academy.id, firstName: "DashRenderAction", lastName: `Ready-${suffix}`,
+        phone: "00000000", email: `dashrender-action-ready-${suffix}@example.com`,
+        currentRankId: await actionOrg.rankId("WHITE"), currentStripes: 0, beltAwardedAt,
+        codeHash: `dashrender-action-ready-${suffix}`, status: "ACTIVE",
+      },
+    });
+    await addSyntheticAttendances(actionOrg, student.id, actionOrg.academy.id, 30, new Date(beltAwardedAt.getTime() + DAY_MS));
+
+    const html = await renderAs(actionOrg.admin.id, actionOrg.org.id);
+    expect(statTileCount(html, "Ready to grade")).toBe(1);
+    expect(statTileHasFlag(html, "Ready to grade")).toBe(true);
+    expect(statTileNote(html, "Ready to grade")).toContain(`${student.firstName} ${student.lastName}`);
+  });
+
+  it("REQUIRED: a real PENDING student renders Awaiting approval as 1, tone-flagged, with its preserved link still present and correct", async () => {
+    await prisma.student.create({
+      data: {
+        organizationId: actionOrg.org.id, homeAcademyId: actionOrg.academy.id, firstName: "DashRenderAction", lastName: `Pending-${suffix}`,
+        phone: "00000000", email: `dashrender-action-pending-${suffix}@example.com`,
+        currentRankId: await actionOrg.rankId("WHITE"), codeHash: `dashrender-action-pending-${suffix}`, status: "PENDING",
+      },
+    });
+    const html = await renderAs(actionOrg.admin.id, actionOrg.org.id);
+    expect(statTileCount(html, "Awaiting approval")).toBe(1);
+    expect(statTileHasFlag(html, "Awaiting approval")).toBe(true);
+    expect(html).toContain('href="/en/students?status=PENDING"');
+    expect(html).toContain("View pending students");
   });
 });
