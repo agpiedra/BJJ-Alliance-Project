@@ -61,3 +61,39 @@ prototype.
 - Screen-reader behavior was not tested directly; the honeypot's `aria-hidden`/`tabIndex=-1` and the checkbox's
   native semantics are unchanged from before, so no new a11y surface was introduced, but this is inference, not a
   screen-reader pass.
+
+## Fix round — duplicate MATROOM wordmark
+
+`src/app/[locale]/register-academy/page.tsx` (not part of this PR's original diff — pre-existing on `main`)
+rendered `<BrandBanner />` above `<RegistrationForm>`. `RegistrationForm` wraps in `<AuthCard>`, and `AuthCard`
+already renders its own `LogoMark` inside the card. Neither component receives a `brand` prop on this
+pre-tenant page, so both fall back to the platform's own `MatroomWordmark` — the same mark rendered twice on
+one page: once in the top banner, once inside the card. The approved prototype
+(`design/matroom/preview/auth-access-phase-prototype.html:441`) places the wordmark inside the card as part of
+"the outer card shell," not a separate banner — and `/login` (`src/app/[locale]/login/page.tsx`) already
+follows that pattern with no `BrandBanner` at all. Fix: removed the stray `<BrandBanner />` and its now-unused
+import from `register-academy/page.tsx` — the smallest change, touching no field, validation rule, native
+control, the slug-availability race guard, the honeypot, or the server action. `AuthCard`'s `titleClassName`
+opt-in scoping (unset by default for the other 10 callers) is unchanged.
+
+Re-verified against the isolated test database (`alliance_bjj_test`, port 5433 — never the dev database),
+real desktop Chromium:
+
+- `pnpm typecheck` / `pnpm lint` — clean (0 errors).
+- `tests/unit/registration-form.test.tsx` + `tests/unit/login-form.test.tsx` — 29/29 passed.
+- `tests/integration/organization-registration.test.ts` — 15/15 passed (real server action, real isolated test
+  database).
+- **Visual, real browser:** `fix-01`/`fix-02` — 1280px EN, light then dark — single wordmark, correctly themed.
+  `fix-03` — 1280px ES — real translation, single wordmark. `fix-04`/`fix-05` — 390px and 320px — single
+  wordmark, paired fields still collapse to one column, no clipping.
+- **Keyboard, real `Tab`/`Space` key presses:** confirmed the exact same order as the original record —
+  `organizationName → desiredSlug → country → city → contactName → contactEmail → contactPhone →
+  studentCountBand(select) → referralSource → preferredLocale(select) → currency(select) →
+  termsAccepted(checkbox) → Submit` — with `organizationName` as the very first `Tab` stop from page load
+  (confirms removing `BrandBanner` added no new focusable element ahead of the form). The honeypot is absent
+  from the captured order throughout. `fix-06` shows the visible focus ring on the select. `Space` toggled the
+  checkbox (`false → true`, confirmed via `.checked`).
+- **Validation, real:** submitting with every required field empty is still blocked by native HTML5 validation,
+  focusing `organizationName` with `"Please fill out this field."` — unchanged.
+- **Real device/platform checks remain unavailable in this environment** — same standing limitation as the
+  original record above; not claimed resolved.
