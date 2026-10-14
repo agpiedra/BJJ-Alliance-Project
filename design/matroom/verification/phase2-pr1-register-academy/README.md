@@ -97,3 +97,33 @@ real desktop Chromium:
   focusing `organizationName` with `"Please fill out this field."` — unchanged.
 - **Real device/platform checks remain unavailable in this environment** — same standing limitation as the
   original record above; not claimed resolved.
+
+## Fix round — heading font-weight
+
+`CardTitle` (`src/components/ui/card.tsx`) bakes in `font-medium` (500). The vendored Noto Serif file is a
+single static Regular (400) instance — the approved D2 styling and `design/matroom/preview/preview.css`'s
+`.display` rule are both 400 — so the registration heading was rendering the display face at the wrong weight
+(a synthetic/matched 500, not the vendored file's real 400 glyphs). Fix: `registration-form.tsx`'s
+`titleClassName` changed from `"font-display"` to `"font-display font-normal"`. `AuthCard` merges
+`titleClassName` after `CardTitle`'s own base classes through `cn` (a tailwind-merge-based utility, confirmed
+in `package.json`), so the later `font-normal` correctly deduplicates and overrides the earlier `font-medium`
+— not a CSS-cascade assumption, a verified merge mechanism. `CardTitle`/`AuthCard` defaults and every other
+caller (forgot-password, reset-password, accept-invitation, select-organization, the access-denied screens,
+the per-org public signup form, `/login`) are untouched.
+
+Re-verified against the isolated test database (never the dev database):
+
+- `pnpm typecheck` / `pnpm lint` — clean (0 errors).
+- `tests/unit/registration-form.test.tsx` + `tests/unit/login-form.test.tsx` — 29/29 passed.
+- `tests/integration/organization-registration.test.ts` — 15/15 passed.
+- **Computed style, real browser, `getComputedStyle` on the actual rendered `<h1>`** (not inferred from
+  source): EN — `font-weight: 400`, `font-family: notoSerif, "notoSerif Fallback"`. ES — same, text
+  `"Registra tu academia"`. Confirms the vendored Noto Serif face at the correct weight, not just that the
+  class was added.
+- **Heading fit, real browser:** `fw-01`/`fw-03` — 1280px, EN then ES — single wordmark preserved, heading
+  renders Regular weight. `fw-02`/`fw-04` — 320px, EN then ES — heading still fits without wrapping or
+  clipping at the narrowest supported width.
+- **Scoping check, real browser:** `/login`'s heading computes to `font-weight: 500`, `font-family:
+  ibmPlexSans` — confirms `CardTitle`'s default and every other `AuthCard` caller are unaffected.
+- **Real device/platform checks remain unavailable in this environment** — same standing limitation as both
+  records above; not claimed resolved.

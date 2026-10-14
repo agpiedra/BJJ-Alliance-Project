@@ -47,7 +47,7 @@ export function RegistrationForm() {
   }
 
   return (
-    <AuthCard title={t("heading")} titleClassName="font-display" widthClassName="max-w-xl">
+    <AuthCard title={t("heading")} titleClassName="font-display font-normal" widthClassName="max-w-xl">
       <form action={formAction} className="flex flex-col gap-3">
         {/* Honeypot — hidden visually, never `type="hidden"` (some bots skip
             those). A real visitor never sees or fills this. */}
