@@ -26,15 +26,43 @@ interface RouteCase {
   cookie?: string;
 }
 
+// Diagnostics for the main-CI timeout on run 38607144036 (the "staff pages
+// (ADMIN)" block hit vitest's 30s budget with no per-route evidence —
+// see the investigation report in this PR's description). The start log
+// fires before `fetch` is awaited specifically so a timeout still shows
+// which route was in flight when the test's budget ran out. Never logs
+// cookies/headers/response bodies — only the route label/path, status,
+// and elapsed time, matching what the original investigation needed and
+// nothing more.
+function sanitizeErrorMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.replace(/[\r\n]+/g, " ").slice(0, 300);
+}
+
+async function requestWithDiagnostics(routeCase: RouteCase, validate: (response: Response) => void): Promise<void> {
+  const testLabel = expect.getState().currentTestName ?? "unknown test";
+  const start = Date.now();
+  console.log(`[smoke-diagnostics] start test="${testLabel}" route="${routeCase.label}" path="${routeCase.path}" at=${new Date(start).toISOString()}`);
+  try {
+    const response = await fetch(`${BASE_URL}${routeCase.path}`, {
+      headers: routeCase.cookie ? { Cookie: routeCase.cookie } : {},
+      redirect: "follow",
+    });
+    console.log(`[smoke-diagnostics] done route="${routeCase.label}" path="${routeCase.path}" status=${response.status} elapsedMs=${Date.now() - start}`);
+    validate(response);
+  } catch (error) {
+    console.log(`[smoke-diagnostics] error route="${routeCase.label}" path="${routeCase.path}" elapsedMs=${Date.now() - start} message="${sanitizeErrorMessage(error)}"`);
+    throw error;
+  }
+}
+
 async function assertNotServerError(routeCase: RouteCase): Promise<void> {
-  const response = await fetch(`${BASE_URL}${routeCase.path}`, {
-    headers: routeCase.cookie ? { Cookie: routeCase.cookie } : {},
-    redirect: "follow",
+  await requestWithDiagnostics(routeCase, (response) => {
+    expect(
+      response.status,
+      `${routeCase.label} (${routeCase.path}) returned ${response.status} — a page that only mocked tests ever rendered just crashed for a real request`,
+    ).toBeLessThan(500);
   });
-  expect(
-    response.status,
-    `${routeCase.label} (${routeCase.path}) returned ${response.status} — a page that only mocked tests ever rendered just crashed for a real request`,
-  ).toBeLessThan(500);
 }
 
 /**
@@ -48,14 +76,12 @@ async function assertNotServerError(routeCase: RouteCase): Promise<void> {
  * shape this project has been corrected on before.
  */
 async function assertRefusedWithExactly404(routeCase: RouteCase): Promise<void> {
-  const response = await fetch(`${BASE_URL}${routeCase.path}`, {
-    headers: routeCase.cookie ? { Cookie: routeCase.cookie } : {},
-    redirect: "follow",
+  await requestWithDiagnostics(routeCase, (response) => {
+    expect(
+      response.status,
+      `${routeCase.label} (${routeCase.path}) returned ${response.status}, expected exactly 404 — a non-super-admin must never learn this route exists`,
+    ).toBe(404);
   });
-  expect(
-    response.status,
-    `${routeCase.label} (${routeCase.path}) returned ${response.status}, expected exactly 404 — a non-super-admin must never learn this route exists`,
-  ).toBe(404);
 }
 
 describe("every page route renders through a real running server (non-5xx)", () => {
