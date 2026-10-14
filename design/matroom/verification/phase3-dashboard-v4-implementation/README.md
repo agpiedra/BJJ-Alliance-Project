@@ -52,6 +52,59 @@ deleted — see "Historical evidence, preserved" at the bottom.
    evidence is now explicitly real `Tab` traversal, distinguished from the first pass's
    programmatic `.focus()` call.
 
+## Harness repair round (this version) — finishing the ledger-active visual verification
+
+Item 5 above (ledger-active screenshots 13–15) shipped with three real gaps, closed here. No
+production code changed in this round — every fix is to the disposable render-harness script
+itself (created, used, and deleted each time; never part of the shipped diff).
+
+**1. Real app styles and fonts, applied correctly.** The harness previously linked only the
+compiled stylesheet and relied on `prefers-color-scheme` emulation; neither the font classes nor a
+real dark-mode trigger were present, so text fell back to the browser's default serif and
+emulating `dark` had no visible effect. Fixed by:
+- Mirroring `/_next/static/{chunks,media}/` under the harness's own static root (copied straight
+  from `.next/`, read-only) so the CSS's own relative `url(../media/...)` `@font-face` references
+  resolve exactly as they do in production — confirmed via `getComputedStyle(h1).fontFamily` →
+  `"ibmPlexSans, \"ibmPlexSans Fallback\""`, not a system serif.
+- Applying the exact `<html>` font classes `next/font/local` generates (read directly off a real
+  prerendered page, `.next/server/app/en/login.html`), not guessed.
+- Applying dark mode through the **actual app mechanism**: a plain `class="dark"` on `<html>` —
+  confirmed in `src/lib/theme-preference.ts`'s `toggleTheme()` and the bootstrap script in
+  `layout.tsx` (reads `localStorage`, falls back to `prefers-color-scheme`, then toggles exactly
+  this class — never a `data-theme` attribute). Confirmed working: computed `background-color` on
+  `<body>` in the dark render is `rgb(20, 29, 25)`, the exact `#141d19` `layout.tsx`'s own
+  `themeColor` viewport metadata already declares for dark — not an approximation.
+
+**2. Populated ledger-active cards recaptured — 320/390px × light/dark × EN/ES (screenshots
+16–22).** Same fixtures as before (two independent debt cards, both long names, both a real
+`unknownCount: 1` disclosure from the same §6.2 technique `dashboard-page-ledger-render.test.ts`
+already uses) — now rendered with the repairs above. `document.documentElement.scrollWidth −
+clientWidth` measured `0` at every one of the 7 captures (both widths, both themes, both locales).
+
+**3. The screenshot-15 horizontal scrollbar — investigated, root-caused, confirmed harness-only.**
+Measured directly (`documentElement.scrollWidth` 689 vs `clientWidth` 375 at 390px): `body`,
+`<main>`, the Needs-attention container, and all 4 attention cards each measured `scrollWidth ===
+clientWidth` — zero overflow at every real content level. The actual source, found by scanning
+every element's `getBoundingClientRect()` for one extending past the viewport: an `sr-only`
+(visually-hidden) `<span>` — the "Students to contact" table's `Actions` column header — inside
+`DataTable`'s existing `overflow-x-auto` wrapper (confirmed correctly sized to 309px, correctly
+scrolling its 748px table internally, not the bug). Because that wrapper has no CSS
+`position` of its own, an absolutely-positioned descendant like that span is positioned against
+the nearest ancestor that DOES establish a containing block — and the bare harness has none above
+`<body>`. The real app always has one: `src/app/[locale]/(staff)/layout.tsx:205`'s own content
+wrapper is `class="relative flex w-full min-w-0 flex-1 flex-col overflow-x-hidden ..."` —
+`position: relative` gives the span a local containing block, and `overflow-x-hidden` is a second,
+independent clip. Reproducing that exact wrapper class in the harness (not in `DashboardPage()`
+itself — this is harness markup, not page markup) brought `documentElement.scrollWidth −
+clientWidth` to `0`. **No component defect exists; no production file was touched.** This also
+explains, after the fact, why the full-shell live screenshots (01–12) never showed this: they
+always had the real wrapper.
+
+**4. Confirmed on the repaired renders, all 7 captures:** the correct IBM Plex Sans font (not a
+serif fallback) at every size; real computed dark colors matching `layout.tsx`'s own declared
+dark theme color; both long names wrapping across lines with no clipping; zero horizontal overflow
+at the document level (measured, not eyeballed).
+
 ## What changed (code)
 
 - `src/app/[locale]/(staff)/dashboard/page.tsx`:
@@ -147,19 +200,34 @@ included, only by this same mock technique the integration tests already use.
 | 10 | `10-populated-390-light-es-top.png` | **Live** | 390px, light, **ES** — "Mensualidad atrasada," "Pendientes de aprobación," the same real long name, ES text measured directly, not inferred from the EN screenshots |
 | 11 | `11-populated-390-dark-es-top.png` | **Live** | 390px, **dark + ES** together, same populated cards |
 | 12 | `12-populated-pending-link-real-tab-focus-dark-es.png` | **Live** | The "Ver estudiantes pendientes" link focused via **6 real sequential `Tab` key presses** (not `.focus()`) from a blurred start state — visible 2px solid outline, confirmed via `document.activeElement` matching the exact link |
-| 13 | `13-ledger-active-harness-390-light-en-top.png` | **Harness** | 390px, light, EN — ledger-active, two independent debt cards, each with a long name AND a real `unknownCount` disclosure (`· 1 unknown`) |
-| 14 | `14-ledger-active-harness-390-dark-en-top.png` | **Harness, limited** | Same render; dark-mode color-scheme emulation did not visibly change colors — the single extracted CSS chunk used for this harness doesn't reliably carry the dark-mode block (see Disclosed limitations) |
-| 15 | `15-ledger-active-harness-390-light-es-top.png` | **Harness** | 390px, light, **ES** — "Mensualidad fuera de gracia," "Inscripción vencida," both long names, both "1 sin confirmar" |
+| 13 | `13-ledger-active-harness-390-light-en-top.png` | Harness (superseded) | First harness attempt — real tone/content correct; font and dark mode were not (see item 16+ below, and "Harness repair round" above for the root cause and fix). Kept as historical evidence, not deleted. |
+| 14 | `14-ledger-active-harness-390-dark-en-top.png` | Harness (superseded) | First attempt's dark-mode capture — colors did not actually change (`prefers-color-scheme` emulation, not the app's real `class="dark"` mechanism). Superseded by item 18. |
+| 15 | `15-ledger-active-harness-390-light-es-top.png` | Harness (superseded) | First attempt's ES capture — also shows the harness-only horizontal-scrollbar artifact, root-caused and fixed this round. Superseded by item 20. |
+| 16 | `16-ledger-active-harness2-390-light-en-top.png` | **Harness (repaired)** | 390px, light, EN — real IBM Plex Sans font, zero measured horizontal overflow, two independent debt cards with long names + `unknownCount` disclosures |
+| 17 | `17-ledger-active-harness2-320-light-en-top.png` | **Harness (repaired)** | 320px, light, EN — same, narrowest width, zero measured overflow |
+| 18 | `18-ledger-active-harness2-390-dark-en-top.png` | **Harness (repaired)** | 390px, **dark** (real `class="dark"` mechanism), EN — computed `body` background `rgb(20, 29, 25)`, matching `layout.tsx`'s own declared `#141d19` dark theme color exactly |
+| 19 | `19-ledger-active-harness2-320-dark-en-top.png` | **Harness (repaired)** | 320px, dark, EN — zero measured overflow |
+| 20 | `20-ledger-active-harness2-390-light-es-top.png` | **Harness (repaired)** | 390px, light, **ES** — "Mensualidad fuera de gracia," "Inscripción vencida," correct font, zero overflow, ES text measured directly |
+| 21 | `21-ledger-active-harness2-390-dark-es-top.png` | **Harness (repaired)** | 390px, **dark + ES** together, zero measured overflow |
+| 22 | `22-ledger-active-harness2-320-dark-es-top.png` | **Harness (repaired)** | 320px, dark + ES, narrowest width, zero measured overflow |
 
-Items 13–15's data (long names, unknown-count) came from the same fixture technique
+Items 13–22's data (long names, unknown-count) came from the same fixture technique
 `dashboard-page-ledger-render.test.ts`'s own §6.2 test already uses (a real `createMonthlyObligation`
 read, then `vi.spyOn(duesFactsModule, "listDuesFactsForStudents")` stripping one student's fact) —
 not invented for this document.
 
-### What was checked on the real rendered states (items 07–15)
+### What was checked on the real rendered states (items 07–12, 16–22)
 
 - **Wrapping/clipping**: every long name wraps across 2 lines inside its card at 320–390px, in
-  both languages, with no horizontal overflow and no truncation.
+  both languages, with no horizontal overflow and no truncation — measured, not eyeballed: on the
+  repaired harness captures (16–22), `document.documentElement.scrollWidth − clientWidth` was `0`
+  at all 7.
+- **Font**: `getComputedStyle(h1).fontFamily` resolves to the real vendored `ibmPlexSans` family
+  on the repaired harness captures (it resolved to a system serif before the repair — see "Harness
+  repair round" above).
+- **Dark-mode color**: computed `body` background on the repaired dark captures is `rgb(20, 29,
+  25)`, matching `layout.tsx`'s own declared dark `themeColor` (`#141d19`) exactly — applied via
+  the app's real `class="dark"` mechanism, not a media-query guess.
 - **Card spacing**: independent border/radius/gap preserved at every width and in the populated
   (nonzero) state, not just the empty-org renders from the first pass.
 - **Link focus**: real `Tab` traversal (item 12) reaches the preserved link as its own stop, with
@@ -188,7 +256,7 @@ as a claim that the whole card is visually identical to the reference.
   shows "Overdue monthly dues," and a ledger-active organization shows two independent cards
   (Monthly past grace / Signup past due) in its place — required by this app's existing
   independent-debt-facts rule (not present in the reference), verified unchanged in the
-  integration suite and shown with real data in items 13/15.
+  integration suite and shown with real data in items 16–22.
 - **Awaiting approval's nonzero tone**: the reference has no nonzero render of this card to copy.
   Per the approved plan, it reuses the same accent/gold-soft treatment as "Ready to grade" (the
   nearest existing, already-approved convention) — a recommendation, not an invented policy.
@@ -197,17 +265,10 @@ as a claim that the whole card is visually identical to the reference.
 
 ## Disclosed limitations
 
-- **Harness dark mode (item 14)**: the CSS chunk extracted from the production build for the
-  render-harness screenshots doesn't visibly apply dark-mode colors under emulated
-  `prefers-color-scheme: dark` — likely split across more than one build chunk, not fully isolated
-  by this ad-hoc extraction. This is a limitation of this verification technique, not a claim
-  about production: the SAME tone classes (`bg-bad-soft` etc.) were already confirmed to render
-  correctly in dark mode, live, in the first pass's contrast measurements, against the real app.
-- **Harness font**: the harness screenshots (13–15) show a generic serif fallback instead of IBM
-  Plex Sans — the vendored font files live under a separate `/_next/static/media/` path not copied
-  into this harness. Cosmetic only; typography itself is not part of what items 13–15 are meant to
-  prove (card structure, tone, wrapping, unknown-count disclosure are).
-- **DIRECTOR role, populated, live**: not captured live or via a dedicated screenshot this round —
+- **Harness dark mode and font (items 13–15)**: resolved this round — see "Harness repair round"
+  above and items 16–22. Kept 13–15 as historical evidence of the first attempt, now explained
+  rather than open.
+- **DIRECTOR role, populated, live**: not captured live or via a dedicated screenshot —
   DIRECTOR's branch-scoped Needs-attention behavior is verified in the integration suite
   (`dashboard-page-ledger-render.test.ts`'s existing tenant/branch-isolation tests), not visually
   re-confirmed here. INSTRUCTOR's card-set exclusion is newly covered by both a real render-test
@@ -216,7 +277,9 @@ as a claim that the whole card is visually identical to the reference.
 
 ## Historical evidence, preserved
 
-Nothing from the first verification pass was deleted. Items 01–06 above are that pass's original
-screenshots, still valid for what they showed (empty-org structure, section order, light/dark/EN/ES
-at the page level) — items 07–15 extend, not replace, that evidence with populated states this
-round's review asked for specifically.
+Nothing from any prior round was deleted. Items 01–06 are the first pass's original screenshots,
+still valid for what they showed (empty-org structure, section order, light/dark/EN/ES at the page
+level). Items 07–12 added populated legacy-state evidence. Items 13–15 were the first ledger-active
+harness attempt — real content, incomplete styling, explained rather than removed. Items 16–22 are
+the repaired harness evidence that finishes the ledger-active verification this round's review
+asked for.
