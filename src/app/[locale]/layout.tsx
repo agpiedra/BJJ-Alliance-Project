@@ -7,15 +7,18 @@ import { routing } from "@/i18n/routing";
 import { PLATFORM_NAME } from "@/lib/platform";
 import "../globals.css";
 
-// Populates the --font-sans / --font-mono custom properties referenced by globals.css's @theme inline block. Headings use
-// IBM Plex Sans semibold too (globals.css maps --font-heading to --font-sans): MATROOM Phase 1 retired Archivo, so the
-// app loads one sans family and one mono family. The editorial serif (--font-display) is a system stack, not a file.
+// Populates the --font-sans / --font-mono / --font-display custom properties referenced by globals.css's @theme
+// inline block. Headings use IBM Plex Sans semibold too (globals.css maps --font-heading to --font-sans): MATROOM
+// Phase 1 retired Archivo, so the app loads one sans family and one mono family. Body typography is unchanged by
+// D2 (design/matroom/DESIGN.md) — only --font-display (the three Persuade-surface headings) moved from a system
+// Georgia stack to this vendored Noto Serif file.
 //
-// The files are vendored in src/fonts (unmodified upstream releases, OFL licences and sources documented in
-// src/fonts/README.md) and loaded with next/font/local, so the build never asks Google for a font: next/font/google
-// failed the build whenever Google answered with /l/font?kit=... URLs (vercel/next.js#99114). Same families, weights,
-// normal style, swap display and CSS variables as before; the full-coverage files keep Latin Extended (the colon sign
-// U+20A1 used for prices lives there), which next/font/local cannot get from per-script subsets.
+// The files are vendored in src/fonts (sources/licences/provenance documented in src/fonts/README.md — Noto
+// Serif is a static instance built from the upstream variable font, disclosed there, not a byte-identical
+// release like the two IBM Plex families) and loaded with next/font/local, so the build never asks Google (or
+// any third party) for a font at build OR runtime: next/font/google previously failed the build whenever Google
+// answered with /l/font?kit=... URLs (vercel/next.js#99114). Same discipline applied to Noto Serif from the
+// start, not just inherited.
 const ibmPlexSans = localFont({
   variable: "--font-sans",
   src: [
@@ -32,6 +35,15 @@ const ibmPlexMono = localFont({
     { path: "../../fonts/ibm-plex-mono/IBMPlexMono-Regular.woff2", weight: "400", style: "normal" },
     { path: "../../fonts/ibm-plex-mono/IBMPlexMono-Medium.woff2", weight: "500", style: "normal" },
   ],
+  display: "swap",
+});
+
+// D2 (design/matroom/DESIGN.md): the three approved Persuade-surface headings only (register-academy, Login,
+// landing) — applied opt-in per caller via a className, never globally. 400/normal only: no heading anywhere in
+// scope uses bold or italic serif text (design/matroom/preview/preview.css's .display is font-weight: 400).
+const notoSerif = localFont({
+  variable: "--font-display",
+  src: [{ path: "../../fonts/noto-serif/NotoSerif-Regular.woff2", weight: "400", style: "normal" }],
   display: "swap",
 });
 
@@ -78,7 +90,7 @@ export default async function LocaleLayout({
   return (
     <html
       lang={locale}
-      className={`${ibmPlexSans.variable} ${ibmPlexMono.variable}`}
+      className={`${ibmPlexSans.variable} ${ibmPlexMono.variable} ${notoSerif.variable}`}
       suppressHydrationWarning
     >
       <body>
