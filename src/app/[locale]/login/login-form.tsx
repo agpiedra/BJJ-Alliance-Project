@@ -23,16 +23,25 @@ import { INITIAL_ACTION_STATE } from "@/lib/action-state";
  * server-side and used to hand to `BrandBanner`; threaded straight through
  * to `AuthCard`'s own `LogoMark`, unchanged. Bare `/login` passes nothing —
  * same generic platform wordmark it has always shown.
+ *
+ * `titleClassName` (D2, design/matroom/DESIGN.md §D2) — opt-in only, same
+ * mechanism as register-academy. D2 names "platform sign-in" (bare
+ * `/login`) as one of the three approved Persuade surfaces; `/o/[orgSlug]/
+ * login` is an existing member completing a task on their own
+ * organization's branded page — D3's Operate surfaces, not D2's Persuade
+ * list, which only names the generic platform surface. So only bare
+ * `/login`'s own `page.tsx` passes this prop; `/o/[orgSlug]/login`'s
+ * `page.tsx` leaves it unset and keeps `CardTitle`'s default sans heading.
  */
-export function LoginForm({ brand }: { brand?: LogoMarkProps }) {
+export function LoginForm({ brand, titleClassName }: { brand?: LogoMarkProps; titleClassName?: string }) {
   return (
     <Suspense fallback={null}>
-      <LoginFormInner brand={brand} />
+      <LoginFormInner brand={brand} titleClassName={titleClassName} />
     </Suspense>
   );
 }
 
-function LoginFormInner({ brand }: { brand?: LogoMarkProps }) {
+function LoginFormInner({ brand, titleClassName }: { brand?: LogoMarkProps; titleClassName?: string }) {
   const t = useTranslations("auth.login");
   const params = useParams<{ locale: string }>();
   const searchParams = useSearchParams();
@@ -52,6 +61,7 @@ function LoginFormInner({ brand }: { brand?: LogoMarkProps }) {
   return (
     <AuthCard
       title={t("heading")}
+      titleClassName={titleClassName}
       brand={brand}
       footer={
         <a href={`/${params.locale}/register-academy`} className="mt-4 text-sm underline pointer-coarse:py-3">
