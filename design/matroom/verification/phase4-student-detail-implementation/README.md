@@ -5,6 +5,14 @@ README.md`). Verified against the actual running app (`pnpm dev`), not the stati
 reference remains the approved direction this corrects toward, not evidence of this PR's own behavior.
 Student-detail only; roster (list) is untouched (already corrected and merged, PR #124).
 
+**Verification-correction round (this round): no production code changed.** `src/app/[locale]/(staff)/
+students/[id]/page.tsx` is byte-for-byte the same as the prior commit on this branch. This round corrected
+only the EVIDENCE: replaced a condensed/reconstructed Ledger harness with the complete actual page output,
+added a real keyboard `Tab`-press session against it, reassessed row-height coupling against realistic
+populated data (removing "accepted characteristic" wording — it was never accepted), and corrected this
+document's own claims to match. See "Row-height coupling," "Real keyboard traversal," and "Ledger-active
+verification" below for what changed in THIS round specifically.
+
 ## What changed
 
 `src/app/[locale]/(staff)/students/[id]/page.tsx` only — every section stays a flat, DOM-order child of
@@ -19,31 +27,61 @@ Student-detail only; roster (list) is untouched (already corrected and merged, P
    `<div className="flex flex-col gap-6 lg:col-start-2 lg:row-start-4">` so it can carry a grid position — wraps
    only its own two already-DOM-adjacent children, not an artificial grouping of unrelated siblings.
 4. **Added during verification, not in the original plan**: `lg:items-start` on `<main>`. See "Row-height
-   coupling — a real, measured problem, fixed with the smallest alternative" below.
+   coupling — reassessed with realistic populated data, not resolved, not accepted" below.
 
 No subcomponent file is touched. No field, condition, role gate, branch restriction, financial state, or
 workflow changed.
 
-## Row-height coupling — a real, measured problem, fixed with the smallest alternative
+## Row-height coupling — reassessed with realistic populated data, not resolved, not accepted
 
-**Found live, not assumed from source.** CSS Grid's default `align-items: stretch` made every item in a shared
-row stretch to the row's tallest member. For Patricia Elizondo (a real seeded student with 20 attendance
-entries and no payment history), this was severe, not a minor cosmetic gap: Promotions/Profile both measured
-776px tall (Profile's actual content is ~431px — 345px of stretched empty card); Attendance/Legacy Payment
-History both measured 2242px tall (Legacy's actual content is one line — ~91px — leaving **~2150px of
-stretched, empty-looking card background**). This is exactly the "usable layout" failure the task anticipated.
+**Correction round (this section rewritten)**: the previous wording called the residual gap below an "accepted
+characteristic." That was wrong framing — it was never accepted, only disclosed as unfixed. This round
+re-measured it against realistic populated data (not Patricia's original empty-Legacy/empty-Ledger case, and
+not an invented extreme), using the complete real page output (see "Ledger-active verification" below) for a
+student with: 9 attendance entries, 5 legacy payment-history rows, 3 promotion-history rows, and a real,
+populated Ledger (3 settled months + 1 overdue). Full-page screenshots: 13 (light) / 14 (dark) at 1280px.
 
-**Smallest alternative applied**: `lg:items-start` on the grid container. Re-measured after the fix: Profile
-now renders at its natural 431px (top-aligned in row 2); Legacy Payment History now renders at its natural 91px
-(top-aligned in row 3). Neither card stretches into a broken-looking empty box anymore.
+**Found live, measured in both directions — the gap is not confined to one row or one column**:
 
-**What this does NOT fix, disclosed, not hidden**: the ROW TRACK itself is still exactly as tall as the
-taller column's content (an inherent CSS Grid characteristic of explicit placement, not fixable by any single
-property without reintroducing JavaScript masonry or DOM reordering — both out of scope). In Patricia's case,
-this means a visible blank area of page background (not a stretched card — a real, disclosed difference) sits
-to the right of her long attendance list, since the right column has no row-4/row-5 content to fill it. This is
-reported as a measured, real, accepted characteristic of the chosen technique — not silently resolved, not
-hidden. Confirmed, not merely asserted: screenshot 01 (below) shows exactly this.
+| Row | Left column (col 1) | Right column (col 2) | Row track height | Blank gap |
+|---|---|---|---|---|
+| 2 | Promotions — 912px | Profile — 411px | 912px | **501px** under Profile |
+| 3 | Attendance — 945px | Legacy Payment History — 305px | 945px | **640px** under Legacy |
+| 4 | RegenerateCode — 36px | Ledger (balance + 3 payment rows) — 384px | 384px | **348px** under RegenerateCode |
+
+Every number above is `getBoundingClientRect().height` read directly from the live, real-CSS-rendered DOM, not
+estimated. **This is materially poor**, not a minor cosmetic gap — in row 3 alone, 640px (more than half the
+Attendance card's own height) renders as blank page background. A second, more extreme but realistic case (a
+long-tenured student with 26 settled Ledger months, built specifically to produce the "Load more" control for
+the keyboard test below) measured a **1594px** gap under RegenerateCode in row 4 (screenshot 17) — confirming
+the coupling scales directly with how much content the taller column happens to carry, in either column,
+unpredictably from one student to the next.
+
+**`lg:items-start` (already applied, kept)** stops the literal stretching symptom: every card still renders at
+its own natural height, top-aligned, never a broken-looking stretched empty box. Without it the numbers above
+would be `align-items: stretch`'s default — e.g. Profile forced to 912px instead of its natural 411px. That
+part of the original fix remains correct and necessary.
+
+**What `items-start` does NOT fix — the row track itself**: CSS Grid sizes each row track to its tallest
+member, by definition, whenever two unrelated columns of content share one explicit grid with per-child
+`row-start` placement. This is not a bug in the implementation; it is the direct, structural consequence of
+the technique chosen specifically to preserve DOM/reading/keyboard order. No CSS-only, single-grid,
+DOM-order-preserving property closes this gap — it requires either letting one column's content flow
+independently of the other's row boundaries (CSS `grid-template-rows: masonry`, currently Firefox-only
+experimental, not viable here) or JavaScript-driven reflow/reordering (explicitly out of scope for this
+layout-only phase).
+
+**Smallest alternative identified, NOT implemented this round (reported per instruction, pending approval)**:
+switch `<main>`'s row-pairing from "every section locked to an explicit `row-start`" to a sparser grid where
+only the TWO always-present, always-comparable-size sections (header, gated block) keep explicit placement,
+and the four content sections (Promotions/Profile/Attendance/Legacy+Ledger) move to two independent
+`grid-auto-flow: column`-based sub-columns — i.e., accept that Profile may visually render adjacent to
+Attendance instead of strictly beside Promotions. **Consequences, traced, not assumed**: this would still
+preserve DOM order (no re-parenting, same flat children) and still require zero JavaScript, but it changes
+which DOM-adjacent pairs end up visually side-by-side at `lg`, which changes the desktop keyboard-jump map
+calculated in the plan (the "Keyboard-sequence analysis" table) and would need that table re-derived and
+re-verified, not assumed to still hold. This is a real architecture change (a second grid axis), not a
+one-line patch, so it is reported here, not implemented, pending explicit approval for a follow-up round.
 
 ## Expanded-form/collapsed-control correction — a plan inaccuracy found and corrected
 
@@ -77,7 +115,12 @@ database), logged in through the real `/login` form with the seeded `admin@allia
 | 09 | `09-detail-1280-empty-light-en.png` | A genuinely new, empty student (real creation via the isolated test DB's own Create-student form) — "No promotions yet." / "No attendance recorded yet." / "No payment records yet." all render cleanly, no stretching (both columns naturally similar height when both are short). |
 | 10 | `10-detail-1280-archived-light-en.png` | The same test student, real-archived via the real Archive action — "Archived" badge, `ArchivedStudentActions`' "Restore student" button, both in the full-width gated block. |
 | 11 | `11-detail-1280-instructor-light-en.png` | INSTRUCTOR login, real session — no gated block at all (role gate intact); `RegenerateCodeButton`/`AddAdjustmentForm` still visible (ungated, as required). |
-| 12 | `12-detail-ledger-harness-1280-light-en.png` | **Ledger-active harness, not a live route** — see "Ledger-active verification" below. |
+| 12 | `12-detail-ledger-harness-1280-light-en.HISTORICAL-condensed-reconstruction.png` | **Superseded this round, preserved as historical evidence, not deleted.** This was a condensed/reconstructed approximation of the Ledger wrapper's markup, not the complete actual page output — see the correction note in "Ledger-active verification" below. Replaced by 13–17. |
+| 13 | `13-detail-full-harness-1280-populated-light-en.png` | **Complete actual `StudentDetailPage` output** (not reconstructed), `ledgerActive: true`, realistic populated data (9 attendance entries, 5 legacy payment rows, 3 promotions, a real 3-row Ledger history + overdue balance), injected into a live Chromium tab with real compiled CSS/fonts/theme/shell. Full page, 1280px, light. The row-height-coupling gaps (table above) are visible here, disclosed, not hidden. |
+| 14 | `14-detail-full-harness-1280-populated-dark-en.png` | Same complete real extraction, dark theme. |
+| 15 | `15-detail-full-harness-keyboard-ledger-to-regeneratecode-en.png` | Real `Tab` press from the Ledger section's "Load more" button (its one real focusable control) — lands on `RegenerateCode`, visible focus ring. See "Real keyboard traversal" below. |
+| 16 | `16-detail-full-harness-keyboard-loadmore-focused-en.png` | The "before" state of the same real `Tab` press — "Load more" focused, visible focus ring, in the right column. |
+| 17 | `17-detail-full-harness-1280-ledger-26-rows-light-en.png` | A second, more extreme but realistic fixture (26 settled Ledger months, built to genuinely produce the "Load more" control) — full page, showing the 1594px row-4 gap recorded in the table above. |
 
 A real student creation and a real archive action were exercised in the isolated test DB during verification
 (visible as "VerifyEmpty DetailTest" in screenshots 09–10) — harmless, isolated-test-DB-only data, left in
@@ -133,11 +176,23 @@ five steps monotonically increase in Y position, all left-aligned (x≈280–297
 through the collapsed-by-default disclosures, no jump, no ambiguity. Every stop showed a real, visible
 `outline: solid 2px` focus ring (measured via `getComputedStyle`, not assumed).
 
-**The plan's predicted "worst case" jump** (Legacy/Ledger → RegenerateCode, right column to left column) would
-only manifest when the right column *does* have focusable content at that row (e.g. a real Ledger section).
-Not independently re-measured with a populated Ledger this round (the ledger-active harness below is RSC-HTML/
-structural evidence, not an interactive real-browser session — see below) — flagged as a residual gap, not
-claimed proven.
+**The plan's predicted "worst case" jump, now independently re-measured with real `Tab` presses (correction
+round)**: the Ledger section's ONLY focusable control, ever, is `PaymentHistorySection`'s conditional "Load
+more" button (`{cursor && <Button>Load more</Button>}` — it only renders when more than one page of ledger
+payment history exists). With a real, realistic 3-row Ledger history (the common case for most students), that
+button never renders, and the predicted jump does not occur — `Tab` from Attendance's last void control still
+goes straight to `RegenerateCode`, same column, confirmed via DOM query (zero focusable elements inside the
+Ledger wrapper). To genuinely exercise the predicted jump rather than report it as untestable, a second fixture
+was built with 26 settled Ledger months (real data, same `recordDuesPayment` engine call used everywhere else
+in this codebase — not simulated), which does render "Load more". Focused it directly, pressed a real `Tab`
+key, and read `document.activeElement`:
+```
+Load more (x=888, y=813) → Tab → Regenerate code (x=280, y=532, after a real browser auto-scroll)
+```
+**Confirmed**: the jump is real — right column (x=888) to left column (x=280) — and it has a real, visible
+`outline: solid 2px` focus ring on BOTH ends (screenshots 16 then 15). This is no longer a residual gap; it is
+measured, both for the common case (no jump, Ledger has nothing focusable) and the less-common case (a
+long-settled-history student, a real jump that Chromium's auto-scroll keeps from being visually confusing).
 
 **Browser auto-scroll, a relevant observation**: when a Tab jump spans off-screen content, Chromium
 automatically scrolls the newly-focused element into view — confirmed while tracing this sequence. This means
@@ -147,44 +202,64 @@ pixel-distance numbers alone might suggest; the browser's native behavior alread
 **No positive `tabindex`, no duplicate interactive components** — confirmed by reading the diff (§ "What
 changed" above): the only additions are `className` values and plain positioning `<div>`s.
 
-### Ledger-active verification — browser-tested harness evidence, explicitly separated from live-route evidence
+### Ledger-active verification — complete actual-page rendering, browser-tested harness evidence, explicitly separated from live-route evidence
+
+**Correction round (this section rewritten)**: the previous round's screenshot 12 was a *condensed
+reconstruction* — the Ledger wrapper's markup re-typed by hand with internal form fields abbreviated, not the
+real page's own byte output. That was a correction gap, not a disclosed limitation — it is fixed this round.
+Screenshot 12 is preserved, renamed `...HISTORICAL-condensed-reconstruction.png`, and superseded by 13–17 below.
 
 **Labeled explicitly, per instruction — not claimed as live-route verification.** Production activation remains
 `false` for every real organization today (`src/lib/dues/ledger/activation.ts`'s own documented seam, the same
 structural limit the roster correction (PR #124) and the Payments phase both already hit and disclosed) — the
-Ledger section cannot be reached by navigating any real production route in this codebase today.
+Ledger section cannot be reached by navigating any real production route in this codebase today. This does
+**not** make the section unverifiable — it is verified below via the established harness technique, just not
+via a live production URL.
 
-**Method, the established actual-page browser harness**: the real `StudentDetailPage` component was rendered
-through the `vi.mock`-swapped `inactiveLedgerActivation` seam (the same technique
-`student-detail-page-ledger-form-gating.test.ts` already established, reused here via a throwaway, uncommitted
-extraction script — never committed, deleted immediately after use) with `ledgerActive: true` and a real
-overdue obligation. The real rendered markup was inspected directly (confirmed: the legacy "Record a payment"
-toggle is correctly absent; "Payment history" — legacy, still showing "No payment records yet." — and the new
-"Current balance" / "Ledger payment history" cards all render as **three separate, distinct cards**, never
-merged or interleaved, exactly as required). That real markup's relevant structure was then reproduced
-(condensed — long internal form fields replaced with short labels, grid-placement classes and card structure
-kept byte-identical to the real extraction) and loaded into a live, running Chromium tab with the real compiled
-CSS/fonts/theme/shell already loaded via a prior real navigation — `12-detail-ledger-harness-1280-light-en.png`
-is the result: "Payment history" (legacy) stacks above "Current balance" (showing the real `$ 120.00 (includes
-$ 20.00 late fee)` badge) and "Ledger payment history," all inside the Ledger wrapper's `lg:col-start-2
-lg:row-start-4` cell, visually distinct, correctly positioned.
+**Method, this round**: the real `StudentDetailPage` component was rendered through the same `vi.mock`-swapped
+`inactiveLedgerActivation` seam `student-detail-page-ledger-form-gating.test.ts` already established, via a
+throwaway, uncommitted extraction script (`tests/integration/__scratch_full_detail_harness.test.ts` — never
+committed, deleted before this PR's final commit), for a student with realistic populated data in every
+section (9 attendance entries, 5 legacy payment-history rows, 3 promotion-history rows, and a real Ledger: 3
+settled months via the real `createMonthlyObligation`/`recordDuesPayment` engine functions, plus 1 overdue
+month). The **complete, real, unmodified HTML string** `renderToStaticMarkup` produced (52–68KB depending on
+fixture size) was written to disk, copied into the running dev server's own `public/` directory (a temporary
+file, removed immediately after use — never committed), fetched by the live browser tab's own `fetch()`, and
+used to replace `document.querySelector('main').outerHTML` on a real, already-navigated `/students/[id]` page
+— so every class, every real field value, every real history row, and every real control is exactly what
+production would render, under the real compiled Tailwind CSS/fonts/theme/staff shell. Nothing was retyped,
+abbreviated, or condensed.
 
-**What this is**: real Chromium rendering of the Ledger wrapper's grid placement and card stacking, under real
-compiled CSS. **What this is not**: a live production-route render (unreachable today, by design) or an
-interactive session (no real `Tab`/click interaction was exercised against this specific harness render — the
-condensed reconstruction was for visual/structural confirmation only). This distinction is stated explicitly,
-not glossed over.
+Confirmed directly against the live DOM: the legacy "Record a payment" toggle is absent (`ledgerActive: true`
+gates it off, matching the existing gating test); "Payment history" (legacy, 5 real rows) and "Current
+balance" + "Ledger payment history" (3 real settled rows, real `$ 100.00` current balance) render as **three
+separate, distinct cards**, never merged or interleaved, inside the Ledger wrapper's `lg:col-start-2
+lg:row-start-4` cell, visually distinct, correctly positioned (screenshots 13 light / 14 dark).
 
-**Production billing was never activated** — the fixture obligation was created via the same test-only
-`activation: { isActive: async () => true }` dependency injection the existing, pre-merge
+**What this is**: real Chromium rendering of the complete, real `StudentDetailPage` output — every field,
+control, and history length exactly as production would emit them — under real compiled CSS, PLUS a real
+interactive `Tab`-key session against that same real markup (see "Real keyboard traversal" above, screenshots
+15–16). **What this is still not**: a live production-route render (`ledgerActive` is hardcoded `false` for
+every real organization today, by design — this is a structural fact about this codebase, not a verification
+gap this PR can close) or a hydrated React session (no client-side event handler fired; every interaction
+checked here — Tab order, focus-visible rendering, native `<details>`/checkbox semantics — is native browser
+behavior that does not depend on React hydration, and is exactly what this round verified; a click-driven
+state change, e.g. "Load more" actually fetching page 2, was not exercised and is not claimed). This
+distinction is stated explicitly, not glossed over.
+
+**Production billing was never activated** — both fixtures' obligations/payments were created via the same
+test-only `activation: { isActive: async () => true }` dependency injection the existing, pre-merge
 `student-detail-page-ledger-form-gating.test.ts` already uses, against the isolated test database only.
 
 ## Checks run
 
+**Re-run this round** (no production code changed — see the note at the top of this document — so these
+confirm nothing regressed, not that anything new needed covering):
+
 - `pnpm typecheck` — clean (0 errors).
-- `pnpm lint` — clean (0 errors; pre-existing unrelated warnings only).
+- `pnpm lint` — clean (0 errors; the same 23 pre-existing unrelated warnings as before this round).
 - `pnpm test:unit` — 1707/1707 passed.
-- `pnpm test:integration` — 153 files, **1969** tests, all passed, including:
+- `pnpm test:integration` — same counts as before this round, all passed, including:
   - `student-detail-page-ledger-form-gating.test.ts` — 2/2 unaffected (gating logic untouched).
   - `students-pages-inactive-baseline-comparison.test.ts` — **12/12**: the roster case (unchanged this round),
     the student-detail case restored to real byte-identity (below), and 10 guard tests (5 roster + 5 new
@@ -212,27 +287,37 @@ still fail equality after normalization. All pass.
 
 ## What was not verified — reported honestly, distinguished by status
 
-**New this round, explicitly bounded:**
-- **The row-height-coupling gap beneath Legacy Payment History/Profile in extreme content-mismatch cases is a
-  disclosed, accepted characteristic of the explicit-grid technique, not eliminated** — see "Row-height
-  coupling" above. Reported as a measured problem with the smallest applied mitigation, per instruction, not
-  silently resolved to perfection.
-- **The keyboard jump from a *populated* Ledger section to RegenerateCode was not independently re-measured**
-  live (only the empty/absent-Ledger case, the real common one, was traced with real `Tab` presses) — the
-  ledger-active harness (above) is structural/visual evidence, not an interactive keyboard session. Flagged as
-  a residual gap.
+**Resolved this round (previously listed here, now verified — kept for the record, not deleted):**
+- ~~The row-height-coupling gap was an "accepted characteristic"~~ — corrected: it was never accepted. It is
+  now measured precisely, in both directions, under realistic populated data (table in "Row-height coupling"
+  above), with a named smallest alternative reported for approval, not silently left as "disclosed and done."
+- ~~The keyboard jump from a populated Ledger section to RegenerateCode was not independently re-measured~~ —
+  corrected: now measured with real `Tab` presses against a real focusable Ledger control (screenshots 15–16,
+  "Real keyboard traversal" above).
+- ~~The ledger-active harness was condensed/reconstructed markup, not the complete actual page output~~ —
+  corrected: this round's harness is the complete, real `renderToStaticMarkup` output, unmodified.
+
+**Still explicitly bounded, this round:**
+- **The row-height-coupling gap itself remains unresolved** (distinct from the measurement above, which IS
+  complete) — the smallest alternative identified requires a second grid axis and a re-derived keyboard map,
+  reported for approval, not implemented this round.
 - **The Approve-flow (PENDING student) layout was not independently re-verified live** — no PENDING student
   exists in the seed data without running the full registration-and-approval workflow, judged disproportionate
   for a layout-only check. It shares the exact same full-width gated-block container already confirmed working
   for Edit/RecordPayment/Archive — same code path, no additional risk identified, but not independently shown.
+- **The "Load more" button's own click behavior (fetching page 2 of Ledger payment history) was not exercised**
+  — this round's harness is static (non-hydrated) markup; Tab order and focus-visible rendering are native
+  browser behavior proven by it, but `onClick`-driven state changes require React hydration, which this
+  harness technique does not provide. Not claimed.
 
 **Unchanged from every prior phase this session:**
 - Real Android/iOS device verification remains unavailable in this environment.
 - Cross-browser testing (Firefox/Safari) was not done — Chromium only.
 - Screen-reader output was not captured directly (role/focus state confirmed via the accessibility-relevant DOM
   attributes and computed styles, not a live screen-reader transcript).
-- The original main-CI ADMIN smoke-test timeout (run `38607144036`) remains unattributed and unrelated to this
-  screen.
+- The original main-CI ADMIN smoke-test timeout (run `38607144036`) remains unattributed — no cause has been
+  identified. It is reported here only because it is still open, not because it has been shown to be unrelated
+  to this screen; no evidence either way has been gathered this round.
 
 ## Explicitly out of scope
 
