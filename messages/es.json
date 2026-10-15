@@ -1724,6 +1724,7 @@
       "credits": "Crédito inicial, contado aparte y no es asistencia: {count, plural, one {# clase} other {# clases}}",
       "showing": "Mostrando {shown} de {total} registros",
       "listLabel": "Registros de asistencia",
+      "monthRecords": "{count, plural, one {# registro} other {# registros}}",
       "loadMore": "Mostrar asistencias anteriores",
       "loading": "Cargando...",
       "loadedMore": "{count, plural, one {# registro anterior cargado.} other {# registros anteriores cargados.}}",
@@ -1738,7 +1739,10 @@
       "monthStats": {
         "thisMonth": "{count, plural, one {# asistencia este mes} other {# asistencias este mes}}",
         "lastMonth": "{count, plural, one {# asistencia el mes pasado} other {# asistencias el mes pasado}}",
-        "unavailable": "No se pudieron cargar los totales de este mes."
+        "unavailable": "No se pudieron cargar los totales de este mes.",
+        "thisMonthLabel": "Este mes",
+        "lastMonthLabel": "Mes pasado",
+        "allTimeLabel": "Total histórico"
       }
     },
     "promotionHistory": {

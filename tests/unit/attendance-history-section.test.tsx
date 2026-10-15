@@ -168,4 +168,65 @@ describe("AttendanceHistorySection", () => {
     expect(items[2]).toHaveTextContent("Asistencia (sin clase asignada)");
     expect(screen.getByRole("button", { name: "Mostrar asistencias anteriores" })).toBeInTheDocument();
   });
+
+  const decRow = (n: number): AttendanceRow => ({
+    id: `dec${n}`,
+    iso: `2025-12-${String(31 - n).padStart(2, "0")}T18:00:00.000Z`,
+    whenLabel: `12/${String(31 - n).padStart(2, "0")}/2025, 12:00`,
+    kind: "class_checkin",
+    className: "Evening GI",
+    reason: null,
+    delta: 1,
+  });
+
+  it("a month spanning pagination pages: the oldest rendered month withholds its record count while more history may still exist, and the count appears once the cursor is exhausted", async () => {
+    renderSection("en", {
+      initialRows: [row(1), row(2), decRow(1), decRow(2)],
+      initialCursor: "cursor-more", // more (older) history may still exist beyond December
+      totals: { total: 4, entryCount: 4, checkIns: 4, staffDays: 0, otherAdjustments: { count: 0, net: 0 } },
+    });
+    // January is CLOSED (not the last group) - exact immediately, zero new reads.
+    expect(screen.getByText("January 2026").closest("p")).toHaveTextContent("2 records");
+    // December is the still-open last group - its count is withheld, never guessed from partially loaded rows.
+    expect(screen.getByText("December 2025").closest("p")).not.toHaveTextContent(/record/);
+
+    loadMoreAttendance.mockResolvedValue({ ok: true, rows: [decRow(3)], nextCursor: null });
+    fireEvent.click(screen.getByRole("button", { name: "Show older attendance" }));
+    await waitFor(() => expect(screen.getByText("That is the start of your attendance history.")).toBeInTheDocument());
+    // Now that the cursor is exhausted, December's count is exact and appears - 3 rows, not the 2 shown before.
+    expect(screen.getByText("December 2025").closest("p")).toHaveTextContent("3 records");
+  });
+
+  it("a month's record count includes every kind together (check-ins and staff-added days), labeled 'records' - never 'classes' or a net attendance figure", () => {
+    renderSection("en", {
+      initialRows: [row(1), row(2, { kind: "staff_day", className: null, reason: "makeup class" }), decRow(1)],
+      initialCursor: null, // fully loaded: both groups' counts are exact immediately
+      totals: { total: 3, entryCount: 3, checkIns: 2, staffDays: 1, otherAdjustments: { count: 0, net: 0 } },
+    });
+    const januaryHeading = screen.getByText("January 2026").closest("p")!;
+    expect(januaryHeading).toHaveTextContent("2 records");
+    expect(januaryHeading).not.toHaveTextContent(/class(es)?\b/i);
+    expect(screen.getByText("December 2025").closest("p")).toHaveTextContent("1 record"); // singular form
+  });
+
+  it("the last-month stat is independently unavailable even when this-month succeeds, never coupled to the other cell's state", () => {
+    renderSection("en", { monthlyStats: { thisMonth: MONTHLY_STATS.thisMonth, lastMonth: { ok: false } } });
+    const stats = within(screen.getByTestId("attendance-month-stats"));
+    expect(stats.getByText("5 attendances this month")).toBeInTheDocument();
+    expect(stats.getByText("Couldn't load this month's totals.")).toBeInTheDocument();
+    expect(stats.queryByText(/attendance(s)? last month/)).toBeNull();
+  });
+
+  it("both monthly stats can be independently unavailable at once, each still showing its own full message", () => {
+    renderSection("en", { monthlyStats: { thisMonth: { ok: false }, lastMonth: { ok: false } } });
+    const stats = within(screen.getByTestId("attendance-month-stats"));
+    expect(stats.getAllByText("Couldn't load this month's totals.")).toHaveLength(2);
+  });
+
+  it("a long all-time total renders intact on one line, never character-split, inside the stat row", () => {
+    renderSection("en", { totals: { ...TOTALS, total: 12345 } });
+    const stats = within(screen.getByTestId("attendance-month-stats"));
+    const valueEl = stats.getByText("12345");
+    expect(valueEl).toHaveClass("whitespace-nowrap");
+  });
 });

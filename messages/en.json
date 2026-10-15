@@ -1724,6 +1724,7 @@
       "credits": "Head-start credit, counted separately and not attendance: {count, plural, one {# class} other {# classes}}",
       "showing": "Showing {shown} of {total} entries",
       "listLabel": "Attendance entries",
+      "monthRecords": "{count, plural, one {# record} other {# records}}",
       "loadMore": "Show older attendance",
       "loading": "Loading...",
       "loadedMore": "{count, plural, one {# older entry loaded.} other {# older entries loaded.}}",
@@ -1738,7 +1739,10 @@
       "monthStats": {
         "thisMonth": "{count, plural, one {# attendance this month} other {# attendances this month}}",
         "lastMonth": "{count, plural, one {# attendance last month} other {# attendances last month}}",
-        "unavailable": "Couldn't load this month's totals."
+        "unavailable": "Couldn't load this month's totals.",
+        "thisMonthLabel": "This month",
+        "lastMonthLabel": "Last month",
+        "allTimeLabel": "All time"
       }
     },
     "promotionHistory": {
