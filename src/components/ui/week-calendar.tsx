@@ -46,6 +46,9 @@ export interface WeekCalendarBlock {
   colorClassName: string;
   /** Inactive sessions render dimmed rather than being hidden entirely. */
   dimmed?: boolean;
+  /** A short, already-localized type label (e.g. "Gi", "No-Gi") — read only by the phone day-list's
+   * own card treatment; the desktop grid's own compact blocks don't render it. */
+  meta?: string;
 }
 
 export interface WeekCalendarLegendItem {
