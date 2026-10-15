@@ -5,17 +5,19 @@ README.md`). Verified against the actual running app (`pnpm dev`), not the stati
 reference remains the approved direction this corrects toward, not evidence of this PR's own behavior.
 Student-detail only; roster (list) is untouched (already corrected and merged, PR #124).
 
-**Verification-correction rounds (two so far): no production code changed.** `src/app/[locale]/(staff)/
-students/[id]/page.tsx` is byte-for-byte the same as the original implementation commit on this branch. Round 2
-corrected the EVIDENCE: replaced a condensed/reconstructed Ledger harness with the complete actual page output,
-added a real keyboard `Tab`-press session against it, reassessed row-height coupling against realistic
-populated data (removing "accepted characteristic" wording — it was never accepted). Round 3 (this round)
-investigated screenshot 17's cut-off "Covers" column (a real, previously unreported clipping bug, root-caused
-and a fix verified but not applied), built one disposable CSS multi-column layout experiment that genuinely
-eliminates the row-height-coupling gaps (measured, not implemented), and removed unsupported usability-verdict
-wording ("not visually jarring/confusing") in favor of plainly-reported observed behavior. See "Row-height
-coupling," "Screenshot 17's cut-off 'Covers' column," "Layout experiment: CSS multi-column," and "Real keyboard
-traversal" below for what changed in each round specifically.
+**Verification-correction rounds (four so far).** Round 2 corrected the EVIDENCE: replaced a condensed/
+reconstructed Ledger harness with the complete actual page output, added a real keyboard `Tab`-press session
+against it, reassessed row-height coupling against realistic populated data (removing "accepted characteristic"
+wording — it was never accepted). Round 3 investigated screenshot 17's cut-off "Covers" column (a real,
+previously unreported clipping bug, root-caused and a fix verified but NOT yet applied), built one disposable
+CSS multi-column layout experiment that eliminates the row-height-coupling gaps (measured, not implemented),
+and removed unsupported usability-verdict wording ("not visually jarring/confusing"). **Round 4 (this round) is
+the first to change production code**: applied the verified `min-width: 0` clipping fix to `src/app/[locale]/
+(staff)/students/[id]/page.tsx` (confirmed reachable at desktop AND narrow widths), ran one bounded check on
+the multi-column experiment (disclosures expanded, Ledger history large — no column switch, no fragmentation),
+and did not adopt multi-column — see "Recommendation" below. See "Row-height coupling," "Screenshot 17's cut-off
+'Covers' column," "Layout experiment: CSS multi-column," "Recommendation," and "Real keyboard traversal" below
+for what changed in each round specifically.
 
 ## What changed
 
@@ -32,6 +34,9 @@ traversal" below for what changed in each round specifically.
    only its own two already-DOM-adjacent children, not an artificial grouping of unrelated siblings.
 4. **Added during verification, not in the original plan**: `lg:items-start` on `<main>`. See "Row-height
    coupling — reassessed with realistic populated data, not resolved, not accepted" below.
+5. **Added in round 4**: `lg:min-w-0` on all 7 row-placed grid items plus the header/gated-block spans, and
+   `lg:[&>*]:min-w-0` on the Ledger wrapper's own two children — the verified clipping fix. See "Screenshot 17's
+   cut-off 'Covers' column" below.
 
 No subcomponent file is touched. No field, condition, role gate, branch restriction, financial state, or
 workflow changed.
@@ -120,22 +125,31 @@ because the `fr`-sized columns can't shrink below that floor, the grid overflows
 textbook CSS Grid "blowout," not specific to this phase's work but newly exposed by this round's more
 realistic, longer-content fixture.
 
-**Verified fix, tested live, NOT applied to production this round**: adding `min-width: 0` to each grid item
-(and to the Ledger wrapper's own two flex-item children) resolves it completely. Re-measured after applying it
-in the browser: `<main>`'s own overflow disappears (`scrollWidth === clientWidth`, 1009px), and the
-previously-silent 42px clip becomes a **real, visible, scrollable** horizontal overflow inside the DataTable's
-own existing `overflow-x-auto` wrapper (`scrollWidth` 433 vs `clientWidth` 340) — scrolling that wrapper to its
-end brings the "Covers" header fully back within the viewport (confirmed: `right` 1223 ≤ 1280). This is a
-one-line-per-grid-item CSS fix (`min-w-0`), independent of and much smaller than the row-height-coupling
-tradeoff above — reported for approval, not implemented, per instruction to keep production code unchanged
-this round.
+**Fixed this round (round 4), applied to production.** `min-width: 0` (Tailwind `lg:min-w-0`) added to all 9
+top-level grid items on `<main>`, plus `lg:[&>*]:min-w-0` on the Ledger wrapper's own two flex-item children
+(`StudentBalanceSummary` + `PaymentHistorySection`) — see "What changed" item 5. Re-verified against the real
+production fix (not an inline-style override): `<main>`'s own overflow disappears (`scrollWidth ===
+clientWidth`, 1009px), and the previously-silent 42px clip becomes a **real, visible, scrollable** horizontal
+overflow inside the DataTable's own existing `overflow-x-auto` wrapper (`scrollWidth` 433 vs `clientWidth`
+340) — scrolling that wrapper to its end brings the "Covers" header fully back within the viewport (confirmed:
+`right` 1223 ≤ 1280, screenshot 21).
+
+**Reachability re-confirmed at narrow widths too, not assumed from the desktop case**: at 390px, the same
+table wrapper shows real internal overflow (`scrollWidth` 433 vs `clientWidth` 292) and scrolling it brings the
+"Covers" header from `right` 474 (past the 390px viewport) to `right` 333 (reachable) — screenshot 22. At
+320px: `scrollWidth` 433 vs `clientWidth` 222, `right` 333 → 263, reachable. No page-level overflow at either
+width (`document.scrollWidth` 375 ≤ 390, 305 ≤ 320). `PaymentHistorySection`'s own, unmodified
+`overflow-x-auto` wrapper (`data-table.tsx`) is exactly what engages at both desktop and narrow widths — this
+fix only stops the grid item above it from reasserting a wider automatic minimum; the DataTable's own scrolling
+behavior is completely unchanged, as instructed.
 
 ## Layout experiment: CSS multi-column — a working, DOM-order-preserving alternative, measured, not implemented
 
 **One disposable experiment, built directly against the complete actual-page output** (the same realistic,
 26-settled-month fixture used above — the harder case), applied live in a running browser, never committed to
 `src/`. Preview screenshots (not verification evidence — a prototype, kept separate):
-`design/matroom/preview/phase4-detail-multicol-experiment-{1280,390}-{before,after}.png`.
+`design/matroom/preview/phase4-detail-multicol-experiment-{1280,390}-{before,after}.png`, plus
+`phase4-detail-multicol-experiment-disclosures-expanded.png` (round 4's bounded check, below).
 
 **Correcting a specific wrong assumption named in this round's instruction**: `grid-auto-flow: column` was
 never tested or implied as a fix here — it would not have worked, since it only changes which grid cell an
@@ -202,24 +216,59 @@ classes, keyboard order is unaffected **by construction**: no new Tab trace was 
 follows directly from "the same ordered list of nodes, restyled in place." No duplicated interactive component,
 no positive `tabindex`, no hidden content — the experiment adds classes/inline styles only.
 
-### The real tradeoff — named, not hidden
+### The real tradeoffs — named precisely, not understated to "lost row alignment" alone
 
-Multi-column achieves independent heights by **not** guaranteeing the reference mock's specific row pairing.
-Today's grid deliberately puts Promotions beside Profile and Attendance beside Legacy (same row index, by
-design). Multi-column instead fills column 1 top-to-bottom, then column 2 top-to-bottom — in this fixture,
-Promotions (col 1) and Legacy (col 2) happen to start at the same height purely because they're each first in
-their column, not because of any deliberate pairing; with different content lengths, nothing would visually
-align. **This is the real cost of this technique**: it trades the reference mock's deliberate row-by-row
-alignment for zero wasted space — reported plainly, not implemented, pending review of whether that tradeoff
-is acceptable.
+Multi-column achieves independent heights at a real, multi-part cost — two distinct tradeoffs, not one:
 
-### The alternative that WOULD preserve exact row pairing — requires relaxing DOM order, NOT implemented
+1. **Equal-width columns, not the approved 3:2 ratio.** `column-count: 2` splits the container into two equal
+   halves. The reference mock and today's grid both use a deliberate 60/40 (3fr/2fr) split — the wider column
+   for the richer left-side content (Promotions, Attendance), the narrower for Profile/Legacy/Ledger. Multi-column
+   has no native way to express that asymmetry; forcing unequal CSS multi-column widths is not a supported,
+   standard pattern (unlike Grid's `grid-template-columns: 3fr 2fr`). Visible directly in the experiment
+   screenshots: both columns render at the same ~468px width, not 3:2.
+2. **Content-dependent column assignment, not merely lost row alignment.** Which section lands in which column
+   is not pinned by the component tree — it is a side effect of `column-fill`'s height-balancing algorithm
+   recalculating on every reflow. **This round's bounded check** (see below) did not trigger a reassignment, but
+   the risk is structural to the technique (CSSWG spec explicitly permits browsers to rebalance column content
+   on reflow), not merely a lost-alignment cosmetic issue — a future content mix could place a DIFFERENT section
+   in a DIFFERENT column than today's test observed.
 
-A genuinely independent two-column layout that preserves the mock's specific Promotions/Profile and
-Attendance/Legacy pairing would require two separate flex column containers, each holding only that column's
-items in their own internal order (e.g. a "left" wrapper: Promotions, Attendance, RegenerateCode,
-AddAdjustment; a "right" wrapper: Profile, Legacy, Ledger). **Exact tradeoff, traced before any implementation,
-per instruction:**
+### Bounded check, round 4: disclosures expanded, Ledger history large — no column switch, no fragmentation
+
+Using the complete real harness output (same 26-settled-month fixture, the harder case) with the multi-column
+experiment stylesheet applied, two native `<details>` disclosures were opened with REAL Playwright clicks (not
+simulated focus) — `PromocionesCard`'s "Manual promote / correct" (column 1) and `AddAdjustmentForm`'s "Add an
+attendance day" (column 2):
+
+- **Both opened correctly** (native `<details>` behavior — provable without React hydration, since this is
+  plain HTML/CSS, not a claim about any client-side state).
+- **Focus landed exactly where a real click should put it**: `document.activeElement` was the "Add an
+  attendance day" `<summary>` (the last element clicked) — no surprising jump, no focus loss.
+- **No section switched columns**: Promotions/Profile/Attendance stayed in column 1 (`left` 280), Legacy/
+  Ledger/RegenerateCode/AddAdjustment stayed in column 2 (`left` 772) — identical to the pre-expansion
+  assignment, even though Promotions grew 912→1441px and AddAdjustment grew 57→360px.
+- **No card fragmented**: every section's `getClientRects().length` was 1, both before and after — `break-
+  inside: avoid-column` held under real content growth, not just in the original static measurement.
+- **What this does NOT prove**: the "Load more" button's own `onClick` behavior (fetching page 2 of Ledger
+  history) requires React hydration, which this static harness does not provide — not claimed, not tested.
+
+This is reassuring evidence FOR this specific test, not a general guarantee against tradeoff #2 above — the
+spec-permitted rebalancing risk remains real and untested for other content combinations.
+
+### Independent 3:2 columns — stable section grouping, NOT exact row alignment — requires relaxing DOM order, NOT implemented
+
+A genuinely independent two-column layout (two separate flex or grid-template-columns containers, each sized
+to its own content, each at the approved 3:2 width ratio) would keep Promotions/Attendance/RegenerateCode/
+AddAdjustment permanently grouped in one column and Profile/Legacy/Ledger permanently grouped in the other —
+**stable section grouping**, which neither today's grid (shares row tracks, so both columns are coupled
+together) nor the multi-column experiment above (content-dependent assignment, not pinned to a column at all)
+actually guarantees. **This does NOT mean exact row alignment is preserved** — independent columns are, by
+definition, independently sized, so Profile would no longer necessarily start at the same vertical position as
+Promotions; it would simply always be in the right column, wherever its own column's content places it. This
+is a real, different tradeoff from both other options, named precisely, not conflated with either. Would
+require two separate flex column containers, each holding only that column's items in their own internal
+order (e.g. a "left" wrapper: Promotions, Attendance, RegenerateCode, AddAdjustment; a "right" wrapper:
+Profile, Legacy, Ledger). **Exact tradeoff, traced before any implementation, per instruction:**
 - **DOM order would change** from today's Header→Promotions→Profile→Attendance→Legacy→Ledger→RegenerateCode→
   AddAdjustment→GatedBlock to Header→[Promotions→Attendance→RegenerateCode→AddAdjustment]→[Profile→Legacy→
   Ledger]→GatedBlock — the entire left column before any of the right column, not the current alternating
@@ -234,6 +283,32 @@ per instruction:**
 This alternative is named and its consequences traced, exactly as instructed, but **not implemented** — it is
 a strictly larger, riskier change (real DOM reordering, a new mobile/keyboard sequence to re-verify end to end)
 than the multi-column experiment above, which needs none of that.
+
+## Recommendation
+
+| | Current explicit grid | Multi-column (experiment) | Independent 3:2 columns |
+|---|---|---|---|
+| DOM/mobile order | Unchanged (preserved) | Unchanged (preserved) | **Changes** — not yet approved |
+| Column width ratio | 3:2, matches the approved mock | Equal (50:50) — does not match | 3:2, matches the approved mock |
+| Section placement | Stable (explicit `row-start`) | **Content-dependent** — not pinned, can shift on reflow | Stable (always same column) |
+| Row-by-row alignment | Attempted, at the cost of blank gaps | Not attempted — packs tightly instead | Not attempted — independent column heights |
+| Blank-space cost | Real, measured (table above) | None | None |
+| Known defects this round | Clipping bug — now fixed (`min-w-0`) | None found in the one bounded check; untested generally | N/A — not built |
+
+**Recommendation: keep the current explicit grid (with the `min-w-0` fix applied this round), do not adopt
+either alternative.** It is the only option that satisfies every approved constraint simultaneously — the
+mock's 3:2 ratio, DOM/mobile/keyboard order, and stable, predictable section placement — at the cost of a
+blank-space gap that is real but bounded, cosmetic, and now fully disclosed with exact measurements (not a
+functional defect: no content is hidden, no control is unreachable, confirmed above). Multi-column fails two of
+the three approved constraints (ratio, stable placement) to buy back that gap. Independent 3:2 columns would
+satisfy the ratio and gain stable placement, but costs the one thing neither other option costs: an unapproved
+DOM/mobile/keyboard reading-order change, which is a materially larger, riskier change to re-verify than either
+layout questioned this round.
+
+**No further layout implementation until this tradeoff is explicitly decided** — per instruction. If the
+row-height gap is later judged materially unacceptable, independent 3:2 columns (not multi-column) is the
+candidate most consistent with the approved design, and its exact mobile/keyboard sequence is traced above —
+but that is a decision for explicit approval, not made here.
 
 ## Expanded-form/collapsed-control correction — a plan inaccuracy found and corrected
 
@@ -276,6 +351,8 @@ database), logged in through the real `/login` form with the seeded `admin@allia
 | 18 | `18-detail-full-harness-scrolled-to-bottom-light-en.png` | Real page scrolled to `document.documentElement.scrollHeight` — proves every control (including "Load more" and "Archive student," the page's last control) is actually, vertically, reachable; no content is lost downward. |
 | 19 | `19-detail-full-harness-1280-ledger-26-rows-refcheck-light-en.png` | A fresh, re-captured `fullPage` shot of the same 26-row state, used to cross-check screenshot 17 against live DOM measurements (below) rather than trusting the image alone. |
 | 20 | `20-detail-full-harness-covers-column-clipped-viewport-en.png` | Viewport-only (not `fullPage`) screenshot of the Ledger payment history table, scrolled into view — every row's "Covers" value visibly truncated mid-text, with no scrollbar anywhere on screen. Direct visual proof of the real clipping bug (see "Screenshot 17's cut-off 'Covers' column" below), independent of any `fullPage` stitching concern. |
+| 21 | `21-detail-full-harness-1280-covers-scrolled-reachable-en.png` | **Round 4, against the applied `min-w-0` fix.** The same table, DATE column scrolled out of view, COVERS values now fully visible and complete (no truncation), with a real, visible horizontal scrollbar — proof the fix turns silent clipping into the DataTable's own intended, reachable scroll. |
+| 22 | `22-detail-full-harness-390-covers-scrolled-reachable-en.png` | Round 4: the same reachability proof at 390px — Covers values reachable via the same real scroll affordance at a narrow width. |
 
 A real student creation and a real archive action were exercised in the isolated test DB during verification
 (visible as "VerifyEmpty DetailTest" in screenshots 09–10) — harmless, isolated-test-DB-only data, left in
@@ -411,17 +488,25 @@ test-only `activation: { isActive: async () => true }` dependency injection the 
 
 ## Checks run
 
-**Re-run this round** (no production code changed — see the note at the top of this document — so these
-confirm nothing regressed, not that anything new needed covering):
+**Round 4 is the first round to change `src/` — checks run against the real `min-w-0` fix**, not just
+re-confirmed against unchanged code:
 
 - `pnpm typecheck` — clean (0 errors).
-- `pnpm lint` — clean (0 errors; the same 23 pre-existing unrelated warnings as before this round).
+- `pnpm lint` — clean (0 errors; the same 23 pre-existing unrelated warnings as every prior round).
 - `pnpm test:unit` — 1707/1707 passed.
-- `pnpm test:integration` — same counts as before this round, all passed, including:
+- `pnpm test:integration` — **153 files, 1969 tests, all passed** (run in isolation, no concurrent process
+  touching the test DB — see the note below), including:
   - `student-detail-page-ledger-form-gating.test.ts` — 2/2 unaffected (gating logic untouched).
-  - `students-pages-inactive-baseline-comparison.test.ts` — **12/12**: the roster case (unchanged this round),
-    the student-detail case restored to real byte-identity (below), and 10 guard tests (5 roster + 5 new
-    detail) proving neither normalization can pass vacuously.
+  - `students-pages-inactive-baseline-comparison.test.ts` — **12/12**: `normalizeApprovedPhase4DetailDiffs()`
+    updated to anchor the new `lg:min-w-0`/`lg:[&>*]:min-w-0` classes (below), both the real-render test and
+    all 5 detail guard-test fixtures updated to match — one stale literal in a guard test's own corruption step
+    was found and fixed along the way (confirmed against the real failure output, not guessed).
+
+An earlier `pnpm test:integration` attempt this round reported 29 unrelated failures, all inside
+`dues-ledger-writers.test.ts`'s own concurrency/row-locking tests (timing-sensitive by design) — traced to a
+second, concurrently-running `vitest` process (this round's own browser-verification harness render) competing
+for the same test-database locks, not a real regression. Re-run in isolation (no other process touching the
+test DB) to get a trustworthy result, reported above.
 
 ### The detail page's baseline-comparison test — reconciled narrowly, same discipline as the roster correction
 
@@ -455,28 +540,37 @@ still fail equality after normalization. All pass.
 - ~~The ledger-active harness was condensed/reconstructed markup, not the complete actual page output~~ —
   corrected: this round's harness is the complete, real `renderToStaticMarkup` output, unmodified.
 
+**Resolved in round 4 (previously "new, not applied" in round 3 — now applied and re-verified):**
+- ~~The Covers-column clipping bug fix was verified live but not applied to production~~ — corrected: `min-
+  width: 0` is now applied to production (`src/app/[locale]/(staff)/students/[id]/page.tsx`), re-verified
+  against the real fix (not an inline-style override), and confirmed reachable at BOTH desktop (1280px) and
+  narrow widths (390px, 320px) — see "Screenshot 17's cut-off 'Covers' column" above.
+
 **New this round:**
-- **A real, previously unreported clipping bug** (the "Covers" column, 42px of real content silently swallowed
-  by an ancestor `overflow-hidden`, zero document-level overflow signal) — found, root-caused precisely, and a
-  one-line-per-grid-item fix (`min-width: 0`) verified live, but NOT applied to production this round. See
-  "Screenshot 17's cut-off 'Covers' column" above.
-- **A working, DOM-order-preserving layout alternative (CSS multi-column)** was built, measured, and found to
-  eliminate every row-height-coupling gap in the table above, at the cost of losing the reference mock's
-  specific row-by-row pairing (a real, named tradeoff) — built as a disposable, uncommitted experiment only,
-  not applied to production. See "Layout experiment: CSS multi-column" above.
+- **A working, DOM-order-preserving layout alternative (CSS multi-column)** was built, measured, found to
+  eliminate every row-height-coupling gap, and bounded-checked under disclosure-expansion and large Ledger
+  content (no column switch, no fragmentation) — but **not adopted**: it does not match the approved 3:2
+  column ratio and its section placement is content-dependent, not pinned — see "Layout experiment" and
+  "Recommendation" above.
+- **A third option (independent 3:2 columns) was compared but not built** — it would require an explicitly
+  unapproved DOM/mobile/keyboard reading-order change, traced in full above, not implemented.
 
 **Still explicitly bounded, this round:**
-- **The row-height-coupling gap itself remains unresolved in production** (distinct from the fact that a
-  working alternative now exists and is measured) — the multi-column experiment above is reported for review,
-  not implemented, pending a decision on whether its pairing tradeoff is acceptable.
+- **The row-height-coupling gap itself remains unresolved in production** — per the Recommendation above, kept
+  deliberately: it is the one real cost of the only option that satisfies every other approved constraint.
 - **The Approve-flow (PENDING student) layout was not independently re-verified live** — no PENDING student
   exists in the seed data without running the full registration-and-approval workflow, judged disproportionate
   for a layout-only check. It shares the exact same full-width gated-block container already confirmed working
   for Edit/RecordPayment/Archive — same code path, no additional risk identified, but not independently shown.
 - **The "Load more" button's own click behavior (fetching page 2 of Ledger payment history) was not exercised**
-  — this round's harness is static (non-hydrated) markup; Tab order and focus-visible rendering are native
-  browser behavior proven by it, but `onClick`-driven state changes require React hydration, which this
-  harness technique does not provide. Not claimed.
+  — this round's harness is static (non-hydrated) markup; Tab order, focus-visible rendering, and native
+  `<details>` disclosure toggling are native browser behavior proven by it (including under the multi-column
+  experiment's bounded check), but `onClick`-driven state changes require React hydration, which this harness
+  technique does not provide. Not claimed.
+- **The multi-column experiment's content-dependent column-assignment risk was bounded-checked, not
+  exhaustively proven safe** — one specific content-growth scenario produced no column switch; the CSS spec
+  still permits rebalancing on reflow for other content mixes, untested here, and this option was not adopted
+  regardless, per the Recommendation above.
 
 **Unchanged from every prior phase this session:**
 - Real Android/iOS device verification remains unavailable in this environment.

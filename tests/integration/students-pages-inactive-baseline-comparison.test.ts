@@ -198,14 +198,16 @@ function normalizeApprovedPhase4Diffs(html: string): string {
  */
 function normalizeApprovedPhase4DetailDiffs(html: string): string {
   return html
-    // 1. <main>'s own grid utilities — appended after its existing base classes.
+    // 1. <main>'s own grid utilities — appended after its existing base classes. (<main> itself never gained
+    //    `min-w-0` — only its children did, rules 2-8 below.)
     .replace(
       '<main class="flex flex-col gap-6 p-6 lg:grid lg:grid-cols-[3fr_2fr] lg:items-start lg:gap-6"',
       '<main class="flex flex-col gap-6 p-6"',
     )
-    // 2. The header row's grid placement — appended after its existing base classes.
+    // 2. The header row's grid placement, plus the clipping-fix `lg:min-w-0` (correction round 4) —
+    //    appended after its existing base classes.
     .replace(
-      '<div class="flex flex-wrap items-center justify-between gap-3 lg:col-span-2 lg:row-start-1"',
+      '<div class="flex flex-wrap items-center justify-between gap-3 lg:col-span-2 lg:row-start-1 lg:min-w-0"',
       '<div class="flex flex-wrap items-center justify-between gap-3"',
     )
     // 3. PromocionesCard's 1:1 positioning wrapper (the component itself takes no className). Its opening
@@ -213,48 +215,50 @@ function normalizeApprovedPhase4DetailDiffs(html: string): string {
     //    follows it — the Profile <Card>'s own opening tag (also grid-placed, stripped by rule 4 below, but
     //    matched here in its PRE-strip form since replacements run top to bottom against the unmodified
     //    string at this point).
-    .replace('<div class="lg:col-start-1 lg:row-start-2">', "")
+    .replace('<div class="lg:col-start-1 lg:row-start-2 lg:min-w-0">', "")
     .replace(
-      '</div><div data-slot="card" data-size="default" class="group/card flex flex-col gap-(--card-spacing) overflow-hidden rounded-lg border border-border bg-card py-(--card-spacing) text-sm text-card-foreground [--card-spacing:--spacing(4)] has-data-[slot=card-footer]:pb-0 has-[&gt;img:first-child]:pt-0 data-[size=sm]:[--card-spacing:--spacing(3)] data-[size=sm]:has-data-[slot=card-footer]:pb-0 *:[img:first-child]:rounded-t-xl *:[img:last-child]:rounded-b-xl lg:col-start-2 lg:row-start-2">',
+      '</div><div data-slot="card" data-size="default" class="group/card flex flex-col gap-(--card-spacing) overflow-hidden rounded-lg border border-border bg-card py-(--card-spacing) text-sm text-card-foreground [--card-spacing:--spacing(4)] has-data-[slot=card-footer]:pb-0 has-[&gt;img:first-child]:pt-0 data-[size=sm]:[--card-spacing:--spacing(3)] data-[size=sm]:has-data-[slot=card-footer]:pb-0 *:[img:first-child]:rounded-t-xl *:[img:last-child]:rounded-b-xl lg:col-start-2 lg:row-start-2 lg:min-w-0">',
       '<div data-slot="card" data-size="default" class="group/card flex flex-col gap-(--card-spacing) overflow-hidden rounded-lg border border-border bg-card py-(--card-spacing) text-sm text-card-foreground [--card-spacing:--spacing(4)] has-data-[slot=card-footer]:pb-0 has-[&gt;img:first-child]:pt-0 data-[size=sm]:[--card-spacing:--spacing(3)] data-[size=sm]:has-data-[slot=card-footer]:pb-0 *:[img:first-child]:rounded-t-xl *:[img:last-child]:rounded-b-xl">',
     )
-    // 4. Profile and Attendance/Legacy-Payment-History <Card>s — grid placement appended after their shared
-    //    base class string, one variant per grid cell.
+    // 4. Profile and Attendance/Legacy-Payment-History <Card>s — grid placement + `lg:min-w-0` appended
+    //    after their shared base class string, one variant per grid cell.
     .replaceAll(
-      ' *:[img:first-child]:rounded-t-xl *:[img:last-child]:rounded-b-xl lg:col-start-2 lg:row-start-2"',
+      ' *:[img:first-child]:rounded-t-xl *:[img:last-child]:rounded-b-xl lg:col-start-2 lg:row-start-2 lg:min-w-0"',
       ' *:[img:first-child]:rounded-t-xl *:[img:last-child]:rounded-b-xl"',
     )
     .replaceAll(
-      ' *:[img:first-child]:rounded-t-xl *:[img:last-child]:rounded-b-xl lg:col-start-1 lg:row-start-3"',
+      ' *:[img:first-child]:rounded-t-xl *:[img:last-child]:rounded-b-xl lg:col-start-1 lg:row-start-3 lg:min-w-0"',
       ' *:[img:first-child]:rounded-t-xl *:[img:last-child]:rounded-b-xl"',
     )
     .replaceAll(
-      ' *:[img:first-child]:rounded-t-xl *:[img:last-child]:rounded-b-xl lg:col-start-2 lg:row-start-3"',
+      ' *:[img:first-child]:rounded-t-xl *:[img:last-child]:rounded-b-xl lg:col-start-2 lg:row-start-3 lg:min-w-0"',
       ' *:[img:first-child]:rounded-t-xl *:[img:last-child]:rounded-b-xl"',
     )
-    // 5. The Ledger section's fragment-to-<div> change (StudentBalanceSummary + PaymentHistorySection) — only
-    //    reachable when `ledgerActive`, not exercised by this file's always-inactive fixture (confirmed: the
-    //    real production default), so this rule is defined by direct reading of the unmodified source
-    //    (page.tsx's own JSX), not confirmed against this file's own render. Included for completeness and
-    //    correctness, not vacuously — a safe no-op against both renders here either way.
-    .replace('<div class="flex flex-col gap-6 lg:col-start-2 lg:row-start-4">', "")
+    // 5. The Ledger section's fragment-to-<div> change (StudentBalanceSummary + PaymentHistorySection), plus
+    //    the clipping-fix `lg:min-w-0 lg:[&>*]:min-w-0` (correction round 4) — only reachable when
+    //    `ledgerActive`, not exercised by this file's always-inactive fixture (confirmed: the real production
+    //    default), so this rule is defined by direct reading of the unmodified source (page.tsx's own JSX),
+    //    not confirmed against this file's own render. Included for completeness and correctness, not
+    //    vacuously — a safe no-op against both renders here either way.
+    .replace('<div class="flex flex-col gap-6 lg:col-start-2 lg:row-start-4 lg:min-w-0 lg:[&amp;&gt;*]:min-w-0">', "")
     // 6. RegenerateCodeButton's 1:1 positioning wrapper — opening tag unique; closing tag anchored by the
     //    AddAdjustmentForm wrapper's own opening tag, which always immediately follows it.
-    .replace('<div class="lg:col-start-1 lg:row-start-4">', "")
+    .replace('<div class="lg:col-start-1 lg:row-start-4 lg:min-w-0">', "")
     .replace(
-      '</div><div class="lg:col-start-1 lg:row-start-5">',
-      '<div class="lg:col-start-1 lg:row-start-5">',
+      '</div><div class="lg:col-start-1 lg:row-start-5 lg:min-w-0">',
+      '<div class="lg:col-start-1 lg:row-start-5 lg:min-w-0">',
     )
     // 7. AddAdjustmentForm's 1:1 positioning wrapper — opening tag unique; closing tag anchored by the gated
     //    action/form block's own opening tag, which always immediately follows it when `canEdit`.
-    .replace('<div class="lg:col-start-1 lg:row-start-5">', "")
+    .replace('<div class="lg:col-start-1 lg:row-start-5 lg:min-w-0">', "")
     .replace(
-      '</div><div class="flex flex-col gap-4 lg:col-span-2 lg:row-start-6">',
-      '<div class="flex flex-col gap-4 lg:col-span-2 lg:row-start-6">',
+      '</div><div class="flex flex-col gap-4 lg:col-span-2 lg:row-start-6 lg:min-w-0">',
+      '<div class="flex flex-col gap-4 lg:col-span-2 lg:row-start-6 lg:min-w-0">',
     )
-    // 8. The gated action/form block's own grid placement — appended after its existing base classes.
+    // 8. The gated action/form block's own grid placement + `lg:min-w-0` — appended after its existing base
+    //    classes.
     .replace(
-      '<div class="flex flex-col gap-4 lg:col-span-2 lg:row-start-6">',
+      '<div class="flex flex-col gap-4 lg:col-span-2 lg:row-start-6 lg:min-w-0">',
       '<div class="flex flex-col gap-4">',
     );
 }
@@ -416,14 +420,14 @@ describe("normalizeApprovedPhase4DetailDiffs — guard tests (prove the detail b
     const cardClassWith = (suffix: string) => `${CARD_CLASS.slice(0, -1)} ${suffix}"`;
     return [
       '<main class="flex flex-col gap-6 p-6 lg:grid lg:grid-cols-[3fr_2fr] lg:items-start lg:gap-6">',
-      '<div class="flex flex-wrap items-center justify-between gap-3 lg:col-span-2 lg:row-start-1"><h1>Ana Pérez</h1></div>',
-      '<div class="lg:col-start-1 lg:row-start-2"><div data-slot="card"><div>Promociones content</div></div></div>',
-      `<div data-slot="card" data-size="default" ${cardClassWith("lg:col-start-2 lg:row-start-2")}><dd>8888 1111</dd></div>`,
-      `<div data-slot="card" data-size="default" ${cardClassWith("lg:col-start-1 lg:row-start-3")}><div>Attendance content</div></div>`,
-      `<div data-slot="card" data-size="default" ${cardClassWith("lg:col-start-2 lg:row-start-3")}><td>Paid</td></div>`,
-      '<div class="lg:col-start-1 lg:row-start-4"><button>Regenerate</button></div>',
-      '<div class="lg:col-start-1 lg:row-start-5"><details><summary>Add adjustment</summary></details></div>',
-      '<div class="flex flex-col gap-4 lg:col-span-2 lg:row-start-6"><button>Edit</button></div>',
+      '<div class="flex flex-wrap items-center justify-between gap-3 lg:col-span-2 lg:row-start-1 lg:min-w-0"><h1>Ana Pérez</h1></div>',
+      '<div class="lg:col-start-1 lg:row-start-2 lg:min-w-0"><div data-slot="card"><div>Promociones content</div></div></div>',
+      `<div data-slot="card" data-size="default" ${cardClassWith("lg:col-start-2 lg:row-start-2 lg:min-w-0")}><dd>8888 1111</dd></div>`,
+      `<div data-slot="card" data-size="default" ${cardClassWith("lg:col-start-1 lg:row-start-3 lg:min-w-0")}><div>Attendance content</div></div>`,
+      `<div data-slot="card" data-size="default" ${cardClassWith("lg:col-start-2 lg:row-start-3 lg:min-w-0")}><td>Paid</td></div>`,
+      '<div class="lg:col-start-1 lg:row-start-4 lg:min-w-0"><button>Regenerate</button></div>',
+      '<div class="lg:col-start-1 lg:row-start-5 lg:min-w-0"><details><summary>Add adjustment</summary></details></div>',
+      '<div class="flex flex-col gap-4 lg:col-span-2 lg:row-start-6 lg:min-w-0"><button>Edit</button></div>',
       "</main>",
     ].join("");
   }
@@ -439,7 +443,7 @@ describe("normalizeApprovedPhase4DetailDiffs — guard tests (prove the detail b
 
   it("REQUIRED: a missing section still fails after normalization — not masked", () => {
     const corrupted = currentDetailWithApprovedDiffsOnly().replace(
-      '<div class="lg:col-start-1 lg:row-start-5"><details><summary>Add adjustment</summary></details></div>',
+      '<div class="lg:col-start-1 lg:row-start-5 lg:min-w-0"><details><summary>Add adjustment</summary></details></div>',
       "",
     );
     expect(normalizeApprovedPhase4DetailDiffs(corrupted)).not.toBe(BASELINE_DETAIL);

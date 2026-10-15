@@ -281,7 +281,7 @@ export default async function StudentDetailPage({
     // an inherent CSS Grid characteristic of this technique, not fixed by any one property) — a real, measured,
     // disclosed limitation (see the verification README's "Row-height coupling" section), not hidden.
     <main className="flex flex-col gap-6 p-6 lg:grid lg:grid-cols-[3fr_2fr] lg:items-start lg:gap-6">
-      <div className="flex flex-wrap items-center justify-between gap-3 lg:col-span-2 lg:row-start-1">
+      <div className="flex flex-wrap items-center justify-between gap-3 lg:col-span-2 lg:row-start-1 lg:min-w-0">
         <div>
           <h1 className="text-2xl font-bold">
             {student.firstName} {student.lastName}
@@ -300,7 +300,7 @@ export default async function StudentDetailPage({
           dashboard queue and Phase 4's future flows will share. */}
       {/* PromocionesCard itself takes no className — a thin 1:1 positioning wrapper carries the grid
           placement instead, per the Phase 4 detail-correction plan. */}
-      <div className="lg:col-start-1 lg:row-start-2">
+      <div className="lg:col-start-1 lg:row-start-2 lg:min-w-0">
         <PromocionesCard
           organizationId={context.organizationId}
           studentId={student.id}
@@ -328,7 +328,7 @@ export default async function StudentDetailPage({
         />
       </div>
 
-      <Card className="lg:col-start-2 lg:row-start-2">
+      <Card className="lg:col-start-2 lg:row-start-2 lg:min-w-0">
         <CardHeader>
           <CardTitle>{tDetail("profile.heading")}</CardTitle>
         </CardHeader>
@@ -380,7 +380,7 @@ export default async function StudentDetailPage({
 
       {/* The latest attendance entries with the ADMIN/DIRECTOR correction control (void a mistaken entry).
           Deliberately small: not the full accessible attendance history, which is separate work. */}
-      <Card className="lg:col-start-1 lg:row-start-3">
+      <Card className="lg:col-start-1 lg:row-start-3 lg:min-w-0">
         <CardHeader>
           <CardTitle>{tDetail("attendanceHistory.heading")}</CardTitle>
         </CardHeader>
@@ -391,7 +391,7 @@ export default async function StudentDetailPage({
       {/* Real data as of Task 2 — every PaymentPeriod row for this student,
           newest first, same "replace comingLater with a real list + empty
           state" shape as promotionHistory above. */}
-      <Card className="lg:col-start-2 lg:row-start-3">
+      <Card className="lg:col-start-2 lg:row-start-3 lg:min-w-0">
         <CardHeader>
           <CardTitle>{tDetail("paymentHistory.heading")}</CardTitle>
         </CardHeader>
@@ -438,8 +438,14 @@ export default async function StudentDetailPage({
           Wrapped in one <div> only because its two already-DOM-adjacent, already-conditionally-grouped children
           (the fragment they replace) can't carry a grid placement themselves — not a new grouping of otherwise
           unrelated siblings. Still legacy-above/ledger-below, still two distinct components, never interleaved. */}
+      {/* `lg:min-w-0` here AND on its own children (`[&>*]:min-w-0`): a long, non-wrapping ledger-history row
+          (e.g. a settlement's "Covers" value) otherwise sets this grid item's automatic minimum width to its
+          own min-content, which can overflow the 2fr column track — silently clipped by an ancestor
+          `overflow-hidden` with zero document-level overflow signal, found live against a 26-month fixture. The
+          DataTable's own pre-existing `overflow-x-auto` wrapper (data-table.tsx) is what should handle a wide
+          table; min-w-0 here just stops this item itself from reasserting a wider auto-minimum above it. */}
       {ledgerActive && (
-        <div className="flex flex-col gap-6 lg:col-start-2 lg:row-start-4">
+        <div className="flex flex-col gap-6 lg:col-start-2 lg:row-start-4 lg:min-w-0 lg:[&>*]:min-w-0">
           <StudentBalanceSummary display={balanceDisplay} pendingReceipts={pendingReceipts} locale={locale} t={t} />
           <PaymentHistorySection
             organizationId={context.organizationId}
@@ -456,7 +462,7 @@ export default async function StudentDetailPage({
           Grouped with AddAdjustmentForm (its DOM-adjacent neighbor) in the left column rather than with Profile
           on the right, specifically to avoid a cross-column backward keyboard-focus jump — see the Phase 4
           detail-correction plan's keyboard-sequence analysis. */}
-      <div className="lg:col-start-1 lg:row-start-4">
+      <div className="lg:col-start-1 lg:row-start-4 lg:min-w-0">
         <RegenerateCodeButton organizationId={context.organizationId} studentId={student.id} />
       </div>
 
@@ -465,7 +471,7 @@ export default async function StudentDetailPage({
           canEdit gate below, which is ADMIN/DIRECTOR only. The server-side
           addAttendanceAdjustment is the real enforcement either way.
           AddAdjustmentForm takes no className — a thin 1:1 positioning wrapper carries the grid placement. */}
-      <div className="lg:col-start-1 lg:row-start-5">
+      <div className="lg:col-start-1 lg:row-start-5 lg:min-w-0">
         <AddAdjustmentForm
           organizationId={context.organizationId}
           studentId={student.id}
@@ -475,7 +481,7 @@ export default async function StudentDetailPage({
       </div>
 
       {canEdit && (
-        <div className="flex flex-col gap-4 lg:col-span-2 lg:row-start-6">
+        <div className="flex flex-col gap-4 lg:col-span-2 lg:row-start-6 lg:min-w-0">
           {/* Only a PENDING student can be approved — the server action
               re-asserts that precondition itself; this just avoids offering
               a button that would always fail. */}
