@@ -19,6 +19,27 @@ function monthKeyOf(iso: string): string {
   return `${dt.year}-${dt.month}`;
 }
 
+/** One stat cell: a short label over the real number, or the full existing unavailable sentence in its place -
+ * never a false zero. `sentence` carries the exact same copy `monthStatText`/`t("total", ...)` already produce,
+ * read by screen readers via the `sr-only` mirror when a number renders, or shown visibly when it can't. */
+function StatCell({ label, ok, value, sentence }: { label: string; ok: boolean; value: number | null; sentence: string }) {
+  return (
+    <div className="flex flex-1 flex-col gap-0.5 p-3 min-w-0">
+      <p className="text-xs text-muted-foreground">{label}</p>
+      {ok ? (
+        <>
+          <p aria-hidden="true" className="text-2xl font-semibold tabular-nums whitespace-nowrap">
+            {value}
+          </p>
+          <span className="sr-only">{sentence}</span>
+        </>
+      ) : (
+        <p className="text-xs text-muted-foreground">{sentence}</p>
+      )}
+    </div>
+  );
+}
+
 /**
  * The student's attendance history as its own section: a DEFINED total (check-ins + staff-added days + any legacy
  * adjustments, from the whole ledger - never the length of what is loaded), the entries grouped by month newest
@@ -122,13 +143,26 @@ export function AttendanceHistorySection({
             <EmptyState message={t("empty")} />
           ) : (
             <>
-              <div className="flex flex-wrap gap-4 text-sm" data-testid="attendance-month-stats">
-                <p className={monthlyStats.thisMonth.ok ? "font-medium" : "text-muted-foreground"}>{monthStatText(monthlyStats.thisMonth, "thisMonth")}</p>
-                <p className={monthlyStats.lastMonth.ok ? "font-medium" : "text-muted-foreground"}>{monthStatText(monthlyStats.lastMonth, "lastMonth")}</p>
+              <div
+                className="flex flex-col divide-y divide-border rounded-lg border border-border bg-card overflow-hidden sm:flex-row sm:divide-x sm:divide-y-0"
+                data-testid="attendance-month-stats"
+              >
+                <StatCell
+                  label={t("monthStats.thisMonthLabel")}
+                  ok={monthlyStats.thisMonth.ok}
+                  value={monthlyStats.thisMonth.ok ? monthlyStats.thisMonth.totals.total : null}
+                  sentence={monthStatText(monthlyStats.thisMonth, "thisMonth")}
+                />
+                <StatCell
+                  label={t("monthStats.lastMonthLabel")}
+                  ok={monthlyStats.lastMonth.ok}
+                  value={monthlyStats.lastMonth.ok ? monthlyStats.lastMonth.totals.total : null}
+                  sentence={monthStatText(monthlyStats.lastMonth, "lastMonth")}
+                />
+                <StatCell label={t("monthStats.allTimeLabel")} ok={true} value={totals.total} sentence={t("total", { count: totals.total })} />
               </div>
 
               <div className="flex flex-col gap-0.5 text-sm">
-                <p className="font-medium">{t("total", { count: totals.total })}</p>
                 <p className="text-muted-foreground">
                   {t("breakdown", { checkIns: totals.checkIns, staffDays: totals.staffDays })}
                 </p>
@@ -142,34 +176,55 @@ export function AttendanceHistorySection({
               </div>
 
               <div ref={groupsRef} className="flex flex-col gap-3">
-                {monthGroups.map((group) => (
-                  <div key={group.key} className="flex flex-col gap-1">
-                    {monthGroups.length > 1 && <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{group.label}</p>}
-                    <ul aria-label={t("listLabel")} className="flex flex-col divide-y divide-border">
-                      {group.rows.map((row) => (
-                        <li
-                          key={row.id}
-                          data-row-id={row.id}
-                          tabIndex={-1}
-                          className="flex flex-col gap-0.5 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                        >
-                          <div className="flex items-center justify-between gap-2">
-                            <time dateTime={row.iso} className="font-medium tabular-nums">
+                {monthGroups.map((group, groupIndex) => {
+                  // A group's row count is the true, whole-month count with zero new reads as long as it is
+                  // CLOSED (not the last/oldest rendered group) - pagination is strictly (occurredAt DESC, id
+                  // DESC), so once grouping has moved past a month into an older one, no later page can ever
+                  // reveal more rows of that now-closed month. The still-open last group is exact only once
+                  // `cursor` is null (the whole ledger has been paged through) - never guessed before that.
+                  const isLastGroup = groupIndex === monthGroups.length - 1;
+                  const countKnown = !isLastGroup || cursor === null;
+                  return (
+                    <div key={group.key} className="flex flex-col gap-1 rounded-lg border border-border p-3">
+                      {monthGroups.length > 1 && (
+                        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                          <span>{group.label}</span>
+                          {countKnown && (
+                            <span className="ml-1 normal-case font-normal tracking-normal text-muted-foreground">
+                              {" "}
+                              · {t("monthRecords", { count: group.rows.length })}
+                            </span>
+                          )}
+                        </p>
+                      )}
+                      <ul aria-label={t("listLabel")} className="flex flex-col divide-y divide-border">
+                        {group.rows.map((row) => (
+                          <li
+                            key={row.id}
+                            data-row-id={row.id}
+                            tabIndex={-1}
+                            className="flex items-start gap-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                          >
+                            <time dateTime={row.iso} className="w-24 shrink-0 font-medium tabular-nums">
                               {row.whenLabel}
                             </time>
-                            <span className="tabular-nums" aria-label={`${row.delta > 0 ? "+" : ""}${row.delta}`}>
-                              {row.delta > 0 ? `+${row.delta}` : row.delta}
-                            </span>
-                          </div>
-                          <span className="text-muted-foreground">
-                            {row.className ? `${t(`kind.${row.kind}`)} · ${row.className}` : t(`kind.${row.kind}`)}
-                          </span>
-                          {row.reason && <span className="text-muted-foreground italic">{row.reason}</span>}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                ))}
+                            <div className="flex min-w-0 flex-1 items-start justify-between gap-2">
+                              <div className="flex min-w-0 flex-col gap-0.5">
+                                <span className="text-muted-foreground">
+                                  {row.className ? `${t(`kind.${row.kind}`)} · ${row.className}` : t(`kind.${row.kind}`)}
+                                </span>
+                                {row.reason && <span className="text-muted-foreground italic">{row.reason}</span>}
+                              </div>
+                              <span className="tabular-nums shrink-0" aria-label={`${row.delta > 0 ? "+" : ""}${row.delta}`}>
+                                {row.delta > 0 ? `+${row.delta}` : row.delta}
+                              </span>
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  );
+                })}
               </div>
 
               <p role="status" aria-live="polite" className="sr-only">
