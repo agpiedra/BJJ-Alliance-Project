@@ -267,8 +267,21 @@ export default async function StudentDetailPage({
   }));
 
   return (
-    <main className="flex flex-col gap-6 p-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
+    // Phase 4 detail correction: a page-local CSS grid, applied only at `lg` (1024px) and up — below that,
+    // this stays the exact `flex flex-col` single-column layout it has always been, same DOM order, same
+    // reading/keyboard order. Every section below is still a direct, flat child of <main> (a thin 1:1
+    // positioning <div> wraps the few subcomponents that don't accept their own className — PromocionesCard,
+    // RegenerateCodeButton, AddAdjustmentForm — never grouping multiple unrelated siblings together); only
+    // `lg:col-start-*`/`lg:row-start-*` on each one changes where it PAINTS, never the DOM/tab sequence.
+    // `lg:items-start` overrides CSS Grid's default `align-items: stretch` — without it, a short right-column
+    // card (e.g. Profile, or an empty Legacy Payment History) stretches its own background/border to match a
+    // much taller same-row left-column item (e.g. Promotions, or a long Attendance history), rendering as a
+    // mostly-empty card. `items-start` stops that: each card sizes to its own content and sits at the top of
+    // its row. This does NOT eliminate the row's own height (still set by the tallest item in that row index —
+    // an inherent CSS Grid characteristic of this technique, not fixed by any one property) — a real, measured,
+    // disclosed limitation (see the verification README's "Row-height coupling" section), not hidden.
+    <main className="flex flex-col gap-6 p-6 lg:grid lg:grid-cols-[3fr_2fr] lg:items-start lg:gap-6">
+      <div className="flex flex-wrap items-center justify-between gap-3 lg:col-span-2 lg:row-start-1">
         <div>
           <h1 className="text-2xl font-bold">
             {student.firstName} {student.lastName}
@@ -285,33 +298,37 @@ export default async function StudentDetailPage({
           only) the award button and manual-correction form, both thin
           wrappers around the SAME `awardPromotion`/`correctPromotion` the
           dashboard queue and Phase 4's future flows will share. */}
-      <PromocionesCard
-        organizationId={context.organizationId}
-        studentId={student.id}
-        belt={currentBeltVisual}
-        label={currentBeltLabel}
-        currentStripes={student.currentStripes}
-        maxStripes={summary.maxStripes}
-        lifetimeCount={summary.lifetimeCount}
-        view={cardView}
-        dueDateFormatted={dueDateFormatted}
-        reachedOnFormatted={reachedOnFormatted}
-        history={promocionesHistory}
-        creditHistory={creditHistory}
-        canAct={canEdit}
-        rankOptions={rankOptions}
-        trackChange={
-          canEdit
-            ? {
-                rankOptions: trackChangeRankOptions,
-                defaultRankId: defaultTrackChangeRankId,
-                isTransition: isTrackTransitionAge,
-              }
-            : null
-        }
-      />
+      {/* PromocionesCard itself takes no className — a thin 1:1 positioning wrapper carries the grid
+          placement instead, per the Phase 4 detail-correction plan. */}
+      <div className="lg:col-start-1 lg:row-start-2">
+        <PromocionesCard
+          organizationId={context.organizationId}
+          studentId={student.id}
+          belt={currentBeltVisual}
+          label={currentBeltLabel}
+          currentStripes={student.currentStripes}
+          maxStripes={summary.maxStripes}
+          lifetimeCount={summary.lifetimeCount}
+          view={cardView}
+          dueDateFormatted={dueDateFormatted}
+          reachedOnFormatted={reachedOnFormatted}
+          history={promocionesHistory}
+          creditHistory={creditHistory}
+          canAct={canEdit}
+          rankOptions={rankOptions}
+          trackChange={
+            canEdit
+              ? {
+                  rankOptions: trackChangeRankOptions,
+                  defaultRankId: defaultTrackChangeRankId,
+                  isTransition: isTrackTransitionAge,
+                }
+              : null
+          }
+        />
+      </div>
 
-      <Card>
+      <Card className="lg:col-start-2 lg:row-start-2">
         <CardHeader>
           <CardTitle>{tDetail("profile.heading")}</CardTitle>
         </CardHeader>
@@ -363,7 +380,7 @@ export default async function StudentDetailPage({
 
       {/* The latest attendance entries with the ADMIN/DIRECTOR correction control (void a mistaken entry).
           Deliberately small: not the full accessible attendance history, which is separate work. */}
-      <Card>
+      <Card className="lg:col-start-1 lg:row-start-3">
         <CardHeader>
           <CardTitle>{tDetail("attendanceHistory.heading")}</CardTitle>
         </CardHeader>
@@ -374,7 +391,7 @@ export default async function StudentDetailPage({
       {/* Real data as of Task 2 — every PaymentPeriod row for this student,
           newest first, same "replace comingLater with a real list + empty
           state" shape as promotionHistory above. */}
-      <Card>
+      <Card className="lg:col-start-2 lg:row-start-3">
         <CardHeader>
           <CardTitle>{tDetail("paymentHistory.heading")}</CardTitle>
         </CardHeader>
@@ -417,9 +434,12 @@ export default async function StudentDetailPage({
       </Card>
 
       {/* §3 decision 2/3 (approved): a NEW current-balance summary + a SEPARATE ledger-history section, alongside
-          the legacy table above, never interleaved into it — only rendered once the ledger is active for this org. */}
+          the legacy table above, never interleaved into it — only rendered once the ledger is active for this org.
+          Wrapped in one <div> only because its two already-DOM-adjacent, already-conditionally-grouped children
+          (the fragment they replace) can't carry a grid placement themselves — not a new grouping of otherwise
+          unrelated siblings. Still legacy-above/ledger-below, still two distinct components, never interleaved. */}
       {ledgerActive && (
-        <>
+        <div className="flex flex-col gap-6 lg:col-start-2 lg:row-start-4">
           <StudentBalanceSummary display={balanceDisplay} pendingReceipts={pendingReceipts} locale={locale} t={t} />
           <PaymentHistorySection
             organizationId={context.organizationId}
@@ -429,24 +449,33 @@ export default async function StudentDetailPage({
             initialFailed={historyInitial.failed}
             locale={locale}
           />
-        </>
+        </div>
       )}
 
-      <RegenerateCodeButton organizationId={context.organizationId} studentId={student.id} />
+      {/* RegenerateCodeButton takes no className — a thin 1:1 positioning wrapper carries the grid placement.
+          Grouped with AddAdjustmentForm (its DOM-adjacent neighbor) in the left column rather than with Profile
+          on the right, specifically to avoid a cross-column backward keyboard-focus jump — see the Phase 4
+          detail-correction plan's keyboard-sequence analysis. */}
+      <div className="lg:col-start-1 lg:row-start-4">
+        <RegenerateCodeButton organizationId={context.organizationId} studentId={student.id} />
+      </div>
 
       {/* Any staff role can add an adjustment (spec §3 grants attendance
           marking/correction to INSTRUCTOR too) — deliberately NOT inside the
           canEdit gate below, which is ADMIN/DIRECTOR only. The server-side
-          addAttendanceAdjustment is the real enforcement either way. */}
-      <AddAdjustmentForm
-        organizationId={context.organizationId}
-        studentId={student.id}
-        todayCr={todayCr}
-        accounting={summary.accounting}
-      />
+          addAttendanceAdjustment is the real enforcement either way.
+          AddAdjustmentForm takes no className — a thin 1:1 positioning wrapper carries the grid placement. */}
+      <div className="lg:col-start-1 lg:row-start-5">
+        <AddAdjustmentForm
+          organizationId={context.organizationId}
+          studentId={student.id}
+          todayCr={todayCr}
+          accounting={summary.accounting}
+        />
+      </div>
 
       {canEdit && (
-        <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-4 lg:col-span-2 lg:row-start-6">
           {/* Only a PENDING student can be approved — the server action
               re-asserts that precondition itself; this just avoids offering
               a button that would always fail. */}
