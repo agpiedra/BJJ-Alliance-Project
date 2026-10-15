@@ -5,41 +5,52 @@ README.md`). Verified against the actual running app (`pnpm dev`), not the stati
 reference remains the approved direction this corrects toward, not evidence of this PR's own behavior.
 Student-detail only; roster (list) is untouched (already corrected and merged, PR #124).
 
-**Verification-correction rounds (four so far).** Round 2 corrected the EVIDENCE: replaced a condensed/
+**Verification-correction rounds (five so far).** Round 2 corrected the EVIDENCE: replaced a condensed/
 reconstructed Ledger harness with the complete actual page output, added a real keyboard `Tab`-press session
 against it, reassessed row-height coupling against realistic populated data (removing "accepted characteristic"
 wording — it was never accepted). Round 3 investigated screenshot 17's cut-off "Covers" column (a real,
 previously unreported clipping bug, root-caused and a fix verified but NOT yet applied), built one disposable
 CSS multi-column layout experiment that eliminates the row-height-coupling gaps (measured, not implemented),
-and removed unsupported usability-verdict wording ("not visually jarring/confusing"). **Round 4 (this round) is
-the first to change production code**: applied the verified `min-width: 0` clipping fix to `src/app/[locale]/
-(staff)/students/[id]/page.tsx` (confirmed reachable at desktop AND narrow widths), ran one bounded check on
-the multi-column experiment (disclosures expanded, Ledger history large — no column switch, no fragmentation),
-and did not adopt multi-column — see "Recommendation" below. See "Row-height coupling," "Screenshot 17's cut-off
-'Covers' column," "Layout experiment: CSS multi-column," "Recommendation," and "Real keyboard traversal" below
-for what changed in each round specifically.
+and removed unsupported usability-verdict wording ("not visually jarring/confusing"). Round 4 was the first to
+change production code: applied the verified `min-width: 0` clipping fix, ran one bounded check on the
+multi-column experiment (no column switch, no fragmentation), and recommended keeping the shared-row grid over
+either alternative. **Round 5 (this round): the user explicitly approved Option B — independent 3:2 desktop
+columns — overriding round 4's own recommendation.** The shared-row CSS Grid is replaced entirely; sections 44
+through 322 below (Row-height coupling, Screenshot 17 clipping as a GRID phenomenon, the multi-column
+experiment, and the round-4 Recommendation) are preserved as HISTORICAL investigation record, superseded by
+"## Round 5 — Option B adopted: independent 3:2 columns," the current, actual implementation.
 
-## What changed
+## What changed (current, round 5)
 
-`src/app/[locale]/(staff)/students/[id]/page.tsx` only — every section stays a flat, DOM-order child of
-`<main>`, nothing reordered:
+`src/app/[locale]/(staff)/students/[id]/page.tsx` only:
 
-1. `<main>` gains `lg:grid lg:grid-cols-[3fr_2fr] lg:items-start lg:gap-6` (below `lg`/1024px, unchanged
-   `flex flex-col` single-column stacking).
-2. Each of the 9 top-level sections gains an explicit `lg:col-start-N lg:row-start-N` (or `lg:col-span-2`),
-   exactly per the plan's table. `PromocionesCard`, `RegenerateCodeButton`, and `AddAdjustmentForm` (which take
-   no `className`) are each wrapped in a thin 1:1 positioning `<div>` — no subcomponent edited.
-3. The Ledger section's `<>...</>` fragment (`StudentBalanceSummary` + `PaymentHistorySection`) becomes a
-   `<div className="flex flex-col gap-6 lg:col-start-2 lg:row-start-4">` so it can carry a grid position — wraps
-   only its own two already-DOM-adjacent children, not an artificial grouping of unrelated siblings.
-4. **Added during verification, not in the original plan**: `lg:items-start` on `<main>`. See "Row-height
-   coupling — reassessed with realistic populated data, not resolved, not accepted" below.
-5. **Added in round 4**: `lg:min-w-0` on all 7 row-placed grid items plus the header/gated-block spans, and
-   `lg:[&>*]:min-w-0` on the Ledger wrapper's own two children — the verified clipping fix. See "Screenshot 17's
-   cut-off 'Covers' column" below.
+1. `<main>` is plain `flex flex-col gap-6 p-6` — no grid classes on `<main>` itself anymore.
+2. A single new wrapper div carries the two-column layout: `flex flex-col gap-6 lg:grid lg:grid-cols-[3fr_2fr]
+   lg:items-start lg:gap-6`, containing exactly two children — a LEFT column `<div className="flex flex-col
+   gap-6 lg:min-w-0">` (Promotions → Attendance → RegenerateCode → AddAdjustment) and a RIGHT column, same
+   classes (Profile → Legacy → Ledger when active). Below `lg`, this wrapper and both columns are plain
+   `flex flex-col`, so everything stacks in that same DOM order — no separate mobile-specific code.
+3. This is a genuine, APPROVED DOM reorder (see "Round 5" below for the full approved sequence and rationale)
+   — a change from every round 1-4 attempt, which all deliberately preserved the pre-existing flat DOM order.
+4. `PromocionesCard`, `RegenerateCodeButton`, and `AddAdjustmentForm` (which take no `className`) are each
+   wrapped in a thin 1:1 sizing `<div className="lg:min-w-0">` — no subcomponent edited.
+5. `lg:min-w-0` (round 4's verified clipping fix, retained) on both column wrappers, plus `lg:[&>*]:min-w-0`
+   on the Ledger wrapper's own two children.
 
 No subcomponent file is touched. No field, condition, role gate, branch restriction, financial state, or
-workflow changed.
+workflow changed. See "## Round 5 — Option B adopted" below for the full implementation detail, and the
+historical sections immediately following this one for rounds 1-4's now-superseded grid technique.
+
+## ⚠ HISTORICAL (rounds 1-4): the grid/multi-column investigation below is superseded
+
+**Everything from here through "## Recommendation" documents the shared-row CSS Grid technique (rounds 1-4)
+and the CSS multi-column experiment that was investigated but not adopted.** Round 5 (explicitly approved by
+the user as "Option B") REPLACES the shared-row grid entirely with two independent column containers — see
+"## Round 5 — Option B adopted: independent 3:2 columns" below for the current, actual implementation. This
+historical record is preserved in full, per instruction, not deleted — it documents real investigation work
+(the row-height-coupling measurement, the clipping-bug root-cause, the multi-column experiment's real
+tradeoffs) that informed the final approved decision. **None of it describes `src/app/[locale]/(staff)/
+students/[id]/page.tsx`'s current structure.**
 
 ## Row-height coupling — reassessed with realistic populated data, not resolved, not accepted
 
@@ -310,6 +321,156 @@ row-height gap is later judged materially unacceptable, independent 3:2 columns 
 candidate most consistent with the approved design, and its exact mobile/keyboard sequence is traced above —
 but that is a decision for explicit approval, not made here.
 
+## Round 5 — Option B adopted: independent 3:2 columns (explicitly approved, supersedes the round-4 recommendation)
+
+**The user explicitly approved Option B** — independent 3:2 desktop columns, replacing the shared-row grid
+entirely, overriding round 4's own recommendation to keep the grid. Explicitly NOT CSS multi-column (the round-
+4 experiment) — a genuinely different technique: two separate column containers, each sized purely to its own
+content, with no shared row tracks of any kind.
+
+### Approved arrangement, implemented exactly
+
+- **Left column**: Promotions → Attendance history → Regenerate code → Add an attendance adjustment.
+- **Right column**: Profile → Legacy payment history → Ledger balance/history (when `ledgerActive`).
+- **Header** above both columns, full width. **Gated action/form block** below both columns, full width.
+- **Approved DOM/mobile/keyboard order** (a genuine, approved change from every prior round's order): Header →
+  Promotions → Attendance history → Regenerate code → Add an attendance adjustment → Profile → Legacy payment
+  history → Ledger (when active) → gated actions.
+
+### Exact structure
+
+`src/app/[locale]/(staff)/students/[id]/page.tsx` only. `<main>` is plain `flex flex-col gap-6 p-6` (no grid
+classes at all now). A single new wrapper div carries the two-column layout:
+
+```
+<div className="flex flex-col gap-6 lg:grid lg:grid-cols-[3fr_2fr] lg:items-start lg:gap-6">
+  <div className="flex flex-col gap-6 lg:min-w-0">   {/* left column */}
+    {/* Promotions, Attendance, RegenerateCode, AddAdjustment, each a direct flex child */}
+  </div>
+  <div className="flex flex-col gap-6 lg:min-w-0">   {/* right column */}
+    {/* Profile, Legacy, Ledger (conditional), each a direct flex child */}
+  </div>
+</div>
+```
+
+Below `lg` (1024px), this whole wrapper is just a `flex flex-col` (no grid), so it — and both columns inside
+it, which are ALSO always `flex flex-col` — collapse into one single-column stack in exact DOM order: the
+approved mobile sequence above, with zero extra code needed for mobile (the column wrappers never change
+their own internal layout between widths, only the OUTER wrapper switches between stacked and 2-column).
+
+`lg:items-start` on the two-column wrapper stops CSS Grid's default `stretch` from forcing the shorter
+column's own wrapper div taller to match the other (the wrapper has no visible border/background, so this
+would have been invisible anyway, but is included for correctness). `lg:min-w-0` on both column wrappers is
+the SAME verified clipping fix from round 4 — still required, because the two columns are still, structurally,
+the two children of a CSS Grid container, and a long non-wrapping Ledger cell can still force a column wider
+than its track share without it. PromocionesCard/RegenerateCodeButton/AddAdjustmentForm (which take no
+`className`) are each wrapped in a thin 1:1 sizing `<div className="lg:min-w-0">` — no `col-start`/`row-start`
+classes exist anywhere anymore, since position is now purely a function of DOM order within each column.
+
+### Desktop (1280px) — measured: genuinely independent column heights, zero shared-row gaps
+
+Confirmed via computed style on the real running app (Patricia Elizondo, populated, no Ledger):
+`grid-template-columns: 562px 374.667px` (exactly 60/40, matching 3fr/2fr). Left column height: **2663px**
+(Promotions+Attendance+RegenerateCode+AddAdjustment). Right column height: **547px**
+(Profile+Legacy, "No payment records yet."). These are genuinely, independently sized — the right column is
+NOT stretched, padded, or coupled to the left column's height in any way; no blank-space gap exists because
+there is no shared row track left to create one. No page overflow (`scrollWidth` 1265 ≤ `innerWidth` 1280).
+Screenshot 23.
+
+### Narrow widths (390px/320px) — approved order confirmed directly, no overflow
+
+At 390px: `getComputedStyle(main).display` is `flex`, the two-column wrapper is ALSO `flex` (not `grid`) —
+confirmed directly, not assumed. DOM/visual order read directly: Header → Promotions → Attendance history →
+Regenerate code → Add an attendance day → Profile → Payment history (legacy) → gated actions — **exactly the
+approved sequence**, `top` monotonically increasing. No overflow (`scrollWidth` 375 ≤ 390). Screenshot 24. At
+320px: no overflow (`scrollWidth` 305 ≤ 320). Screenshot 25.
+
+### Breakpoint transition, measured exactly at 1024px
+
+| Width | Two-column wrapper `display` | Page overflow |
+|---|---|---|
+| 1000px | `flex` | No (`scrollWidth` 985 ≤ `innerWidth` 1000) |
+| 1024px | `grid` | No (`scrollWidth` 1009 ≤ `innerWidth` 1024) |
+
+Clean switch exactly at the breakpoint, no half-collapsed state. Screenshot 36 (1000px).
+
+### Expanded-form and validation-error states — full-width gated block preserved, form's own internal limit unchanged
+
+Expanding `EditStudentForm` ("Edit student"): the GATED BLOCK's own container measures **961px** — full width,
+matching the two-column row's own total width (also 961px) exactly, confirmed via computed style. The
+`<form>` ELEMENT ITSELF measures 384px — this is NOT a regression: `edit-student-form.tsx:58`'s own
+`className="mt-4 flex w-full max-w-sm flex-col gap-3"` has ALWAYS capped the form at `max-w-sm` (384px),
+independent of any layout round's work — "full-width gated block" means the BLOCK is full-width, never that
+this pre-existing internal form limit should be removed. Screenshot 26. A real server-side validation error
+("Guardian name and phone are required for students under 18.") was triggered live (set a DOB making the
+student a minor, left guardian fields blank, submitted) — renders inline, full-width, legible. Screenshot 27.
+
+### Dark theme and Spanish locale — representative coverage, unaffected by the column change
+
+Dark theme (live, via the `dark` class): correct contrast/tokens, independent column heights hold identically.
+Screenshot 28. Spanish locale: "Promociones"/"Historial de asistencia"/"Perfil"/"Historial de pagos" all
+translated correctly, column technique unaffected by locale. Screenshot 29.
+
+### Real keyboard traversal — the common case (no cross-column jump) and the Ledger-active case (a real jump, through two native scrollable-region stops)
+
+**Common case** (Patricia, no Ledger — right column has ZERO focusable elements: Profile has no inputs, Legacy
+shows "No payment records yet." with no controls): focused "Add an attendance day" (left column, last
+control, x=297) and pressed a real `Tab` key — landed directly on "Edit student" (gated block, x=297, same
+column, monotonically increasing Y) with a real, visible `outline: solid 2px` focus ring. No cross-column jump
+occurs in this common case, exactly as in every prior round's grid-based measurement.
+
+**Ledger-active case** (the complete actual-page harness — round 5's own fresh extraction, realistic 26-
+settled-month fixture, same technique as every prior round, never a live production route): the right column's
+ONLY focusable control is still `PaymentHistorySection`'s conditional "Load more" button. Focused "Add an
+attendance day" (left column) and pressed real `Tab` three times:
+```
+Add an attendance day (x=297) → Tab → [Legacy table's own scrollable region, x=883] → Tab →
+[Ledger table's own scrollable region, x=883] → Tab → Load more (x=883)
+```
+**New finding, previously unobserved**: Chromium inserts TWO extra stops of its own into the Tab sequence —
+the Legacy and Ledger payment-history tables' own `overflow-x-auto` wrapper `<div>`s, which Chromium makes
+natively, implicitly focusable (confirmed `tabIndex: -1` yet genuinely reachable via `Tab`) whenever a
+horizontally-scrollable region has real overflow, specifically so a keyboard user can scroll it. This is
+standard, pre-existing Chromium accessibility behavior for scrollable overflow containers — not a component
+this PR added, and not specific to the new column structure (the SAME `overflow-x-auto` divs existed in every
+prior round too) — simply not previously traced with a real `Tab` session against content wide enough to
+genuinely overflow. Every stop showed a real, visible `outline: solid 2px` focus ring, and Chromium correctly
+auto-scrolled the page to each one. The cross-column jump (left → right) is CONFIRMED REAL here, with real
+Tab presses, not assumed. Screenshots 30 (final "Load more" focus), 31 (full page, 1280px), 32 (390px, no
+overflow).
+
+### Three distinct cards, still never merged — confirmed again against the new structure
+
+Legacy "Payment history" and the new "Current balance"/"Ledger payment history" cards render as **three
+separate, distinct cards** inside the right column, in that exact order, never merged or interleaved —
+confirmed directly against the round-5 harness. The legacy "Record a payment" toggle remains correctly absent
+when `ledgerActive`.
+
+### Empty, archived, and INSTRUCTOR-role states — real actions, real roles
+
+A genuinely new student was created via the real Create-student form (`VerifyEmptyR5 DetailTest`) — "No
+promotions yet."-equivalent empty states throughout, both columns naturally short and independently sized, no
+stretching (screenshot 33). The same student was then really archived via the real Archive action — "Archived"
+badge, `ArchivedStudentActions`'s "Restore student" button, full-width gated block (screenshot 34). A separate,
+real INSTRUCTOR login (`instructor@test.com`) against a real Escazú-homed student confirmed: `<main>` has
+exactly 2 children (header + two-column row) — the gated block is correctly absent entirely; RegenerateCode
+and AddAdjustment remain visible (ungated, as required) — screenshot 35.
+
+### Min-width:0 clipping fix — retained, re-verified against the new structure
+
+The Ledger payment-history table's Covers column is reachable via the DataTable's own, completely unmodified
+`overflow-x-auto` scrolling, confirmed on the round-5 harness: `tableWrapper` `scrollWidth` 433 vs `clientWidth`
+346 (real, reachable internal overflow), scrolling it brings the Covers header fully within the viewport.
+Neither `<main>` nor the right column itself overflows (`scrollWidth === clientWidth` for both) — the fix
+still works correctly in the new structure, exactly as designed.
+
+### Baseline-comparison test — reconciled for the genuine DOM reorder, not just a className diff
+
+See "Checks run" below — this round required a materially different approach (content-anchored extraction +
+reordering, not simple class-stripping) because, for the first time, the approved change includes a real DOM
+reorder, not merely added classes. Full detail in `normalizeApprovedPhase4DetailDiffs`'s and
+`reorderBaselineToPhase4DetailColumns`'s own doc comments in the test file.
+
 ## Expanded-form/collapsed-control correction — a plan inaccuracy found and corrected
 
 **The original plan claimed** `EditStudentForm` was "confirmed not wrapped in a `<details>`," based on reading
@@ -328,6 +489,11 @@ followed all session requires naming that, not quietly leaving it uncorrected in
 `pnpm dev`, `DATABASE_URL` redirected to the isolated test DB (`alliance_bjj_test`, port 5433 — never the dev
 database), logged in through the real `/login` form with the seeded `admin@alliancecr.com` (ADMIN) and
 `instructor@test.com` (INSTRUCTOR) accounts, real desktop Chromium (Playwright).
+
+**Screenshots 01–22 are HISTORICAL** — they document rounds 1-4's shared-row CSS Grid (now entirely replaced).
+**Screenshots 23–36 are round 5's current evidence**, against the actual, currently-shipped independent-column
+structure — see "## Round 5 — Option B adopted" above for the full narrative; the table below lists every
+file for completeness and to preserve the historical record, per instruction.
 
 | # | File | What it shows |
 |---|---|---|
@@ -353,12 +519,26 @@ database), logged in through the real `/login` form with the seeded `admin@allia
 | 20 | `20-detail-full-harness-covers-column-clipped-viewport-en.png` | Viewport-only (not `fullPage`) screenshot of the Ledger payment history table, scrolled into view — every row's "Covers" value visibly truncated mid-text, with no scrollbar anywhere on screen. Direct visual proof of the real clipping bug (see "Screenshot 17's cut-off 'Covers' column" below), independent of any `fullPage` stitching concern. |
 | 21 | `21-detail-full-harness-1280-covers-scrolled-reachable-en.png` | **Round 4, against the applied `min-w-0` fix.** The same table, DATE column scrolled out of view, COVERS values now fully visible and complete (no truncation), with a real, visible horizontal scrollbar — proof the fix turns silent clipping into the DataTable's own intended, reachable scroll. |
 | 22 | `22-detail-full-harness-390-covers-scrolled-reachable-en.png` | Round 4: the same reachability proof at 390px — Covers values reachable via the same real scroll affordance at a narrow width. |
+| 23 | `23-detail-1280-populated-light-en-v2cols.png` | **Round 5 (current structure).** Patricia Elizondo, 1280px, light — independent 3:2 columns, left 2663px tall, right 547px tall, zero shared-row gap. |
+| 24 | `24-detail-390-populated-light-en-v2cols.png` | 390px — approved mobile order confirmed (Header→Promotions→Attendance→RegenerateCode→AddAdjustment→Profile→Legacy→gated), no overflow. |
+| 25 | `25-detail-320-populated-light-en-v2cols.png` | 320px — same, no overflow. |
+| 26 | `26-detail-1280-expanded-edit-light-en-v2cols.png` | `EditStudentForm` expanded — gated block full-width (961px, matches the two-column row's own width); the form's own pre-existing `max-w-sm` (384px) internal limit is unchanged, not a regression. |
+| 27 | `27-detail-1280-expanded-edit-error-light-en-v2cols.png` | A real server-side validation error, triggered live ("Guardian name and phone are required for students under 18.") — inline, full-width, legible. |
+| 28 | `28-detail-1280-populated-dark-en-v2cols.png` | Dark theme, live via the `dark` class. |
+| 29 | `29-detail-1280-populated-light-es-v2cols.png` | Spanish locale — fully translated, column technique unaffected. |
+| 30 | `30-detail-harness-keyboard-loadmore-focused-v2cols.png` | Real `Tab` traversal's final stop on the round-5 Ledger-active harness — "Load more," reached via 2 native Chromium scrollable-region stops (new finding, see "Round 5" above), real visible focus ring. |
+| 31 | `31-detail-harness-1280-ledger-26-rows-v2cols.png` | Full page, 1280px — the round-5 Ledger-active harness (complete actual-page output, 26-settled-month fixture), three distinct cards (legacy/current-balance/ledger-history) confirmed never merged. |
+| 32 | `32-detail-harness-390-ledger-26-rows-v2cols.png` | Same harness at 390px — no overflow. |
+| 33 | `33-detail-1280-empty-pending-light-en-v2cols.png` | A genuinely new, real student (`VerifyEmptyR5 DetailTest`, created via the real Create-student form) — empty states throughout, both columns independently short, no stretching. |
+| 34 | `34-detail-1280-archived-light-en-v2cols.png` | The same real student, really archived via the real Archive action — "Archived" badge, "Restore student" button, full-width gated block. |
+| 35 | `35-detail-1280-instructor-light-en-v2cols.png` | Real INSTRUCTOR login, a real Escazú-homed student — gated block correctly absent entirely (`<main>` has exactly 2 children); RegenerateCode/AddAdjustment still visible (ungated). |
+| 36 | `36-detail-1000-below-breakpoint-light-en-v2cols.png` | 1000px (just below `lg`) — confirms the stacked fallback engages cleanly, no half-collapsed state. |
 
 A real student creation and a real archive action were exercised in the isolated test DB during verification
 (visible as "VerifyEmpty DetailTest" in screenshots 09–10) — harmless, isolated-test-DB-only data, left in
 place.
 
-### Grid structure, confirmed via computed style, not visual inspection alone
+### Grid structure, confirmed via computed style, not visual inspection alone — ⚠ HISTORICAL (round 1-4 grid)
 
 ```
 main: display: grid, grid-template-columns: 578.29px 373.71px (≈60/40, matching 3fr/2fr)
@@ -372,7 +552,7 @@ Gated block:    col span 2, row 6
 Every value read directly from `getComputedStyle` on each of `<main>`'s real children — matches the plan's
 table exactly, for every section.
 
-### Breakpoint transition, measured exactly at 1024px
+### Breakpoint transition, measured exactly at 1024px — ⚠ HISTORICAL (round 1-4 grid; round 5's re-measurement is in "Round 5" above)
 
 | Width | `display` | Page overflow |
 |---|---|---|
@@ -383,17 +563,19 @@ table exactly, for every section.
 
 Clean switch exactly at the specified breakpoint, no overflow at any tested width, no half-collapsed state.
 
-### DOM order, read directly, not assumed from the diff
+### DOM order, read directly, not assumed from the diff — ⚠ HISTORICAL (round 1-4 order; round 5's approved, DIFFERENT order is in "Round 5" above)
 
 ```
 ["Patricia Elizondo...", "Promotions...", "Profile...", "Attendance history...",
  "Payment history...", "Regenerate code", "Add an attendance day...", "Edit student..."]
 ```
-Exactly the required order: Header → Promotions → Profile → Attendance → Legacy → (Ledger, absent —
-`ledgerActive=false`, the real production default) → RegenerateCode → AddAdjustment → gated block. Confirmed
-identical at 1280px, 390px, and 320px — grid placement does not touch this.
+Exactly the required order AT THE TIME: Header → Promotions → Profile → Attendance → Legacy → (Ledger, absent
+— `ledgerActive=false`, the real production default) → RegenerateCode → AddAdjustment → gated block. Confirmed
+identical at 1280px, 390px, and 320px — grid placement does not touch this. **This order no longer matches the
+current code** — round 5 explicitly approved a different order (Promotions → Attendance → RegenerateCode →
+AddAdjustment → Profile → Legacy), see "Round 5" above.
 
-### Real keyboard traversal — the actual desktop focus path, including the predicted jump
+### Real keyboard traversal — the actual desktop focus path, including the predicted jump — ⚠ HISTORICAL (round 1-4 grid; round 5's re-trace, including a new finding about native scrollable-region tab stops, is in "Round 5" above)
 
 **Finding, better than the plan predicted**: for a student with an empty Legacy Payment History (the common
 case — Patricia's legacy history is empty), Legacy contributes **zero focusable elements**, so `Tab` moves
@@ -437,7 +619,7 @@ separate question, left open, not asserted either way.
 **No positive `tabindex`, no duplicate interactive components** — confirmed by reading the diff (§ "What
 changed" above): the only additions are `className` values and plain positioning `<div>`s.
 
-### Ledger-active verification — complete actual-page rendering, browser-tested harness evidence, explicitly separated from live-route evidence
+### Ledger-active verification — complete actual-page rendering, browser-tested harness evidence, explicitly separated from live-route evidence — ⚠ HISTORICAL (round 1-4 grid; round 5's own fresh harness + re-trace is in "Round 5" above)
 
 **Correction round (this section rewritten)**: the previous round's screenshot 12 was a *condensed
 reconstruction* — the Ledger wrapper's markup re-typed by hand with internal form fields abbreviated, not the
@@ -488,45 +670,47 @@ test-only `activation: { isActive: async () => true }` dependency injection the 
 
 ## Checks run
 
-**Round 4 is the first round to change `src/` — checks run against the real `min-w-0` fix**, not just
-re-confirmed against unchanged code:
+**Round 5 changed `src/` structurally (the DOM reorder) — checks run against the real new page.tsx**:
 
 - `pnpm typecheck` — clean (0 errors).
 - `pnpm lint` — clean (0 errors; the same 23 pre-existing unrelated warnings as every prior round).
 - `pnpm test:unit` — 1707/1707 passed.
-- `pnpm test:integration` — **153 files, 1969 tests, all passed** (run in isolation, no concurrent process
-  touching the test DB — see the note below), including:
+- `pnpm test:integration` — **153 files, 1970 tests, all passed** (run in isolation, no concurrent process
+  touching the test DB — round 4's own log noted this caused 29 false failures when violated), including:
   - `student-detail-page-ledger-form-gating.test.ts` — 2/2 unaffected (gating logic untouched).
-  - `students-pages-inactive-baseline-comparison.test.ts` — **12/12**: `normalizeApprovedPhase4DetailDiffs()`
-    updated to anchor the new `lg:min-w-0`/`lg:[&>*]:min-w-0` classes (below), both the real-render test and
-    all 5 detail guard-test fixtures updated to match — one stale literal in a guard test's own corruption step
-    was found and fixed along the way (confirmed against the real failure output, not guessed).
+  - `students-pages-inactive-baseline-comparison.test.ts` — **13/13**, reconciled for the genuine DOM reorder
+    (below).
 
-An earlier `pnpm test:integration` attempt this round reported 29 unrelated failures, all inside
-`dues-ledger-writers.test.ts`'s own concurrency/row-locking tests (timing-sensitive by design) — traced to a
-second, concurrently-running `vitest` process (this round's own browser-verification harness render) competing
-for the same test-database locks, not a real regression. Re-run in isolation (no other process touching the
-test DB) to get a trustworthy result, reported above.
+### The detail page's baseline-comparison test — materially reconciled for a genuine DOM reorder, not just a className diff
 
-### The detail page's baseline-comparison test — reconciled narrowly, same discipline as the roster correction
+Round 4's `normalizeApprovedPhase4DetailDiffs()` only ever stripped ADDED CLASSES — sufficient when the
+approved change never moved content relative to the baseline. Round 5's approved change is a REAL content
+reorder (Profile/Attendance/Legacy/RegenerateCode/AddAdjustment all move), so a simple strip could no longer
+produce byte-identity: the underlying CONTENT SEQUENCE itself now differs. Two paired functions, both confirmed
+against this PR's own real rendered output (writing both renders to disk and diffing them byte-by-byte before
+writing any normalization — never guessed):
 
-`students-pages-inactive-baseline-comparison.test.ts`'s student-detail case previously asserted literal
-byte-identity against the pre-PR2 baseline — true until this PR's approved, intentional grid-placement classes
-and wrapper `<div>`s. A new `normalizeApprovedPhase4DetailDiffs()` function — anchored literal-string removal,
-confirmed against this PR's own real rendered output (`pnpm exec vitest run`, inspecting the actual failure
-diff before writing the normalization, not guessed) — strips exactly: `<main>`'s grid utility classes; the
-header row's grid placement; `PromocionesCard`'s positioning wrapper (opening tag, and its closing tag anchored
-to the unique string that always immediately follows it — the Profile `<Card>`'s own opening tag); the
-Profile/Attendance/Legacy `<Card>`s' own grid-placement suffixes; the Ledger wrapper (defined by direct source
-reading — not exercised by this file's always-inactive fixture, included for completeness, a safe no-op either
-way); `RegenerateCodeButton`'s and `AddAdjustmentForm`'s positioning wrappers (same anchored-adjacency
-technique); and the gated block's own grid-placement suffix. Both renders are then asserted byte-identical via
-`.toBe()` — real equivalence restored over every field, every history row, every role-gated control.
+1. **`normalizeApprovedPhase4DetailDiffs(currentHtml)`** strips CURRENT's added structural classes (the two-
+   column-row wrapper, both column wrappers, the three 1:1 sizing wrappers, the `lg:min-w-0` clipping fix) —
+   anchored, POSITION-AWARE literal-string removal: where two cards would otherwise share an identical
+   unsuffixed class string (e.g. Promotions' own bare card vs. Attendance's card before its suffix is
+   stripped), the function deliberately strips a CLOSE-adjacent anchor BEFORE stripping that card's own suffix,
+   so the match stays unambiguous (documented inline, rule by rule, in the function itself).
+2. **`reorderBaselineToPhase4DetailColumns(baselineHtml)`** cuts the TRUE pre-PR2 baseline's 5 reorderable
+   sections by their own unique content anchors (heading text, `<form>`/`<details>` tags) and re-concatenates
+   them in round 5's approved new order. Promotions (always first) and the gated block (always last) need no
+   cutting — their position is identical in both orders.
 
-**5 new guard tests** (`normalizeApprovedPhase4DetailDiffs — guard tests`, synthetic fixtures, no DB, fast)
-prove this cannot pass vacuously: the approved diffs alone normalize to equal the baseline (the real, intended
-case); a changed field value, a missing section, an unrelated markup addition, and a changed student name all
-still fail equality after normalization. All pass.
+The two results are compared with `.toBe()` — real byte equality, not a looser check. A new, additional
+assertion proves the reorder is REAL, not assumed: `baselineHtml.indexOf(">Profile</div>")` is LESS than its
+`">Attendance history</div>"` index (the old order), while `currentHtml`'s is the reverse (the new order) —
+confirmed directly on the raw, unnormalized strings before any transform runs.
+
+**6 guard tests** (synthetic fixtures mirroring both the old and new structural shapes, no DB, fast) prove this
+cannot pass vacuously: the approved diffs+reorder alone produce equality (the real, intended case); a changed
+field value, a missing section, an unrelated markup addition, a changed student name, and a value altered only
+in the BASELINE source (proving the reorder function carries baseline's real content through, not a hardcoded
+copy) — all still fail equality after normalization. All pass.
 
 ## What was not verified — reported honestly, distinguished by status
 
@@ -546,31 +730,39 @@ still fail equality after normalization. All pass.
   against the real fix (not an inline-style override), and confirmed reachable at BOTH desktop (1280px) and
   narrow widths (390px, 320px) — see "Screenshot 17's cut-off 'Covers' column" above.
 
+**Round 4 findings, superseded by round 5's adoption (kept historical, not deleted):**
+- A working, DOM-order-preserving layout alternative (CSS multi-column) was built and measured, but not
+  adopted — see the historical "Layout experiment"/"Recommendation" sections above.
+- Independent 3:2 columns was compared as a third option, traced but not built in round 4 — **round 5 adopted
+  it**, per explicit user approval overriding round 4's own recommendation.
+
+**Resolved in round 5 (the row-height-coupling gap itself is now eliminated, not merely disclosed):**
+- ~~The row-height-coupling gap itself remains unresolved in production~~ — corrected: independent columns
+  have no shared row tracks at all, so there is no gap to disclose anymore. Measured: left/right columns at
+  2663px/547px (Patricia, populated), genuinely independent, zero coupling.
+
 **New this round:**
-- **A working, DOM-order-preserving layout alternative (CSS multi-column)** was built, measured, found to
-  eliminate every row-height-coupling gap, and bounded-checked under disclosure-expansion and large Ledger
-  content (no column switch, no fragmentation) — but **not adopted**: it does not match the approved 3:2
-  column ratio and its section placement is content-dependent, not pinned — see "Layout experiment" and
-  "Recommendation" above.
-- **A third option (independent 3:2 columns) was compared but not built** — it would require an explicitly
-  unapproved DOM/mobile/keyboard reading-order change, traced in full above, not implemented.
+- A real DOM/mobile/keyboard order change, explicitly approved — traced and verified end to end (desktop,
+  mobile, breakpoint transition, real keyboard traversal including a newly observed native Chromium behavior:
+  horizontally-scrollable `overflow-x-auto` table regions add their own implicit Tab stops).
+- The baseline-comparison test's normalization approach changed materially (content-anchored reorder, not just
+  class-stripping) — see "Checks run" above.
 
 **Still explicitly bounded, this round:**
-- **The row-height-coupling gap itself remains unresolved in production** — per the Recommendation above, kept
-  deliberately: it is the one real cost of the only option that satisfies every other approved constraint.
-- **The Approve-flow (PENDING student) layout was not independently re-verified live** — no PENDING student
-  exists in the seed data without running the full registration-and-approval workflow, judged disproportionate
-  for a layout-only check. It shares the exact same full-width gated-block container already confirmed working
-  for Edit/RecordPayment/Archive — same code path, no additional risk identified, but not independently shown.
+- **The Approve-flow (PENDING student) layout was not independently re-verified live with the new columns** —
+  the newly-created real student this round was Active immediately (the Create-student form doesn't produce
+  PENDING students), so the PENDING/Approve-button path specifically still wasn't exercised live. It shares the
+  exact same full-width gated-block container confirmed working for Edit/Archive this round — same code path,
+  no additional risk identified, but not independently shown.
 - **The "Load more" button's own click behavior (fetching page 2 of Ledger payment history) was not exercised**
-  — this round's harness is static (non-hydrated) markup; Tab order, focus-visible rendering, and native
-  `<details>` disclosure toggling are native browser behavior proven by it (including under the multi-column
-  experiment's bounded check), but `onClick`-driven state changes require React hydration, which this harness
-  technique does not provide. Not claimed.
-- **The multi-column experiment's content-dependent column-assignment risk was bounded-checked, not
-  exhaustively proven safe** — one specific content-growth scenario produced no column switch; the CSS spec
-  still permits rebalancing on reflow for other content mixes, untested here, and this option was not adopted
-  regardless, per the Recommendation above.
+  — this round's harness is static (non-hydrated) markup; Tab order and focus-visible rendering (including the
+  newly-observed native scrollable-region stops) are native browser behavior proven by it, but `onClick`-driven
+  state changes require React hydration, which this harness technique does not provide. Not claimed.
+- **Cross-column keyboard behavior for a populated Legacy Payment History specifically (vs. the Ledger section)
+  was not independently isolated** — the real Ledger-active harness this round has a populated Legacy table
+  too, and its own `overflow-x-auto` region was one of the two native Tab stops traced; a case with ONLY Legacy
+  populated and Ledger absent was not separately re-measured (judged low-risk: both are instances of the same
+  native Chromium scrollable-region behavior, already proven once).
 
 **Unchanged from every prior phase this session:**
 - Real Android/iOS device verification remains unavailable in this environment.

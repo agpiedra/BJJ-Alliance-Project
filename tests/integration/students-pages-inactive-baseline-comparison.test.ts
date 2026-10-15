@@ -196,71 +196,113 @@ function normalizeApprovedPhase4Diffs(html: string): string {
  * the failure diff) before writing this, not a loose regex. Applying this to the baseline is a safe no-op:
  * none of these literal strings exist there.
  */
+/**
+ * Round 5 (Option B, explicitly approved): the detail page's shared-row grid is replaced by two INDEPENDENT
+ * column containers, and Profile/Attendance/Legacy/RegenerateCode/AddAdjustment are genuinely REORDERED in the
+ * DOM (left column: Promotions → Attendance → RegenerateCode → AddAdjustment; right column: Profile → Legacy
+ * → Ledger). A simple "strip the added classes" normalization — sufficient for every prior round's pure
+ * className diff — can no longer produce byte-identity on its own, because the underlying CONTENT SEQUENCE
+ * itself differs between this PR's current render and the true pre-PR2 baseline (whose order is the OLD
+ * Promotions → Profile → Attendance → Legacy → RegenerateCode → AddAdjustment). Proving "every field, every
+ * row, every role-gated control is unchanged — only their position moved" therefore requires TWO paired
+ * transforms, confirmed against this PR's own real rendered output (not guessed):
+ *
+ * 1. `normalizeApprovedPhase4DetailDiffs` strips the CURRENT render's added structural classes (the two-
+ *    column-row wrapper, the two column wrappers, the three 1:1 sizing wrappers, and the `lg:min-w-0` clipping
+ *    fix) — anchored, position-aware literal-string removal, run in an order that keeps each anchor unique
+ *    even where two cards share an otherwise-identical class string (see inline comments).
+ * 2. `reorderBaselineToPhase4DetailColumns` cuts the TRUE baseline's 5 reorderable sections (Profile,
+ *    Attendance, Legacy, RegenerateCode, AddAdjustment — Promotions and the gated block are untouched, since
+ *    they are first/last in both orders) by their own unique heading/content anchors, and re-concatenates them
+ *    in THIS PR's approved new order.
+ *
+ * The two results are then compared with `.toBe()` for real byte equality — not a looser, "contains" style
+ * check. See the guard tests below for proof this cannot pass vacuously.
+ */
 function normalizeApprovedPhase4DetailDiffs(html: string): string {
-  return html
-    // 1. <main>'s own grid utilities — appended after its existing base classes. (<main> itself never gained
-    //    `min-w-0` — only its children did, rules 2-8 below.)
-    .replace(
-      '<main class="flex flex-col gap-6 p-6 lg:grid lg:grid-cols-[3fr_2fr] lg:items-start lg:gap-6"',
-      '<main class="flex flex-col gap-6 p-6"',
-    )
-    // 2. The header row's grid placement, plus the clipping-fix `lg:min-w-0` (correction round 4) —
-    //    appended after its existing base classes.
-    .replace(
-      '<div class="flex flex-wrap items-center justify-between gap-3 lg:col-span-2 lg:row-start-1 lg:min-w-0"',
-      '<div class="flex flex-wrap items-center justify-between gap-3"',
-    )
-    // 3. PromocionesCard's 1:1 positioning wrapper (the component itself takes no className). Its opening
-    //    tag is a unique literal; its closing tag is anchored by the one thing that always immediately
-    //    follows it — the Profile <Card>'s own opening tag (also grid-placed, stripped by rule 4 below, but
-    //    matched here in its PRE-strip form since replacements run top to bottom against the unmodified
-    //    string at this point).
-    .replace('<div class="lg:col-start-1 lg:row-start-2 lg:min-w-0">', "")
-    .replace(
-      '</div><div data-slot="card" data-size="default" class="group/card flex flex-col gap-(--card-spacing) overflow-hidden rounded-lg border border-border bg-card py-(--card-spacing) text-sm text-card-foreground [--card-spacing:--spacing(4)] has-data-[slot=card-footer]:pb-0 has-[&gt;img:first-child]:pt-0 data-[size=sm]:[--card-spacing:--spacing(3)] data-[size=sm]:has-data-[slot=card-footer]:pb-0 *:[img:first-child]:rounded-t-xl *:[img:last-child]:rounded-b-xl lg:col-start-2 lg:row-start-2 lg:min-w-0">',
-      '<div data-slot="card" data-size="default" class="group/card flex flex-col gap-(--card-spacing) overflow-hidden rounded-lg border border-border bg-card py-(--card-spacing) text-sm text-card-foreground [--card-spacing:--spacing(4)] has-data-[slot=card-footer]:pb-0 has-[&gt;img:first-child]:pt-0 data-[size=sm]:[--card-spacing:--spacing(3)] data-[size=sm]:has-data-[slot=card-footer]:pb-0 *:[img:first-child]:rounded-t-xl *:[img:last-child]:rounded-b-xl">',
-    )
-    // 4. Profile and Attendance/Legacy-Payment-History <Card>s — grid placement + `lg:min-w-0` appended
-    //    after their shared base class string, one variant per grid cell.
-    .replaceAll(
-      ' *:[img:first-child]:rounded-t-xl *:[img:last-child]:rounded-b-xl lg:col-start-2 lg:row-start-2 lg:min-w-0"',
-      ' *:[img:first-child]:rounded-t-xl *:[img:last-child]:rounded-b-xl"',
-    )
-    .replaceAll(
-      ' *:[img:first-child]:rounded-t-xl *:[img:last-child]:rounded-b-xl lg:col-start-1 lg:row-start-3 lg:min-w-0"',
-      ' *:[img:first-child]:rounded-t-xl *:[img:last-child]:rounded-b-xl"',
-    )
-    .replaceAll(
-      ' *:[img:first-child]:rounded-t-xl *:[img:last-child]:rounded-b-xl lg:col-start-2 lg:row-start-3 lg:min-w-0"',
-      ' *:[img:first-child]:rounded-t-xl *:[img:last-child]:rounded-b-xl"',
-    )
-    // 5. The Ledger section's fragment-to-<div> change (StudentBalanceSummary + PaymentHistorySection), plus
-    //    the clipping-fix `lg:min-w-0 lg:[&>*]:min-w-0` (correction round 4) — only reachable when
-    //    `ledgerActive`, not exercised by this file's always-inactive fixture (confirmed: the real production
-    //    default), so this rule is defined by direct reading of the unmodified source (page.tsx's own JSX),
-    //    not confirmed against this file's own render. Included for completeness and correctness, not
-    //    vacuously — a safe no-op against both renders here either way.
-    .replace('<div class="flex flex-col gap-6 lg:col-start-2 lg:row-start-4 lg:min-w-0 lg:[&amp;&gt;*]:min-w-0">', "")
-    // 6. RegenerateCodeButton's 1:1 positioning wrapper — opening tag unique; closing tag anchored by the
-    //    AddAdjustmentForm wrapper's own opening tag, which always immediately follows it.
-    .replace('<div class="lg:col-start-1 lg:row-start-4 lg:min-w-0">', "")
-    .replace(
-      '</div><div class="lg:col-start-1 lg:row-start-5 lg:min-w-0">',
-      '<div class="lg:col-start-1 lg:row-start-5 lg:min-w-0">',
-    )
-    // 7. AddAdjustmentForm's 1:1 positioning wrapper — opening tag unique; closing tag anchored by the gated
-    //    action/form block's own opening tag, which always immediately follows it when `canEdit`.
-    .replace('<div class="lg:col-start-1 lg:row-start-5 lg:min-w-0">', "")
-    .replace(
-      '</div><div class="flex flex-col gap-4 lg:col-span-2 lg:row-start-6 lg:min-w-0">',
-      '<div class="flex flex-col gap-4 lg:col-span-2 lg:row-start-6 lg:min-w-0">',
-    )
-    // 8. The gated action/form block's own grid placement + `lg:min-w-0` — appended after its existing base
-    //    classes.
-    .replace(
-      '<div class="flex flex-col gap-4 lg:col-span-2 lg:row-start-6 lg:min-w-0">',
-      '<div class="flex flex-col gap-4">',
-    );
+  const CARD_OPEN_BARE =
+    '<div data-slot="card" data-size="default" class="group/card flex flex-col gap-(--card-spacing) overflow-hidden rounded-lg border border-border bg-card py-(--card-spacing) text-sm text-card-foreground [--card-spacing:--spacing(4)] has-data-[slot=card-footer]:pb-0 has-[&gt;img:first-child]:pt-0 data-[size=sm]:[--card-spacing:--spacing(3)] data-[size=sm]:has-data-[slot=card-footer]:pb-0 *:[img:first-child]:rounded-t-xl *:[img:last-child]:rounded-b-xl">';
+  const CARD_SUFFIXED = CARD_OPEN_BARE.replace('">', ' lg:min-w-0"');
+  const CARD_TAIL_SUFFIXED = ' *:[img:first-child]:rounded-t-xl *:[img:last-child]:rounded-b-xl lg:min-w-0"';
+  const CARD_TAIL_BARE = ' *:[img:first-child]:rounded-t-xl *:[img:last-child]:rounded-b-xl"';
+
+  return (
+    html
+      // 1. The two-column-row wrapper's opening tag (carries the 3fr/2fr grid — `<main>` itself is unchanged).
+      .replace('<div class="flex flex-col gap-6 lg:grid lg:grid-cols-[3fr_2fr] lg:items-start lg:gap-6">', "")
+      // 2. The LEFT column wrapper's opening tag (1st of 2 byte-identical occurrences — `.replace` without
+      //    `g` always consumes the earliest remaining one, so calling it twice, in document order, correctly
+      //    targets left then right).
+      .replace('<div class="flex flex-col gap-6 lg:min-w-0">', "")
+      // 3. Promotions' 1:1 sizing wrapper opening tag (1st of 3 byte-identical bare `lg:min-w-0` wrappers —
+      //    same earliest-match discipline).
+      .replace('<div class="lg:min-w-0">', "")
+      // 4. Close of Promotions' sizing wrapper, anchored to Attendance Card's STILL-SUFFIXED opening tag —
+      //    deliberately matched BEFORE stripping Attendance's own suffix (rule 5), because Promotions' own
+      //    (always bare, no suffix) card would otherwise be an equally-valid, WRONG match for an unsuffixed
+      //    anchor at this position.
+      .replace("</div>" + CARD_SUFFIXED, CARD_SUFFIXED)
+      // 5. Attendance Card's own `lg:min-w-0` suffix, now safe to strip.
+      .replace(CARD_TAIL_SUFFIXED, CARD_TAIL_BARE)
+      // 6. RegenerateCodeButton's 1:1 sizing wrapper opening tag (now the earliest remaining bare occurrence).
+      .replace('<div class="lg:min-w-0">', "")
+      // 7. Close of RegenerateCode's wrapper, adjacent to AddAdjustment's wrapper opening tag — both bare, no
+      //    card involved, no ambiguity.
+      .replace('</div><div class="lg:min-w-0">', '<div class="lg:min-w-0">')
+      // 8. AddAdjustmentForm's 1:1 sizing wrapper opening tag (the remaining bare occurrence).
+      .replace('<div class="lg:min-w-0">', "")
+      // 9. Close of AddAdjustment's wrapper + close of the LEFT column wrapper + the RIGHT column wrapper's
+      //    OWN opening tag, all anchored together against Profile Card's STILL-SUFFIXED opening tag (same
+      //    before-stripping-its-suffix discipline as rule 4).
+      .replace('</div></div><div class="flex flex-col gap-6 lg:min-w-0">' + CARD_SUFFIXED, CARD_SUFFIXED)
+      // 10. Profile Card's own `lg:min-w-0` suffix.
+      .replace(CARD_TAIL_SUFFIXED, CARD_TAIL_BARE)
+      // 11. Legacy Payment History Card's own `lg:min-w-0` suffix (the next remaining occurrence).
+      .replace(CARD_TAIL_SUFFIXED, CARD_TAIL_BARE)
+      // 12. The Ledger section's fragment-to-<div> change (StudentBalanceSummary + PaymentHistorySection),
+      //     plus the clipping-fix `lg:min-w-0 lg:[&>*]:min-w-0` — only reachable when `ledgerActive`, not
+      //     exercised by this file's always-inactive fixture (confirmed by direct reading of page.tsx, not
+      //     exercised here — a safe no-op either way).
+      .replace('<div class="flex flex-col gap-6 lg:min-w-0 lg:[&amp;&gt;*]:min-w-0">', "")
+      // 13. Close of the RIGHT column wrapper + close of the two-column-row wrapper, anchored to the gated
+      //     action/form block's own opening tag.
+      .replace('</div></div><div class="flex flex-col gap-4">', '<div class="flex flex-col gap-4">')
+  );
+}
+
+/**
+ * Cuts the TRUE pre-PR2 baseline's 5 reorderable sections (Profile, Attendance, Legacy Payment History,
+ * RegenerateCode, AddAdjustment) by their own unique anchors, and re-concatenates them in this PR's approved
+ * new order. Promotions (always first) and the gated action/form block (always last) are left untouched —
+ * their position is unchanged in both the old and new order, so they need no cutting.
+ */
+function reorderBaselineToPhase4DetailColumns(html: string): string {
+  const promotionsStart = html.indexOf('<div data-slot="card" data-size="default"');
+  const profileStart = html.lastIndexOf('<div data-slot="card" data-size="default"', html.indexOf(">Profile</div>"));
+  const attendanceStart = html.lastIndexOf(
+    '<div data-slot="card" data-size="default"',
+    html.indexOf(">Attendance history</div>"),
+  );
+  const legacyStart = html.lastIndexOf(
+    '<div data-slot="card" data-size="default"',
+    html.indexOf(">Payment history</div>"),
+  );
+  const regenerateStart = html.indexOf("<form", html.indexOf(">Payment history</div>"));
+  const addAdjustmentStart = html.indexOf("<details", html.indexOf(">Regenerate code</button>"));
+  const gatedBlockStart = html.indexOf('<div class="flex flex-col gap-4">');
+
+  const header = html.slice(0, promotionsStart);
+  const promotions = html.slice(promotionsStart, profileStart);
+  const profile = html.slice(profileStart, attendanceStart);
+  const attendance = html.slice(attendanceStart, legacyStart);
+  const legacy = html.slice(legacyStart, regenerateStart);
+  const regenerateCode = html.slice(regenerateStart, addAdjustmentStart);
+  const addAdjustment = html.slice(addAdjustmentStart, gatedBlockStart);
+  const gatedBlock = html.slice(gatedBlockStart);
+
+  // Approved order: Header → Promotions → Attendance → RegenerateCode → AddAdjustment → Profile → Legacy →
+  // (Ledger, absent in this always-inactive fixture) → gated block.
+  return header + promotions + attendance + regenerateCode + addAdjustment + profile + legacy + gatedBlock;
 }
 
 describe("inactive-ledger render EQUIVALENCE against the pre-PR2 baseline (review fix)", () => {
@@ -310,16 +352,17 @@ describe("inactive-ledger render EQUIVALENCE against the pre-PR2 baseline (revie
   });
 
   /**
-   * Phase 4 student-detail correction: the grid-placement classes/wrapper divs (§2/§5 of
-   * `design/matroom/verification/phase4-student-detail-proposal/README.md`) are an approved, intentional
-   * visual change to this same inactive-ledger render path — the prior literal byte-identity assertion is
-   * now correctly false for the same legitimate reason the roster case above already documents.
-   * `normalizeApprovedPhase4DetailDiffs` strips ONLY the grid-placement diffs (exact anchored literal
-   * strings, confirmed against a real render — see its own doc comment), restoring real byte-for-byte
-   * equivalence over everything else: every field, every history row, every role-gated control, every
-   * condition.
+   * Phase 4 student-detail correction, round 5 (Option B, explicitly approved): the shared-row grid is
+   * replaced by two independent column containers, and 5 of the page's 9 sections are genuinely REORDERED in
+   * the DOM (see `reorderBaselineToPhase4DetailColumns`'s own doc comment for the full approved sequence).
+   * The prior literal byte-identity assertion is now correctly false for a structural reason, not merely a
+   * className diff — `normalizeApprovedPhase4DetailDiffs` strips CURRENT's added structural classes, and
+   * `reorderBaselineToPhase4DetailColumns` cuts and re-sequences the TRUE baseline's reorderable sections into
+   * that same approved order, confirmed against a real render (see each function's own doc comment) — not
+   * guessed. Byte-for-byte equivalence is restored over everything else: every field, every history row,
+   * every role-gated control, every condition — regardless of which approved position it now renders in.
    */
-  it("REQUIRED: student-detail page — current inactive render is byte-identical to the real pre-PR2 implementation, after normalizing ONLY the approved Phase 4 grid-placement diffs", async () => {
+  it("REQUIRED: student-detail page — current inactive render is byte-identical (content-wise) to the real pre-PR2 implementation, after stripping the approved structural diffs and reordering the baseline into the approved column sequence", async () => {
     currentSession = { user: { id: a.admin.id }, activeOrganizationId: a.org.id };
     const baselineHtml = withProvider(await BaselineStudentDetailPage({ params: Promise.resolve({ locale: "en", id: paidStudent.id }) }));
     const currentHtml = withProvider(await CurrentStudentDetailPage({ params: Promise.resolve({ locale: "en", id: paidStudent.id }) }));
@@ -327,12 +370,18 @@ describe("inactive-ledger render EQUIVALENCE against the pre-PR2 baseline (revie
 
     expect(baselineHtml).toContain("100.00");
 
-    // The grid-placement diff is genuinely present in current and genuinely absent from the true pre-PR2
+    // The structural diff is genuinely present in current and genuinely absent from the true pre-PR2
     // baseline — proven before normalizing it away, so the equality assertion below isn't vacuous.
     expect(currentHtml).toContain("lg:grid lg:grid-cols-[3fr_2fr]");
     expect(baselineHtml).not.toContain("lg:grid lg:grid-cols-[3fr_2fr]");
 
-    const normalizedBaseline = normalizeReactGeneratedIds(normalizeApprovedPhase4DetailDiffs(baselineHtml));
+    // DOM-order proof the reorder is real, not assumed: in baseline, "Profile" appears before "Attendance
+    // history" (the old order); in current, "Attendance history" appears before "Profile" (the new, approved
+    // order) — confirmed directly on the raw, unnormalized strings.
+    expect(baselineHtml.indexOf(">Profile</div>")).toBeLessThan(baselineHtml.indexOf(">Attendance history</div>"));
+    expect(currentHtml.indexOf(">Attendance history</div>")).toBeLessThan(currentHtml.indexOf(">Profile</div>"));
+
+    const normalizedBaseline = normalizeReactGeneratedIds(reorderBaselineToPhase4DetailColumns(baselineHtml));
     const normalizedCurrent = normalizeReactGeneratedIds(normalizeApprovedPhase4DetailDiffs(currentHtml));
     expect(normalizedCurrent).toBe(normalizedBaseline);
   });
@@ -399,66 +448,89 @@ describe("normalizeApprovedPhase4Diffs — guard tests (prove the baseline compa
  * (confirmed against a real render before writing this file — the production test above passed against the
  * actual rendered HTML, not just these synthetic fixtures).
  */
-describe("normalizeApprovedPhase4DetailDiffs — guard tests (prove the detail baseline comparison cannot pass vacuously)", () => {
+describe("normalizeApprovedPhase4DetailDiffs + reorderBaselineToPhase4DetailColumns — guard tests (prove the detail baseline comparison cannot pass vacuously)", () => {
   const CARD_CLASS =
     'class="group/card flex flex-col gap-(--card-spacing) overflow-hidden rounded-lg border border-border bg-card py-(--card-spacing) text-sm text-card-foreground [--card-spacing:--spacing(4)] has-data-[slot=card-footer]:pb-0 has-[&gt;img:first-child]:pt-0 data-[size=sm]:[--card-spacing:--spacing(3)] data-[size=sm]:has-data-[slot=card-footer]:pb-0 *:[img:first-child]:rounded-t-xl *:[img:last-child]:rounded-b-xl"';
+  const cardClassWith = (suffix: string) => `${CARD_CLASS.slice(0, -1)} ${suffix}"`;
+  const card = (title: string, body: string, cls: string = CARD_CLASS) =>
+    `<div data-slot="card" data-size="default" ${cls}><div data-slot="card-title">${title}</div>${body}</div>`;
 
-  const BASELINE_DETAIL = [
-    '<main class="flex flex-col gap-6 p-6">',
-    '<div class="flex flex-wrap items-center justify-between gap-3"><h1>Ana Pérez</h1></div>',
-    '<div data-slot="card"><div>Promociones content</div></div>',
-    `<div data-slot="card" data-size="default" ${CARD_CLASS}><dd>8888 1111</dd></div>`,
-    `<div data-slot="card" data-size="default" ${CARD_CLASS}><div>Attendance content</div></div>`,
-    `<div data-slot="card" data-size="default" ${CARD_CLASS}><td>Paid</td></div>`,
-    "<button>Regenerate</button>",
-    "<details><summary>Add adjustment</summary></details>",
-    '<div class="flex flex-col gap-4"><button>Edit</button></div>',
-    "</main>",
-  ].join("");
-
-  function currentDetailWithApprovedDiffsOnly(): string {
-    const cardClassWith = (suffix: string) => `${CARD_CLASS.slice(0, -1)} ${suffix}"`;
+  // OLD order (the true pre-PR2 baseline, before any Phase 4 work): Header → Promotions → Profile →
+  // Attendance → Legacy → RegenerateCode → AddAdjustment → gated block. No extra wrapper divs anywhere.
+  function baselineDetail(): string {
     return [
-      '<main class="flex flex-col gap-6 p-6 lg:grid lg:grid-cols-[3fr_2fr] lg:items-start lg:gap-6">',
-      '<div class="flex flex-wrap items-center justify-between gap-3 lg:col-span-2 lg:row-start-1 lg:min-w-0"><h1>Ana Pérez</h1></div>',
-      '<div class="lg:col-start-1 lg:row-start-2 lg:min-w-0"><div data-slot="card"><div>Promociones content</div></div></div>',
-      `<div data-slot="card" data-size="default" ${cardClassWith("lg:col-start-2 lg:row-start-2 lg:min-w-0")}><dd>8888 1111</dd></div>`,
-      `<div data-slot="card" data-size="default" ${cardClassWith("lg:col-start-1 lg:row-start-3 lg:min-w-0")}><div>Attendance content</div></div>`,
-      `<div data-slot="card" data-size="default" ${cardClassWith("lg:col-start-2 lg:row-start-3 lg:min-w-0")}><td>Paid</td></div>`,
-      '<div class="lg:col-start-1 lg:row-start-4 lg:min-w-0"><button>Regenerate</button></div>',
-      '<div class="lg:col-start-1 lg:row-start-5 lg:min-w-0"><details><summary>Add adjustment</summary></details></div>',
-      '<div class="flex flex-col gap-4 lg:col-span-2 lg:row-start-6 lg:min-w-0"><button>Edit</button></div>',
+      '<main class="flex flex-col gap-6 p-6">',
+      '<div class="flex flex-wrap items-center justify-between gap-3"><h1>Ana Pérez</h1></div>',
+      card("Promotions", "<div>Promociones content</div>"),
+      card("Profile", "<dd>8888 1111</dd>"),
+      card("Attendance history", "<div>Attendance content</div>"),
+      card("Payment history", "<td>Paid</td>"),
+      '<form class="flex flex-col items-start gap-2"><button>Regenerate code</button></form>',
+      "<details><summary>Add an attendance day</summary></details>",
+      '<div class="flex flex-col gap-4"><button>Edit</button></div>',
       "</main>",
     ].join("");
   }
 
-  it("REQUIRED: the approved grid-placement diffs alone normalize to equal the baseline (the real, intended case)", () => {
-    expect(normalizeApprovedPhase4DetailDiffs(currentDetailWithApprovedDiffsOnly())).toBe(BASELINE_DETAIL);
+  // NEW order (round 5, approved Option B): Header → [left: Promotions → Attendance → RegenerateCode →
+  // AddAdjustment] → [right: Profile → Legacy] → gated block, each column its own independent container.
+  function currentDetailWithApprovedDiffsOnly(): string {
+    return [
+      '<main class="flex flex-col gap-6 p-6">',
+      '<div class="flex flex-wrap items-center justify-between gap-3"><h1>Ana Pérez</h1></div>',
+      '<div class="flex flex-col gap-6 lg:grid lg:grid-cols-[3fr_2fr] lg:items-start lg:gap-6">',
+      '<div class="flex flex-col gap-6 lg:min-w-0">',
+      '<div class="lg:min-w-0">' + card("Promotions", "<div>Promociones content</div>") + "</div>",
+      card("Attendance history", "<div>Attendance content</div>", cardClassWith("lg:min-w-0")),
+      '<div class="lg:min-w-0"><form class="flex flex-col items-start gap-2"><button>Regenerate code</button></form></div>',
+      '<div class="lg:min-w-0"><details><summary>Add an attendance day</summary></details></div>',
+      "</div>",
+      '<div class="flex flex-col gap-6 lg:min-w-0">',
+      card("Profile", "<dd>8888 1111</dd>", cardClassWith("lg:min-w-0")),
+      card("Payment history", "<td>Paid</td>", cardClassWith("lg:min-w-0")),
+      "</div>",
+      "</div>",
+      '<div class="flex flex-col gap-4"><button>Edit</button></div>',
+      "</main>",
+    ].join("");
+  }
+
+  it("REQUIRED: the approved structural diffs alone, after stripping current and reordering baseline, normalize to equal each other (the real, intended case)", () => {
+    expect(normalizeApprovedPhase4DetailDiffs(currentDetailWithApprovedDiffsOnly())).toBe(
+      reorderBaselineToPhase4DetailColumns(baselineDetail()),
+    );
   });
 
   it("REQUIRED: a changed field value still fails after normalization — not masked", () => {
     const corrupted = currentDetailWithApprovedDiffsOnly().replace("<dd>8888 1111</dd>", "<dd>9999 2222</dd>");
-    expect(normalizeApprovedPhase4DetailDiffs(corrupted)).not.toBe(BASELINE_DETAIL);
+    expect(normalizeApprovedPhase4DetailDiffs(corrupted)).not.toBe(reorderBaselineToPhase4DetailColumns(baselineDetail()));
   });
 
   it("REQUIRED: a missing section still fails after normalization — not masked", () => {
     const corrupted = currentDetailWithApprovedDiffsOnly().replace(
-      '<div class="lg:col-start-1 lg:row-start-5 lg:min-w-0"><details><summary>Add adjustment</summary></details></div>',
+      '<div class="lg:min-w-0"><details><summary>Add an attendance day</summary></details></div>',
       "",
     );
-    expect(normalizeApprovedPhase4DetailDiffs(corrupted)).not.toBe(BASELINE_DETAIL);
+    expect(normalizeApprovedPhase4DetailDiffs(corrupted)).not.toBe(reorderBaselineToPhase4DetailColumns(baselineDetail()));
   });
 
   it("REQUIRED: an unrelated, unexpected markup addition still fails after normalization — not masked", () => {
     const corrupted = currentDetailWithApprovedDiffsOnly().replace(
-      "<button>Regenerate</button>",
-      "<button>Regenerate</button><span>Beta</span>",
+      "<button>Regenerate code</button>",
+      "<button>Regenerate code</button><span>Beta</span>",
     );
-    expect(normalizeApprovedPhase4DetailDiffs(corrupted)).not.toBe(BASELINE_DETAIL);
+    expect(normalizeApprovedPhase4DetailDiffs(corrupted)).not.toBe(reorderBaselineToPhase4DetailColumns(baselineDetail()));
   });
 
   it("REQUIRED: a student name change still fails after normalization — not masked", () => {
     const corrupted = currentDetailWithApprovedDiffsOnly().replace("Ana Pérez", "Beatriz López");
-    expect(normalizeApprovedPhase4DetailDiffs(corrupted)).not.toBe(BASELINE_DETAIL);
+    expect(normalizeApprovedPhase4DetailDiffs(corrupted)).not.toBe(reorderBaselineToPhase4DetailColumns(baselineDetail()));
+  });
+
+  it("REQUIRED: a legacy-history field value altered only in the baseline source still fails — proves reorderBaselineToPhase4DetailColumns carries baseline's real content through, not a hardcoded copy", () => {
+    const alteredBaseline = baselineDetail().replace("<td>Paid</td>", "<td>Overdue</td>");
+    expect(normalizeApprovedPhase4DetailDiffs(currentDetailWithApprovedDiffsOnly())).not.toBe(
+      reorderBaselineToPhase4DetailColumns(alteredBaseline),
+    );
   });
 });
