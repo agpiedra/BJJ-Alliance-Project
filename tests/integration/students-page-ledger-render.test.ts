@@ -139,4 +139,32 @@ describe("students/page.tsx: inactive-ledger render parity + corrected legacy-bo
     expect(html).toContain(debtStudent.lastName);
     expect(html).not.toContain(cleanStudent.lastName);
   });
+
+  /**
+   * Phase 4 roster correction: chip-styled presentation for the ledger checkboxes (native input + CSS only,
+   * no client wrapper). This is RSC-HTML evidence of the MARKUP only — it proves the checkbox is still a real,
+   * functional `<input type="checkbox">` with the right `name`/`value`/`checked` attributes and the structural
+   * class hooks the CSS relies on (`has-[:checked]`, `sr-only`), not that the CSS renders the intended pixels
+   * (jsdom/`renderToStaticMarkup` has no CSS engine). The `:has()` selector mechanism itself, and native
+   * checkbox Tab/Space/focus-visible behavior, are unchanged, pre-existing browser/CSS features — not reverified
+   * here since no new interaction logic was added (see the roster verification README for the full evidence
+   * boundary: ledgerActive=true is unreachable in any real browser today, same structural seam this file's own
+   * existing tests already document).
+   */
+  it("REQUIRED: ledger checkboxes keep real name/value/checked semantics and the chip's structural CSS hooks, with the native input visually hidden but still present", async () => {
+    mockActive = true;
+    const html = await renderRoster({ debt: "1" });
+    // Still a real checkbox, same name/value contract as before this round, visually hidden via `sr-only`
+    // (present in the accessibility tree, not `display:none`/`hidden`) — attribute order is React's own
+    // `renderToStaticMarkup` ordering (type, class, name, [checked], value), not JSX source order.
+    expect(html).toMatch(/<input type="checkbox" class="sr-only" name="debt" checked="" value="1"/);
+    expect(html).toMatch(/<input type="checkbox" class="sr-only" name="noDebt" value="1"/);
+    // `defaultChecked={params.debt === "1"}` reaches the rendered `checked` attribute for the checked one...
+    expect(html).toContain('name="debt" checked="" value="1"');
+    // ...and not for one that wasn't requested (no `checked` attribute at all).
+    expect(html).not.toContain('name="noDebt" checked=');
+    // The chip's checked/focus-visible styling hooks are present on the wrapping label.
+    expect(html).toContain("has-[:checked]:border-primary");
+    expect(html).toContain("has-[:focus-visible]:ring-2");
+  });
 });
