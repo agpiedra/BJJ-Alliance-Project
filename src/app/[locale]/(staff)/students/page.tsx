@@ -336,11 +336,17 @@ export default async function StudentsPage({
       {/* Phase 4 roster correction: heading sits beside the "Create student" disclosure at desktop, per the
           October reference's header layout. `has-[details[open]]:flex-col` (plain CSS :has(), the same
           mechanism already used by globals.css's checkbox touch-target rule) switches this row to a column
-          stack the moment the disclosure opens, so the full create-student form gets its own full-width row
-          below the heading instead of sharing a cramped half-width column with it. The <details>/<summary>
-          disclosure itself, every field, and both success states inside CreateStudentForm are unchanged —
-          this only changes where the page lays the whole block out. */}
-      <div className="flex flex-wrap items-start justify-between gap-3 has-[details[open]]:flex-col">
+          stack the moment the disclosure opens. Review-fix: `items-start` alone only stops the row from being
+          SHARED with the heading — in a column flex container it does not stretch the <details> element to the
+          container's width (align-items: flex-start sizes a column flex item to its own content on the cross
+          axis, measured live: 417px inside a 960px-wide container). `has-[details[open]]:items-stretch`
+          overrides that specifically when open, so <details> itself takes the full row width; its own `<form
+          className="max-w-sm">` (create-student-form.tsx, unchanged) keeps its own narrower readability cap —
+          the form's internal width limit is preserved, only the outer <details> container now actually uses
+          the full row instead of shrink-wrapping around its content. The <details>/<summary> disclosure itself,
+          every field, and both success states inside CreateStudentForm are unchanged — this only changes where
+          and how wide the page lays the whole block out. */}
+      <div className="flex flex-wrap items-start justify-between gap-3 has-[details[open]]:flex-col has-[details[open]]:items-stretch">
         <header className="flex flex-col gap-1">
           <p className="font-mono text-[10.5px] tracking-[.11em] text-muted-foreground uppercase">{t("eyebrow", { orgName: branding.displayName })}</p>
           <h1>{t("heading")}</h1>

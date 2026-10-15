@@ -151,15 +151,42 @@ function withProvider(page: unknown): string {
 }
 
 /**
- * The ONE narrow, documented normalization this file applies: React's `useId()` (used internally by a
- * presentational SVG component's own clipPath id — e.g. `BeltBar` — nothing ledger-related) assigns ids from a
- * counter scoped to `renderToStaticMarkup` CALL ORDER within this process, not to page content. Rendering baseline
- * then current back-to-back in the same test run gives them different id sequences purely from that call order —
- * confirmed by re-running this suite and observing the SAME row's id change between runs even with no code change
- * at all. Strips only React 19's own `«...»` id format; touches no real text or financial content.
+ * The ONE narrow, documented normalization this file applies for ID churn: React's `useId()` (used internally by
+ * a presentational SVG component's own clipPath id — e.g. `BeltBar`/`BeltVisual` — nothing ledger-related)
+ * assigns ids from a counter scoped to `renderToStaticMarkup` CALL ORDER within this process, not to page
+ * content. Rendering baseline then current back-to-back in the same test run gives them different id sequences
+ * purely from that call order — confirmed by re-running this suite and observing the SAME row's id change
+ * between runs even with no code change at all. Strips only React 19's own `«...»` id format; touches no real
+ * text or financial content.
  */
 function normalizeReactGeneratedIds(html: string): string {
   return html.replace(/«[^»]*»/g, "«ID»");
+}
+
+/**
+ * Phase 4 roster correction: the two approved, intentional visual diffs between the pre-PR2 baseline and
+ * current, normalized away — precisely, by anchored literal-string removal, not a loose regex — so everything
+ * else in the page remains a byte-for-byte comparison. Each replacement targets an EXACT, unique string this
+ * PR's own JSX is known to produce (confirmed by reading `page.tsx` and a real render before writing this), not
+ * a pattern broad enough to also swallow an unrelated change. Applying this to the BASELINE html is a safe
+ * no-op: neither literal string exists there (confirmed by `expect(baselineHtml).not.toContain(...)` below), so
+ * `.replace()` simply finds no match. See `__normalizeApprovedPhase4Diffs guard tests` below for proof this
+ * does NOT mask an unrelated, unexpected change — a corrupted fixture still fails equality after normalization.
+ */
+function normalizeApprovedPhase4Diffs(html: string): string {
+  return html
+    // 1. Header/CreateStudentForm regrouping wrapper (`page.tsx`'s own `has-[details[open]]:flex-col` div):
+    //    CreateStudentForm is mocked to `() => null` in this file, so the wrapper's only content is `<header>`;
+    //    its closing tag is therefore always immediately followed by `<Card>`'s root (`data-slot="card"`).
+    .replace(
+      '<div class="flex flex-wrap items-start justify-between gap-3 has-[details[open]]:flex-col has-[details[open]]:items-stretch"><header',
+      "<header",
+    )
+    .replace('</header></div><div data-slot="card"', '</header><div data-slot="card"')
+    // 2. Belt sizing (`w-[140px]` on the wrapping span and the <svg> itself — `BeltVisual` called directly
+    //    instead of through `BeltBar`, which never forwarded a className to its <svg> at all).
+    .replaceAll('<span aria-hidden="true" class="w-[140px] shrink-0">', '<span aria-hidden="true">')
+    .replaceAll('aria-label="" class="w-[140px]" style=', 'aria-label="" style=');
 }
 
 describe("inactive-ledger render EQUIVALENCE against the pre-PR2 baseline (review fix)", () => {
@@ -168,15 +195,19 @@ describe("inactive-ledger render EQUIVALENCE against the pre-PR2 baseline (revie
    * the pre-PR2 baseline — a true claim back when the ONLY thing separating `83fed6f` from `main` was PR2's
    * ledger-integration gating logic, which this file exists to prove made zero visual change. That premise no
    * longer holds: the Phase 4 roster correction (header/CreateStudentForm regrouping, BeltVisual sizing) is an
-   * approved, intentional visual change to this same inactive-ledger render path. A literal byte-identity
-   * assertion would now correctly FAIL for a legitimate, instructed reason — so it is replaced below with two
-   * narrower claims that preserve this file's real intent: (1) the actual financial/roster DATA content is
-   * unchanged (same students, same payment-status text — no silent regression in what the page computes and
-   * shows), and (2) the diff between baseline and current is EXACTLY the two approved visual changes, not a
-   * surprise — asserted by checking their structural markers are present in current and absent from the true
-   * pre-PR2 baseline.
+   * approved, intentional visual change to this same inactive-ledger render path.
+   *
+   * Review-fix: an earlier version of this correction replaced byte-identity with loose `.toContain("Paid")` /
+   * `.toContain(studentId)` presence checks — those do not prove a student's name/row is actually paired with
+   * the RIGHT payment status, or that no OTHER, unexpected markup changed elsewhere on the page; a student ID
+   * appearing anywhere in the HTML (e.g. in an unrelated attribute) would satisfy them. Restored to real
+   * equivalence instead: `normalizeApprovedPhase4Diffs` strips ONLY the two approved, anchored diffs (exact
+   * literal strings, not a loose pattern — see its own doc comment), and the two renders are then asserted
+   * BYTE-IDENTICAL via `.toBe()` — the same rigor the student-detail case below already has, restored here.
+   * `__normalizeApprovedPhase4Diffs guard tests` below proves this normalization cannot be satisfied by a
+   * corrupted/wrong render — it is not a test that vacuously passes.
    */
-  it("REQUIRED: roster page — current inactive render keeps identical financial/roster DATA content as the real pre-PR2 implementation, with only the approved Phase 4 visual changes as the diff", async () => {
+  it("REQUIRED: roster page — current inactive render is byte-identical to the real pre-PR2 implementation, after normalizing ONLY the two approved Phase 4 diffs", async () => {
     currentSession = { user: { id: a.admin.id }, activeOrganizationId: a.org.id };
     const baselineHtml = withProvider(await BaselineStudentsPage({ searchParams: Promise.resolve({}) }));
     const currentHtml = withProvider(await CurrentStudentsPage({ searchParams: Promise.resolve({}) }));
@@ -187,21 +218,21 @@ describe("inactive-ledger render EQUIVALENCE against the pre-PR2 baseline (revie
     // table, checked below) — "Paid"/"Overdue" are this page's own real financial content.
     expect(baselineHtml).toContain("Paid");
     expect(baselineHtml).toContain("Overdue");
-    // Same real financial/roster data content in both — the computed values this page shows are unchanged,
-    // independent of the two approved layout/sizing differences.
-    expect(currentHtml).toContain("Paid");
-    expect(currentHtml).toContain("Overdue");
-    expect(currentHtml).toContain(paidStudent.id);
-    expect(baselineHtml).toContain(paidStudent.id);
-    expect(currentHtml).toContain(pendingStudent.id);
-    expect(baselineHtml).toContain(pendingStudent.id);
 
-    // The diff is exactly the two approved Phase 4 changes — present in current, absent from the true
-    // pre-PR2 baseline — not an unexpected, broader divergence.
+    // The two approved Phase 4 diffs are genuinely present in current and genuinely absent from the true
+    // pre-PR2 baseline — proven BEFORE normalizing them away, so the equality assertion below isn't vacuous
+    // (i.e. normalizing away something that was never there in the first place).
     expect(currentHtml).toContain("has-[details[open]]:flex-col");
     expect(baselineHtml).not.toContain("has-[details[open]]:flex-col");
     expect(currentHtml).toContain("w-[140px]");
     expect(baselineHtml).not.toContain("w-[140px]");
+
+    // Everything else — every student row, every column, every payment status, the filter bar, academy scope,
+    // progress bars, eligibility pills, role-gated controls — is asserted BYTE-IDENTICAL to the true pre-PR2
+    // baseline, not merely "contains the same substrings somewhere."
+    const normalizedBaseline = normalizeReactGeneratedIds(normalizeApprovedPhase4Diffs(baselineHtml));
+    const normalizedCurrent = normalizeReactGeneratedIds(normalizeApprovedPhase4Diffs(currentHtml));
+    expect(normalizedCurrent).toBe(normalizedBaseline);
   });
 
   it("REQUIRED: student-detail page — current inactive render is byte-identical to the real pre-PR2 implementation", async () => {
@@ -212,5 +243,60 @@ describe("inactive-ledger render EQUIVALENCE against the pre-PR2 baseline (revie
 
     expect(baselineHtml).toContain("100.00");
     expect(normalizeReactGeneratedIds(currentHtml)).toBe(normalizeReactGeneratedIds(baselineHtml));
+  });
+});
+
+/**
+ * Guard tests, synthetic fixtures only (no DB, no render — fast, deterministic): prove
+ * `normalizeApprovedPhase4Diffs` cannot be satisfied by a wrong/corrupted render. Each fixture below is built
+ * from the SAME literal patterns the real baseline/current renders use (confirmed against a real render before
+ * writing this file), so these guard tests exercise the actual normalization logic, not a stand-in for it.
+ */
+describe("normalizeApprovedPhase4Diffs — guard tests (prove the baseline comparison cannot pass vacuously)", () => {
+  const BASELINE_ROW = [
+    "<header class=\"flex flex-col gap-1\"><h1>Students</h1></header>",
+    '<div data-slot="card"><table><tbody>',
+    '<tr><td><a href="/en/students/stu_1">Ana Pérez</a></td>',
+    '<td><span aria-hidden="true"><svg viewBox="0 0 360 40" width="64" role="img" aria-label="" style="aspect-ratio:360 / 40;height:auto"></svg></span></td>',
+    "<td>Paid</td></tr>",
+    "</tbody></table></div>",
+  ].join("");
+
+  function currentRowWithApprovedDiffsOnly(): string {
+    return [
+      '<div class="flex flex-wrap items-start justify-between gap-3 has-[details[open]]:flex-col has-[details[open]]:items-stretch"><header class="flex flex-col gap-1"><h1>Students</h1></header></div>',
+      '<div data-slot="card"><table><tbody>',
+      '<tr><td><a href="/en/students/stu_1">Ana Pérez</a></td>',
+      '<td><span aria-hidden="true" class="w-[140px] shrink-0"><svg viewBox="0 0 360 40" width="64" role="img" aria-label="" class="w-[140px]" style="aspect-ratio:360 / 40;height:auto"></svg></span></td>',
+      "<td>Paid</td></tr>",
+      "</tbody></table></div>",
+    ].join("");
+  }
+
+  it("REQUIRED: the two approved diffs alone normalize to equal the baseline (the real, intended case)", () => {
+    expect(normalizeApprovedPhase4Diffs(currentRowWithApprovedDiffsOnly())).toBe(BASELINE_ROW);
+  });
+
+  it("REQUIRED: a changed payment-status association still fails after normalization — not masked", () => {
+    const corrupted = currentRowWithApprovedDiffsOnly().replace("<td>Paid</td>", "<td>Pending</td>");
+    expect(normalizeApprovedPhase4Diffs(corrupted)).not.toBe(BASELINE_ROW);
+  });
+
+  it("REQUIRED: a missing row still fails after normalization — not masked", () => {
+    const corrupted = currentRowWithApprovedDiffsOnly().replace(
+      '<tr><td><a href="/en/students/stu_1">Ana Pérez</a></td><td><span aria-hidden="true" class="w-[140px] shrink-0"><svg viewBox="0 0 360 40" width="64" role="img" aria-label="" class="w-[140px]" style="aspect-ratio:360 / 40;height:auto"></svg></span></td><td>Paid</td></tr>',
+      "",
+    );
+    expect(normalizeApprovedPhase4Diffs(corrupted)).not.toBe(BASELINE_ROW);
+  });
+
+  it("REQUIRED: an unrelated, unexpected markup addition elsewhere still fails after normalization — not masked", () => {
+    const corrupted = currentRowWithApprovedDiffsOnly().replace("<h1>Students</h1>", "<h1>Students</h1><span>Beta</span>");
+    expect(normalizeApprovedPhase4Diffs(corrupted)).not.toBe(BASELINE_ROW);
+  });
+
+  it("REQUIRED: a student name change still fails after normalization — not masked", () => {
+    const corrupted = currentRowWithApprovedDiffsOnly().replace("Ana Pérez", "Beatriz López");
+    expect(normalizeApprovedPhase4Diffs(corrupted)).not.toBe(BASELINE_ROW);
   });
 });
