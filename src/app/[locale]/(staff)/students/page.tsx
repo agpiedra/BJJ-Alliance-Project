@@ -19,7 +19,7 @@ import {
 import { Pill } from "@/components/ui/pill";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
-import { BeltBar } from "@/components/belt-graphic/belt-bar";
+import { BeltVisual } from "@/components/belt-graphic/belt-graphic";
 import { ProgressToNextGrade } from "@/components/belt-graphic/progress-to-next-grade";
 import { buildProgressView } from "@/lib/promotion/progress-view";
 import { listStudents } from "./actions";
@@ -333,27 +333,42 @@ export default async function StudentsPage({
 
   return (
     <main className="flex flex-col gap-6 p-4 sm:p-6">
-      <header className="flex flex-col gap-1">
-        <p className="font-mono text-[10.5px] tracking-[.11em] text-muted-foreground uppercase">{t("eyebrow", { orgName: branding.displayName })}</p>
-        <h1>{t("heading")}</h1>
-        <p className="text-sm text-muted-foreground">
-          {t("sub", { active: activeCount, inactive: inactiveCount })}
-        </p>
-      </header>
+      {/* Phase 4 roster correction: heading sits beside the "Create student" disclosure at desktop, per the
+          October reference's header layout. `has-[details[open]]:flex-col` (plain CSS :has(), the same
+          mechanism already used by globals.css's checkbox touch-target rule) switches this row to a column
+          stack the moment the disclosure opens. Review-fix: `items-start` alone only stops the row from being
+          SHARED with the heading — in a column flex container it does not stretch the <details> element to the
+          container's width (align-items: flex-start sizes a column flex item to its own content on the cross
+          axis, measured live: 417px inside a 960px-wide container). `has-[details[open]]:items-stretch`
+          overrides that specifically when open, so <details> itself takes the full row width; its own `<form
+          className="max-w-sm">` (create-student-form.tsx, unchanged) keeps its own narrower readability cap —
+          the form's internal width limit is preserved, only the outer <details> container now actually uses
+          the full row instead of shrink-wrapping around its content. The <details>/<summary> disclosure itself,
+          every field, and both success states inside CreateStudentForm are unchanged — this only changes where
+          and how wide the page lays the whole block out. */}
+      <div className="flex flex-wrap items-start justify-between gap-3 has-[details[open]]:flex-col has-[details[open]]:items-stretch">
+        <header className="flex flex-col gap-1">
+          <p className="font-mono text-[10.5px] tracking-[.11em] text-muted-foreground uppercase">{t("eyebrow", { orgName: branding.displayName })}</p>
+          <h1>{t("heading")}</h1>
+          <p className="text-sm text-muted-foreground">
+            {t("sub", { active: activeCount, inactive: inactiveCount })}
+          </p>
+        </header>
 
-      {/* Server-side gate is the real enforcement (createStudent itself
-          re-checks the role) — this only avoids showing the control to a
-          role that would just be rejected, as defense in depth. */}
-      {canCreate && (
-        <CreateStudentForm
-          organizationId={context.organizationId}
-          academies={academies}
-          rankOptions={createStudentRankOptions}
-          billingActive={billingActive}
-          plans={createStudentPlans}
-          organizationRole={context.organizationRole === "ADMIN" ? "ADMIN" : "DIRECTOR"}
-        />
-      )}
+        {/* Server-side gate is the real enforcement (createStudent itself
+            re-checks the role) — this only avoids showing the control to a
+            role that would just be rejected, as defense in depth. */}
+        {canCreate && (
+          <CreateStudentForm
+            organizationId={context.organizationId}
+            academies={academies}
+            rankOptions={createStudentRankOptions}
+            billingActive={billingActive}
+            plans={createStudentPlans}
+            organizationRole={context.organizationRole === "ADMIN" ? "ADMIN" : "DIRECTOR"}
+          />
+        )}
+      </div>
 
       <Card>
         <form method="get">
@@ -412,9 +427,22 @@ export default async function StudentsPage({
               // this form (it has its own notice below, outside the form) and is dropped on the next submit.
               <fieldset className="flex flex-wrap items-center gap-3">
                 <legend className="sr-only">{t("filters.payment")}</legend>
+                {/* Phase 4 roster correction: chip presentation, native checkbox + CSS only — no client
+                    wrapper, no React state, no onClick. The checkbox stays a real, functional
+                    <input type="checkbox">, same name/value/defaultChecked, same GET-form participation,
+                    same native Tab/Space keyboard behavior. `sr-only` visually hides the native box (the
+                    label becomes the visible pill) without removing it from the accessibility tree or tab
+                    order. `has-[:checked]`/`has-[:focus-visible]` are plain CSS (Tailwind's `has-*` variant
+                    compiles to the same `:has()` selector already used by globals.css's checkbox
+                    touch-target rule). The checkbox stays a direct child of the label, so that existing
+                    global rule (`label:has(> input[type="checkbox"])`, 44px under pointer: coarse) already
+                    applies to this markup with no new CSS needed. */}
                 {LEDGER_FILTER_KEYS.map((key) => (
-                  <label key={key} className="flex items-center gap-1.5 text-sm">
-                    <input type="checkbox" name={key} value="1" defaultChecked={params[key] === "1"} />
+                  <label
+                    key={key}
+                    className="inline-flex items-center gap-1.5 rounded-full border border-border px-3 py-1.5 text-sm has-[:checked]:border-primary has-[:checked]:bg-primary/10 has-[:checked]:font-medium has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring has-[:focus-visible]:ring-offset-2"
+                  >
+                    <input type="checkbox" name={key} value="1" defaultChecked={params[key] === "1"} className="sr-only" />
                     {t(`ledger.filters.${key}`)}
                   </label>
                 ))}
@@ -516,17 +544,36 @@ export default async function StudentsPage({
                       </DataTableCell>
                       <DataTableCell>
                         <div className="flex items-center gap-2">
-                          <BeltBar
-                            belt={{
-                              primaryColor: student.currentRank.primaryColor,
-                              centerStripeColor: student.currentRank.centerStripeColor,
-                              barColor: student.currentRank.barColor,
-                              stripeColors: student.currentRank.stripeColors,
-                              maxStripes: student.currentRank.maxStripes,
-                              visibleStripeSlots: student.currentRank.visibleStripeSlots,
-                            }}
-                            stripes={student.currentStripes}
-                          />
+                          {/* Phase 4 roster correction: BeltBar's own `className` reaches its wrapping <span>,
+                              not the <svg> it renders (confirmed by reading belt-bar.tsx) — a width class on
+                              BeltBar would not resize the belt. BeltVisual (already exported, same shared
+                              component BeltBar itself wraps) applies `className` directly to the <svg>, the
+                              same mechanism the landing page already uses (PR #123) — so this page renders
+                              BeltVisual directly, reproducing BeltBar's own aria-hidden-wrapper pattern
+                              in-place so the accessible name is still delegated to the sibling text span
+                              below, exactly as before, with no new/duplicate screen-reader announcement.
+                              ~140px wide, matching the October reference's belt width; the resulting ~15.6px
+                              height is intentionally shorter than the reference's 26px — the shared
+                              component's own 360:40 (9:1) viewBox is NOT changed here (that would affect
+                              every belt in the app), so this is a disclosed, intentional reuse adaptation,
+                              not a claimed exact visual match. Rank colors and stripe geometry are untouched:
+                              same `belt`/`stripes` props BeltBar itself passed through. */}
+                          <span aria-hidden className="w-[140px] shrink-0">
+                            <BeltVisual
+                              belt={{
+                                primaryColor: student.currentRank.primaryColor,
+                                centerStripeColor: student.currentRank.centerStripeColor,
+                                barColor: student.currentRank.barColor,
+                                stripeColors: student.currentRank.stripeColors,
+                                maxStripes: student.currentRank.maxStripes,
+                                visibleStripeSlots: student.currentRank.visibleStripeSlots,
+                              }}
+                              stripes={student.currentStripes}
+                              label=""
+                              size="xs"
+                              className="w-[140px]"
+                            />
+                          </span>
                           <span className="whitespace-nowrap">
                             {locale === "es" ? student.currentRank.labelEs : student.currentRank.labelEn} ·{" "}
                             <span className="font-medium">
