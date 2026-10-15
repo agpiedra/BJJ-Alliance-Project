@@ -267,6 +267,13 @@ export default async function StudentDetailPage({
   }));
 
   return (
+    // Phase 4 detail correction, round 5 — EXPLICITLY APPROVED (Option B): independent 3:2 desktop columns,
+    // replacing round 1-4's shared-row-track CSS grid entirely. Two real column containers, each sized to its
+    // OWN content — zero row-track coupling, unlike every prior round's per-row grid placement (which forced
+    // a measured, disclosed blank-space cost; see the verification README's "Row-height coupling" history).
+    // This round's DOM/mobile/keyboard order is an APPROVED CHANGE from every prior round: Header → Promotions
+    // → Attendance → RegenerateCode → AddAdjustment → Profile → Legacy Payment History → Ledger → gated
+    // actions — the entire left column before any of the right column, not the previous alternating sequence.
     <main className="flex flex-col gap-6 p-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
@@ -278,172 +285,206 @@ export default async function StudentDetailPage({
         <Badge variant="outline">{tStatus(student.status)}</Badge>
       </div>
 
-      {/* MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 2d — "Awarding from the
-          student detail page." Replaces the old read-only belt graphic +
-          at-belt-summary card + standalone promotion-history card with one
-          component: read-only display for every role, plus (ADMIN/DIRECTOR
-          only) the award button and manual-correction form, both thin
-          wrappers around the SAME `awardPromotion`/`correctPromotion` the
-          dashboard queue and Phase 4's future flows will share. */}
-      <PromocionesCard
-        organizationId={context.organizationId}
-        studentId={student.id}
-        belt={currentBeltVisual}
-        label={currentBeltLabel}
-        currentStripes={student.currentStripes}
-        maxStripes={summary.maxStripes}
-        lifetimeCount={summary.lifetimeCount}
-        view={cardView}
-        dueDateFormatted={dueDateFormatted}
-        reachedOnFormatted={reachedOnFormatted}
-        history={promocionesHistory}
-        creditHistory={creditHistory}
-        canAct={canEdit}
-        rankOptions={rankOptions}
-        trackChange={
-          canEdit
-            ? {
-                rankOptions: trackChangeRankOptions,
-                defaultRankId: defaultTrackChangeRankId,
-                isTransition: isTrackTransitionAge,
+      {/* `lg:items-start` keeps each column at its own natural height — without it, CSS Grid's default
+          `align-items: stretch` would stretch the shorter column's wrapper <div> to match the taller one
+          (an invisible box, since neither wrapper has its own border/background, but still the point of
+          independent columns is that each is sized to its own content, not reach-stretched by the other).
+          `lg:min-w-0` on both column wrappers below is the same verified clipping fix from round 4 (a long
+          non-wrapping Ledger "Covers" value can otherwise force a column wider than its 3fr/2fr share). */}
+      <div className="flex flex-col gap-6 lg:grid lg:grid-cols-[3fr_2fr] lg:items-start lg:gap-6">
+        {/* Left column: Promotions → Attendance → Regenerate code → Add attendance adjustment. */}
+        <div className="flex flex-col gap-6 lg:min-w-0">
+          {/* MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 2d — "Awarding from the
+              student detail page." Replaces the old read-only belt graphic +
+              at-belt-summary card + standalone promotion-history card with one
+              component: read-only display for every role, plus (ADMIN/DIRECTOR
+              only) the award button and manual-correction form, both thin
+              wrappers around the SAME `awardPromotion`/`correctPromotion` the
+              dashboard queue and Phase 4's future flows will share. */}
+          {/* PromocionesCard itself takes no className — a thin 1:1 sizing wrapper carries `lg:min-w-0`. */}
+          <div className="lg:min-w-0">
+            <PromocionesCard
+              organizationId={context.organizationId}
+              studentId={student.id}
+              belt={currentBeltVisual}
+              label={currentBeltLabel}
+              currentStripes={student.currentStripes}
+              maxStripes={summary.maxStripes}
+              lifetimeCount={summary.lifetimeCount}
+              view={cardView}
+              dueDateFormatted={dueDateFormatted}
+              reachedOnFormatted={reachedOnFormatted}
+              history={promocionesHistory}
+              creditHistory={creditHistory}
+              canAct={canEdit}
+              rankOptions={rankOptions}
+              trackChange={
+                canEdit
+                  ? {
+                      rankOptions: trackChangeRankOptions,
+                      defaultRankId: defaultTrackChangeRankId,
+                      isTransition: isTrackTransitionAge,
+                    }
+                  : null
               }
-            : null
-        }
-      />
+            />
+          </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>{tDetail("profile.heading")}</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <dl className="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2">
-            <div>
-              <dt className="text-sm text-muted-foreground">{t("create.phone")}</dt>
-              <dd>{student.phone}</dd>
-            </div>
-            <div>
-              <dt className="text-sm text-muted-foreground">{t("create.email")}</dt>
-              <dd>{student.email}</dd>
-            </div>
-            <div>
-              <dt className="text-sm text-muted-foreground">{t("create.currentBelt")}</dt>
-              <dd>{currentBeltLabel}</dd>
-            </div>
-            <div>
-              <dt className="text-sm text-muted-foreground">{t("create.currentStripes")}</dt>
-              <dd>{student.currentStripes}</dd>
-            </div>
-            <div>
-              <dt className="text-sm text-muted-foreground">{tDetail("profile.joinedAt")}</dt>
-              <dd>{formatTimestampInAcademyZone(student.joinedAt, locale) ?? "—"}</dd>
-            </div>
-            <div>
-              <dt className="text-sm text-muted-foreground">{t("create.dateOfBirth")}</dt>
-              <dd>{formatDateOnly(student.dateOfBirth) ?? "—"}</dd>
-            </div>
-            <div>
-              <dt className="text-sm text-muted-foreground">{t("create.guardianName")}</dt>
-              <dd>{student.guardianName ?? "—"}</dd>
-            </div>
-            <div>
-              <dt className="text-sm text-muted-foreground">{t("create.guardianPhone")}</dt>
-              <dd>{student.guardianPhone ?? "—"}</dd>
-            </div>
-            <div>
-              <dt className="text-sm text-muted-foreground">{t("create.emergencyContact")}</dt>
-              <dd>{student.emergencyContact ?? "—"}</dd>
-            </div>
-            <div className="sm:col-span-2">
-              <dt className="text-sm text-muted-foreground">{tDetail("profile.notes")}</dt>
-              <dd className="whitespace-pre-wrap">{student.notes ?? "—"}</dd>
-            </div>
-          </dl>
-        </CardContent>
-      </Card>
+          {/* The latest attendance entries with the ADMIN/DIRECTOR correction control (void a mistaken entry).
+              Deliberately small: not the full accessible attendance history, which is separate work. */}
+          <Card className="lg:min-w-0">
+            <CardHeader>
+              <CardTitle>{tDetail("attendanceHistory.heading")}</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <AttendanceEntriesCard organizationId={context.organizationId} entries={attendanceEntries} canVoid={canEdit} />
+            </CardContent>
+          </Card>
 
-      {/* The latest attendance entries with the ADMIN/DIRECTOR correction control (void a mistaken entry).
-          Deliberately small: not the full accessible attendance history, which is separate work. */}
-      <Card>
-        <CardHeader>
-          <CardTitle>{tDetail("attendanceHistory.heading")}</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <AttendanceEntriesCard organizationId={context.organizationId} entries={attendanceEntries} canVoid={canEdit} />
-        </CardContent>
-      </Card>
-      {/* Real data as of Task 2 — every PaymentPeriod row for this student,
-          newest first, same "replace comingLater with a real list + empty
-          state" shape as promotionHistory above. */}
-      <Card>
-        <CardHeader>
-          <CardTitle>{tDetail("paymentHistory.heading")}</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {paymentHistory.length === 0 ? (
-            <p className="text-muted-foreground">{tDetail("paymentHistory.empty")}</p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-sm">
-                <thead>
-                  <tr className="text-muted-foreground">
-                    <th className="pb-2 pr-4 font-medium">{tDetail("paymentHistory.columnPeriod")}</th>
-                    <th className="pb-2 pr-4 font-medium">{tDetail("paymentHistory.columnPlan")}</th>
-                    <th className="pb-2 pr-4 font-medium">{tDetail("paymentHistory.columnStatus")}</th>
-                    <th className="pb-2 pr-4 font-medium">{tDetail("paymentHistory.columnAmount")}</th>
-                    <th className="pb-2 font-medium">{tDetail("paymentHistory.columnNotes")}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {paymentHistory.map((period) => (
-                    <tr key={period.id} className="border-t">
-                      <td className="py-2 pr-4 align-top whitespace-nowrap">
-                        {formatPeriodMonth(period.year, period.month)}
-                      </td>
-                      <td className="py-2 pr-4 align-top whitespace-nowrap">{period.planName}</td>
-                      <td className="py-2 pr-4 align-top">
-                        <Badge variant="outline">{tPaymentStatus(period.status)}</Badge>
-                      </td>
-                      <td className="py-2 pr-4 align-top whitespace-nowrap">
-                        {period.amount != null ? formatMoney(period.amount, period.currency, locale) : "—"}
-                      </td>
-                      <td className="py-2 align-top whitespace-pre-wrap">{period.notes ?? "—"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+          {/* RegenerateCodeButton takes no className — a thin 1:1 sizing wrapper carries `lg:min-w-0`. */}
+          <div className="lg:min-w-0">
+            <RegenerateCodeButton organizationId={context.organizationId} studentId={student.id} />
+          </div>
+
+          {/* Any staff role can add an adjustment (spec §3 grants attendance
+              marking/correction to INSTRUCTOR too) — deliberately NOT inside the
+              canEdit gate below, which is ADMIN/DIRECTOR only. The server-side
+              addAttendanceAdjustment is the real enforcement either way.
+              AddAdjustmentForm takes no className — a thin 1:1 sizing wrapper carries `lg:min-w-0`. */}
+          <div className="lg:min-w-0">
+            <AddAdjustmentForm
+              organizationId={context.organizationId}
+              studentId={student.id}
+              todayCr={todayCr}
+              accounting={summary.accounting}
+            />
+          </div>
+        </div>
+
+        {/* Right column: Profile → Legacy payment history → Ledger balance/history. */}
+        <div className="flex flex-col gap-6 lg:min-w-0">
+          <Card className="lg:min-w-0">
+            <CardHeader>
+              <CardTitle>{tDetail("profile.heading")}</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <dl className="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2">
+                <div>
+                  <dt className="text-sm text-muted-foreground">{t("create.phone")}</dt>
+                  <dd>{student.phone}</dd>
+                </div>
+                <div>
+                  <dt className="text-sm text-muted-foreground">{t("create.email")}</dt>
+                  <dd>{student.email}</dd>
+                </div>
+                <div>
+                  <dt className="text-sm text-muted-foreground">{t("create.currentBelt")}</dt>
+                  <dd>{currentBeltLabel}</dd>
+                </div>
+                <div>
+                  <dt className="text-sm text-muted-foreground">{t("create.currentStripes")}</dt>
+                  <dd>{student.currentStripes}</dd>
+                </div>
+                <div>
+                  <dt className="text-sm text-muted-foreground">{tDetail("profile.joinedAt")}</dt>
+                  <dd>{formatTimestampInAcademyZone(student.joinedAt, locale) ?? "—"}</dd>
+                </div>
+                <div>
+                  <dt className="text-sm text-muted-foreground">{t("create.dateOfBirth")}</dt>
+                  <dd>{formatDateOnly(student.dateOfBirth) ?? "—"}</dd>
+                </div>
+                <div>
+                  <dt className="text-sm text-muted-foreground">{t("create.guardianName")}</dt>
+                  <dd>{student.guardianName ?? "—"}</dd>
+                </div>
+                <div>
+                  <dt className="text-sm text-muted-foreground">{t("create.guardianPhone")}</dt>
+                  <dd>{student.guardianPhone ?? "—"}</dd>
+                </div>
+                <div>
+                  <dt className="text-sm text-muted-foreground">{t("create.emergencyContact")}</dt>
+                  <dd>{student.emergencyContact ?? "—"}</dd>
+                </div>
+                <div className="sm:col-span-2">
+                  <dt className="text-sm text-muted-foreground">{tDetail("profile.notes")}</dt>
+                  <dd className="whitespace-pre-wrap">{student.notes ?? "—"}</dd>
+                </div>
+              </dl>
+            </CardContent>
+          </Card>
+
+          {/* Real data as of Task 2 — every PaymentPeriod row for this student,
+              newest first, same "replace comingLater with a real list + empty
+              state" shape as promotionHistory above. */}
+          <Card className="lg:min-w-0">
+            <CardHeader>
+              <CardTitle>{tDetail("paymentHistory.heading")}</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {paymentHistory.length === 0 ? (
+                <p className="text-muted-foreground">{tDetail("paymentHistory.empty")}</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-sm">
+                    <thead>
+                      <tr className="text-muted-foreground">
+                        <th className="pb-2 pr-4 font-medium">{tDetail("paymentHistory.columnPeriod")}</th>
+                        <th className="pb-2 pr-4 font-medium">{tDetail("paymentHistory.columnPlan")}</th>
+                        <th className="pb-2 pr-4 font-medium">{tDetail("paymentHistory.columnStatus")}</th>
+                        <th className="pb-2 pr-4 font-medium">{tDetail("paymentHistory.columnAmount")}</th>
+                        <th className="pb-2 font-medium">{tDetail("paymentHistory.columnNotes")}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {paymentHistory.map((period) => (
+                        <tr key={period.id} className="border-t">
+                          <td className="py-2 pr-4 align-top whitespace-nowrap">
+                            {formatPeriodMonth(period.year, period.month)}
+                          </td>
+                          <td className="py-2 pr-4 align-top whitespace-nowrap">{period.planName}</td>
+                          <td className="py-2 pr-4 align-top">
+                            <Badge variant="outline">{tPaymentStatus(period.status)}</Badge>
+                          </td>
+                          <td className="py-2 pr-4 align-top whitespace-nowrap">
+                            {period.amount != null ? formatMoney(period.amount, period.currency, locale) : "—"}
+                          </td>
+                          <td className="py-2 align-top whitespace-pre-wrap">{period.notes ?? "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* §3 decision 2/3 (approved): a NEW current-balance summary + a SEPARATE ledger-history section,
+              alongside the legacy table above, never interleaved into it — only rendered once the ledger is
+              active for this org. Wrapped in one <div> only because its two already-DOM-adjacent children
+              (the fragment they replace) can't carry sizing classes themselves — not a new grouping of
+              otherwise unrelated siblings. Still legacy-above/ledger-below, still two distinct components,
+              never interleaved. `lg:min-w-0` here AND on its own children (`[&>*]:min-w-0`): a long,
+              non-wrapping ledger-history row (e.g. a settlement's "Covers" value) otherwise sets this item's
+              automatic minimum width to its own min-content, which can overflow the column — silently clipped
+              by an ancestor `overflow-hidden` with zero document-level overflow signal, found live against a
+              26-month fixture. The DataTable's own pre-existing `overflow-x-auto` wrapper (data-table.tsx) is
+              what should handle a wide table; min-w-0 here just stops this item itself from reasserting a
+              wider auto-minimum above it. */}
+          {ledgerActive && (
+            <div className="flex flex-col gap-6 lg:min-w-0 lg:[&>*]:min-w-0">
+              <StudentBalanceSummary display={balanceDisplay} pendingReceipts={pendingReceipts} locale={locale} t={t} />
+              <PaymentHistorySection
+                organizationId={context.organizationId}
+                studentId={student.id}
+                initialRows={historyInitial.rows}
+                initialCursor={historyInitial.cursor}
+                initialFailed={historyInitial.failed}
+                locale={locale}
+              />
             </div>
           )}
-        </CardContent>
-      </Card>
-
-      {/* §3 decision 2/3 (approved): a NEW current-balance summary + a SEPARATE ledger-history section, alongside
-          the legacy table above, never interleaved into it — only rendered once the ledger is active for this org. */}
-      {ledgerActive && (
-        <>
-          <StudentBalanceSummary display={balanceDisplay} pendingReceipts={pendingReceipts} locale={locale} t={t} />
-          <PaymentHistorySection
-            organizationId={context.organizationId}
-            studentId={student.id}
-            initialRows={historyInitial.rows}
-            initialCursor={historyInitial.cursor}
-            initialFailed={historyInitial.failed}
-            locale={locale}
-          />
-        </>
-      )}
-
-      <RegenerateCodeButton organizationId={context.organizationId} studentId={student.id} />
-
-      {/* Any staff role can add an adjustment (spec §3 grants attendance
-          marking/correction to INSTRUCTOR too) — deliberately NOT inside the
-          canEdit gate below, which is ADMIN/DIRECTOR only. The server-side
-          addAttendanceAdjustment is the real enforcement either way. */}
-      <AddAdjustmentForm
-        organizationId={context.organizationId}
-        studentId={student.id}
-        todayCr={todayCr}
-        accounting={summary.accounting}
-      />
+        </div>
+      </div>
 
       {canEdit && (
         <div className="flex flex-col gap-4">
