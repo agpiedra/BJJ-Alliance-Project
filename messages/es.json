@@ -1,17 +1,20 @@
 {
   "home": {
-    "heading": "Administra tu academia en una sola plataforma",
-    "subheading": "Seguimiento de cinturones, asistencia y pagos para academias de Jiu-Jitsu Brasileño.",
+    "heading": "Cada franja, registrada. Cada clase, contada.",
+    "subheading": "MATROOM gestiona asistencia, progreso de cinturón, cuotas y check-in para academias de Jiu-Jitsu Brasileño — una sola plataforma para cada sede.",
     "cta": "Registra tu academia",
     "loginLink": "¿Ya tienes cuenta? Inicia sesión",
     "highlights": {
-      "family": "Niños y adultos entrenan juntos, con un currículo pensado para ambos",
-      "progress": "Cada grado y franja queda registrado, para que siempre sepas dónde estás parado",
-      "schedule": "Un horario semanal estructurado, confirmado al inscribirte"
+      "family": "Lleva la asistencia y el progreso de cinturón juntos, con promociones revisadas por instructores.",
+      "progress": "Lleva el control de lo que se debe, lo que se ha pagado y los paquetes prepagados — en la moneda de tu academia.",
+      "schedule": "Administra varias sedes bajo una sola organización, cada una con su propio horario y matrícula."
     },
     "belts": {
       "heading": "Un camino de progreso claro",
-      "description": "De cinturón blanco a negro, cada grado y franja queda registrado para que siempre sepas dónde estás parado."
+      "description": "De cinturón blanco a negro, cada franja y promoción queda registrada, para que estudiantes e instructores siempre sepan en qué punto están."
+    },
+    "footer": {
+      "signIn": "Iniciar sesión"
     }
   },
   "notFound": {

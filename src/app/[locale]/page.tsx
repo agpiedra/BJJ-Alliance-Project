@@ -56,7 +56,10 @@ export default async function HomePage({
       <BrandBanner />
       <main className="mx-auto flex max-w-4xl flex-col gap-12 p-6 pb-16">
         <section className="flex flex-col items-center gap-4 pt-8 text-center">
-          <h1 className="text-3xl font-bold sm:text-4xl">{t("heading")}</h1>
+          {/* D2 (design/matroom/DESIGN.md §D2/§7.11) — self-hosted Noto Serif, opt-in, same
+              font-normal override as register-academy/Login: the vendored file is a single
+              static Regular (400) instance, so the default sans weight class is dropped. */}
+          <h1 className="font-display max-w-2xl text-3xl font-normal sm:text-4xl">{t("heading")}</h1>
           <p className="max-w-xl text-lg text-muted-foreground">{t("subheading")}</p>
           <div className="flex flex-wrap items-center justify-center gap-4 pt-2">
             {/* MULTI_ACADEMY_AND_KIDS_BELTS.md Item 2 — this is the
@@ -94,17 +97,30 @@ export default async function HomePage({
         </section>
 
         <section className="flex flex-col items-center gap-4">
-          <h2 className="text-xl font-semibold">{t("belts.heading")}</h2>
+          <h2 className="font-display text-xl font-normal">{t("belts.heading")}</h2>
           <p className="max-w-xl text-center text-sm text-muted-foreground">
             {t("belts.description")}
           </p>
           <div className="flex flex-wrap items-center justify-center gap-4">
+            {/* Default `lg` size (320px intrinsic SVG width) overflows a 320px viewport's padded
+                content area; BeltGraphic's own `className` prop (its documented mechanism for a
+                caller to size it) shrinks it to fit without touching the shared component. */}
             {BELT_PROGRESSION.map(({ code, belt, stripes }) => (
-              <BeltGraphic key={code} belt={belt} label={tBelt(code)} stripes={stripes} />
+              <BeltGraphic key={code} belt={belt} label={tBelt(code)} stripes={stripes} className="w-40 sm:w-56 lg:w-80" />
             ))}
           </div>
         </section>
       </main>
+      {/* D7 (design/matroom/DESIGN.md §D7) — footer with real destinations only: sign-in and
+          register-academy, approved 2026-10-13. No invented About/Blog/social links. */}
+      <footer className="mx-auto flex max-w-4xl flex-wrap items-center justify-center gap-6 border-t p-6 text-sm">
+        <a href={`/${locale}/login`} className="underline pointer-coarse:py-3">
+          {t("footer.signIn")}
+        </a>
+        <a href={`/${locale}/register-academy`} className="underline pointer-coarse:py-3">
+          {t("cta")}
+        </a>
+      </footer>
     </>
   );
 }

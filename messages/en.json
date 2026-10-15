@@ -1,17 +1,20 @@
 {
   "home": {
-    "heading": "Run your academy on one platform",
-    "subheading": "Belt tracking, attendance, and payments for Brazilian Jiu-Jitsu academies.",
+    "heading": "Every stripe, tracked. Every class, counted.",
+    "subheading": "MATROOM runs attendance, belt progress, dues and check-in for Brazilian Jiu-Jitsu academies — one platform for every branch.",
     "cta": "Register your academy",
     "loginLink": "Already have an account? Sign in",
     "highlights": {
-      "family": "Kids and adults train together, with a curriculum built for both",
-      "progress": "Every stripe and belt promotion is tracked, so you always know where you stand",
-      "schedule": "A structured weekly class schedule confirmed when you sign up"
+      "family": "Keep attendance and belt progress together, with promotions reviewed by instructors.",
+      "progress": "Track what's owed, what's been paid, and prepaid packages — in your academy's own currency.",
+      "schedule": "Run multiple locations under one organization, each with its own schedule and roster."
     },
     "belts": {
       "heading": "A clear path of progress",
-      "description": "From white belt to black, every stripe and promotion is tracked so you always know where you stand."
+      "description": "From white belt to black, every stripe and promotion is tracked, so students and instructors always know where they stand."
+    },
+    "footer": {
+      "signIn": "Sign in"
     }
   },
   "notFound": {
