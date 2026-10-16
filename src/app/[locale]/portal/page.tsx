@@ -232,6 +232,10 @@ export default async function StudentPortalPage({
       new Intl.DateTimeFormat(locale === "es" ? "es-CR" : "en-US", { weekday: "long", month: "long", day: "numeric" }).format(date.toJSDate()),
     ]),
   );
+  // Hoisted above `calendarBlocks` (rather than declared alongside the other `getTranslations` calls
+  // below) so the phone day-list's per-block type label can reuse it directly - the exact same
+  // translator the legend already uses for the same type, no new copy.
+  const tClassType = await getTranslations("classType");
   const calendarBlocks: WeekCalendarBlock[] = sessions.map((s) => {
     const [hour, minute] = s.startTime.split(":").map(Number);
     const end = addMinutesToClockTime(s.startTime, s.durationMinutes);
@@ -244,6 +248,7 @@ export default async function StudentPortalPage({
       endRow: rowFor(end.hour, end.minute),
       colorClassName: CLASS_TYPE_COLOR_CLASS[s.type],
       dimmed: !s.active,
+      meta: tClassType(s.type),
     };
   });
   const sundayHasClasses = hasClassesByDay.get(DayOfWeek.SUNDAY) ?? false;
@@ -252,7 +257,6 @@ export default async function StudentPortalPage({
   const t = await getTranslations("portal");
   const tPaymentStatus = await getTranslations("students.paymentStatus");
   const tAdminSchedule = await getTranslations("adminSchedule");
-  const tClassType = await getTranslations("classType");
   // Reuses the STAFF "students" namespace's existing `ledger.*` copy — the same balance-summary/history strings
   // the staff student-detail page already shows, so the two surfaces never drift into two different wordings for
   // the same ledger facts. Only the eligibility-notice strings (students.ledger.eligibilityNotice.*) are new.

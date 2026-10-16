@@ -34,12 +34,58 @@ export function ScheduleDayList({
   const todayKey = days.find((d) => d.isToday)?.key ?? days[0]?.key;
   const [selected, setSelected] = useState(todayKey);
   const tabRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const tablistRef = useRef<HTMLDivElement>(null);
+  const selectedRef = useRef(selected);
+  selectedRef.current = selected;
+
+  /** Adjusts ONLY the tablist's own horizontal scroll, never `scrollIntoView` (which can move an
+   * ancestor scroll container, including the page, in ways this component doesn't control and can't
+   * verify). A no-op when the selected tab is already fully within the visible range — this never
+   * recenters an already-visible tab, only brings a genuinely out-of-view one to the nearest edge.
+   *
+   * Uses `getBoundingClientRect()`, not `offsetLeft`/`offsetWidth` — this tablist has no `position`,
+   * so a tab's `offsetLeft` resolves against whatever positioned ancestor the browser finds next
+   * (an unrelated coordinate space, not this scroll container's own content), which silently broke
+   * the very first real-browser check of this fix. `getBoundingClientRect()` is always relative to
+   * the viewport, so subtracting the tablist's own rect and adding its current `scrollLeft` gives the
+   * tab's true position within the tablist's scrollable content, regardless of any ancestor's
+   * positioning. */
+  function ensureSelectedTabVisible() {
+    const tablist = tablistRef.current;
+    const tab = tabRefs.current[selectedRef.current];
+    if (!tablist || !tab) return;
+    const tabRect = tab.getBoundingClientRect();
+    const listRect = tablist.getBoundingClientRect();
+    const tabLeft = tabRect.left - listRect.left + tablist.scrollLeft;
+    const tabRight = tabRect.right - listRect.left + tablist.scrollLeft;
+    const viewLeft = tablist.scrollLeft;
+    const viewRight = viewLeft + tablist.clientWidth;
+    if (tabLeft < viewLeft) tablist.scrollLeft = tabLeft;
+    else if (tabRight > viewRight) tablist.scrollLeft = tabRight - tablist.clientWidth;
+  }
 
   useEffect(() => {
-    // The already-selected day-tab can load scrolled out of view at phone widths (all 7 tabs overflow the row) —
-    // bring it into view on mount/change so it's visible without the user first discovering horizontal scroll.
-    tabRefs.current[selected]?.scrollIntoView?.({ block: "nearest", inline: "center" });
+    ensureSelectedTabVisible();
   }, [selected]);
+
+  // The tablist can mount — or later become visible — at zero width: its parent portal panel still
+  // `hidden`, or this component's own `md:hidden` CSS boundary not yet crossed. `selected` never
+  // changes just because visibility changes, so the effect above alone misses that moment entirely.
+  // A ResizeObserver reacts to the container's own rendered size regardless of WHY it changed — this
+  // is what makes it fire on a parent-hidden-attribute flip AND on a desktop<->phone resize alike,
+  // and (unlike IntersectionObserver) NOT fire just because the page was scrolled vertically.
+  useEffect(() => {
+    const el = tablistRef.current;
+    if (!el) return;
+    let lastWidth = el.clientWidth;
+    const ro = new ResizeObserver(([entry]) => {
+      const width = entry.contentRect.width;
+      if (width > 0 && lastWidth === 0) ensureSelectedTabVisible();
+      lastWidth = width;
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   if (days.length === 0) return null;
   const activeDay = days.find((d) => d.key === selected) ?? days[0];
@@ -66,9 +112,10 @@ export function ScheduleDayList({
 
   return (
     <div className="flex flex-col gap-3 p-4 md:hidden" data-testid="schedule-day-list">
-      <div role="tablist" aria-label={t("label")} className="flex gap-2 overflow-x-auto pb-1">
+      <div ref={tablistRef} role="tablist" aria-label={t("label")} className="flex gap-2 overflow-x-auto pb-1">
         {days.map((day, index) => {
           const isActive = day.key === selected;
+          const hasClasses = !day.isOff;
           return (
             <button
               key={day.key}
@@ -91,6 +138,12 @@ export function ScheduleDayList({
             >
               <span>{day.label}</span>
               <span className="tabular-nums">{day.dateNumber}</span>
+              {hasClasses && (
+                <span
+                  aria-hidden="true"
+                  className={cn("size-1.5 rounded-full", isActive ? "bg-background" : "bg-muted-foreground")}
+                />
+              )}
             </button>
           );
         })}
@@ -114,10 +167,19 @@ export function ScheduleDayList({
             {activeBlocks.map((block) => (
               <li
                 key={block.id}
-                className={cn("flex items-center justify-between gap-3 rounded-md px-3 py-2.5 text-sm text-white", block.colorClassName, block.dimmed && "opacity-60")}
+                className={cn(
+                  "flex items-stretch gap-3 overflow-hidden rounded-md border border-border bg-card text-sm",
+                  block.dimmed && "opacity-60",
+                )}
               >
-                <span className="font-medium">{block.title}</span>
-                <span className="font-mono text-xs tabular-nums">{block.timeLabel}</span>
+                <span aria-hidden="true" className={cn("w-1.5 shrink-0", block.colorClassName)} />
+                <div className="flex flex-1 flex-col gap-0.5 py-2.5 pr-3">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className="font-medium">{block.title}</span>
+                    <span className="font-mono text-xs tabular-nums">{block.timeLabel}</span>
+                  </div>
+                  {block.meta && <span className="text-xs text-muted-foreground">{block.meta}</span>}
+                </div>
               </li>
             ))}
           </ul>
