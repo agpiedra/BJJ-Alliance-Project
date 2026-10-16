@@ -66,8 +66,8 @@ export function LogoMark({ size = 40, className, logoUrl, initials, initialsBack
         style={{
           width: size,
           height: size,
-          backgroundColor: initialsBackground ?? "#111827",
-          color: initialsForeground ?? "#ffffff",
+          backgroundColor: initialsBackground ?? "#fffefa",
+          color: initialsForeground ?? "#1d392b",
           fontSize: size * 0.4,
         }}
       >

@@ -3,6 +3,7 @@ import { getTestPrismaClient } from "../helpers/test-db";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import sharp from "sharp";
 import { hashSecret } from "../../src/lib/crypto";
+import { MATROOM_DEFAULT_BRANDING } from "../../src/lib/branding/default-palette";
 import type { StorageFailure, UploadedLogo } from "../../src/lib/branding/logo-storage";
 
 type UploadLogoResult = { ok: true; result: UploadedLogo } | StorageFailure;
@@ -201,6 +202,156 @@ describe("saveBrandingTheme", () => {
     expect(result.ok).toBe(true);
     const row = await prisma.organizationBranding.findUniqueOrThrow({ where: { organizationId: org.id } });
     expect(row.sidebarForeground).toBe("#FFFFFF");
+  });
+});
+
+describe("saveBrandingTheme — brandingIsDefault transitions", () => {
+  afterAll(cleanup);
+  beforeEach(() => {
+    currentSession = null;
+  });
+
+  const DEFAULT_PRIMARY = "#254b35";
+  const DEFAULT_SIDEBAR_BG = "#fffefa";
+
+  it("a missing row, saved unchanged (default values, no overrides), is created already in default mode", async () => {
+    const org = await makeScratchOrg("branding-default-missing-row-unchanged");
+    const admin = await makeStaffUser("ADMIN", "branding-default-missing-row-unchanged", org.id);
+    currentSession = { user: { id: admin.id, role: "ADMIN" }, activeOrganizationId: org.id };
+
+    const result = await saveBrandingTheme(
+      org.id,
+      {},
+      formData({ primaryColor: DEFAULT_PRIMARY, sidebarBackground: DEFAULT_SIDEBAR_BG }),
+    );
+    expect(result.ok).toBe(true);
+
+    const row = await prisma.organizationBranding.findUniqueOrThrow({ where: { organizationId: org.id } });
+    expect(row.brandingIsDefault).toBe(true);
+  });
+
+  it("an untouched default-mode row, saved unchanged, stays in default mode", async () => {
+    const org = await makeScratchOrg("branding-default-unchanged");
+    const admin = await makeStaffUser("ADMIN", "branding-default-unchanged", org.id);
+    await prisma.organizationBranding.create({
+      data: { organizationId: org.id, primaryColor: DEFAULT_PRIMARY, sidebarBackground: DEFAULT_SIDEBAR_BG, brandingIsDefault: true },
+    });
+    currentSession = { user: { id: admin.id, role: "ADMIN" }, activeOrganizationId: org.id };
+
+    const result = await saveBrandingTheme(
+      org.id,
+      {},
+      formData({ primaryColor: DEFAULT_PRIMARY, sidebarBackground: DEFAULT_SIDEBAR_BG }),
+    );
+    expect(result.ok).toBe(true);
+
+    const row = await prisma.organizationBranding.findUniqueOrThrow({ where: { organizationId: org.id } });
+    expect(row.brandingIsDefault).toBe(true);
+  });
+
+  it("a default-mode row with primaryColor edited away from default flips to stored mode and writes the submitted color", async () => {
+    const org = await makeScratchOrg("branding-default-primary-edit");
+    const admin = await makeStaffUser("ADMIN", "branding-default-primary-edit", org.id);
+    await prisma.organizationBranding.create({
+      data: { organizationId: org.id, primaryColor: DEFAULT_PRIMARY, sidebarBackground: DEFAULT_SIDEBAR_BG, brandingIsDefault: true },
+    });
+    currentSession = { user: { id: admin.id, role: "ADMIN" }, activeOrganizationId: org.id };
+
+    const result = await saveBrandingTheme(
+      org.id,
+      {},
+      formData({ primaryColor: "#215DA5", sidebarBackground: DEFAULT_SIDEBAR_BG }),
+    );
+    expect(result.ok).toBe(true);
+
+    const row = await prisma.organizationBranding.findUniqueOrThrow({ where: { organizationId: org.id } });
+    expect(row.brandingIsDefault).toBe(false);
+    expect(row.primaryColor).toBe("#215DA5");
+  });
+
+  it("a default-mode row with sidebarBackground edited away from default flips to stored mode and writes the submitted color", async () => {
+    const org = await makeScratchOrg("branding-default-sidebar-edit");
+    const admin = await makeStaffUser("ADMIN", "branding-default-sidebar-edit", org.id);
+    await prisma.organizationBranding.create({
+      data: { organizationId: org.id, primaryColor: DEFAULT_PRIMARY, sidebarBackground: DEFAULT_SIDEBAR_BG, brandingIsDefault: true },
+    });
+    currentSession = { user: { id: admin.id, role: "ADMIN" }, activeOrganizationId: org.id };
+
+    const result = await saveBrandingTheme(
+      org.id,
+      {},
+      formData({ primaryColor: DEFAULT_PRIMARY, sidebarBackground: "#0B2545" }),
+    );
+    expect(result.ok).toBe(true);
+
+    const row = await prisma.organizationBranding.findUniqueOrThrow({ where: { organizationId: org.id } });
+    expect(row.brandingIsDefault).toBe(false);
+    expect(row.sidebarBackground).toBe("#0B2545");
+  });
+
+  it("enabling sidebar overrides on a default-mode row flips it to stored mode even when the override values match the default exactly — presence of the override keys is itself the edit", async () => {
+    const org = await makeScratchOrg("branding-default-enable-overrides");
+    const admin = await makeStaffUser("ADMIN", "branding-default-enable-overrides", org.id);
+    await prisma.organizationBranding.create({
+      data: { organizationId: org.id, primaryColor: DEFAULT_PRIMARY, sidebarBackground: DEFAULT_SIDEBAR_BG, brandingIsDefault: true },
+    });
+    currentSession = { user: { id: admin.id, role: "ADMIN" }, activeOrganizationId: org.id };
+
+    const result = await saveBrandingTheme(
+      org.id,
+      {},
+      formData({
+        primaryColor: DEFAULT_PRIMARY,
+        sidebarBackground: DEFAULT_SIDEBAR_BG,
+        sidebarForeground: MATROOM_DEFAULT_BRANDING.light.sidebarForeground,
+      }),
+    );
+    expect(result.ok).toBe(true);
+
+    const row = await prisma.organizationBranding.findUniqueOrThrow({ where: { organizationId: org.id } });
+    expect(row.brandingIsDefault).toBe(false);
+    expect(row.sidebarForeground).toBe(MATROOM_DEFAULT_BRANDING.light.sidebarForeground);
+  });
+
+  it("disabling sidebar overrides on an already-stored-mode row resets them to null and leaves it in stored mode (existing behavior, unaffected by default-mode)", async () => {
+    const org = await makeScratchOrg("branding-stored-disable-overrides");
+    const admin = await makeStaffUser("ADMIN", "branding-stored-disable-overrides", org.id);
+    await prisma.organizationBranding.create({
+      data: {
+        organizationId: org.id,
+        primaryColor: "#7F1D1D",
+        sidebarBackground: "#1A0505",
+        sidebarForeground: "#FFFFFF",
+        brandingIsDefault: false,
+      },
+    });
+    currentSession = { user: { id: admin.id, role: "ADMIN" }, activeOrganizationId: org.id };
+
+    const result = await saveBrandingTheme(org.id, {}, formData({ primaryColor: "#7F1D1D", sidebarBackground: "#1A0505" }));
+    expect(result.ok).toBe(true);
+
+    const row = await prisma.organizationBranding.findUniqueOrThrow({ where: { organizationId: org.id } });
+    expect(row.brandingIsDefault).toBe(false);
+    expect(row.sidebarForeground).toBeNull();
+  });
+
+  it("an existing stored-mode row, saved unchanged, never re-enters default mode even if its colors happen to equal the shared default", async () => {
+    const org = await makeScratchOrg("branding-stored-unchanged-coincidental-match");
+    const admin = await makeStaffUser("ADMIN", "branding-stored-unchanged-coincidental-match", org.id);
+    await prisma.organizationBranding.create({
+      data: { organizationId: org.id, primaryColor: DEFAULT_PRIMARY, sidebarBackground: DEFAULT_SIDEBAR_BG, brandingIsDefault: false },
+    });
+    currentSession = { user: { id: admin.id, role: "ADMIN" }, activeOrganizationId: org.id };
+
+    const result = await saveBrandingTheme(
+      org.id,
+      {},
+      formData({ primaryColor: DEFAULT_PRIMARY, sidebarBackground: DEFAULT_SIDEBAR_BG }),
+    );
+    expect(result.ok).toBe(true);
+
+    const row = await prisma.organizationBranding.findUniqueOrThrow({ where: { organizationId: org.id } });
+    expect(row.brandingIsDefault).toBe(false);
   });
 });
 

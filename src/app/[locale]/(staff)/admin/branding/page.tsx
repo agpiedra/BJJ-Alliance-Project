@@ -76,6 +76,7 @@ export default async function BrandingSettingsPage() {
               sidebarActiveBackground: raw?.sidebarActiveBackground ?? null,
               sidebarActiveForeground: raw?.sidebarActiveForeground ?? null,
               sidebarBorder: raw?.sidebarBorder ?? null,
+              isDefaultMode: resolved.isDefaultMode,
             }}
             action={saveBrandingTheme}
           />

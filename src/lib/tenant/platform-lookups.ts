@@ -1,5 +1,7 @@
 import { unscopedPrisma } from "@/lib/prisma/unscoped";
 import { deriveInitials, resolvePrimaryTheme, resolveSidebarTheme, type ResolvedPrimaryTheme, type ResolvedSidebarTheme } from "@/lib/theme";
+import { MATROOM_DEFAULT_BRANDING } from "@/lib/branding/default-palette";
+import { resolveDefaultBrandingVariant } from "@/lib/branding/resolve-default-variant";
 import { resolveInvoiceState, isUnreviewed } from "@/lib/billing/deadline";
 import type { Academy, OrganizationStatus, Prisma } from "@/generated/prisma/client";
 
@@ -188,8 +190,11 @@ export interface OrganizationLoginBranding {
   displayName: string;
   initials: string;
   logoUrl: string | null;
+  isDefaultMode: boolean;
   primary: ResolvedPrimaryTheme;
   sidebar: ResolvedSidebarTheme;
+  /** See ResolvedBranding's own doc comment (get-branding.ts) — only present when `isDefaultMode`. */
+  dark?: { primary: ResolvedPrimaryTheme; sidebar: ResolvedSidebarTheme };
 }
 
 /**
@@ -234,22 +239,35 @@ export async function resolveOrganizationLoginBranding(orgSlug: string): Promise
   if (!organization || organization.status !== "ACTIVE") return null;
 
   const row = await unscopedPrisma.organizationBranding.findUnique({ where: { organizationId: organization.id } });
+  const isDefaultMode = !row || row.brandingIsDefault;
 
   const displayName = row?.displayName || organization.name;
-  const primary = resolvePrimaryTheme(row?.primaryColor ?? "#FACC15");
 
+  if (isDefaultMode) {
+    return {
+      displayName,
+      initials: deriveInitials(displayName),
+      logoUrl: row?.logoUrl ?? null,
+      isDefaultMode: true,
+      ...resolveDefaultBrandingVariant(MATROOM_DEFAULT_BRANDING.light),
+      dark: resolveDefaultBrandingVariant(MATROOM_DEFAULT_BRANDING.dark),
+    };
+  }
+
+  const primary = resolvePrimaryTheme(row!.primaryColor);
   return {
     displayName,
     initials: deriveInitials(displayName),
     logoUrl: row?.logoUrl ?? null,
+    isDefaultMode: false,
     primary,
     sidebar: resolveSidebarTheme({
-      background: row?.sidebarBackground ?? "#111827",
-      foreground: row?.sidebarForeground,
-      activeBackground: row?.sidebarActiveBackground,
-      activeForeground: row?.sidebarActiveForeground,
+      background: row!.sidebarBackground,
+      foreground: row!.sidebarForeground,
+      activeBackground: row!.sidebarActiveBackground,
+      activeForeground: row!.sidebarActiveForeground,
       activeBackgroundDefault: primary.background,
-      border: row?.sidebarBorder,
+      border: row!.sidebarBorder,
     }),
   };
 }

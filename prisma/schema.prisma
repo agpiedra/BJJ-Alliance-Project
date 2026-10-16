@@ -407,17 +407,40 @@ model OrganizationBranding {
 
   /// The one brand-color knob (see this model's own doc comment for why
   /// there's exactly one, not two). Overrides `--brand-gold`; its foreground
-  /// is always derived, never stored — see src/lib/theme.ts.
-  primaryColor String @default("#FACC15")
+  /// is always derived, never stored — see src/lib/theme.ts. The literal
+  /// default below is defense-in-depth only (see `brandingIsDefault`): a
+  /// brand-new row's actual rendered color comes from the shared
+  /// `MATROOM_DEFAULT_BRANDING` constant, not this column, while
+  /// `brandingIsDefault` is true.
+  primaryColor String @default("#254b35")
 
   /// The sidebar's own five-token palette (doc: "chosen independently" of
   /// primaryColor). Only the background is required; the other four are
-  /// derive-unless-overridden, per this model's own doc comment.
-  sidebarBackground       String  @default("#111827")
+  /// derive-unless-overridden, per this model's own doc comment. Same
+  /// defense-in-depth note as `primaryColor` above applies to
+  /// `sidebarBackground`'s literal default.
+  sidebarBackground       String  @default("#fffefa")
   sidebarForeground       String?
   sidebarActiveBackground String?
   sidebarActiveForeground String?
   sidebarBorder           String?
+
+  /// True: this organization has never explicitly saved branding — every
+  /// rendered color (light AND dark) comes from the shared
+  /// `MATROOM_DEFAULT_BRANDING` constant (src/lib/branding/default-palette.ts),
+  /// not from the columns above. False: render the columns above exactly as
+  /// stored, with the existing null-override derivation untouched (today's
+  /// behavior, unchanged). Flipped to false the moment `saveBrandingTheme`
+  /// detects a real edit (see that action's own doc comment) — never
+  /// inferred from whether a row's colors happen to match the default.
+  ///
+  /// Migration note: existing rows are backfilled to `false` (preserve
+  /// stored-column behavior for data that predates this field, whose
+  /// customization intent is unknown), and the column's default is then
+  /// changed to `true` for rows created after that point — two separate
+  /// `ALTER` statements, never inferred from column defaults alone. See the
+  /// migration adding this column for the exact two-step DDL.
+  brandingIsDefault Boolean @default(true)
 
   updatedAt DateTime @updatedAt
 

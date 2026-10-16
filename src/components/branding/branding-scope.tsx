@@ -28,14 +28,20 @@ import { BrandingPortalContext } from "@/components/branding/branding-portal-con
  *   instead. Getting this pairing backwards would make a director's chosen
  *   "active" color only ever show up on hover.
  *
- * `--brand-gold` is deliberately identical in both `:root` and `.dark`
- * scopes here, continuing this codebase's OWN existing rule for that token
- * ("Gold does not invert between themes" — globals.css) — a director's
- * color gets the same treatment the shipped default already gets, not a
- * new light/dark-aware behavior invented for this feature. `--sidebar-*`
- * is likewise already theme-invariant in the shipped defaults (identical
- * values in `:root` and `.dark` today), so this continues that too: one
- * set of sidebar values, injected once, regardless of theme.
+ * `--brand-gold`/`--sidebar-*` are deliberately identical in both `:root`
+ * and `.dark` scopes for a CUSTOMIZED organization (`branding.isDefaultMode
+ * === false`), continuing this codebase's own existing rule for that token
+ * ("Gold does not invert between themes" — globals.css) — a director's own
+ * chosen color gets the same treatment the shipped default already got, not
+ * a new light/dark-aware behavior invented for this feature.
+ *
+ * An organization that has never explicitly saved branding
+ * (`branding.isDefaultMode === true`) is the one deliberate exception: it is
+ * meant to look exactly like the platform's own unbranded pages, which DO
+ * invert between themes (design/matroom/tokens.css's `:root`/`.dark`
+ * blocks) — so this is the one case where a SECOND, dark-specific value set
+ * is additionally emitted under `.dark`, using `branding.dark` (only present
+ * when `isDefaultMode`, see ResolvedBranding's own doc comment).
  *
  * Scoped to a `data-branding` wrapper (not a raw `:root`/`.dark` override)
  * so this never leaks into unauthenticated/unbranded pages rendered
@@ -76,6 +82,20 @@ export function BrandingScope({ branding, children }: { branding: ResolvedBrandi
         .dark [data-branding="${scopeAttr}"] {
           --action-edge: ${presentation.dark.actionEdge};
           --brand-data: ${presentation.dark.brandData};
+          ${
+            branding.isDefaultMode && branding.dark
+              ? `--brand-gold: ${branding.dark.primary.background};
+          --brand-gold-foreground: ${branding.dark.primary.foreground};
+          --sidebar: ${branding.dark.sidebar.background};
+          --sidebar-foreground: ${branding.dark.sidebar.foreground};
+          --sidebar-primary: ${branding.dark.sidebar.activeBackground};
+          --sidebar-primary-foreground: ${branding.dark.sidebar.activeForeground};
+          --sidebar-accent: ${branding.dark.sidebar.hoverBackground};
+          --sidebar-accent-foreground: ${branding.dark.sidebar.hoverForeground};
+          --sidebar-border: ${branding.dark.sidebar.border};
+          --sidebar-muted: color-mix(in srgb, ${branding.dark.sidebar.foreground} 74%, ${branding.dark.sidebar.background});`
+              : ""
+          }
         }
       `}</style>
       <BrandingPortalContext.Provider value={containerRef}>{children}</BrandingPortalContext.Provider>
