@@ -153,6 +153,8 @@ Evidence: `img/current/picker-fix-1280-en.png`, `picker-fix-390-en.png`, `picker
 
 While testing the deliberately unbroken 56-character name as a picker stress case, the **Entry screen's** own "Open for check-in now" line (joins names with `" · "`, no wrap handling for an unbroken word) overflowed horizontally, producing a page-level horizontal scrollbar. This is a different component (`EntryView`, not `ClassPicker`) and wasn't touched — noted here for visibility, not fixed, since it's outside this task's authorized scope (no new features / no scope creep) and the authorized fix was specifically the picker's name/time layout.
 
+> **Superseded — fixed in a later, separately scoped PR.** See §7 below for the bounded correction, root cause, and evidence. This paragraph is left exactly as originally written for the record.
+
 ### 4. Regression test — and why the obvious version doesn't work
 
 Added one test to `tests/browser/touch-targets.test.ts` (same real-Chrome suite already covering this screen, `pnpm test:browser`), run across all existing viewports/pointers (tablet landscape 1024×768, tablet portrait 768×1024, phone 390×844 — mouse and coarse pointer).
@@ -185,9 +187,81 @@ The test also keeps the pre-existing single-line/no-clipping assertion on the ti
 | Ambiguous-match "Wrong class?" correction flow intact | **Verified** | structured DOM assertions + DB row count (reassigned in place) |
 | Regression test meaningfully detects the defect | **Verified** | fails against reverted code, passes against the fix |
 | Lint / typecheck / unit / browser-test suites | **Verified** | all green |
-| Entry panel overflow on an unbroken long name | **Pending — separately scoped, not fixed here** | observed during testing, not captured as a separate screenshot |
+| Entry panel overflow on an unbroken long name | **Fixed** — see §7 | `entry-overflow-after-*.png` |
 | Real Android/iOS device verification | **Unverified — carried over** | — |
 | ADMIN smoke-test timeout, run `38607144036` | **Unverified — carried over, unattributed** | — |
 | "Opens at X" line / "Forgot your code?" footer | **Deliberately out of scope** | planning §3 |
 
 No commits beyond this branch. PR opened against `main`, held unmerged for review.
+
+---
+
+## Implementation (shipped) — Entry open-now panel overflow
+
+Separate branch `fix/kiosk-entry-open-now-overflow`, separate PR. Scope: only the Entry screen's "Open for check-in now" panel overflow flagged pending in §3/§6 above. Out of scope, untouched: the picker (already fixed in the prior PR), "opens at X" / "Forgot your code?" copy, any shared-component redesign, branding, monitoring, migrations, deployment, activation.
+
+### Reproduction (before)
+
+Disposable fixture: 3 classes open at once at Escazú — `"Fundamentals"`, `"Advanced"`, and a deliberately unbroken 56-character name (`"Superultraheavyweightdivisionintermediateclassforadults"`), so the panel joins three names including one with no internal space to wrap at.
+
+Measured separately, as asked:
+- **1280px**: `document.documentElement.scrollWidth` stayed within the viewport (no page-level scrollbar), but the panel's own text visibly painted past its bordered card into the surrounding page background — confirmed via `nameSpan.scrollWidth (432) > nameSpan.clientWidth (287)`.
+- **390px**: `document.documentElement.scrollWidth (475) > innerWidth (390)` — a real, visible horizontal scrollbar, with the long name's tail word clipped at the viewport edge.
+- **320px**: same horizontal scroll, worse (the unbroken word is cut off mid-word).
+
+Evidence: `img/current/entry-overflow-before-1280-en.png`, `entry-overflow-before-390-en.png`.
+
+### Root cause (two layers, both needed fixing)
+
+1. **The name-list span itself** (`kiosk-client.tsx`, inside the `data-testid="kiosk-open-now"` panel): `whitespace-normal` behavior wraps at spaces, but the unbroken word has none, so it overflowed its own box — the exact same `overflow-wrap` gap the picker fix (prior PR) already addressed for the same reason. Fix: add `break-words`.
+2. **A second, independent bug, found only because the first fix alone didn't fully resolve 320px**: the portrait (non-landscape) `grid` wrapping the whole Entry layout has no explicit `grid-template-columns`. Unlike the landscape variant two breakpoints over (`min-[900px]:landscape:grid-cols-[minmax(0,1fr)_auto]`, already correctly bounded), the implicit portrait track has no `minmax(0, …)` ceiling, so it grows to fit its content instead of being capped by the page's real available width. On top of that, the inner column (`flex flex-col items-center`) and the panel itself (`max-w-xs`, a flat 320px cap untied to real available space) are both `items-center`-aligned, shrink-to-fit flex items — under CSS's shrink-to-fit algorithm, an element with wrapping text and no explicit width prefers to use its full allowed upper bound before it will wrap, rather than first shrinking to whatever space is actually available. The combination let the panel claim its full `max-w-xs` (320px) even when only ~256–305px was actually available at 320–390px wide viewports.
+
+Confirmed by elimination, live, before touching source: temporarily forcing `grid-template-columns: minmax(0, 1fr)` on the grid (DevTools-only, not committed) dropped `scrollWidth` from 344px to 313px at 320px — real, but not the full fix. Only after also tying the column and the panel to their real available width (not just an absolute cap) did `scrollWidth` match `clientWidth` exactly (no overflow at all).
+
+### Fix, exact scope
+
+File: `src/app/[locale]/kiosk/[academySlug]/kiosk-client.tsx`, `EntryView`, three one-utility-class changes, no structural/JSX changes:
+- The outer grid: `grid-cols-[minmax(0,1fr)]` added to the base (portrait) classes, reusing the exact pattern the landscape variant already uses on the same element.
+- The inner column (`flex flex-col items-center …`): `w-full` added, so it ties to its now-properly-bounded grid track instead of shrink-wrapping to its own content's preferred width.
+- The open-now panel: `max-w-xs` → `max-w-[min(100%,20rem)]` (still caps at 20rem/320px for larger screens, but now also respects "100% of what's actually available" so it can't claim more than the real column width at narrow viewports) and `break-words` on the name-list span.
+
+All complete class names, the `" · "` separator, the open-class data itself, the `refreshAt`/`serverNow` refresh timing, the loading/unavailable states, and every keypad interaction are unchanged — confirmed via the "keeps the snug, content-hugging panel for ordinary short names unchanged" regression test and a direct before/after comparison (ordinary two-name panel width: 226px, identical before and after the fix).
+
+### Verification (after)
+
+Real browser, same fixture (3 classes, including the unbroken name), real dev server against the isolated test DB:
+
+| Viewport | Locale | `scrollWidth` vs `clientWidth` | Keypad reachable | Evidence |
+|---|---|---|---|---|
+| 320px portrait | EN | equal (305 = 305) | yes | `entry-overflow-after-320-en.png` |
+| 390px portrait | EN | equal (390 = 390) | yes | `entry-overflow-after-390-en.png` |
+| 390px portrait | ES | equal (390 = 390) | yes | `entry-overflow-after-390-es.png` |
+| 1280px landscape | EN | equal (1280 = 1280) | yes | `entry-overflow-after-1280-en.png` |
+
+Also confirmed: the ordinary-names case (`"Fundamentals · Advanced"`, no unbroken word) renders an unchanged, snug, content-hugging card — `img/current/entry-ordinary-names-390-en.png` — and the kiosk is still dark-only (no light variant exists anywhere on this screen, reconfirmed from the prior PR's finding).
+
+Note: `document.documentElement.scrollWidth > window.innerWidth` is **not** a reliable "has horizontal scroll" check — `window.innerWidth` includes the vertical scrollbar's own gutter, so a real few-pixel overflow can hide underneath it (this happened mid-investigation: an early partial fix measured as "clean" by that comparison while a real horizontal scrollbar was still visible on screen). The correct comparison, used throughout this verification and in the regression test, is `scrollWidth` vs. `document.documentElement.clientWidth`, which excludes that gutter.
+
+### Regression test
+
+Added two tests to `tests/browser/touch-targets.test.ts` (same real-Chrome suite, no new test infrastructure), under a new `describe.each` for 320px/390px/1280px (the three widths this task specifically asked for, not the file's existing tablet/phone matrix):
+- **"never pushes the page into horizontal scroll, even with an unbroken long class name among several open classes"** — mocks `/api/kiosk/open-classes` with the same 3-class fixture, asserts `scrollWidth <= clientWidth` (the correct comparison above), asserts the full un-truncated joined name text, and asserts the name span's own text still fits its own box (`measure().fits`).
+- **"keeps the snug, content-hugging panel for ordinary short names unchanged"** — same mock with only the two ordinary names, asserts the panel's rendered width stays well under the 320px cap, proving the fix didn't force the panel to always stretch.
+
+Confirmed meaningful the same way as the picker's regression test: reverted the three fix lines, re-ran — both new tests failed (`scrollWidth 473/484 > clientWidth 320/390` at 320px/390px, and `fits: false` at 1280px). Restored the fix, re-ran the whole file: all 80 tests pass.
+
+### Checks run
+
+- `pnpm lint` (scoped to the two changed files): clean.
+- `pnpm typecheck`: clean.
+- `pnpm test:unit` (1724 tests): all pass.
+- `pnpm test:browser` (`tests/browser/touch-targets.test.ts`, 80 tests — 74 existing + 6 new): all pass, including both new tests, confirmed to fail against the unfixed code and pass against the fix.
+
+### Remaining limitations
+
+- Real Android/iOS device verification — still outstanding, carried over.
+- ADMIN smoke-test timeout, run `38607144036` — still unresolved/unattributed, carried over.
+- The "opens at X" upcoming-class line and "Forgot your code?" footer remain deliberately out of scope (planning §3).
+- This fix addresses the Entry panel specifically; it does not touch or re-verify the picker (already fixed and merged in the prior PR).
+
+No commits beyond this branch. Second PR opened against `main`, held unmerged for review.

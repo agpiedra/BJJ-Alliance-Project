@@ -789,8 +789,8 @@ function EntryView({
   return (
     // Portrait / phone: one centred column (prompt, dots, keypad, clock). Landscape tablet: two columns, the prompt, dots and clock on the
     // left and the keypad on the right, so the whole screen fits 1024 x 768 without scrolling.
-    <div className="grid w-full justify-items-center gap-8 min-[900px]:landscape:max-w-5xl min-[900px]:landscape:grid-cols-[minmax(0,1fr)_auto] min-[900px]:landscape:grid-rows-[1fr_auto] min-[900px]:landscape:justify-items-start min-[900px]:landscape:gap-x-16 min-[900px]:landscape:gap-y-6">
-      <div className="flex flex-col items-center gap-6 min-[900px]:landscape:col-start-1 min-[900px]:landscape:row-start-1 min-[900px]:landscape:items-start min-[900px]:landscape:self-center">
+    <div className="grid w-full grid-cols-[minmax(0,1fr)] justify-items-center gap-8 min-[900px]:landscape:max-w-5xl min-[900px]:landscape:grid-cols-[minmax(0,1fr)_auto] min-[900px]:landscape:grid-rows-[1fr_auto] min-[900px]:landscape:justify-items-start min-[900px]:landscape:gap-x-16 min-[900px]:landscape:gap-y-6">
+      <div className="flex w-full flex-col items-center gap-6 min-[900px]:landscape:col-start-1 min-[900px]:landscape:row-start-1 min-[900px]:landscape:items-start min-[900px]:landscape:self-center">
         <h1 className="text-center text-3xl font-semibold text-balance min-[900px]:landscape:text-left sm:text-[40px] sm:leading-tight">{t("enterCode")}</h1>
 
         <div className="flex gap-4 sm:gap-5" aria-hidden="true">
@@ -808,9 +808,9 @@ function EntryView({
             right now — a normal, common state) and when the fetch itself failed (never a false "nothing open"
             claim, and never a blocker for the keypad either way). */}
         {openNow.kind === "ok" && openNow.classes.length > 0 && (
-          <div data-testid="kiosk-open-now" className="flex max-w-xs flex-col gap-1 rounded-lg border border-input bg-card px-4 py-3 text-center min-[900px]:landscape:text-left">
+          <div data-testid="kiosk-open-now" className="flex max-w-[min(100%,20rem)] flex-col gap-1 rounded-lg border border-input bg-card px-4 py-3 text-center min-[900px]:landscape:text-left">
             <span className="text-xs text-muted-foreground">{t("openNowLabel")}</span>
-            <span className="text-base font-semibold">{openNow.classes.map((entry) => entry.name).join(" · ")}</span>
+            <span data-testid="kiosk-open-now-names" className="text-base font-semibold break-words">{openNow.classes.map((entry) => entry.name).join(" · ")}</span>
           </div>
         )}
 

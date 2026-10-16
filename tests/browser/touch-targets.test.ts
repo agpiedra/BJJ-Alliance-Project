@@ -294,6 +294,66 @@ describe.each(POINTERS)("kiosk under a $name pointer", (pointer) => {
   });
 });
 
+// A width long enough to need a line break on its own (no spaces), the same shape that caused the Entry
+// open-now panel to push the whole page into horizontal scroll before this fix.
+const UNBROKEN_OPEN_CLASS_NAME = "Superultraheavyweightdivisionintermediateclassforadults";
+const ENTRY_OPEN_CLASSES_WITH_UNBROKEN_NAME = [
+  { id: "e1", name: "Fundamentals", startTime: "09:00", endTime: "10:30", type: "GI" },
+  { id: "e2", name: "Advanced", startTime: "09:05", endTime: "10:35", type: "GI" },
+  { id: "e3", name: UNBROKEN_OPEN_CLASS_NAME, startTime: "09:10", endTime: "10:40", type: "KIDS" },
+];
+
+describe.each([
+  { name: "320px portrait", width: 320, height: 690 },
+  { name: "390px portrait", width: 390, height: 844 },
+  { name: "1280px landscape", width: 1280, height: 800 },
+])("Entry open-now panel at $name", (viewport) => {
+  it("never pushes the page into horizontal scroll, even with an unbroken long class name among several open classes", async () => {
+    // document.documentElement.clientWidth (not window.innerWidth): clientWidth excludes the vertical
+    // scrollbar's own width, so it is the real available content width. Comparing scrollWidth against
+    // innerWidth instead would have silently passed on a genuine few-pixel overflow this exact bug produced
+    // (the vertical scrollbar happened to absorb just enough of the gap to hide it from that weaker check).
+    const page = await openPage(POINTERS[0], viewport);
+    await page.route("**/api/kiosk/open-classes", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ ok: true, openClasses: ENTRY_OPEN_CLASSES_WITH_UNBROKEN_NAME, refreshAt: new Date(Date.now() + 60_000).toISOString(), serverNow: new Date().toISOString() }),
+      }),
+    );
+    await openKiosk(page, POINTERS[0]);
+    const panel = page.getByTestId("kiosk-open-now");
+    await panel.waitFor();
+    const names = page.getByTestId("kiosk-open-now-names");
+    // complete names preserved, in order, joined by " · " — no truncation
+    expect(await names.textContent()).toBe("Fundamentals · Advanced · " + UNBROKEN_OPEN_CLASS_NAME);
+    const sizes = await page.evaluate(() => ({ clientWidth: document.documentElement.clientWidth, scrollWidth: document.documentElement.scrollWidth }));
+    expect(sizes.scrollWidth, `document must not need more width (${sizes.scrollWidth}) than it actually has (${sizes.clientWidth})`).toBeLessThanOrEqual(sizes.clientWidth);
+    // the panel's own text must still fit inside its own box (no clipping) and the keypad stays reachable
+    const nameMeasure = await names.evaluate(measure);
+    expect(nameMeasure.fits, "the open-now names must fit inside their own box, not just inside the page").toBe(true);
+    const keyOne = page.getByRole("button", { name: "1", exact: true });
+    await expect.poll(async () => keyOne.isVisible()).toBe(true);
+  });
+
+  it("keeps the snug, content-hugging panel for ordinary short names unchanged", async () => {
+    const page = await openPage(POINTERS[0], viewport);
+    await page.route("**/api/kiosk/open-classes", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ ok: true, openClasses: ENTRY_OPEN_CLASSES_WITH_UNBROKEN_NAME.slice(0, 2), refreshAt: new Date(Date.now() + 60_000).toISOString(), serverNow: new Date().toISOString() }),
+      }),
+    );
+    await openKiosk(page, POINTERS[0]);
+    const panel = page.getByTestId("kiosk-open-now");
+    await panel.waitFor();
+    const panelBox = await panel.boundingBox();
+    // well short of the 20rem (320px) cap — proves the width fix didn't force the panel to always stretch
+    expect(panelBox!.width, "the panel for two short names stays content-sized, not stretched to its max width").toBeLessThan(260);
+  });
+});
+
 describe.each(POINTERS)("shared Button sizes under a $name pointer", (pointer) => {
   describe.each(VIEWPORTS.slice(0, 2))("$name", (viewport) => {
     const compact = { xs: 28, sm: 32, default: 36, lg: 40, "icon-xs": 28, "icon-sm": 32, icon: 36, "icon-lg": 40 } as const;
