@@ -179,12 +179,13 @@ The test also keeps the pre-existing single-line/no-clipping assertion on the ti
 | Deliberately unbroken long name degrades readably (not letter-by-letter) | **Verified** | `picker-fix-1280-en.png` |
 | Bounded scroll still works | **Verified** | `scrollHeight`/`clientHeight` measurement |
 | Last (scrolled-to) card selectable, produces correct check-in | **Verified** | `picker-fix-last-card-select-1280.png` |
-| `refreshAt` boundary crossing (list hidden → replaced, no reload) | **Verified** (end-to-end; sub-100ms transient frame not captured) | `entry-refresh-boundary-after.png` |
+| `refreshAt` boundary crossing: old list replaced by the correct new list, no reload | **Verified (live)** | `entry-refresh-boundary-after.png`, `performance.getEntriesByType("navigation")` showing one `navigate` entry |
+| `refreshAt` boundary crossing: expired list hidden while the refetch is in flight | **Source/test evidence only** — not independently observed live this session; confirmed at the source (`kiosk-client.tsx` ~line 308, `{kind:"loading"}` set before refetch) | — |
 | Done click before expiry → immediate return, no duplicate write | **Verified** | `entry-after-done-click.png`, DB row count |
 | Ambiguous-match "Wrong class?" correction flow intact | **Verified** | structured DOM assertions + DB row count (reassigned in place) |
 | Regression test meaningfully detects the defect | **Verified** | fails against reverted code, passes against the fix |
 | Lint / typecheck / unit / browser-test suites | **Verified** | all green |
-| Entry panel overflow on an unbroken long name | **Noticed, not fixed (out of scope)** | observed during testing, not captured as a separate screenshot |
+| Entry panel overflow on an unbroken long name | **Pending — separately scoped, not fixed here** | observed during testing, not captured as a separate screenshot |
 | Real Android/iOS device verification | **Unverified — carried over** | — |
 | ADMIN smoke-test timeout, run `38607144036` | **Unverified — carried over, unattributed** | — |
 | "Opens at X" line / "Forgot your code?" footer | **Deliberately out of scope** | planning §3 |
