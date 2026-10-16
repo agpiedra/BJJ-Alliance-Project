@@ -83,6 +83,13 @@ const OPEN_CLASSES = [
   { id: "c2", name: "Open Mat", startTime: "18:00", endTime: "19:00", type: "OPEN_MAT" },
 ];
 
+// Ordinary, realistic class names — short, no internal wrap opportunity needed for most of them — the exact shape
+// that demonstrated the name/time overlap regression (see the test below), not a synthetic worst case.
+const SHORT_NAME_CLASSES = [
+  { id: "s1", name: "Fundamentals", startTime: "07:25", endTime: "08:55", type: "GI" },
+  { id: "s2", name: "Advanced", startTime: "07:30", endTime: "09:00", type: "GI" },
+];
+
 let browser: Browser;
 let kioskSlug: string;
 const contexts: BrowserContext[] = [];
@@ -161,6 +168,37 @@ describe.each(POINTERS)("kiosk under a $name pointer", (pointer) => {
       const time = await page.locator("main button", { hasText: LONG_CLASS }).locator(".font-mono").evaluate(measure);
       expect(time.h, "the time range is a single line").toBeLessThan(40);
       expect((await page.getByRole("button", { name: "Cancel" }).evaluate(measure)).h, "Cancel is a large target").toBeGreaterThanOrEqual(60);
+    });
+
+    it("class-picker rows: the class name is never squeezed narrower than its own text, even for an ordinary short name", async () => {
+      // The regression this guards: the name span had no `break-words` and the row had no `flex-wrap`, so the
+      // time range's shrink-0, non-shrinking width left the name column narrower than its own text needed — even
+      // for a single short word like "Fundamentals". A squeezed box doesn't clip or wrap its text by itself (the
+      // span has `overflow: visible`): the glyphs paint past the box edge and visually land on top of the time
+      // range next to it. getBoundingClientRect()-based overlap checks CANNOT see this: the box Chrome reports
+      // for the name span never actually grows to include the overflowing ink, so a name/time rectangle-
+      // intersection test reports "no overlap" in both the broken and the fixed state — it was tried and
+      // verified to pass against the unfixed code, which is exactly the false confidence a real but wrong
+      // real-browser check gives. `scrollWidth > clientWidth` is the one measurement that is true only when the
+      // element's own content needs more width than the box it was actually given — confirmed to fail against
+      // the unfixed code and pass against the fix before being kept here.
+      const page = await openPage(pointer, viewport);
+      await page.route("**/api/kiosk/check-in", (route) =>
+        route.fulfill({ status: 400, contentType: "application/json", body: JSON.stringify({ ok: false, error: "class_selection_required", openClasses: SHORT_NAME_CLASSES }) }),
+      );
+      await openKiosk(page, pointer);
+      await submitCode(page);
+      await page.getByRole("heading", { level: 1, name: "Which class did you attend?" }).waitFor();
+      for (const entry of SHORT_NAME_CLASSES) {
+        const row = page.locator("main button", { hasText: entry.name });
+        const name = row.locator('[data-testid="picker-row-name"]');
+        const widths = await name.evaluate((el) => ({ clientWidth: el.clientWidth, scrollWidth: el.scrollWidth }));
+        expect(widths.scrollWidth, `"${entry.name}" must not need more width than its own box (${widths.scrollWidth} > ${widths.clientWidth})`).toBeLessThanOrEqual(widths.clientWidth);
+        // the time range must still render on exactly one line (never wraps, never clipped)
+        const time = await row.locator(".font-mono").evaluate(measure);
+        expect(time.h, `time range for "${entry.name}" is a single line`).toBeLessThan(40);
+        expect(time.fits, `time range for "${entry.name}" must contain its text`).toBe(true);
+      }
     });
 
     it('the "Not this class?" control contains its label and is at least 44px', async () => {
