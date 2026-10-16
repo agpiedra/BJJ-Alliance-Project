@@ -902,11 +902,11 @@ function ClassPicker({
             type="button"
             variant="outline"
             disabled={submitting}
-            className="h-auto min-h-[104px] pointer-coarse:min-h-[104px] w-full justify-between gap-4 border-2 px-5 py-5 text-left text-xl whitespace-normal sm:px-6 sm:text-2xl"
+            className="h-auto min-h-[104px] pointer-coarse:min-h-[104px] w-full flex-wrap justify-between gap-x-4 gap-y-2 border-2 px-5 py-5 text-left text-xl whitespace-normal sm:px-6 sm:text-2xl"
             onClick={() => onPick(entry.id)}
           >
             <span className="flex min-w-0 flex-col gap-1">
-              <span className="text-2xl font-semibold sm:text-[28px] sm:leading-tight">{entry.name}</span>
+              <span data-testid="picker-row-name" className="text-2xl font-semibold break-words sm:text-[28px] sm:leading-tight">{entry.name}</span>
               <span className="text-base font-normal text-muted-foreground sm:text-lg">{tType.has(entry.type) ? tType(entry.type) : entry.type}</span>
             </span>
             {/* The time range never wraps inside itself, however long the class name is. */}
