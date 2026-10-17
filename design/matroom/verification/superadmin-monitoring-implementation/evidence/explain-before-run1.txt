@@ -1,0 +1,99 @@
+Pager usage is off.
+=== kiosk groupBy
+                                                                                       QUERY PLAN                                                                                        
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Finalize GroupAggregate (actual time=80.241..82.670 rows=3 loops=1)
+   Group Key: success, "countsAsFailure"
+   Buffers: shared hit=106 read=61193 written=10
+   ->  Gather Merge (actual time=80.214..82.663 rows=9 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         Buffers: shared hit=106 read=61193 written=10
+         ->  Partial GroupAggregate (actual time=76.481..76.680 rows=3 loops=3)
+               Group Key: success, "countsAsFailure"
+               Buffers: shared hit=106 read=61193 written=10
+               ->  Sort (actual time=76.460..76.532 rows=2478 loops=3)
+                     Sort Key: success, "countsAsFailure"
+                     Sort Method: quicksort  Memory: 180kB
+                     Buffers: shared hit=106 read=61193 written=10
+                     Worker 0:  Sort Method: quicksort  Memory: 172kB
+                     Worker 1:  Sort Method: quicksort  Memory: 170kB
+                     ->  Parallel Seq Scan on "KioskAttempt" (actual time=0.088..75.610 rows=2478 loops=3)
+                           Filter: (("createdAt" >= '2026-10-16 13:49:03.445'::timestamp without time zone) AND ("createdAt" <= '2026-10-17 13:49:03.445'::timestamp without time zone))
+                           Rows Removed by Filter: 997522
+                           Buffers: shared hit=32 read=61193 written=10
+ Planning:
+   Buffers: shared hit=150 read=11
+ Planning Time: 1.253 ms
+ Execution Time: 82.842 ms
+(24 rows)
+
+=== payment count
+                                                                                                      QUERY PLAN                                                                                                       
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate (actual time=36.744..40.877 rows=1 loops=1)
+   Buffers: shared hit=15871 read=7535
+   ->  Gather (actual time=0.505..40.816 rows=920 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         Buffers: shared hit=15871 read=7535
+         ->  Parallel Seq Scan on "AuditLog" (actual time=0.210..33.806 rows=307 loops=3)
+               Filter: (("createdAt" >= '2026-10-16 13:49:03.445'::timestamp without time zone) AND ("createdAt" <= '2026-10-17 13:49:03.445'::timestamp without time zone) AND (action = 'duesPayment.record'::text))
+               Rows Removed by Filter: 333027
+               Buffers: shared hit=15871 read=7535
+ Planning:
+   Buffers: shared hit=57 read=5
+ Planning Time: 0.608 ms
+ Execution Time: 40.905 ms
+(14 rows)
+
+=== access denials list
+                                                                                                             QUERY PLAN                                                                                                              
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit (actual time=35.525..39.510 rows=13 loops=1)
+   Buffers: shared hit=15985 read=7509 written=2
+   ->  Gather Merge (actual time=35.523..39.507 rows=13 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         Buffers: shared hit=15985 read=7509 written=2
+         ->  Sort (actual time=32.282..32.283 rows=4 loops=3)
+               Sort Key: "createdAt" DESC, id DESC
+               Sort Method: quicksort  Memory: 25kB
+               Buffers: shared hit=15985 read=7509 written=2
+               Worker 0:  Sort Method: quicksort  Memory: 26kB
+               Worker 1:  Sort Method: quicksort  Memory: 26kB
+               ->  Parallel Seq Scan on "AuditLog" (actual time=4.023..32.077 rows=4 loops=3)
+                     Filter: (("createdAt" >= '2026-10-16 13:49:03.445'::timestamp without time zone) AND ("createdAt" <= '2026-10-17 13:49:03.445'::timestamp without time zone) AND (action = 'organization.accessRefused'::text))
+                     Rows Removed by Filter: 333329
+                     Buffers: shared hit=15897 read=7509 written=2
+ Planning:
+   Buffers: shared hit=61 read=2
+ Planning Time: 0.706 ms
+ Execution Time: 39.590 ms
+(20 rows)
+
+=== privileged list
+                                                                                                                                                                                                                                                                                            QUERY PLAN                                                                                                                                                                                                                                                                                             
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit (actual time=35.608..40.106 rows=2 loops=1)
+   Buffers: shared hit=16081 read=7413
+   ->  Gather Merge (actual time=35.606..40.104 rows=2 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         Buffers: shared hit=16081 read=7413
+         ->  Sort (actual time=32.767..32.767 rows=1 loops=3)
+               Sort Key: "createdAt" DESC, id DESC
+               Sort Method: quicksort  Memory: 25kB
+               Buffers: shared hit=16081 read=7413
+               Worker 0:  Sort Method: quicksort  Memory: 25kB
+               Worker 1:  Sort Method: quicksort  Memory: 25kB
+               ->  Parallel Seq Scan on "AuditLog" (actual time=27.116..32.567 rows=1 loops=3)
+                     Filter: (("createdAt" >= '2026-10-16 13:49:03.445'::timestamp without time zone) AND ("createdAt" <= '2026-10-17 13:49:03.445'::timestamp without time zone) AND (action = ANY ('{organization.approve,organization.reject,organization.suspend,organization.cancel,organization.reactivate,organization.createManual,organization.graceDays.changed,organizationInvoice.create,organizationInvoice.recordPayment,organizationInvoice.void,organizationInvoice.acknowledgeReview,organizationInvoice.graceExtended,user.superAdminGranted,user.superAdminRevoked}'::text[])))
+                     Rows Removed by Filter: 333333
+                     Buffers: shared hit=15993 read=7413
+ Planning:
+   Buffers: shared hit=2 read=1
+ Planning Time: 0.127 ms
+ Execution Time: 40.161 ms
+(20 rows)
+

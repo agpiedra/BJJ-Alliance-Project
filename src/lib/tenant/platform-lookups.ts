@@ -615,3 +615,101 @@ export async function revokeSuperAdminFlag(actorUserId: string, targetUserId: st
     });
   });
 }
+
+// ---------------------------------------------------------------------------
+// /platform/monitoring (docs/SUPERADMIN_MONITORING_PLAN.md Increment 0) —
+// cross-tenant, read-only. Same trust boundary as the section above: callers
+// MUST already be behind `requireSuperAdmin` (src/lib/monitoring/
+// load-monitoring.ts authorizes before calling any of these). Every query
+// names its `select`: no ipAddress, no kioskTokenHash, no AuditLog
+// before/after payload (which is where payment amounts and student ids live).
+// ---------------------------------------------------------------------------
+
+/** Inclusive at both ends: `start <= createdAt <= end`. */
+export interface MonitoringWindow {
+  start: Date;
+  end: Date;
+}
+
+export interface KioskAttemptCounts {
+  /** `success = true` — includes outcomes kept for review and recognized retries. */
+  recordedSuccessful: number;
+  /** `success = false AND countsAsFailure = true` — includes provisional, unfinalized reservations. */
+  countedTowardPinLimit: number;
+  /** `success = false AND countsAsFailure = false`. */
+  other: number;
+}
+
+export async function countKioskAttemptsByOutcome(window: MonitoringWindow): Promise<KioskAttemptCounts> {
+  const groups = await unscopedPrisma.kioskAttempt.groupBy({
+    by: ["success", "countsAsFailure"],
+    where: { createdAt: { gte: window.start, lte: window.end } },
+    _count: { _all: true },
+  });
+  const counts: KioskAttemptCounts = { recordedSuccessful: 0, countedTowardPinLimit: 0, other: 0 };
+  for (const group of groups) {
+    if (group.success) counts.recordedSuccessful += group._count._all;
+    else if (group.countsAsFailure) counts.countedTowardPinLimit += group._count._all;
+    else counts.other += group._count._all;
+  }
+  return counts;
+}
+
+/** Count only — the row's `after` payload carries the amount and student, and is never read here. */
+export async function countDuesPaymentRecordEvents(window: MonitoringWindow): Promise<number> {
+  return unscopedPrisma.auditLog.count({
+    where: { action: "duesPayment.record", createdAt: { gte: window.start, lte: window.end } },
+  });
+}
+
+export interface MonitoringAuditEvent {
+  id: string;
+  action: string;
+  createdAt: Date;
+  actorId: string | null;
+  entityType: string;
+  entityId: string;
+  organizationName: string | null;
+}
+
+/** Newest first; `id` breaks createdAt ties so the same rows always come back in the same order. */
+export async function listRecentAuditEvents(actions: readonly string[], window: MonitoringWindow, limit: number): Promise<MonitoringAuditEvent[]> {
+  const rows = await unscopedPrisma.auditLog.findMany({
+    where: { action: { in: [...actions] }, createdAt: { gte: window.start, lte: window.end } },
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    take: limit,
+    select: {
+      id: true,
+      action: true,
+      createdAt: true,
+      actorId: true,
+      entityType: true,
+      entityId: true,
+      organization: { select: { name: true } },
+    },
+  });
+  return rows.map(({ organization, ...row }) => ({ ...row, organizationName: organization?.name ?? null }));
+}
+
+export interface JobRunSummary {
+  latestRun: { status: string; startedAt: Date; finishedAt: Date | null; failed: number; heartbeatStatus: string | null } | null;
+  /** A separate lookup over all history — never derived from `latestRun`. */
+  latestSuccess: { startedAt: Date; finishedAt: Date | null } | null;
+}
+
+export async function getJobRunSummary(jobName: string): Promise<JobRunSummary> {
+  const orderBy = [{ startedAt: "desc" as const }, { id: "desc" as const }];
+  const [latestRun, latestSuccess] = await Promise.all([
+    unscopedPrisma.jobRun.findFirst({
+      where: { jobName },
+      orderBy,
+      select: { status: true, startedAt: true, finishedAt: true, failed: true, heartbeatStatus: true },
+    }),
+    unscopedPrisma.jobRun.findFirst({
+      where: { jobName, status: "SUCCEEDED" },
+      orderBy,
+      select: { startedAt: true, finishedAt: true },
+    }),
+  ]);
+  return { latestRun, latestSuccess };
+}

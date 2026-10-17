@@ -2017,6 +2017,7 @@
       "overview": "Resumen",
       "organizations": "Academias",
       "admins": "Administradores de plataforma",
+      "monitoring": "Monitoreo",
       "signOut": "Cerrar sesión",
       "menu": "Menú",
       "closeMenu": "Cerrar menú",
@@ -2204,6 +2205,106 @@
         "errors": {
           "cannotRevokeSelf": "No puedes revocar tu propio acceso — pide a otro administrador de plataforma que lo haga.",
           "cannotRevokeLastAdmin": "No puedes revocar al último administrador de plataforma restante."
+        }
+      }
+    },
+    "monitoring": {
+      "heading": "Monitoreo",
+      "description": "Estado de la plataforma y actividad reciente, solo lectura.",
+      "timeZone": "Todas las horas en {zone} ({offset}).",
+      "snapshot": "Instantánea: {time}",
+      "window": "Paneles de actividad: últimas 24 horas ({start} – {end})",
+      "unavailable": {
+        "title": "No se pudo cargar",
+        "body": "Este panel no se pudo cargar. Recarga para intentar de nuevo."
+      },
+      "database": {
+        "heading": "Conexión a la base de datos",
+        "reachable": "Accesible",
+        "unreachable": "No accesible",
+        "checkedAt": "Verificada {time}",
+        "note": "Solo verifica la conexión. No mide latencia, carga ni capacidad."
+      },
+      "jobs": {
+        "heading": "Tareas programadas",
+        "scope": "Todas las ejecuciones registradas",
+        "scheduleWeekly": "Cada {weekday} a las {utcTime} UTC ({localWeekday} {localTime}, {zone})",
+        "scheduleCron": "Programación: {cron} (UTC)",
+        "scheduleMissing": "No se encontró una programación en la configuración de despliegue.",
+        "outcome": "Último resultado",
+        "noHistory": "Sin historial",
+        "freshness": "Vigencia",
+        "freshnessState": {
+          "on_schedule": "A tiempo",
+          "overdue": "Atrasada",
+          "no_recorded_run": "Sin ejecuciones registradas"
+        },
+        "latestRun": "Última ejecución",
+        "latestSuccess": "Última ejecución exitosa",
+        "noneRecorded": "Ninguna registrada",
+        "failedItems": "Elementos fallidos",
+        "stuck": "Atascada",
+        "heartbeat": "Pulso",
+        "heartbeatState": {
+          "ok": "OK",
+          "failed": "Fallido",
+          "not_configured": "No configurado",
+          "none": "No registrado"
+        },
+        "freshUntil": "Vigente hasta",
+        "overdueSince": "Atrasada desde",
+        "threshold": "Una ejecución se considera vigente durante {hours} horas desde que inicia.",
+        "neverRan": "Esta tarea nunca ha registrado una ejecución. Considérala no saludable hasta que lo haga.",
+        "yes": "Sí",
+        "no": "No"
+      },
+      "kiosk": {
+        "heading": "Actividad del kiosco",
+        "scope": "Todas las academias · últimas 24 horas",
+        "recordedSuccessful": "Intentos registrados como exitosos",
+        "recordedSuccessfulNote": "Incluye eventos retenidos para revisión y reintentos reconocidos.",
+        "countedTowardPinLimit": "Intentos contados para el límite de PIN",
+        "countedTowardPinLimitNote": "Incluye intentos aún no finalizados. No es prueba de abuso.",
+        "other": "Otros intentos registrados",
+        "otherNote": "Resultados mixtos, sin desglosar."
+      },
+      "payments": {
+        "heading": "Actividad de pagos",
+        "scope": "Últimas 24 horas",
+        "recordedEvents": "Eventos de pago registrados",
+        "note": "Solo pagos registrados con éxito. No es ingreso ni una tasa de fallos."
+      },
+      "events": {
+        "scope": "Últimas 24 horas · {count} mostrados, más recientes primero (hasta {limit})",
+        "actor": "Actor",
+        "system": "Sistema",
+        "target": "Destino",
+        "platformLevel": "Nivel de plataforma"
+      },
+      "accessDenials": {
+        "heading": "Accesos entre academias denegados",
+        "note": "Solicitudes rechazadas por apuntar a otra academia.",
+        "empty": "Ninguna solicitud entre academias rechazada en esta ventana."
+      },
+      "privilegedChanges": {
+        "heading": "Cambios privilegiados",
+        "note": "Aprobación, suspensión y facturación de academias; otorgamientos y revocaciones de administrador de plataforma.",
+        "empty": "Ningún cambio privilegiado en esta ventana."
+      },
+      "external": {
+        "heading": "Paneles externos",
+        "note": "No disponible en esta página. No se ha conectado ningún panel.",
+        "notConnected": "No conectado",
+        "notVerified": "No verificado",
+        "items": {
+          "requestVolume": "Volumen de solicitudes",
+          "latency": "Latencia",
+          "errorRate": "Tasa de errores",
+          "databaseSaturation": "Saturación de la base de datos",
+          "backups": "Respaldos",
+          "storageQuota": "Cuota de almacenamiento",
+          "emailQuota": "Cuota de correo",
+          "cost": "Costo"
         }
       }
     }

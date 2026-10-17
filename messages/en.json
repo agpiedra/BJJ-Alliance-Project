@@ -2017,6 +2017,7 @@
       "overview": "Overview",
       "organizations": "Organizations",
       "admins": "Platform admins",
+      "monitoring": "Monitoring",
       "signOut": "Sign out",
       "menu": "Menu",
       "closeMenu": "Close menu",
@@ -2204,6 +2205,106 @@
         "errors": {
           "cannotRevokeSelf": "You cannot revoke your own access — ask another platform admin.",
           "cannotRevokeLastAdmin": "You cannot revoke the last remaining platform admin."
+        }
+      }
+    },
+    "monitoring": {
+      "heading": "Monitoring",
+      "description": "Read-only platform health and recent activity.",
+      "timeZone": "All times in {zone} ({offset}).",
+      "snapshot": "Snapshot: {time}",
+      "window": "Activity panels: last 24 hours ({start} – {end})",
+      "unavailable": {
+        "title": "Could not load",
+        "body": "This panel could not load. Refresh to try again."
+      },
+      "database": {
+        "heading": "Database reachability",
+        "reachable": "Reachable",
+        "unreachable": "Not reachable",
+        "checkedAt": "Checked {time}",
+        "note": "Connection check only. Not latency, load or capacity."
+      },
+      "jobs": {
+        "heading": "Scheduled jobs",
+        "scope": "All recorded runs",
+        "scheduleWeekly": "Every {weekday} at {utcTime} UTC ({localWeekday} {localTime}, {zone})",
+        "scheduleCron": "Schedule: {cron} (UTC)",
+        "scheduleMissing": "No schedule found in the deployment configuration.",
+        "outcome": "Latest outcome",
+        "noHistory": "No history",
+        "freshness": "Freshness",
+        "freshnessState": {
+          "on_schedule": "On schedule",
+          "overdue": "Overdue",
+          "no_recorded_run": "No recorded run"
+        },
+        "latestRun": "Latest run",
+        "latestSuccess": "Latest successful run",
+        "noneRecorded": "None recorded",
+        "failedItems": "Failed items",
+        "stuck": "Stuck",
+        "heartbeat": "Heartbeat",
+        "heartbeatState": {
+          "ok": "OK",
+          "failed": "Failed",
+          "not_configured": "Not configured",
+          "none": "Not recorded"
+        },
+        "freshUntil": "Fresh until",
+        "overdueSince": "Overdue since",
+        "threshold": "A run counts as fresh for {hours} hours after it starts.",
+        "neverRan": "This job has never recorded a run. Treat it as unhealthy until it does.",
+        "yes": "Yes",
+        "no": "No"
+      },
+      "kiosk": {
+        "heading": "Kiosk activity",
+        "scope": "All academies · last 24 hours",
+        "recordedSuccessful": "Attempts recorded as successful",
+        "recordedSuccessfulNote": "Includes events kept for review and recognized retries.",
+        "countedTowardPinLimit": "Attempts counted toward PIN limiting",
+        "countedTowardPinLimitNote": "Includes attempts not yet finalized. Not proof of abuse.",
+        "other": "Other recorded attempts",
+        "otherNote": "Mixed outcomes, not broken down."
+      },
+      "payments": {
+        "heading": "Payment activity",
+        "scope": "Last 24 hours",
+        "recordedEvents": "Recorded payment events",
+        "note": "Successful payment recordings only. Not revenue or a failure rate."
+      },
+      "events": {
+        "scope": "Last 24 hours · {count} shown, newest first (up to {limit})",
+        "actor": "Actor",
+        "system": "System",
+        "target": "Target",
+        "platformLevel": "Platform-level"
+      },
+      "accessDenials": {
+        "heading": "Cross-tenant access denials",
+        "note": "Requests refused for targeting another organization.",
+        "empty": "No refused cross-organization requests in this window."
+      },
+      "privilegedChanges": {
+        "heading": "Privileged changes",
+        "note": "Organization approval, suspension and billing changes; platform admin grants and revokes.",
+        "empty": "No privileged changes in this window."
+      },
+      "external": {
+        "heading": "External dashboards",
+        "note": "Not available on this page. No dashboard has been connected.",
+        "notConnected": "Not connected",
+        "notVerified": "Not verified",
+        "items": {
+          "requestVolume": "Request volume",
+          "latency": "Latency",
+          "errorRate": "Error rate",
+          "databaseSaturation": "Database saturation",
+          "backups": "Backups",
+          "storageQuota": "Storage quota",
+          "emailQuota": "Email quota",
+          "cost": "Cost"
         }
       }
     }
