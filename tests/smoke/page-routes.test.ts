@@ -220,6 +220,7 @@ describe("every page route renders through a real running server (non-5xx)", () 
       { label: "platform organizations new", path: "/en/platform/organizations/new" },
       { label: "platform organization detail", path: `/en/platform/organizations/${seededOrganizationId}` },
       { label: "platform admins", path: "/en/platform/admins" },
+      { label: "platform monitoring", path: "/en/platform/monitoring" },
     ];
     for (const route of routes) {
       await assertNotServerError({ ...route, cookie: superAdminCookie });
@@ -234,6 +235,7 @@ describe("every page route renders through a real running server (non-5xx)", () 
       { label: "platform organizations new", path: "/en/platform/organizations/new" },
       { label: "platform organization detail", path: `/en/platform/organizations/${seededOrganizationId}` },
       { label: "platform admins", path: "/en/platform/admins" },
+      { label: "platform monitoring", path: "/en/platform/monitoring" },
     ];
     for (const route of routes) {
       await assertRefusedWithExactly404({ ...route, cookie: adminCookie });
@@ -242,6 +244,7 @@ describe("every page route renders through a real running server (non-5xx)", () 
 
   it("an unauthenticated visitor is also refused every /platform route with exactly 404", async () => {
     await assertRefusedWithExactly404({ label: "platform overview (anonymous)", path: "/en/platform" });
+    await assertRefusedWithExactly404({ label: "platform monitoring (anonymous)", path: "/en/platform/monitoring" });
   });
 
   it("student portal (STUDENT session) — the exact page and role that were 500ing", async () => {

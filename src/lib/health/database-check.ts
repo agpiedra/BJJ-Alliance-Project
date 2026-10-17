@@ -35,9 +35,19 @@ async function pingDatabase(): Promise<void> {
  * Postgres via `unscopedPrisma` (a liveness ping has no tenant to scope it to).
  */
 export async function checkDatabaseHealth(check: () => Promise<void> = pingDatabase): Promise<boolean> {
+  return (await getDatabaseHealth(check)).ok;
+}
+
+/**
+ * Same cached check, plus WHEN that result was actually produced — `/platform/monitoring`
+ * shows this instant rather than "now", since a cache hit can be up to `CACHE_WINDOW_MS` old.
+ * Reachability only: there is deliberately no duration here, because a cache hit would make
+ * any timing meaningless as database latency.
+ */
+export async function getDatabaseHealth(check: () => Promise<void> = pingDatabase): Promise<{ ok: boolean; checkedAt: Date }> {
   const now = Date.now();
   if (cached && now - cached.checkedAt < CACHE_WINDOW_MS) {
-    return cached.ok;
+    return { ok: cached.ok, checkedAt: new Date(cached.checkedAt) };
   }
 
   let ok: boolean;
@@ -49,7 +59,7 @@ export async function checkDatabaseHealth(check: () => Promise<void> = pingDatab
     ok = false;
   }
   cached = { ok, checkedAt: now };
-  return ok;
+  return { ok, checkedAt: new Date(now) };
 }
 
 /** Test-only: clears the module-level cache so each test case starts fresh. */

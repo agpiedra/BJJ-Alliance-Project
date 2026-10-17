@@ -31,6 +31,7 @@ export default async function PlatformLayout({ children, params }: { children: R
     { href: `/${locale}/platform`, label: t("overview") },
     { href: `/${locale}/platform/organizations`, label: t("organizations") },
     { href: `/${locale}/platform/admins`, label: t("admins") },
+    { href: `/${locale}/platform/monitoring`, label: t("monitoring") },
   ];
 
   return (

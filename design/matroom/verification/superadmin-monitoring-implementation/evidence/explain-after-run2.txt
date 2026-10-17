@@ -1,0 +1,73 @@
+Pager usage is off.
+=== kiosk groupBy
+                                                                                   QUERY PLAN                                                                                    
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ HashAggregate (actual time=9.210..9.211 rows=3 loops=1)
+   Group Key: success, "countsAsFailure"
+   Batches: 1  Memory Usage: 24kB
+   Buffers: shared hit=7062
+   ->  Bitmap Heap Scan on "KioskAttempt" (actual time=2.057..8.481 rows=7435 loops=1)
+         Recheck Cond: (("createdAt" >= '2026-10-16 13:49:03.445'::timestamp without time zone) AND ("createdAt" <= '2026-10-17 13:49:03.445'::timestamp without time zone))
+         Heap Blocks: exact=7039
+         Buffers: shared hit=7062
+         ->  Bitmap Index Scan on "KioskAttempt_createdAt_idx" (actual time=1.406..1.406 rows=7435 loops=1)
+               Index Cond: (("createdAt" >= '2026-10-16 13:49:03.445'::timestamp without time zone) AND ("createdAt" <= '2026-10-17 13:49:03.445'::timestamp without time zone))
+               Buffers: shared hit=23
+ Planning:
+   Buffers: shared hit=195
+ Planning Time: 1.519 ms
+ Execution Time: 9.363 ms
+(15 rows)
+
+=== payment count
+                                                                                                     QUERY PLAN                                                                                                      
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate (actual time=0.190..0.190 rows=1 loops=1)
+   Buffers: shared hit=10
+   ->  Index Only Scan using "AuditLog_action_createdAt_idx" on "AuditLog" (actual time=0.043..0.153 rows=920 loops=1)
+         Index Cond: ((action = 'duesPayment.record'::text) AND ("createdAt" >= '2026-10-16 13:49:03.445'::timestamp without time zone) AND ("createdAt" <= '2026-10-17 13:49:03.445'::timestamp without time zone))
+         Heap Fetches: 0
+         Buffers: shared hit=10
+ Planning:
+   Buffers: shared hit=78
+ Planning Time: 0.576 ms
+ Execution Time: 0.210 ms
+(10 rows)
+
+=== access denials list
+                                                                                                            QUERY PLAN                                                                                                             
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit (actual time=0.152..0.154 rows=13 loops=1)
+   Buffers: shared hit=26
+   ->  Incremental Sort (actual time=0.151..0.152 rows=13 loops=1)
+         Sort Key: "createdAt" DESC, id DESC
+         Presorted Key: "createdAt"
+         Full-sort Groups: 1  Sort Method: quicksort  Average Memory: 28kB  Peak Memory: 28kB
+         Buffers: shared hit=26
+         ->  Index Scan Backward using "AuditLog_action_createdAt_idx" on "AuditLog" (actual time=0.018..0.048 rows=13 loops=1)
+               Index Cond: ((action = 'organization.accessRefused'::text) AND ("createdAt" >= '2026-10-16 13:49:03.445'::timestamp without time zone) AND ("createdAt" <= '2026-10-17 13:49:03.445'::timestamp without time zone))
+               Buffers: shared hit=17
+ Planning:
+   Buffers: shared hit=56
+ Planning Time: 0.391 ms
+ Execution Time: 0.175 ms
+(14 rows)
+
+=== privileged list
+                                                                                                                                                                                                                                                                                           QUERY PLAN                                                                                                                                                                                                                                                                                            
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit (actual time=0.098..0.099 rows=2 loops=1)
+   Buffers: shared hit=47
+   ->  Sort (actual time=0.098..0.098 rows=2 loops=1)
+         Sort Key: "createdAt" DESC, id DESC
+         Sort Method: quicksort  Memory: 25kB
+         Buffers: shared hit=47
+         ->  Index Scan using "AuditLog_action_createdAt_idx" on "AuditLog" (actual time=0.073..0.086 rows=2 loops=1)
+               Index Cond: ((action = ANY ('{organization.approve,organization.reject,organization.suspend,organization.cancel,organization.reactivate,organization.createManual,organization.graceDays.changed,organizationInvoice.create,organizationInvoice.recordPayment,organizationInvoice.void,organizationInvoice.acknowledgeReview,organizationInvoice.graceExtended,user.superAdminGranted,user.superAdminRevoked}'::text[])) AND ("createdAt" >= '2026-10-16 13:49:03.445'::timestamp without time zone) AND ("createdAt" <= '2026-10-17 13:49:03.445'::timestamp without time zone))
+               Buffers: shared hit=47
+ Planning:
+   Buffers: shared hit=3
+ Planning Time: 0.086 ms
+ Execution Time: 0.124 ms
+(13 rows)
+

@@ -2,20 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireEnv } from "@/lib/env";
 import { JOB_NAMES, type JobName } from "@/lib/jobs/job-names";
-
-/**
- * How long a job may go without a fresh run before it's reported STALE — its own schedule
- * (`vercel.json`) plus a generous buffer for a missed or delayed trigger, not the schedule
- * itself: this endpoint is a second, independent signal alongside the Healthchecks.io
- * heartbeat (`src/lib/jobs/heartbeat.ts`), not a replacement for it.
- */
-const STALE_AFTER_HOURS: Record<JobName, number> = {
-  "weekly-digest": 24 * 8, // weekly (Monday) + a day of slack
-};
-
-/** A RUNNING row older than this never finished — almost certainly a crashed or killed
- * invocation, not a job still legitimately working. */
-const STUCK_AFTER_MINUTES = 30;
+import { isJobStale, isJobStuck } from "@/lib/jobs/job-health";
 
 interface JobHealth {
   lastRun: {
@@ -47,8 +34,8 @@ export async function GET(request: Request): Promise<NextResponse> {
     const run = await prisma.jobRun.findFirst({ where: { jobName }, orderBy: { startedAt: "desc" } });
     const now = Date.now();
 
-    const stuck = run !== null && run.status === "RUNNING" && now - run.startedAt.getTime() > STUCK_AFTER_MINUTES * 60_000;
-    const stale = run === null || now - run.startedAt.getTime() > STALE_AFTER_HOURS[jobName] * 3_600_000;
+    const stuck = isJobStuck(run?.status ?? null, run?.startedAt ?? null, now);
+    const stale = isJobStale(jobName, run?.startedAt ?? null, now);
 
     jobs[jobName] = {
       lastRun: run

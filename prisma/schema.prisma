@@ -1724,6 +1724,10 @@ model KioskAttempt {
 
   @@index([academyId, kioskTokenHash, createdAt])
   @@index([organizationId])
+  /// /platform/monitoring's platform-wide last-24-hours count. Without it that count scans the
+  /// whole table, and this table is never pruned (measured: design/matroom/verification/
+  /// superadmin-monitoring-implementation/README.md).
+  @@index([createdAt])
 }
 
 /// A queued (offline) kiosk check-in that could not be attributed to a class unambiguously, kept as UNTRUSTED EVIDENCE
@@ -1796,6 +1800,9 @@ model AuditLog {
   @@index([entityType, entityId])
   @@index([actorId])
   @@index([organizationId])
+  /// /platform/monitoring's per-action, last-24-hours counts and recent-event lists (same
+  /// measurement as KioskAttempt's createdAt index).
+  @@index([action, createdAt])
 }
 
 model Notification {

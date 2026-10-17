@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  * this test never touches a real database, only the caching logic itself (a separate
  * integration test drives the route against a real one).
  */
-const { checkDatabaseHealth, resetDatabaseHealthCacheForTests, CACHE_WINDOW_MS } = await import("../../src/lib/health/database-check");
+const { checkDatabaseHealth, getDatabaseHealth, resetDatabaseHealthCacheForTests, CACHE_WINDOW_MS } = await import("../../src/lib/health/database-check");
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -65,5 +65,15 @@ describe("checkDatabaseHealth", () => {
     vi.advanceTimersByTime(CACHE_WINDOW_MS + 1);
     check.mockImplementation(async () => {});
     expect(await checkDatabaseHealth(check)).toBe(true);
+  });
+
+  it("getDatabaseHealth reports when the cached result was actually produced, not the time of the call", async () => {
+    const check = vi.fn(async () => {});
+    const first = await getDatabaseHealth(check);
+    vi.advanceTimersByTime(CACHE_WINDOW_MS - 1);
+    const cachedHit = await getDatabaseHealth(check);
+    expect(check).toHaveBeenCalledTimes(1);
+    expect(cachedHit).toEqual({ ok: true, checkedAt: first.checkedAt });
+    expect(Date.now() - cachedHit.checkedAt.getTime()).toBe(CACHE_WINDOW_MS - 1);
   });
 });
