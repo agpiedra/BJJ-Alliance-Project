@@ -3,6 +3,7 @@ import authConfig from "@/auth.config";
 import { prisma } from "@/lib/prisma";
 import { resolveActiveOrganizationForSignIn } from "@/lib/tenant/active-organization";
 import { deriveAccess } from "@/lib/auth/derive-access";
+import { sessionCredentialsCurrent } from "@/lib/auth/session-credentials";
 
 type JwtCallback = NonNullable<NonNullable<typeof authConfig.callbacks>["jwt"]>;
 export type JwtCallbackParams = Parameters<JwtCallback>[0];
@@ -25,10 +26,26 @@ export type JwtCallbackParams = Parameters<JwtCallback>[0];
  * Node-only, and is used only by real sign-in (src/auth.ts) and the
  * screenshot-only bypass, never by middleware.
  */
-export async function signInJwtCallback(params: JwtCallbackParams): Promise<JWT> {
+export async function signInJwtCallback(params: JwtCallbackParams): Promise<JWT | null> {
+  // Session revocation (src/lib/auth/session-credentials.ts). Every call that is NOT a fresh sign-in — every
+  // server-side `auth()` session read, `unstable_update`, and the `/api/auth/session` handler — first checks the token's
+  // captured credentials version against the user's current one. `null` ends the session: Auth.js returns no session
+  // (and, where it can set cookies, clears the cookie). It runs before the update branch below, so an organization or
+  // session update can never revive a stale token, and the stored version is never copied into the token here.
+  if (!params.user && !(await sessionCredentialsCurrent(params.token))) {
+    return null;
+  }
+
   const token = await authConfig.callbacks!.jwt!(params);
 
   if (params.user) {
+    // The version read together with the verified password hash (verify-credentials.ts) — never re-read here, so a
+    // reset that commits between password verification and this point cannot give an old-password login the new
+    // version. A sign-in without it is refused rather than guessed.
+    const version = (params.user as { credentialsVersion?: unknown }).credentialsVersion;
+    if (typeof version !== "number") return null;
+    token.cv = version;
+
     const resolution = await resolveActiveOrganizationForSignIn(token.id as string);
     token.activeOrganizationId = resolution.kind === "resolved" ? resolution.organizationId : null;
     if (resolution.kind === "resolved") {

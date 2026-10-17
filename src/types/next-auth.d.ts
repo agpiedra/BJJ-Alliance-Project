@@ -25,6 +25,8 @@ declare module "next-auth" {
 
   interface User {
     id: string;
+    /** `User.credentialsVersion` from the SAME row read that verified the password (`verify-credentials.ts`). */
+    credentialsVersion?: number;
   }
 }
 
@@ -33,5 +35,10 @@ declare module "next-auth/jwt" {
     id: string;
     activeOrganizationId: string | null;
     access?: import("@/lib/auth/route-access").AccessClaim;
+    /**
+     * Credentials version captured at sign-in (`src/lib/auth/session-credentials.ts`). Set only at sign-in, never
+     * refreshed from the database; absent on tokens issued before it existed, which count as version 0.
+     */
+    cv?: number;
   }
 }

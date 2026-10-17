@@ -73,11 +73,15 @@ async function bypassToken(userId: string, organizationId?: string) {
 
 /** Simulates exactly what src/auth.ts's real signIn() flow does: one call to the shared jwt callback with `user` present. */
 async function realLoginToken(user: { id: string; email: string }) {
-  return signInJwtCallback({
+  // `authorize` returns the credentials version read with the verified password (verify-credentials.ts).
+  const { credentialsVersion } = await prisma.user.findUniqueOrThrow({ where: { id: user.id }, select: { credentialsVersion: true } });
+  const token = await signInJwtCallback({
     token: { sub: user.id, email: user.email, name: user.email },
-    user: { id: user.id, email: user.email, name: user.email },
+    user: { id: user.id, email: user.email, name: user.email, credentialsVersion },
     trigger: "signIn",
   } as JwtCallbackParams);
+  if (!token) throw new Error("expected a sign-in token");
+  return token;
 }
 
 /** Claims that must be equal — excludes iat/exp/jti, which are legitimately fresh per call. */
@@ -90,6 +94,8 @@ function meaningfulClaims(token: Record<string, unknown> | null) {
     activeOrganizationId: token?.activeOrganizationId,
     // The `{ staff, portal }` claim the middleware reads — the bypass must mint the SAME one.
     access: token?.access,
+    // The credentials version session revocation checks — the bypass must capture the SAME one.
+    cv: token?.cv,
   };
 }
 

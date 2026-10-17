@@ -188,7 +188,7 @@ This covers success paths, provider rejections, provider-side errors, network fa
 
 ## Limitations
 
-- **Sessions:** a reset does not end existing sessions. Middleware refreshes each active session's cookie on every page navigation (`docs/PASSWORD_RECOVERY_PLAN.md` §1, §2.9). Revocation is a separate owner decision.
+- **Sessions:** this PR alone did not end existing sessions on reset. Addressed by the separate session-revocation work (`design/matroom/verification/session-revocation-implementation/README.md`).
 - **Token in the URL:** the reset link carries the token in its query string. The app never logs it, but request logs (shown here by `next dev`; possibly the hosting platform's), browser history and `Referer` headers can contain it. Mitigations (a fragment or POST exchange, `Referrer-Policy`) are outside this PR. The security-headers workstream is separate.
 - **The SDK override depends on its internals:** the reset send silences the SDK's error logging by shadowing its private `logError` on one client instance. That relies on an internal method name in resend@6.27.0; an SDK upgrade that renames it would make `password-reset-email-client.test.ts` fail.
 - **Timing:** identical response text does not make timing identical. An existing, active account additionally runs one short token transaction.

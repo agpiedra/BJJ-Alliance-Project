@@ -247,11 +247,11 @@ describe("deriveAccess and the access claim", () => {
       const { user, student } = await signUpStudent(org, "signin");
       await approve(org, student.id);
 
-      const token = await callback({ token: {}, user: { id: user.id, email: "x", name: "x" }, trigger: "signIn" });
+      const token = await callback({ token: {}, user: { id: user.id, email: "x", name: "x", credentialsVersion: 0 }, trigger: "signIn" });
       expect(token.activeOrganizationId).toBe(org.organizationId);
       expect(token.access).toEqual(PORTAL_ONLY);
 
-      const ownerToken = await callback({ token: {}, user: { id: org.ownerId, email: "x", name: "x" }, trigger: "signIn" });
+      const ownerToken = await callback({ token: {}, user: { id: org.ownerId, email: "x", name: "x", credentialsVersion: 0 }, trigger: "signIn" });
       expect(ownerToken.access).toEqual(STAFF_ONLY);
     });
 
@@ -261,7 +261,7 @@ describe("deriveAccess and the access claim", () => {
       await prisma.organizationMembership.create({ data: { userId: a.ownerId, organizationId: b.organizationId, role: "ADMIN" } });
       await prisma.user.update({ where: { id: a.ownerId }, data: { lastActiveOrganizationId: null } });
 
-      const token = await callback({ token: {}, user: { id: a.ownerId, email: "x", name: "x" }, trigger: "signIn" });
+      const token = await callback({ token: {}, user: { id: a.ownerId, email: "x", name: "x", credentialsVersion: 0 }, trigger: "signIn" });
 
       expect(token.activeOrganizationId).toBeNull();
       expect(token.access).toEqual(NONE);
@@ -275,7 +275,7 @@ describe("deriveAccess and the access claim", () => {
       // One person: an instructor at A, and (separately) a student at B.
       await prisma.organizationMembership.create({ data: { userId: user.id, organizationId: a.organizationId, role: "INSTRUCTOR" } });
 
-      let token = await callback({ token: {}, user: { id: user.id, email: "x", name: "x" }, trigger: "signIn", session: undefined });
+      let token = await callback({ token: {}, user: { id: user.id, email: "x", name: "x", credentialsVersion: 0 }, trigger: "signIn", session: undefined });
       token = await callback({ token, trigger: "update", session: { activeOrganizationId: a.organizationId } });
       expect(token.access).toEqual(STAFF_ONLY);
       token = await callback({ token, trigger: "update", session: { activeOrganizationId: b.organizationId } });
@@ -286,7 +286,7 @@ describe("deriveAccess and the access claim", () => {
       const org = await newOrganization();
       const { user, student } = await signUpStudent(org, "promoted");
       await approve(org, student.id);
-      let token = await callback({ token: {}, user: { id: user.id, email: "x", name: "x" }, trigger: "signIn" });
+      let token = await callback({ token: {}, user: { id: user.id, email: "x", name: "x", credentialsVersion: 0 }, trigger: "signIn" });
       expect(token.access).toEqual(PORTAL_ONLY);
 
       // Promoted while logged in: the database changes, the token does not — until refreshed.
@@ -303,7 +303,7 @@ describe("deriveAccess and the access claim", () => {
 
     it("and the other direction: a refresh takes staff access away from someone demoted while logged in", async () => {
       const org = await newOrganization();
-      let token = await callback({ token: {}, user: { id: org.ownerId, email: "x", name: "x" }, trigger: "signIn" });
+      let token = await callback({ token: {}, user: { id: org.ownerId, email: "x", name: "x", credentialsVersion: 0 }, trigger: "signIn" });
       expect(token.access).toEqual(STAFF_ONLY);
 
       await prisma.organizationMembership.update({
