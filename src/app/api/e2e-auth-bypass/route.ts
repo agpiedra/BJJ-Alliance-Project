@@ -71,7 +71,7 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    select: { id: true, email: true, active: true },
+    select: { id: true, email: true, active: true, credentialsVersion: true },
   });
   if (!user || !user.active) {
     return notFound();
@@ -83,9 +83,12 @@ export async function POST(request: Request): Promise<NextResponse> {
   // membership, null for zero or an unresolved 2+).
   let token = await signInJwtCallback({
     token: { sub: user.id, email: user.email, name: user.email },
-    user: { id: user.id, email: user.email, name: user.email },
+    user: { id: user.id, email: user.email, name: user.email, credentialsVersion: user.credentialsVersion },
     trigger: "signIn",
   } as JwtCallbackParams);
+  if (!token) {
+    return notFound();
+  }
 
   // Step 2, optional: a caller-supplied organizationId is handled as an
   // explicit post-sign-in switch — the same shape a real
@@ -106,6 +109,9 @@ export async function POST(request: Request): Promise<NextResponse> {
       trigger: "update",
       session: { activeOrganizationId: membership.organizationId },
     } as JwtCallbackParams);
+    if (!token) {
+      return notFound();
+    }
   }
 
   const sessionToken = await encode({

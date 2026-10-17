@@ -535,6 +535,10 @@ model User {
   isSuperAdmin Boolean  @default(false)
   locale       String   @default("es")
   active       Boolean  @default(true)
+  /// docs/PASSWORD_RECOVERY_PLAN.md §2.9 — incremented inside a successful password-reset transaction. Copied into the
+  /// session JWT as `cv` at sign-in (from the same row read that verified the password); every server-side session
+  /// read refuses a token whose `cv` differs, so a reset ends all earlier sessions. Tokens without `cv` count as 0.
+  credentialsVersion Int @default(0)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 

@@ -212,7 +212,9 @@ export async function redeemPasswordResetToken(input: { rawToken: string; newPas
       });
       if (consumed.count !== 1) return INVALID;
 
-      await tx.user.update({ where: { id: candidate.userId }, data: { passwordHash } });
+      // Same statement, same transaction: the new password and the end of every earlier session commit together, or
+      // neither does (src/lib/auth/session-credentials.ts).
+      await tx.user.update({ where: { id: candidate.userId }, data: { passwordHash, credentialsVersion: { increment: 1 } } });
       await tx.passwordResetToken.updateMany({ where: { userId: candidate.userId, usedAt: null }, data: { usedAt: now } });
       return { ok: true } as const;
     });
