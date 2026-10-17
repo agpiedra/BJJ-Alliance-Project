@@ -528,3 +528,89 @@ describe("offline-queue", () => {
     expect(maxConcurrent).toBe(1);
   });
 });
+
+/**
+ * A queued entry holds the kiosk token and the student's code; the three "dropped" warnings used to log that whole
+ * entry. These drive each warning path with distinctive synthetic secrets and inspect EVERY argument of every
+ * captured console.warn call, so a regression that logs the entry (or any field of it, or the server's free text)
+ * fails here.
+ */
+describe("offline-queue drop warnings never log the queued entry", () => {
+  const TOKEN = "SYNTH-KIOSK-TOKEN-q7Zp4Lx9";
+  const CODE = "SYNTH-STUDENT-CODE-88213";
+  const SLUG = "synth-slug-w3k";
+  const CLASS_ID = "synth-class-id-v5r";
+  const SERVER_TEXT = "SYNTH-SERVER-FREE-TEXT-m2n";
+
+  beforeEach(() => {
+    installFakeIndexedDb();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  async function dropOnce(status: number, error: string) {
+    await enqueueOfflineCheckIn({ academySlug: SLUG, token: TOKEN, code: CODE, pickedClassSessionId: CLASS_ID });
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(status, { ok: false, error }));
+    vi.stubGlobal("fetch", fetchMock);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const summary = await flushOfflineQueue();
+    const sentEventId = JSON.parse(fetchMock.mock.calls[0][1].body).eventId as string;
+    const captured = JSON.stringify(warnSpy.mock.calls);
+
+    // Queue behavior is unchanged: counted as one drop, and the entry is gone (a second flush replays nothing).
+    expect(summary).toEqual({ dropped: 1 });
+    await flushOfflineQueue();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    return { calls: warnSpy.mock.calls, captured, sentEventId };
+  }
+
+  function expectNoEntryData(captured: string) {
+    for (const secret of [TOKEN, CODE, SLUG, CLASS_ID, SERVER_TEXT]) {
+      expect(captured).not.toContain(secret);
+    }
+    for (const entryKey of ['"token"', '"code"', '"academySlug"', '"pickedClassSessionId"', '"queuedAt"', '"entry"']) {
+      expect(captured).not.toContain(entryKey);
+    }
+  }
+
+  it("class refusal: logs category, status, known reason and event id only", async () => {
+    const { calls, captured, sentEventId } = await dropOnce(400, "class_not_open");
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toHaveLength(2);
+    expect(calls[0][1]).toEqual({ category: "class_refused", status: 400, reason: "class_not_open", eventId: sentEventId });
+    expectNoEntryData(captured);
+  });
+
+  it("invalid_request: unrecognized server text is replaced by a fixed value", async () => {
+    const { calls, captured, sentEventId } = await dropOnce(400, `${SERVER_TEXT} ${TOKEN} ${CODE}`);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toHaveLength(2);
+    expect(calls[0][0]).toContain("invalid_request");
+    expect(calls[0][1]).toEqual({ category: "invalid_request", status: 400, reason: "unrecognized", eventId: sentEventId });
+    expectNoEntryData(captured);
+  });
+
+  it("invalid_token: logs category, status, known reason and event id only", async () => {
+    const { calls, captured, sentEventId } = await dropOnce(401, "invalid_token");
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toHaveLength(2);
+    expect(calls[0][0]).toContain("invalid_token");
+    expect(calls[0][1]).toEqual({ category: "invalid_token", status: 401, reason: "invalid_token", eventId: sentEventId });
+    expectNoEntryData(captured);
+  });
+
+  it("invalid_token on a 404 with free server text: the text is not logged", async () => {
+    const { calls, captured, sentEventId } = await dropOnce(404, SERVER_TEXT);
+
+    expect(calls[0][1]).toEqual({ category: "invalid_token", status: 404, reason: "unrecognized", eventId: sentEventId });
+    expectNoEntryData(captured);
+  });
+});
