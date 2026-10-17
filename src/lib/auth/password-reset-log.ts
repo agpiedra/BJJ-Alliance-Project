@@ -12,8 +12,12 @@ export type PasswordResetLogEntry =
       outcome: EmailSendOutcome | "not_scheduled" | "not_attempted";
       providerCode?: ResendErrorCode;
     }
+  /** The throttle could not be checked: the request stops (fail closed) — no token, no email. */
+  | { event: "password_reset.throttle_failed"; error: SafeErrorCode }
+  /** The account lookup failed: the request stops — no token, no email. */
+  | { event: "password_reset.lookup_failed"; error: SafeErrorCode }
   | { event: "password_reset.issue_failed"; error: SafeErrorCode }
-  | { event: "password_reset.redeem_failed"; error: SafeErrorCode }
+  | { event: "password_reset.redeem_failed"; stage: "lookup" | "hash" | "transaction"; error: SafeErrorCode }
   | { event: "password_reset.token_cleanup_failed"; error: SafeErrorCode; sendAttempted: boolean }
   | { event: "password_reset.throttle_cleanup_failed"; error: SafeErrorCode };
 

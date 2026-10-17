@@ -19,7 +19,7 @@ Implements `docs/PASSWORD_RECOVERY_PLAN.md` rev 2 (local plan document; not part
 | `src/app/[locale]/forgot-password/actions.ts` | Thin wrapper. The production "withheld" stub and the development `console.log` of link and address are removed |
 | `src/app/[locale]/reset-password/actions.ts` | Thin wrapper; adds a generic `resetFailed` error for an unexpected failure |
 | `src/app/[locale]/reset-password/page.tsx` | On `invalidToken`: help line plus a "Request a new link" link to `/[locale]/forgot-password` |
-| `src/lib/email/send-transactional-email.ts` | Additive `outcome` / `providerCode`. `success` and `error` are unchanged, so registration, approval and staff-invitation callers are untouched |
+| `src/lib/email/send-transactional-email.ts` | Additive `outcome` / `providerCode`. `success` and `error` are unchanged, so registration, approval and staff-invitation callers are untouched. Correction round: an opt-in `suppressProviderErrorLogging` option, used only by the reset send, silences the Resend SDK's own error logging on that one client instance |
 | `prisma/schema.prisma`, `prisma/migrations/20261017180000_password_reset_request_throttle/` | New `PasswordResetRequest` table and two indexes. Additive |
 | `messages/en.json`, `messages/es.json` | Conditional confirmation; reset-page help, link label and `resetFailed` |
 | `docs/DEPLOYMENT_RUNBOOK.md` | Reset email depends on the verified sending domain; request-log limitation |
@@ -39,13 +39,25 @@ Unchanged: `auth.ts`, the JWT callbacks, middleware, the kiosk limiter (`src/lib
 4. Issue the token inside one transaction: lock the user row, re-check `active`, invalidate older tokens, create one.
 5. Schedule the email after the response.
 
-Every outcome returns the same `{ ok: true }`. An issuance failure for an existing account is caught and logged, so it cannot answer differently from an unknown address.
+Every outcome returns the same `{ ok: true }`. The request core never throws:
+- **Throttle failure** (a database error, or a key that cannot be derived): **fails closed**. No token, no email; logs `throttle_failed`.
+- **Account-lookup failure:** stops the request; logs `lookup_failed`.
+- **Missing `APP_URL` or pepper, or an issuance error:** caught; logs `issue_failed`.
+
+None of these continues past the failed step, and none can answer differently from an unknown address.
 
 **Redemption** (`redeemPasswordResetToken`):
 1. An unlocked preliminary read refuses missing, used, expired or inactive-account tokens **before** bcrypt. It is not authoritative.
 2. bcrypt.
 3. One transaction: lock the user row → re-check `active` → take a **fresh time** → conditionally consume this token (`usedAt IS NULL AND expiresAt > now`) → set the password → invalidate the user's other unused tokens.
 4. Any refusal writes nothing. Any error rolls everything back and returns `resetFailed`.
+
+Infrastructure failures at any stage return the generic `resetFailed` and write nothing. Each is logged as `redeem_failed` with a fixed `stage`:
+- `lookup`: the pepper or the preliminary token read;
+- `hash`;
+- `transaction`.
+
+An ordinary unknown, used or expired token is still `invalidToken`.
 
 **One lock order:** issuance and redemption both take the `User` row lock first, then token rows. Single-token cleanup takes only that token's row and no other lock.
 
@@ -64,7 +76,7 @@ Every outcome returns the same `{ ok: true }`. An issuance failure for an existi
 - **`not_configured`:** a required environment variable is missing.
 
 **Logs:**
-- **Events:** `password_reset.email` (`outcome`, plus `providerCode` when it is in the SDK's fixed list), `password_reset.throttled` (`keyKind`), and `password_reset.issue_failed` / `redeem_failed` / `token_cleanup_failed` / `throttle_cleanup_failed`.
+- **Events:** `password_reset.email` (`outcome`, plus `providerCode` when it is in the SDK's fixed list), `password_reset.throttled` (`keyKind`), and `password_reset.throttle_failed` / `lookup_failed` / `issue_failed` / `redeem_failed` (`stage`) / `token_cleanup_failed` / `throttle_cleanup_failed`.
 - **Error field:** a Prisma code, an allow-listed class name, or `unrecognized_error`.
 - **Never logged:** raw error objects or messages, ids, address, IP, link, token or password.
 
@@ -78,8 +90,10 @@ Every outcome returns the same `{ ok: true }`. An issuance failure for an existi
 |---|---|
 | `tests/unit/password-reset-email-and-log.test.ts` | 9/9. Outcome classification (Resend SDK mocked): client code → rejected, provider-side and unrecognized codes → unknown, thrown network error → unknown, missing env → not_configured with no provider call. Error-code allow-listing maps arbitrary names, messages and malformed codes to `unrecognized_error` |
 | `tests/integration/password-reset.test.ts` | 24/24 (email dispatch and `after()` scheduling mocked) |
+| `tests/integration/password-reset-email-client.test.ts` (correction round) | 4/4. The **real** reset send path through the **real** Resend SDK, with only `fetch` stubbed. Provider error bodies echo the recipient and distinctive synthetic secrets (422 rejection, 500 provider error, 502 unparseable body, thrown network error). Every console argument is captured: none of the secrets, the recipient, the reset link or `[Resend API Error]` appears, and every line is a `[password-reset]` entry. A fourth case shows the default path (existing callers) still prints the SDK's own error output, i.e. their behavior is unchanged |
+| `tests/integration/password-reset-failures.test.ts` (correction round) | 9/9. Failure injection with secret-bearing errors. Throttle database failure (test trigger) and underivable throttle key → fail closed, uniform response, no throttle row, no token, no scheduled email, no send. Account-lookup failure and missing `APP_URL` → same. Preliminary token-lookup failure, missing pepper and hashing failure during redemption → `resetFailed`, password and token unchanged. An ordinary unknown token is still `invalidToken` and logs nothing. No synthetic secret appears in captured logs |
 | Full unit suite | 125 files, 1773 tests passed |
-| Full integration suite | 155 files, 2021 tests passed |
+| Full integration suite | 155 files, 2021 tests passed (initial head); 157 files, 2034 tests passed (correction round) |
 | Smoke (`page-routes`) against the browser-verification server | 2 files, 21 tests passed |
 | typecheck / lint / guard-usage | Clean / 0 errors (23 pre-existing warnings, none in changed files) / all guards have call sites |
 | Migration | Generated with `prisma migrate diff` against a disposable shadow database; applied to the isolated test database only; `db:check-drift` clean both ways |
@@ -109,6 +123,8 @@ Every outcome returns the same `{ ok: true }`. An issuance failure for an existi
 | Consume without `usedAt: null` | Concurrent same-token redemption; issuance-first ordering |
 | Remove the `active` re-check under the lock | Deactivation-first ordering |
 | Widen cleanup beyond the token id | Stale cleanup must not invalidate the newer token |
+| Remove `suppressProviderErrorLogging` from the reset send (correction round) | 3 of the 4 email-client tests fail: the SDK printed `[Resend API Error]` containing the synthetic provider secret |
+| Restore the previous head's `password-reset.ts` (`cfe8b90`) under the new failure tests (correction round) | 7 of 9 fail (all except the two control cases) |
 
 ### Real browser (local, disposable database, email unconfigured)
 
@@ -148,6 +164,20 @@ The Next.js dev overlay is hidden in captures; it exists only under `next dev`.
 
 ---
 
+## Logging: what is verified, and what remains a deployment concern
+
+**Verified by tests (application and email client).** During a password-reset request, send and redemption, nothing written to the console by this application's code or by the Resend SDK contains:
+- the recipient address;
+- the IP;
+- the reset link or raw token;
+- the password;
+- provider free text;
+- error messages or query parameters.
+
+This covers success paths, provider rejections, provider-side errors, network failures and injected infrastructure failures (`password-reset.test.ts`, `password-reset-email-client.test.ts`, `password-reset-failures.test.ts`). These tests capture `console.log/info/warn/error/debug` in the test process. Other email callers (registration, approval, staff invitations) are unchanged: outside production the SDK still prints their provider errors.
+
+**Separate deployment concern (not addressed by this code).** The reset link carries the token in its query string. Request URLs are written by the web server and hosting layer, not by this application's logging. `next dev` printed them locally (`GET/POST /en/reset-password?token=… 200`), and the hosting platform's request logs, browser history and `Referer` headers may contain them. Documented in `docs/DEPLOYMENT_RUNBOOK.md` for review before launch. The token-URL flow is not redesigned in this PR.
+
 ## Not verified here
 
 - **Actual delivery:** whether an email reaches an address other than the Resend account owner's needs a verified sending domain.
@@ -160,7 +190,7 @@ The Next.js dev overlay is hidden in captures; it exists only under `next dev`.
 
 - **Sessions:** a reset does not end existing sessions. Middleware refreshes each active session's cookie on every page navigation (`docs/PASSWORD_RECOVERY_PLAN.md` §1, §2.9). Revocation is a separate owner decision.
 - **Token in the URL:** the reset link carries the token in its query string. The app never logs it, but request logs (shown here by `next dev`; possibly the hosting platform's), browser history and `Referer` headers can contain it. Mitigations (a fragment or POST exchange, `Referrer-Policy`) are outside this PR. The security-headers workstream is separate.
-- **The Resend SDK logs provider errors itself** whenever `NODE_ENV !== "production"` (`[Resend API Error]` with the provider's error object). That is outside this code's control. It is suppressed in production builds.
+- **The SDK override depends on its internals:** the reset send silences the SDK's error logging by shadowing its private `logError` on one client instance. That relies on an internal method name in resend@6.27.0; an SDK upgrade that renames it would make `password-reset-email-client.test.ts` fail.
 - **Timing:** identical response text does not make timing identical. An existing, active account additionally runs one short token transaction.
 - **IP throttling** is best effort and fails open when no IP is available.
 - **Throttle rows inside 24 hours** have no fixed ceiling, and expired rows remain if requests stop entirely.

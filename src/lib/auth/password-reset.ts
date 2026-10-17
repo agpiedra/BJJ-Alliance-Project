@@ -19,28 +19,44 @@ export const RESET_TOKEN_TTL_MS = 60 * 60 * 1000;
 export type ResetLocale = "en" | "es";
 
 /**
- * Every outcome — unknown address, inactive account, throttled, issued with any email outcome, scheduling failure —
- * returns the same `void`; the action turns it into one uniform response. Only a throttle or lookup failure that would
- * hit every request alike is allowed to throw.
+ * Every outcome — unknown address, inactive account, throttled, issued with any email outcome, scheduling failure, or
+ * an infrastructure failure at any step — returns the same `void`; the action turns it into one uniform response.
+ * Never throws. A failed safeguard STOPS the request rather than continuing past it: if the throttle cannot be
+ * checked, or the account cannot be looked up, no token is issued and no email is scheduled.
  */
 export async function requestPasswordResetCore(input: { email: string; locale: ResetLocale; ip: string | null }): Promise<void> {
-  const appUrl = requireEnv("APP_URL");
-  const claim = await claimResetRequest(resetThrottleKeys(input.email, input.ip));
+  let claim: Awaited<ReturnType<typeof claimResetRequest>>;
+  try {
+    claim = await claimResetRequest(resetThrottleKeys(input.email, input.ip));
+  } catch (error) {
+    // Fail closed: an unchecked throttle never lets a request through.
+    logPasswordResetEvent({ event: "password_reset.throttle_failed", error: safeErrorCode(error) });
+    return;
+  }
   await sweepExpiredResetRequests();
   if (!claim.allowed) {
     logPasswordResetEvent({ event: "password_reset.throttled", keyKind: claim.keyKind });
     return;
   }
 
-  const user = await prisma.user.findUnique({ where: { email: input.email }, select: { id: true } });
+  let user: { id: string } | null;
+  try {
+    user = await prisma.user.findUnique({ where: { email: input.email }, select: { id: true } });
+  } catch (error) {
+    logPasswordResetEvent({ event: "password_reset.lookup_failed", error: safeErrorCode(error) });
+    return;
+  }
   if (!user) return;
 
   const rawToken = generateRandomToken();
   let issued: IssuedToken | null;
+  let appUrl: string;
   try {
+    // Configuration is read here, inside the catch, so a missing value for an existing account cannot answer
+    // differently from an unknown address.
+    appUrl = requireEnv("APP_URL");
     issued = await issueResetToken(user.id, digestLookupSecret(rawToken, requireEnv("CODE_PEPPER")));
   } catch (error) {
-    // Swallowed so an existing account's failure cannot answer differently from an unknown address.
     logPasswordResetEvent({ event: "password_reset.issue_failed", error: safeErrorCode(error) });
     return;
   }
@@ -91,7 +107,7 @@ async function deliverResetEmail(input: { tokenId: string; to: string; link: str
   try {
     const message = resetEmailMessage(input.locale, input.link);
     sendStarted = true;
-    const result = await sendTransactionalEmail(input.to, message.subject, message.lines);
+    const result = await sendTransactionalEmail(input.to, message.subject, message.lines, { suppressProviderErrorLogging: true });
     logPasswordResetEvent({
       event: "password_reset.email",
       outcome: result.outcome,
@@ -150,6 +166,8 @@ function resetEmailMessage(locale: ResetLocale, link: string): { subject: string
 export type RedeemResult = { ok: true } | { ok: false; reason: "invalidToken" | "failed" };
 
 const INVALID: RedeemResult = { ok: false, reason: "invalidToken" };
+/** An infrastructure failure — never reported as an invalid token, and never a partial change. */
+const FAILED: RedeemResult = { ok: false, reason: "failed" };
 
 /**
  * Single-use redemption. A preliminary, UNLOCKED read rejects missing, used, expired or inactive-account tokens before
@@ -158,16 +176,28 @@ const INVALID: RedeemResult = { ok: false, reason: "invalidToken" };
  * leaves the password unchanged and the token unused.
  */
 export async function redeemPasswordResetToken(input: { rawToken: string; newPassword: string }): Promise<RedeemResult> {
-  const tokenHash = digestLookupSecret(input.rawToken, requireEnv("CODE_PEPPER"));
-  const candidate = await prisma.passwordResetToken.findUnique({
-    where: { tokenHash },
-    select: { id: true, userId: true, usedAt: true, expiresAt: true, user: { select: { active: true } } },
-  });
+  let candidate: { id: string; userId: string; usedAt: Date | null; expiresAt: Date; user: { active: boolean } } | null;
+  try {
+    const tokenHash = digestLookupSecret(input.rawToken, requireEnv("CODE_PEPPER"));
+    candidate = await prisma.passwordResetToken.findUnique({
+      where: { tokenHash },
+      select: { id: true, userId: true, usedAt: true, expiresAt: true, user: { select: { active: true } } },
+    });
+  } catch (error) {
+    logPasswordResetEvent({ event: "password_reset.redeem_failed", stage: "lookup", error: safeErrorCode(error) });
+    return FAILED;
+  }
   if (!candidate || candidate.usedAt || candidate.expiresAt.getTime() <= Date.now() || !candidate.user.active) {
     return INVALID;
   }
 
-  const passwordHash = await hashSecret(input.newPassword);
+  let passwordHash: string;
+  try {
+    passwordHash = await hashSecret(input.newPassword);
+  } catch (error) {
+    logPasswordResetEvent({ event: "password_reset.redeem_failed", stage: "hash", error: safeErrorCode(error) });
+    return FAILED;
+  }
 
   try {
     return await prisma.$transaction(async (tx) => {
@@ -187,7 +217,7 @@ export async function redeemPasswordResetToken(input: { rawToken: string; newPas
       return { ok: true } as const;
     });
   } catch (error) {
-    logPasswordResetEvent({ event: "password_reset.redeem_failed", error: safeErrorCode(error) });
-    return { ok: false, reason: "failed" };
+    logPasswordResetEvent({ event: "password_reset.redeem_failed", stage: "transaction", error: safeErrorCode(error) });
+    return FAILED;
   }
 }

@@ -90,10 +90,29 @@ export function classifyProviderError(name: unknown): { outcome: "rejected" | "u
   return { outcome: providerCode !== undefined && REJECTION_CODES.has(providerCode) ? "rejected" : "unknown", providerCode };
 }
 
+export interface SendTransactionalEmailOptions {
+  /**
+   * Stops the Resend SDK's own error logging for this send. resend@6.27.0 prints the provider's raw error object
+   * (`console.error("[Resend API Error]:", …)`) whenever `NODE_ENV !== "production"`; that object is free text that
+   * can carry the recipient or other request details. Off by default, so existing callers behave exactly as before.
+   */
+  suppressProviderErrorLogging?: boolean;
+}
+
+/**
+ * Shadows the SDK's private `logError` on this one client instance — no global console change, no NODE_ENV change.
+ * It depends on that internal method name; tests/integration/password-reset-email-client.test.ts drives the real SDK
+ * with only `fetch` mocked and fails if an SDK upgrade starts logging provider errors again.
+ */
+function silenceSdkErrorLogging(client: Resend): void {
+  (client as unknown as { logError: (...args: unknown[]) => void }).logError = () => {};
+}
+
 export async function sendTransactionalEmail(
   to: string,
   subject: string,
   bodyLines: string[],
+  options: SendTransactionalEmailOptions = {},
 ): Promise<TransactionalEmailResult> {
   let apiKey: string;
   let from: string;
@@ -106,6 +125,7 @@ export async function sendTransactionalEmail(
 
   try {
     const client = new Resend(apiKey);
+    if (options.suppressProviderErrorLogging) silenceSdkErrorLogging(client);
     const { error } = await client.emails.send({
       from,
       to,
