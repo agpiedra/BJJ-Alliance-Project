@@ -33,15 +33,21 @@ async function cleanup() {
   }
 }
 
-async function makeOrgWithBranding(label: string, brandingOverrides: Partial<{ primaryColor: string; sidebarBackground: string; logoUrl: string; displayName: string }>) {
+async function makeOrgWithBranding(
+  label: string,
+  brandingOverrides: Partial<{ primaryColor: string; sidebarBackground: string; logoUrl: string; displayName: string; brandingIsDefault: boolean }>,
+) {
   const suffix = `${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
   const org = await testPrisma.organization.create({
     data: { slug: `${label}-${suffix}`, name: `${label} Org ${suffix}`, status: "ACTIVE" },
   });
   cleanupOrgIds.push(org.id);
 
+  // brandingIsDefault: false by default — these fixtures exist to test ARBITRARY STORED colors;
+  // without this, the schema's own default (true, for a row with no data of its own) would make
+  // every assertion below resolve to the shared MATROOM default instead of the color actually set.
   await testPrisma.organizationBranding.create({
-    data: { organizationId: org.id, ...brandingOverrides },
+    data: { organizationId: org.id, brandingIsDefault: false, ...brandingOverrides },
   });
 
   const academy = await testPrisma.academy.create({
@@ -98,7 +104,7 @@ describe("getOrganizationBranding — tenant isolation", () => {
     await expect(prisma.organizationBranding.findMany()).rejects.toThrow(UnscopedTenantQueryError);
   });
 
-  it("a missing branding row (should never happen — created transactionally with every Organization) degrades to system defaults rather than crashing", async () => {
+  it("a missing branding row (should never happen — created transactionally with every Organization) degrades to the MATROOM default palette, not a crash — and is reported as default mode", async () => {
     const suffix = `${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
     const org = await testPrisma.organization.create({
       data: { slug: `branding-missing-row-${suffix}`, name: `Missing Row Org ${suffix}`, status: "ACTIVE" },
@@ -107,8 +113,90 @@ describe("getOrganizationBranding — tenant isolation", () => {
     // Deliberately no OrganizationBranding row created for this org.
 
     const branding = await getOrganizationBranding(tenantCtx("ADMIN", org.id));
+    expect(branding.isDefaultMode).toBe(true);
+    expect(branding.primary.background).toBe("#254b35");
+    expect(branding.sidebar.background).toBe("#fffefa");
+    expect(branding.sidebar.activeBackground).toBe("#e6ebdd");
+    expect(branding.logoUrl).toBeNull();
+    // The dark counterpart is present (missing-row fallback == a brand-new default-mode row — same
+    // treatment, never a second, less-complete notion of "default").
+    expect(branding.dark?.sidebar.background).toBe("#202c25");
+  });
+
+  it("brandingIsDefault: true renders the shared default palette even when the row's own stored columns hold something else entirely — the flag decides, not the stored value", async () => {
+    const org = await makeOrgWithBranding("branding-default-mode-with-stale-columns", {
+      primaryColor: "#7F1D1D", // a value that would never be mistaken for the real default
+      sidebarBackground: "#1A0505",
+      brandingIsDefault: true,
+    });
+
+    const branding = await getOrganizationBranding(tenantCtx("ADMIN", org.org.id));
+    expect(branding.isDefaultMode).toBe(true);
+    expect(branding.primary.background).toBe("#254b35");
+    expect(branding.sidebar.background).toBe("#fffefa");
+    expect(branding.primary.background).not.toBe("#7F1D1D");
+  });
+
+  it("brandingIsDefault: false (the post-migration state of every pre-existing row) renders exactly its own stored columns, including legacy gold/navy — never reinterpreted as default mode", async () => {
+    const org = await makeOrgWithBranding("branding-legacy-stored-mode", {
+      primaryColor: "#FACC15",
+      sidebarBackground: "#111827",
+      brandingIsDefault: false,
+    });
+
+    const branding = await getOrganizationBranding(tenantCtx("ADMIN", org.org.id));
+    expect(branding.isDefaultMode).toBe(false);
     expect(branding.primary.background).toBe("#FACC15");
     expect(branding.sidebar.background).toBe("#111827");
-    expect(branding.logoUrl).toBeNull();
+    expect(branding.dark).toBeUndefined();
+  });
+});
+
+describe("resolveOrganizationLoginBranding — the second branding read path (pre-auth, unscoped by design)", () => {
+  afterAll(cleanup);
+
+  it("stored-mode: renders exactly the org's own columns, same as getOrganizationBranding", async () => {
+    const { resolveOrganizationLoginBranding } = await import("../../src/lib/tenant/platform-lookups");
+    const org = await makeOrgWithBranding("login-branding-stored", {
+      primaryColor: "#215DA5",
+      sidebarBackground: "#0B2545",
+      brandingIsDefault: false,
+    });
+
+    const branding = await resolveOrganizationLoginBranding(org.org.slug);
+    expect(branding?.isDefaultMode).toBe(false);
+    expect(branding?.primary.background).toBe("#215DA5");
+    expect(branding?.sidebar.background).toBe("#0B2545");
+    expect(branding?.dark).toBeUndefined();
+  });
+
+  it("default-mode: renders the shared MATROOM palette, with the dark counterpart present", async () => {
+    const { resolveOrganizationLoginBranding } = await import("../../src/lib/tenant/platform-lookups");
+    const org = await makeOrgWithBranding("login-branding-default", { brandingIsDefault: true });
+
+    const branding = await resolveOrganizationLoginBranding(org.org.slug);
+    expect(branding?.isDefaultMode).toBe(true);
+    expect(branding?.primary.background).toBe("#254b35");
+    expect(branding?.sidebar.background).toBe("#fffefa");
+    expect(branding?.dark?.sidebar.background).toBe("#202c25");
+  });
+
+  it("a missing branding row degrades to the same MATROOM default palette as the other read path", async () => {
+    const { resolveOrganizationLoginBranding } = await import("../../src/lib/tenant/platform-lookups");
+    const suffix = `${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
+    const org = await testPrisma.organization.create({
+      data: { slug: `login-branding-missing-row-${suffix}`, name: `Login Missing Row Org ${suffix}`, status: "ACTIVE" },
+    });
+    cleanupOrgIds.push(org.id);
+
+    const branding = await resolveOrganizationLoginBranding(org.slug);
+    expect(branding?.isDefaultMode).toBe(true);
+    expect(branding?.primary.background).toBe("#254b35");
+    expect(branding?.sidebar.background).toBe("#fffefa");
+  });
+
+  it("an unknown slug still returns null, unaffected by default/stored mode", async () => {
+    const { resolveOrganizationLoginBranding } = await import("../../src/lib/tenant/platform-lookups");
+    expect(await resolveOrganizationLoginBranding("no-such-org-slug-at-all")).toBeNull();
   });
 });

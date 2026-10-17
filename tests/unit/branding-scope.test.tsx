@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import { BrandingScope } from "@/components/branding/branding-scope";
 import type { ResolvedBranding } from "@/lib/branding/get-branding";
 import { resolvePrimaryTheme, resolveSidebarTheme } from "@/lib/theme";
+import { MATROOM_DEFAULT_BRANDING } from "@/lib/branding/default-palette";
+import { resolveDefaultBrandingVariant } from "@/lib/branding/resolve-default-variant";
 
 function branding(primary: string, sidebarBackground: string, id = "org1"): ResolvedBranding {
   const p = resolvePrimaryTheme(primary);
@@ -11,6 +13,7 @@ function branding(primary: string, sidebarBackground: string, id = "org1"): Reso
     displayName: "Test",
     initials: "T",
     logoUrl: null,
+    isDefaultMode: false,
     primary: p,
     sidebar: resolveSidebarTheme({ background: sidebarBackground, activeBackgroundDefault: p.background }),
   };
@@ -57,5 +60,55 @@ describe("BrandingScope", () => {
     const out = css(branding("#C2410C", "#123B4A", "abc"));
     expect(out).toContain('[data-branding="org-abc"] {');
     expect(out).toContain('.dark [data-branding="org-abc"] {');
+  });
+});
+
+/**
+ * The one deliberate exception to "gold does not invert between themes"
+ * (see this component's own doc comment): a never-customized org renders
+ * like the platform's own unbranded pages, which DO invert. Light-mode
+ * values come from the normal rule block (unchanged); the SECOND,
+ * dark-specific value set emitted under `.dark` only for `isDefaultMode`
+ * orgs is what these tests cover.
+ */
+describe("BrandingScope — default-mode orgs (isDefaultMode: true)", () => {
+  function defaultModeBranding(id = "org1"): ResolvedBranding {
+    const p = resolvePrimaryTheme(MATROOM_DEFAULT_BRANDING.light.primaryColor);
+    return {
+      organizationId: id,
+      displayName: "Test",
+      initials: "T",
+      logoUrl: null,
+      isDefaultMode: true,
+      primary: p,
+      sidebar: resolveSidebarTheme({ background: MATROOM_DEFAULT_BRANDING.light.sidebarBackground, activeBackgroundDefault: p.background }),
+      dark: resolveDefaultBrandingVariant(MATROOM_DEFAULT_BRANDING.dark),
+    };
+  }
+
+  it("emits the exact dark-palette values under .dark, not the light-mode values repeated", () => {
+    const out = css(defaultModeBranding());
+    const [, darkRule] = out.split(".dark ");
+    expect(darkRule).toContain(`--brand-gold: ${MATROOM_DEFAULT_BRANDING.dark.primaryColor};`);
+    expect(darkRule).toContain(`--sidebar: ${MATROOM_DEFAULT_BRANDING.dark.sidebarBackground};`);
+    expect(darkRule).toContain(`--sidebar-primary: ${MATROOM_DEFAULT_BRANDING.dark.sidebarActiveBackground};`);
+    expect(darkRule).toContain(`--sidebar-border: ${MATROOM_DEFAULT_BRANDING.dark.sidebarBorder};`);
+  });
+
+  it("the light-mode rule still uses the resolved light primary/sidebar, same code path as a customized org", () => {
+    const out = css(defaultModeBranding());
+    const [lightRule] = out.split(".dark ");
+    expect(lightRule).toContain(`--brand-gold: ${MATROOM_DEFAULT_BRANDING.light.primaryColor};`);
+    expect(lightRule).toContain(`--sidebar: ${MATROOM_DEFAULT_BRANDING.light.sidebarBackground};`);
+  });
+
+  it("a customized org (isDefaultMode: false) never emits the second dark value set, even if branding.dark were somehow present", () => {
+    const b = branding("#C2410C", "#123B4A");
+    const out = css(b);
+    const [, darkRule] = out.split(".dark ");
+    // Customized orgs keep "gold does not invert" — the dark rule carries
+    // only --action-edge/--brand-data, never a second --brand-gold/--sidebar set.
+    expect(darkRule).not.toContain("--brand-gold:");
+    expect(darkRule).not.toContain("--sidebar:");
   });
 });

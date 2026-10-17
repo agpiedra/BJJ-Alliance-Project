@@ -49,6 +49,7 @@ const HARBOR = {
   displayName: "Harbor Jiu-Jitsu (fictional)",
   initials: "HJ",
   logoUrl: null,
+  isDefaultMode: false,
   primary: HARBOR_PRIMARY,
   sidebar: resolveSidebarTheme({ background: "#123B4A", activeBackgroundDefault: HARBOR_PRIMARY.background }),
 };

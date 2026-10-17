@@ -8,6 +8,7 @@ import { isValidHexColor, validateSidebarOverrides } from "@/lib/theme";
 import { validateAndReencodeLogo, ACCEPTED_MIME_TYPES } from "@/lib/branding/validate-logo";
 import { uploadLogo, deleteLogoByUrl } from "@/lib/branding/logo-storage";
 import { revalidateBranding } from "@/lib/branding/get-branding";
+import { MATROOM_DEFAULT_BRANDING } from "@/lib/branding/default-palette";
 import { Prisma } from "@/generated/prisma/client";
 import type { ActionState } from "@/lib/action-state";
 
@@ -75,6 +76,32 @@ export async function saveBrandingTheme(
     where: { organizationId: context.organizationId },
   });
 
+  // Was this organization in default mode before this save? A missing row is treated the same as
+  // `brandingIsDefault: true` — both mean "no data of its own yet" (ResolvedBranding's own rule).
+  const wasDefault = before === null || before.brandingIsDefault === true;
+
+  // Does this SPECIFIC submission reproduce the current default exactly? Compared against the
+  // known, current MATROOM_DEFAULT_BRANDING constant — never against legacy hex literals, which
+  // could never reliably indicate intent either way. The four override fields must be ABSENT
+  // (parsed `undefined`, i.e. the "Customize sidebar" checkbox was off at submit time — see
+  // ThemePicker's own doc comment), not merely equal to some derived value: checking the box is
+  // itself a meaningful action even if every swatch happens to still show its default color.
+  const matchesCurrentDefault =
+    data.primaryColor === MATROOM_DEFAULT_BRANDING.light.primaryColor &&
+    data.sidebarBackground === MATROOM_DEFAULT_BRANDING.light.sidebarBackground &&
+    data.sidebarForeground === undefined &&
+    data.sidebarActiveBackground === undefined &&
+    data.sidebarActiveForeground === undefined &&
+    data.sidebarBorder === undefined;
+
+  // A submission that neither changes anything nor originated from a customized row stays in
+  // default mode — this is what makes "open settings, click Save without touching anything"
+  // preserve appearance exactly, instead of silently freezing the current default into stored
+  // columns the moment any save fires. Any other submission is a genuine edit: the organization
+  // leaves default mode for good (never re-enters it automatically — see this field's own schema
+  // doc comment), and every field is written exactly as submitted, same as always.
+  const staysDefault = wasDefault && matchesCurrentDefault;
+
   await prisma.$transaction(async (tx) => {
     await tx.organizationBranding.upsert({
       where: { organizationId: context.organizationId },
@@ -87,6 +114,7 @@ export async function saveBrandingTheme(
         sidebarActiveBackground: data.sidebarActiveBackground ?? null,
         sidebarActiveForeground: data.sidebarActiveForeground ?? null,
         sidebarBorder: data.sidebarBorder ?? null,
+        brandingIsDefault: staysDefault,
       },
       update: {
         displayName: data.displayName || null,
@@ -96,6 +124,7 @@ export async function saveBrandingTheme(
         sidebarActiveBackground: data.sidebarActiveBackground ?? null,
         sidebarActiveForeground: data.sidebarActiveForeground ?? null,
         sidebarBorder: data.sidebarBorder ?? null,
+        brandingIsDefault: staysDefault,
       },
     });
 

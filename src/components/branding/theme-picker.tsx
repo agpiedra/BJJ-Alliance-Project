@@ -3,7 +3,8 @@
 import { useActionState, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
-import { resolvePrimaryTheme, resolveSidebarTheme, validateSidebarOverrides } from "@/lib/theme";
+import { deriveForeground, resolvePrimaryTheme, resolveSidebarTheme, validateSidebarOverrides } from "@/lib/theme";
+import { MATROOM_DEFAULT_BRANDING } from "@/lib/branding/default-palette";
 import type { ActionState } from "@/lib/action-state";
 
 const INITIAL_STATE: ActionState = {};
@@ -16,6 +17,12 @@ export interface ThemePickerInitialValues {
   sidebarActiveBackground: string | null;
   sidebarActiveForeground: string | null;
   sidebarBorder: string | null;
+  /** Whether this organization currently has `brandingIsDefault: true` (or no row at all) — used
+   * ONLY to decide which constant the LIVE PREVIEW falls back to while the draft still matches the
+   * default; never used to initialize "Customize sidebar" (that stays keyed off the four raw
+   * override fields above, independent of this flag — enabling/disabling overrides is a separate
+   * concern from overall default/stored mode). */
+  isDefaultMode: boolean;
 }
 
 export interface ThemePickerProps {
@@ -52,19 +59,98 @@ export function ThemePicker({ organizationId, initial, action }: ThemePickerProp
   const [sidebarActiveForeground, setSidebarActiveForeground] = useState(initial.sidebarActiveForeground ?? "");
   const [sidebarBorder, setSidebarBorder] = useState(initial.sidebarBorder ?? "");
 
+  // Recomputed from the live draft on every keystroke, using the identical rule the server's save
+  // guard applies — never a value frozen at mount. Editing primaryColor/sidebarBackground away from
+  // the default, or checking "Customize sidebar" at all (even before touching a swatch — enabling
+  // overrides is itself a meaningful action), immediately falls through to the normal derivation
+  // below, so the preview never promises an appearance Save wouldn't actually produce.
+  const draftMatchesDefault =
+    primaryColor === MATROOM_DEFAULT_BRANDING.light.primaryColor &&
+    sidebarBackground === MATROOM_DEFAULT_BRANDING.light.sidebarBackground &&
+    !customizeSidebar;
+  // `initial.isDefaultMode` gates the top level: a row that did NOT start in default mode never
+  // previews as default-mode again merely because its draft happens to match the constant's values
+  // (the save guard's `wasDefault` makes the same one-way distinction server-side).
+  const previewIsDefaultMode = initial.isDefaultMode && draftMatchesDefault;
+
   const primary = useMemo(() => resolvePrimaryTheme(primaryColor), [primaryColor]);
+
+  // Effective override values — computed ONCE and reused everywhere: the swatch's own rendered
+  // `value=`, the FormData Save actually submits (the same controlled value), the live preview, and
+  // sidebarCheck's client-side validation. Previously the swatch displayed one of these (the exact
+  // MATROOM literal, or a generic "sidebar.X" derivation) while the preview/validation recomputed a
+  // DIFFERENT value from the still-empty raw override state passed as `null` — an untouched swatch
+  // could preview one color and submit another (confirmed: an untouched sidebarActiveBackground
+  // submitted the approved #e6ebdd literal while the preview derived its active-item color from
+  // primaryColor instead). A swatch still showing its fallback is untouched; that fallback is exactly
+  // what gets submitted the moment customizeSidebar is checked at all (checking the box with nothing
+  // picked is itself a meaningful edit — see saveBrandingTheme's own doc comment), so it must be the
+  // single source every consumer below reads from.
+  const sidebarForegroundFallback = initial.isDefaultMode
+    ? MATROOM_DEFAULT_BRANDING.light.sidebarForeground
+    : deriveForeground(sidebarBackground);
+  const sidebarActiveBackgroundFallback = initial.isDefaultMode
+    ? MATROOM_DEFAULT_BRANDING.light.sidebarActiveBackground
+    : primary.background;
+  const sidebarActiveBackgroundEffective = sidebarActiveBackground || sidebarActiveBackgroundFallback;
+  // activeForeground's natural pairing is with activeBackground (resolveSidebarTheme derives it FROM
+  // activeBackground, never independently) — its own fallback must chain off the EFFECTIVE
+  // activeBackground, not a value frozen at mount. The approved MATROOM literal is only right while
+  // activeBackground is ALSO still exactly the approved default; the moment activeBackground is
+  // edited, the approved literal no longer pairs with it and the same contrast-safe derivation
+  // resolveSidebarTheme itself would use is correct instead.
+  const sidebarActiveForegroundFallback =
+    initial.isDefaultMode && sidebarActiveBackgroundEffective === MATROOM_DEFAULT_BRANDING.light.sidebarActiveBackground
+      ? MATROOM_DEFAULT_BRANDING.light.sidebarActiveForeground
+      : deriveForeground(sidebarActiveBackgroundEffective);
+  // deriveBorder() returns an rgba() string, which a native <input type="color"> can neither render
+  // nor submit — "#000000" is the existing stored-mode placeholder, unchanged; only default mode has
+  // a real hex literal to fall back to.
+  const sidebarBorderFallback = initial.isDefaultMode ? MATROOM_DEFAULT_BRANDING.light.sidebarBorder : "#000000";
+
+  const sidebarForegroundEffective = sidebarForeground || sidebarForegroundFallback;
+  const sidebarActiveForegroundEffective = sidebarActiveForeground || sidebarActiveForegroundFallback;
+  const sidebarBorderEffective = sidebarBorder || sidebarBorderFallback;
+
   const sidebarInput = useMemo(
     () => ({
       background: sidebarBackground,
-      foreground: customizeSidebar && sidebarForeground ? sidebarForeground : null,
-      activeBackground: customizeSidebar && sidebarActiveBackground ? sidebarActiveBackground : null,
-      activeForeground: customizeSidebar && sidebarActiveForeground ? sidebarActiveForeground : null,
+      foreground: customizeSidebar ? sidebarForegroundEffective : null,
+      activeBackground: customizeSidebar ? sidebarActiveBackgroundEffective : null,
+      activeForeground: customizeSidebar ? sidebarActiveForegroundEffective : null,
       activeBackgroundDefault: primary.background,
-      border: customizeSidebar && sidebarBorder ? sidebarBorder : null,
+      border: customizeSidebar ? sidebarBorderEffective : null,
     }),
-    [sidebarBackground, customizeSidebar, sidebarForeground, sidebarActiveBackground, sidebarActiveForeground, sidebarBorder, primary.background],
+    [
+      sidebarBackground,
+      customizeSidebar,
+      sidebarForegroundEffective,
+      sidebarActiveBackgroundEffective,
+      sidebarActiveForegroundEffective,
+      sidebarBorderEffective,
+      primary.background,
+    ],
   );
   const sidebar = useMemo(() => resolveSidebarTheme(sidebarInput), [sidebarInput]);
+
+  // While the draft still matches the default exactly, the preview box below renders via the SAME
+  // CSS custom properties the real app renders (`var(--sidebar)` etc.) instead of a hardcoded hex
+  // string — those variables already flip between the approved light and dark MATROOM values
+  // purely through the CSS cascade (globals.css's plain :root/.dark, or this org's own BrandingScope
+  // override, which resolves to the identical values since this org IS in default mode server-side),
+  // so the preview follows a live theme toggle with no JS reactivity of its own to maintain. The
+  // moment the draft is a genuine edit, this falls back to the flat, theme-invariant hex values
+  // `resolvePrimaryTheme`/`resolveSidebarTheme` compute above — correct for stored-mode, which never
+  // inverts between themes (see BrandingScope's own doc comment).
+  const previewPrimaryBg = previewIsDefaultMode ? "var(--brand-gold)" : primary.background;
+  const previewPrimaryFg = previewIsDefaultMode ? "var(--brand-gold-foreground)" : primary.foreground;
+  const previewSidebarBg = previewIsDefaultMode ? "var(--sidebar)" : sidebar.background;
+  const previewSidebarFg = previewIsDefaultMode ? "var(--sidebar-foreground)" : sidebar.foreground;
+  const previewSidebarActiveBg = previewIsDefaultMode ? "var(--sidebar-primary)" : sidebar.activeBackground;
+  const previewSidebarActiveFg = previewIsDefaultMode ? "var(--sidebar-primary-foreground)" : sidebar.activeForeground;
+  const previewSidebarHoverBg = previewIsDefaultMode ? "var(--sidebar-accent)" : sidebar.hoverBackground;
+  const previewSidebarHoverFg = previewIsDefaultMode ? "var(--sidebar-accent-foreground)" : sidebar.hoverForeground;
+  const previewSidebarBorder = previewIsDefaultMode ? "var(--sidebar-border)" : sidebar.border;
 
   // The SAME validation the server action re-runs — never a client-only
   // guess, so the live verdict and the server's eventual block always
@@ -136,7 +222,7 @@ export function ThemePicker({ organizationId, initial, action }: ThemePickerProp
               <input
                 type="color"
                 name="sidebarForeground"
-                value={sidebarForeground || sidebar.foreground}
+                value={sidebarForegroundEffective}
                 onChange={(e) => setSidebarForeground(e.target.value)}
                 className="h-9 w-14 rounded border"
               />
@@ -149,7 +235,7 @@ export function ThemePicker({ organizationId, initial, action }: ThemePickerProp
               <input
                 type="color"
                 name="sidebarActiveBackground"
-                value={sidebarActiveBackground || sidebar.activeBackground}
+                value={sidebarActiveBackgroundEffective}
                 onChange={(e) => setSidebarActiveBackground(e.target.value)}
                 className="h-9 w-14 rounded border"
               />
@@ -159,7 +245,7 @@ export function ThemePicker({ organizationId, initial, action }: ThemePickerProp
               <input
                 type="color"
                 name="sidebarActiveForeground"
-                value={sidebarActiveForeground || sidebar.activeForeground}
+                value={sidebarActiveForegroundEffective}
                 onChange={(e) => setSidebarActiveForeground(e.target.value)}
                 className="h-9 w-14 rounded border"
               />
@@ -172,7 +258,7 @@ export function ThemePicker({ organizationId, initial, action }: ThemePickerProp
               <input
                 type="color"
                 name="sidebarBorder"
-                value={sidebarBorder || "#000000"}
+                value={sidebarBorderEffective}
                 onChange={(e) => setSidebarBorder(e.target.value)}
                 className="h-9 w-14 rounded border"
               />
@@ -194,20 +280,25 @@ export function ThemePicker({ organizationId, initial, action }: ThemePickerProp
       </div>
 
       {/* Live sidebar preview — real nav items in default/hover/active
-          states, per doc, not a bare color swatch. */}
+          states, per doc, not a bare color swatch. While the draft still
+          matches the default (previewIsDefaultMode), this renders via
+          var(--sidebar)/var(--brand-gold) etc. — the SAME tokens the real
+          app renders, which already flip with the page's actual light/dark
+          theme through the CSS cascade alone, so this preview follows a
+          live theme toggle with no extra reactivity of its own. */}
       <div
         className="flex w-64 shrink-0 flex-col gap-1 rounded-lg p-3"
-        style={{ backgroundColor: sidebar.background, color: sidebar.foreground, border: `1px solid ${sidebar.border}` }}
+        style={{ backgroundColor: previewSidebarBg, color: previewSidebarFg, border: `1px solid ${previewSidebarBorder}` }}
       >
         <p className="px-2 py-1 text-xs font-semibold tracking-wide uppercase opacity-70">{t("previewLabel")}</p>
-        <div className="rounded px-3 py-2 text-sm" style={{ backgroundColor: sidebar.activeBackground, color: sidebar.activeForeground }}>
+        <div className="rounded px-3 py-2 text-sm" style={{ backgroundColor: previewSidebarActiveBg, color: previewSidebarActiveFg }}>
           {t("previewNavActive")}
         </div>
-        <div className="rounded px-3 py-2 text-sm" style={{ backgroundColor: sidebar.hoverBackground, color: sidebar.hoverForeground }}>
+        <div className="rounded px-3 py-2 text-sm" style={{ backgroundColor: previewSidebarHoverBg, color: previewSidebarHoverFg }}>
           {t("previewNavHover")}
         </div>
         <div className="rounded px-3 py-2 text-sm">{t("previewNavDefault")}</div>
-        <div className="mt-3 rounded px-3 py-2 text-center text-sm font-medium" style={{ backgroundColor: primary.background, color: primary.foreground }}>
+        <div className="mt-3 rounded px-3 py-2 text-center text-sm font-medium" style={{ backgroundColor: previewPrimaryBg, color: previewPrimaryFg }}>
           {t("previewButton")}
         </div>
       </div>

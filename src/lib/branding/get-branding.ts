@@ -1,23 +1,33 @@
 import { getScopedDb } from "@/lib/tenant/scoped-client";
 import { deriveInitials, resolvePrimaryTheme, resolveSidebarTheme, type ResolvedPrimaryTheme, type ResolvedSidebarTheme } from "@/lib/theme";
+import { MATROOM_DEFAULT_BRANDING } from "@/lib/branding/default-palette";
+import { resolveDefaultBrandingVariant } from "@/lib/branding/resolve-default-variant";
 import type { AccessContext } from "@/lib/tenant/types";
 
-/** System defaults for an organization with no branding row at all — should
- * never happen (see OrganizationBranding's own schema doc comment: it's
- * created transactionally alongside every Organization), but a missing row
- * degrades to these rather than crashing the page. A wrong/default theme is
- * a visual bug, not a tenant-isolation failure, so fail-soft is deliberate
+/** A missing branding row — should never happen (see OrganizationBranding's
+ * own schema doc comment: it's created transactionally alongside every
+ * Organization) — degrades to the same MATROOM default palette an
+ * org with `brandingIsDefault: true` renders, rather than crashing the page
+ * or reinventing a second notion of "default." A wrong/default theme is a
+ * visual bug, not a tenant-isolation failure, so fail-soft is deliberate
  * here specifically. */
-const DEFAULT_PRIMARY_COLOR = "#FACC15";
-const DEFAULT_SIDEBAR_BACKGROUND = "#111827";
 
 export interface ResolvedBranding {
   organizationId: string;
   displayName: string;
   initials: string;
   logoUrl: string | null;
+  /** True when this organization has never explicitly saved branding (or has
+   * no row at all) — every color below comes from MATROOM_DEFAULT_BRANDING,
+   * not from stored columns. */
+  isDefaultMode: boolean;
   primary: ResolvedPrimaryTheme;
   sidebar: ResolvedSidebarTheme;
+  /** Only present when `isDefaultMode` is true — the dark-theme counterpart
+   * BrandingScope additionally emits under `.dark [data-branding]`. A
+   * customized organization's colors are deliberately theme-invariant (see
+   * BrandingScope's own doc comment) and have no dark counterpart. */
+  dark?: { primary: ResolvedPrimaryTheme; sidebar: ResolvedSidebarTheme };
 }
 
 /**
@@ -69,30 +79,43 @@ export async function getOrganizationBranding(context: AccessContext): Promise<R
   }
 
   const row = await readBrandingRow(context);
+  const isDefaultMode = !row || row.brandingIsDefault;
 
   const displayName = row?.displayName || row?.organization.name || "Academy";
-  const primaryColor = row?.primaryColor ?? DEFAULT_PRIMARY_COLOR;
-  const sidebarBackground = row?.sidebarBackground ?? DEFAULT_SIDEBAR_BACKGROUND;
-  const primary = resolvePrimaryTheme(primaryColor);
 
-  const resolved: ResolvedBranding = {
-    organizationId: context.organizationId,
-    displayName,
-    initials: deriveInitials(displayName),
-    logoUrl: row?.logoUrl ?? null,
-    primary,
-    // activeBackgroundDefault: primary.background — see SidebarOverrides's
-    // own doc comment. An org that hasn't set an explicit sidebar-active
-    // color keeps today's exact look (active nav = brand color).
-    sidebar: resolveSidebarTheme({
-      background: sidebarBackground,
-      foreground: row?.sidebarForeground,
-      activeBackground: row?.sidebarActiveBackground,
-      activeForeground: row?.sidebarActiveForeground,
-      activeBackgroundDefault: primary.background,
-      border: row?.sidebarBorder,
-    }),
-  };
+  let resolved: ResolvedBranding;
+  if (isDefaultMode) {
+    resolved = {
+      organizationId: context.organizationId,
+      displayName,
+      initials: deriveInitials(displayName),
+      logoUrl: row?.logoUrl ?? null,
+      isDefaultMode: true,
+      ...resolveDefaultBrandingVariant(MATROOM_DEFAULT_BRANDING.light),
+      dark: resolveDefaultBrandingVariant(MATROOM_DEFAULT_BRANDING.dark),
+    };
+  } else {
+    const primary = resolvePrimaryTheme(row!.primaryColor);
+    resolved = {
+      organizationId: context.organizationId,
+      displayName,
+      initials: deriveInitials(displayName),
+      logoUrl: row?.logoUrl ?? null,
+      isDefaultMode: false,
+      primary,
+      // activeBackgroundDefault: primary.background — see SidebarOverrides's
+      // own doc comment. An org that hasn't set an explicit sidebar-active
+      // color keeps today's exact look (active nav = brand color).
+      sidebar: resolveSidebarTheme({
+        background: row!.sidebarBackground,
+        foreground: row!.sidebarForeground,
+        activeBackground: row!.sidebarActiveBackground,
+        activeForeground: row!.sidebarActiveForeground,
+        activeBackgroundDefault: primary.background,
+        border: row!.sidebarBorder,
+      }),
+    };
+  }
 
   cache.set(context.organizationId, { value: resolved, expiresAt: Date.now() + CACHE_TTL_MS });
   return resolved;
