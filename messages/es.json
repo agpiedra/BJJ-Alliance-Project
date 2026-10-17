@@ -67,14 +67,17 @@
       "heading": "Recuperar contraseña",
       "email": "Correo electrónico",
       "submit": "Enviar enlace",
-      "genericConfirmation": "Si ese correo existe en nuestro sistema, se envió un enlace para restablecer la contraseña."
+      "genericConfirmation": "Si una cuenta habilitada coincide con esa dirección, es posible que recibas un correo para restablecer la contraseña. Revisa tu bandeja de entrada y la carpeta de spam."
     },
     "resetPassword": {
       "heading": "Restablecer contraseña",
       "newPassword": "Nueva contraseña",
       "submit": "Restablecer",
       "invalidToken": "Este enlace no es válido o ya expiró.",
-      "success": "Tu contraseña fue restablecida. Ya puedes iniciar sesión."
+      "success": "Tu contraseña fue restablecida. Ya puedes iniciar sesión.",
+      "invalidTokenHelp": "Los enlaces para restablecer la contraseña vencen después de 1 hora, y solo funciona el más reciente.",
+      "requestNewLink": "Solicitar un enlace nuevo",
+      "resetFailed": "No se pudo restablecer la contraseña. Inténtalo de nuevo."
     },
     "acceptInvitation": {
       "heading": "Establece tu contraseña",

@@ -67,14 +67,17 @@
       "heading": "Reset password",
       "email": "Email",
       "submit": "Send reset link",
-      "genericConfirmation": "If that email exists in our system, a password reset link has been sent."
+      "genericConfirmation": "If an eligible account matches that address, you may receive a password-reset email. Check your inbox and spam folder."
     },
     "resetPassword": {
       "heading": "Reset password",
       "newPassword": "New password",
       "submit": "Reset password",
       "invalidToken": "This link is invalid or has expired.",
-      "success": "Your password has been reset. You can now sign in."
+      "success": "Your password has been reset. You can now sign in.",
+      "invalidTokenHelp": "Reset links expire after 1 hour, and only the most recent link works.",
+      "requestNewLink": "Request a new link",
+      "resetFailed": "Your password could not be reset. Please try again."
     },
     "acceptInvitation": {
       "heading": "Set your password",

@@ -7,16 +7,9 @@ import { bodyToHtml } from "@/lib/notifications/email-channel";
  * registration-confirmation and invitation emails, the first things a
  * prospective customer sees from this product.
  *
- * Deliberately NOT forgot-password/actions.ts's pattern: that flow's
- * token-link email is still a `console.log` stub, explicitly deferred to
- * REDESIGN_BRIEF.md's own Phase 8 (a different document's Phase 8 — see
- * this repo's "qualify phase numbers with the document name" rule; not
- * MULTI_ACADEMY_AND_KIDS_BELTS.md's Phase 8). That stub is tolerable for a
- * low-frequency, already-authenticated-user recovery flow during
- * pre-launch dev. It is not acceptable here: these two emails are the
- * actual product experience for a real prospective academy, so this uses
- * the SAME real, already-proven Resend wiring `src/lib/notifications/channels.ts`
- * uses for staff notifications — not a copy of the stub.
+ * Also the password-reset email (src/lib/auth/password-reset.ts, docs/PASSWORD_RECOVERY_PLAN.md), which replaced
+ * forgot-password's former `console.log` stub. Uses the SAME real Resend wiring `src/lib/notifications/channels.ts`
+ * uses for staff notifications.
  *
  * Deliberately NOT the `NotificationChannel`/`dispatchNotification` system
  * either: that machinery renders a `Notification` DB row and a
@@ -29,26 +22,122 @@ import { bodyToHtml } from "@/lib/notifications/email-channel";
 export interface TransactionalEmailResult {
   success: boolean;
   error?: string;
+  /**
+   * What is actually known about the request (docs/PASSWORD_RECOVERY_PLAN.md §2.6). `accepted` means the provider took
+   * the request — never that it was delivered. `unknown` means acceptance cannot be determined (network failure, a
+   * provider-side error, an unrecognized code) and must never be reported as rejected or undelivered.
+   */
+  outcome: EmailSendOutcome;
+  /** The provider's error code, only when it is one of the SDK's fixed codes — never its free-text message. */
+  providerCode?: ResendErrorCode;
+}
+
+export type EmailSendOutcome = "accepted" | "rejected" | "unknown" | "not_configured";
+
+/** Every `RESEND_ERROR_CODE_KEY` value in resend@6.27.0. */
+const RESEND_ERROR_CODES = [
+  "invalid_idempotency_key",
+  "validation_error",
+  "missing_api_key",
+  "restricted_api_key",
+  "invalid_api_key",
+  "not_found",
+  "method_not_allowed",
+  "invalid_idempotent_request",
+  "concurrent_idempotent_requests",
+  "invalid_attachment",
+  "invalid_from_address",
+  "invalid_access",
+  "invalid_parameter",
+  "invalid_region",
+  "missing_required_field",
+  "monthly_quota_exceeded",
+  "daily_quota_exceeded",
+  "rate_limit_exceeded",
+  "security_error",
+  "application_error",
+  "internal_server_error",
+] as const;
+export type ResendErrorCode = (typeof RESEND_ERROR_CODES)[number];
+
+/**
+ * Codes that mean the provider answered and did not take the request. Everything else — `internal_server_error`,
+ * `application_error` (which the SDK also returns for a network failure or an unparseable response), the idempotency
+ * conflicts, and any code outside the fixed list — leaves acceptance unknown.
+ */
+const REJECTION_CODES: ReadonlySet<string> = new Set<ResendErrorCode>([
+  "invalid_idempotency_key",
+  "validation_error",
+  "missing_api_key",
+  "restricted_api_key",
+  "invalid_api_key",
+  "not_found",
+  "method_not_allowed",
+  "invalid_attachment",
+  "invalid_from_address",
+  "invalid_access",
+  "invalid_parameter",
+  "invalid_region",
+  "missing_required_field",
+  "monthly_quota_exceeded",
+  "daily_quota_exceeded",
+  "rate_limit_exceeded",
+  "security_error",
+]);
+
+export function classifyProviderError(name: unknown): { outcome: "rejected" | "unknown"; providerCode?: ResendErrorCode } {
+  const providerCode = typeof name === "string" && (RESEND_ERROR_CODES as readonly string[]).includes(name) ? (name as ResendErrorCode) : undefined;
+  return { outcome: providerCode !== undefined && REJECTION_CODES.has(providerCode) ? "rejected" : "unknown", providerCode };
+}
+
+export interface SendTransactionalEmailOptions {
+  /**
+   * Stops the Resend SDK's own error logging for this send. resend@6.27.0 prints the provider's raw error object
+   * (`console.error("[Resend API Error]:", …)`) whenever `NODE_ENV !== "production"`; that object is free text that
+   * can carry the recipient or other request details. Off by default, so existing callers behave exactly as before.
+   */
+  suppressProviderErrorLogging?: boolean;
+}
+
+/**
+ * Shadows the SDK's private `logError` on this one client instance — no global console change, no NODE_ENV change.
+ * It depends on that internal method name; tests/integration/password-reset-email-client.test.ts drives the real SDK
+ * with only `fetch` mocked and fails if an SDK upgrade starts logging provider errors again.
+ */
+function silenceSdkErrorLogging(client: Resend): void {
+  (client as unknown as { logError: (...args: unknown[]) => void }).logError = () => {};
 }
 
 export async function sendTransactionalEmail(
   to: string,
   subject: string,
   bodyLines: string[],
+  options: SendTransactionalEmailOptions = {},
 ): Promise<TransactionalEmailResult> {
+  let apiKey: string;
+  let from: string;
   try {
-    const client = new Resend(requireEnv("RESEND_API_KEY"));
+    apiKey = requireEnv("RESEND_API_KEY");
+    from = requireEnv("EMAIL_FROM");
+  } catch (err) {
+    return { success: false, error: err instanceof Error ? err.message : String(err), outcome: "not_configured" };
+  }
+
+  try {
+    const client = new Resend(apiKey);
+    if (options.suppressProviderErrorLogging) silenceSdkErrorLogging(client);
     const { error } = await client.emails.send({
-      from: requireEnv("EMAIL_FROM"),
+      from,
       to,
       subject,
       html: bodyToHtml(bodyLines.join("\n")),
     });
     if (error) {
-      return { success: false, error: error.message };
+      return { success: false, error: error.message, ...classifyProviderError(error.name) };
     }
-    return { success: true };
+    return { success: true, outcome: "accepted" };
   } catch (err) {
-    return { success: false, error: err instanceof Error ? err.message : String(err) };
+    // Thrown during or around the request: whether the provider took it cannot be known.
+    return { success: false, error: err instanceof Error ? err.message : String(err), outcome: "unknown" };
   }
 }

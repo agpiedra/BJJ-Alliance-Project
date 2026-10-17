@@ -594,6 +594,22 @@ model PasswordResetToken {
   @@index([userId])
 }
 
+/// docs/PASSWORD_RECOVERY_PLAN.md §2.4 — one row per ALLOWED password-reset request per throttle key. Keys are HMAC
+/// digests (CODE_PEPPER) of the normalized submitted email or the client IP — never the raw values, and computed for
+/// every submitted address whether or not an account exists. Its own table: the kiosk PIN limiter and
+/// RegistrationAttempt are unrelated and untouched. Rows older than 24 hours are removed by a bounded sweep
+/// (src/lib/auth/password-reset-throttle.ts).
+model PasswordResetRequest {
+  id        String   @id @default(cuid())
+  /// "email" | "ip"
+  keyKind   String
+  keyDigest String
+  createdAt DateTime @default(now())
+
+  @@index([keyKind, keyDigest, createdAt])
+  @@index([createdAt])
+}
+
 /// MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 5 — a table of its own, NOT an
 /// extension of PasswordResetToken. Traced directly: PasswordResetToken.userId
 /// is required and non-nullable, meaning it fundamentally means "prove you

@@ -567,6 +567,13 @@ address sandbox mode is allowed to deliver to. The failure only appears for a re
 director's or student's *different* address — which never happens until a real customer
 is in the system.
 
+Password-reset email (`src/lib/auth/password-reset.ts`) depends on the same verified sending
+domain. Until `RESEND_API_KEY` and `EMAIL_FROM` are set, every reset request answers with the
+same public message, logs `{ event: "password_reset.email", outcome: "not_configured" }`, and
+the token it issued is made unusable — no link is ever logged by the app. The link carries the
+token in its query string, so the hosting platform's own request logs may record it: check
+what Vercel's request logs keep before relying on them, and treat log access accordingly.
+
 ### 5. Cold starts on the kiosk
 
 The dev server is always warm — a persistent process, never once has anyone testing this
