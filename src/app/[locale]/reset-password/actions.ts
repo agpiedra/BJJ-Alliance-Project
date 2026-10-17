@@ -1,16 +1,15 @@
 "use server";
 
 import { z } from "zod";
-import { prisma } from "@/lib/prisma";
-import { digestLookupSecret, hashSecret } from "@/lib/crypto";
-import { requireEnv } from "@/lib/env";
 import type { ActionState } from "@/lib/action-state";
+import { redeemPasswordResetToken } from "@/lib/auth/password-reset";
 
 const schema = z.object({
   token: z.string().min(1),
   password: z.string().min(8),
 });
 
+/** docs/PASSWORD_RECOVERY_PLAN.md (rev 2) — single-use redemption lives in src/lib/auth/password-reset.ts. */
 export async function resetPassword(
   _prevState: ActionState,
   formData: FormData,
@@ -23,23 +22,7 @@ export async function resetPassword(
     return { error: "invalidToken", fieldErrors: parsed.error.flatten().fieldErrors };
   }
 
-  const tokenHash = digestLookupSecret(parsed.data.token, requireEnv("CODE_PEPPER"));
-  const record = await prisma.passwordResetToken.findUnique({ where: { tokenHash } });
-
-  if (!record || record.usedAt || record.expiresAt < new Date()) {
-    return { error: "invalidToken" };
-  }
-
-  await prisma.$transaction([
-    prisma.user.update({
-      where: { id: record.userId },
-      data: { passwordHash: await hashSecret(parsed.data.password) },
-    }),
-    prisma.passwordResetToken.update({
-      where: { id: record.id },
-      data: { usedAt: new Date() },
-    }),
-  ]);
-
-  return { ok: true };
+  const result = await redeemPasswordResetToken({ rawToken: parsed.data.token, newPassword: parsed.data.password });
+  if (result.ok) return { ok: true };
+  return { error: result.reason === "invalidToken" ? "invalidToken" : "resetFailed" };
 }

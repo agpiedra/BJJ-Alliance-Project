@@ -2,7 +2,7 @@
 
 import { Suspense, useActionState } from "react";
 import { useTranslations } from "next-intl";
-import { useSearchParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { AuthCard } from "@/components/auth/auth-card";
@@ -20,6 +20,7 @@ export default function ResetPasswordPage() {
 function ResetPasswordForm() {
   const t = useTranslations("auth.resetPassword");
   const searchParams = useSearchParams();
+  const params = useParams<{ locale: string }>();
   const token = searchParams.get("token") ?? "";
   const [state, formAction, isPending] = useActionState(resetPassword, INITIAL_ACTION_STATE);
 
@@ -40,6 +41,14 @@ function ResetPasswordForm() {
           <Input type="password" name="password" required minLength={8} />
         </label>
         {state.error && <p className="text-sm text-destructive">{t(state.error)}</p>}
+        {state.error === "invalidToken" && (
+          <p className="text-sm text-muted-foreground">
+            {t("invalidTokenHelp")}{" "}
+            <a href={`/${params.locale}/forgot-password`} className="underline">
+              {t("requestNewLink")}
+            </a>
+          </p>
+        )}
         <Button type="submit" disabled={isPending}>
           {t("submit")}
         </Button>
