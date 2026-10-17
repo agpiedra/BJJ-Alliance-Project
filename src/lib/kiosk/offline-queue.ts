@@ -136,6 +136,36 @@ function isFailureBody(body: unknown): body is { ok: false; error: string } {
   return record.ok === false && typeof record.error === "string";
 }
 
+/** Every `error` code `/api/kiosk/check-in` can return (plus the legacy `no_active_class`). */
+const KNOWN_FAILURE_REASONS = new Set([
+  "already_checked_in",
+  "class_not_open",
+  "class_selection_required",
+  "invalid_class",
+  "invalid_code",
+  "invalid_request",
+  "invalid_token",
+  "locked_out",
+  "no_active_class",
+  "no_open_class",
+  "org_unavailable",
+  "rate_limited",
+]);
+
+/**
+ * A dropped replay's console diagnostics: an allow-list, never the entry. A queued entry carries the kiosk token and
+ * the student's code, and the server's `error` is free text as far as this client can know — so only a fixed category,
+ * the HTTP status, a known reason code (anything else becomes "unrecognized") and the event's random id are logged.
+ */
+function warnDropped(message: string, entry: StoredCheckIn, category: "class_refused" | "invalid_request" | "invalid_token", status: number, reason: string | undefined) {
+  console.warn(message, {
+    category,
+    status,
+    reason: reason !== undefined && KNOWN_FAILURE_REASONS.has(reason) ? reason : "unrecognized",
+    eventId: entry.eventId ?? null,
+  });
+}
+
 type ReplayOutcome = "definitive" | "retry";
 
 /**
@@ -233,14 +263,11 @@ async function replayEntry(entry: StoredCheckIn): Promise<ReplayResult> {
     // retrying an identical malformed request can never succeed, so it is dropped rather than retried forever, and
     // logged since it indicates a real bug.
     if (reason === "no_active_class" || reason === "no_open_class" || reason === "class_selection_required" || reason === "class_not_open" || reason === "invalid_class") {
-      console.warn("[kiosk-offline-queue] offline check-in dropped: the server refused a queued replay for its class (contract violation)", {
-        entry,
-        reason,
-      });
+      warnDropped("[kiosk-offline-queue] offline check-in dropped: the server refused a queued replay for its class (contract violation)", entry, "class_refused", response.status, reason);
       return { outcome: "definitive", dropped: true };
     }
     if (reason !== "already_checked_in" && reason !== "invalid_code") {
-      console.warn("[kiosk-offline-queue] offline check-in dropped: invalid_request", { entry, reason });
+      warnDropped("[kiosk-offline-queue] offline check-in dropped: invalid_request", entry, "invalid_request", response.status, reason);
       return { outcome: "definitive", dropped: true };
     }
     return { outcome: "definitive", dropped: false };
@@ -253,7 +280,7 @@ async function replayEntry(entry: StoredCheckIn): Promise<ReplayResult> {
     // drop it rather than retry forever, but log it: a real student's
     // check-in silently vanishing with no trace is exactly the kind of
     // thing the front desk needs to be able to investigate later.
-    console.warn("[kiosk-offline-queue] offline check-in dropped: invalid_token", { entry, reason });
+    warnDropped("[kiosk-offline-queue] offline check-in dropped: invalid_token", entry, "invalid_token", response.status, reason);
     return { outcome: "definitive", dropped: true };
   }
 
