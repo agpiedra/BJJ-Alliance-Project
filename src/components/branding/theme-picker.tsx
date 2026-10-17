@@ -3,7 +3,7 @@
 import { useActionState, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
-import { resolvePrimaryTheme, resolveSidebarTheme, validateSidebarOverrides } from "@/lib/theme";
+import { deriveForeground, resolvePrimaryTheme, resolveSidebarTheme, validateSidebarOverrides } from "@/lib/theme";
 import { MATROOM_DEFAULT_BRANDING } from "@/lib/branding/default-palette";
 import type { ActionState } from "@/lib/action-state";
 
@@ -74,16 +74,62 @@ export function ThemePicker({ organizationId, initial, action }: ThemePickerProp
   const previewIsDefaultMode = initial.isDefaultMode && draftMatchesDefault;
 
   const primary = useMemo(() => resolvePrimaryTheme(primaryColor), [primaryColor]);
+
+  // Effective override values — computed ONCE and reused everywhere: the swatch's own rendered
+  // `value=`, the FormData Save actually submits (the same controlled value), the live preview, and
+  // sidebarCheck's client-side validation. Previously the swatch displayed one of these (the exact
+  // MATROOM literal, or a generic "sidebar.X" derivation) while the preview/validation recomputed a
+  // DIFFERENT value from the still-empty raw override state passed as `null` — an untouched swatch
+  // could preview one color and submit another (confirmed: an untouched sidebarActiveBackground
+  // submitted the approved #e6ebdd literal while the preview derived its active-item color from
+  // primaryColor instead). A swatch still showing its fallback is untouched; that fallback is exactly
+  // what gets submitted the moment customizeSidebar is checked at all (checking the box with nothing
+  // picked is itself a meaningful edit — see saveBrandingTheme's own doc comment), so it must be the
+  // single source every consumer below reads from.
+  const sidebarForegroundFallback = initial.isDefaultMode
+    ? MATROOM_DEFAULT_BRANDING.light.sidebarForeground
+    : deriveForeground(sidebarBackground);
+  const sidebarActiveBackgroundFallback = initial.isDefaultMode
+    ? MATROOM_DEFAULT_BRANDING.light.sidebarActiveBackground
+    : primary.background;
+  const sidebarActiveBackgroundEffective = sidebarActiveBackground || sidebarActiveBackgroundFallback;
+  // activeForeground's natural pairing is with activeBackground (resolveSidebarTheme derives it FROM
+  // activeBackground, never independently) — its own fallback must chain off the EFFECTIVE
+  // activeBackground, not a value frozen at mount. The approved MATROOM literal is only right while
+  // activeBackground is ALSO still exactly the approved default; the moment activeBackground is
+  // edited, the approved literal no longer pairs with it and the same contrast-safe derivation
+  // resolveSidebarTheme itself would use is correct instead.
+  const sidebarActiveForegroundFallback =
+    initial.isDefaultMode && sidebarActiveBackgroundEffective === MATROOM_DEFAULT_BRANDING.light.sidebarActiveBackground
+      ? MATROOM_DEFAULT_BRANDING.light.sidebarActiveForeground
+      : deriveForeground(sidebarActiveBackgroundEffective);
+  // deriveBorder() returns an rgba() string, which a native <input type="color"> can neither render
+  // nor submit — "#000000" is the existing stored-mode placeholder, unchanged; only default mode has
+  // a real hex literal to fall back to.
+  const sidebarBorderFallback = initial.isDefaultMode ? MATROOM_DEFAULT_BRANDING.light.sidebarBorder : "#000000";
+
+  const sidebarForegroundEffective = sidebarForeground || sidebarForegroundFallback;
+  const sidebarActiveForegroundEffective = sidebarActiveForeground || sidebarActiveForegroundFallback;
+  const sidebarBorderEffective = sidebarBorder || sidebarBorderFallback;
+
   const sidebarInput = useMemo(
     () => ({
       background: sidebarBackground,
-      foreground: customizeSidebar && sidebarForeground ? sidebarForeground : null,
-      activeBackground: customizeSidebar && sidebarActiveBackground ? sidebarActiveBackground : null,
-      activeForeground: customizeSidebar && sidebarActiveForeground ? sidebarActiveForeground : null,
+      foreground: customizeSidebar ? sidebarForegroundEffective : null,
+      activeBackground: customizeSidebar ? sidebarActiveBackgroundEffective : null,
+      activeForeground: customizeSidebar ? sidebarActiveForegroundEffective : null,
       activeBackgroundDefault: primary.background,
-      border: customizeSidebar && sidebarBorder ? sidebarBorder : null,
+      border: customizeSidebar ? sidebarBorderEffective : null,
     }),
-    [sidebarBackground, customizeSidebar, sidebarForeground, sidebarActiveBackground, sidebarActiveForeground, sidebarBorder, primary.background],
+    [
+      sidebarBackground,
+      customizeSidebar,
+      sidebarForegroundEffective,
+      sidebarActiveBackgroundEffective,
+      sidebarActiveForegroundEffective,
+      sidebarBorderEffective,
+      primary.background,
+    ],
   );
   const sidebar = useMemo(() => resolveSidebarTheme(sidebarInput), [sidebarInput]);
 
@@ -176,7 +222,7 @@ export function ThemePicker({ organizationId, initial, action }: ThemePickerProp
               <input
                 type="color"
                 name="sidebarForeground"
-                value={sidebarForeground || (initial.isDefaultMode ? MATROOM_DEFAULT_BRANDING.light.sidebarForeground : sidebar.foreground)}
+                value={sidebarForegroundEffective}
                 onChange={(e) => setSidebarForeground(e.target.value)}
                 className="h-9 w-14 rounded border"
               />
@@ -189,7 +235,7 @@ export function ThemePicker({ organizationId, initial, action }: ThemePickerProp
               <input
                 type="color"
                 name="sidebarActiveBackground"
-                value={sidebarActiveBackground || (initial.isDefaultMode ? MATROOM_DEFAULT_BRANDING.light.sidebarActiveBackground : sidebar.activeBackground)}
+                value={sidebarActiveBackgroundEffective}
                 onChange={(e) => setSidebarActiveBackground(e.target.value)}
                 className="h-9 w-14 rounded border"
               />
@@ -199,7 +245,7 @@ export function ThemePicker({ organizationId, initial, action }: ThemePickerProp
               <input
                 type="color"
                 name="sidebarActiveForeground"
-                value={sidebarActiveForeground || (initial.isDefaultMode ? MATROOM_DEFAULT_BRANDING.light.sidebarActiveForeground : sidebar.activeForeground)}
+                value={sidebarActiveForegroundEffective}
                 onChange={(e) => setSidebarActiveForeground(e.target.value)}
                 className="h-9 w-14 rounded border"
               />
@@ -212,7 +258,7 @@ export function ThemePicker({ organizationId, initial, action }: ThemePickerProp
               <input
                 type="color"
                 name="sidebarBorder"
-                value={sidebarBorder || (initial.isDefaultMode ? MATROOM_DEFAULT_BRANDING.light.sidebarBorder : "#000000")}
+                value={sidebarBorderEffective}
                 onChange={(e) => setSidebarBorder(e.target.value)}
                 className="h-9 w-14 rounded border"
               />

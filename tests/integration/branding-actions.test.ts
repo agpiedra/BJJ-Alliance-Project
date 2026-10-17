@@ -4,6 +4,8 @@ import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import sharp from "sharp";
 import { hashSecret } from "../../src/lib/crypto";
 import { MATROOM_DEFAULT_BRANDING } from "../../src/lib/branding/default-palette";
+import { getOrganizationBranding } from "../../src/lib/branding/get-branding";
+import type { TenantContext } from "../../src/lib/tenant/types";
 import type { StorageFailure, UploadedLogo } from "../../src/lib/branding/logo-storage";
 
 type UploadLogoResult = { ok: true; result: UploadedLogo } | StorageFailure;
@@ -311,6 +313,49 @@ describe("saveBrandingTheme — brandingIsDefault transitions", () => {
     const row = await prisma.organizationBranding.findUniqueOrThrow({ where: { organizationId: org.id } });
     expect(row.brandingIsDefault).toBe(false);
     expect(row.sidebarForeground).toBe(MATROOM_DEFAULT_BRANDING.light.sidebarForeground);
+  });
+
+  it("REQUIRED: a real save/reload of the fixed ThemePicker's 'enable overrides, nothing touched' payload (all four override fields present, each the approved literal) produces the exact appearance the preview showed before saving", async () => {
+    const org = await makeScratchOrg("branding-default-enable-all-overrides-roundtrip");
+    const admin = await makeStaffUser("ADMIN", "branding-default-enable-all-overrides-roundtrip", org.id);
+    await prisma.organizationBranding.create({
+      data: { organizationId: org.id, primaryColor: DEFAULT_PRIMARY, sidebarBackground: DEFAULT_SIDEBAR_BG, brandingIsDefault: true },
+    });
+    currentSession = { user: { id: admin.id, role: "ADMIN" }, activeOrganizationId: org.id };
+
+    // Exactly what the fixed ThemePicker submits when "Customize sidebar" is checked and no swatch
+    // is touched — the four effective values it now shows in its own preview.
+    const result = await saveBrandingTheme(
+      org.id,
+      {},
+      formData({
+        primaryColor: DEFAULT_PRIMARY,
+        sidebarBackground: DEFAULT_SIDEBAR_BG,
+        sidebarForeground: MATROOM_DEFAULT_BRANDING.light.sidebarForeground,
+        sidebarActiveBackground: MATROOM_DEFAULT_BRANDING.light.sidebarActiveBackground,
+        sidebarActiveForeground: MATROOM_DEFAULT_BRANDING.light.sidebarActiveForeground,
+        sidebarBorder: MATROOM_DEFAULT_BRANDING.light.sidebarBorder,
+      }),
+    );
+    expect(result.ok).toBe(true);
+
+    const context: TenantContext = {
+      kind: "tenant",
+      actorUserId: admin.id,
+      organizationId: org.id,
+      organizationRole: "ADMIN",
+      academyIds: "ALL",
+      selfStudentId: null,
+      linkedStudentId: null,
+    };
+    const branding = await getOrganizationBranding(context);
+    expect(branding.isDefaultMode).toBe(false);
+    expect(branding.primary.background).toBe(MATROOM_DEFAULT_BRANDING.light.primaryColor);
+    expect(branding.sidebar.background).toBe(MATROOM_DEFAULT_BRANDING.light.sidebarBackground);
+    expect(branding.sidebar.foreground).toBe(MATROOM_DEFAULT_BRANDING.light.sidebarForeground);
+    expect(branding.sidebar.activeBackground).toBe(MATROOM_DEFAULT_BRANDING.light.sidebarActiveBackground);
+    expect(branding.sidebar.activeForeground).toBe(MATROOM_DEFAULT_BRANDING.light.sidebarActiveForeground);
+    expect(branding.sidebar.border).toBe(MATROOM_DEFAULT_BRANDING.light.sidebarBorder);
   });
 
   it("disabling sidebar overrides on an already-stored-mode row resets them to null and leaves it in stored mode (existing behavior, unaffected by default-mode)", async () => {
