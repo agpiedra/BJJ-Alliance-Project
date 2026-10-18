@@ -1,6 +1,7 @@
 "use server";
 
 import { AuthError } from "next-auth";
+import { redirect } from "next/navigation";
 import { z } from "zod";
 import { signIn } from "@/auth";
 import { prisma } from "@/lib/prisma";
@@ -171,10 +172,10 @@ export async function acceptInvitation(locale: string, _prevState: ActionState, 
     });
   } catch (error) {
     if (error instanceof AuthError) {
-      // Should be unreachable — the password just verified against was
-      // written to the DB in the same transaction above — but fail closed
-      // rather than crash if it somehow happens.
-      return { error: "invalidToken" };
+      // Acceptance has COMMITTED: the account and its password exist. A refused sign-in here (the login throttle, or
+      // its limiter failing closed — docs/LOGIN_THROTTLING_PLAN.md §6) is not an invalid token, so send the person to
+      // sign in. redirect() throws NEXT_REDIRECT, which nothing below catches.
+      redirect(`/${locale}/login`);
     }
     throw error;
   }

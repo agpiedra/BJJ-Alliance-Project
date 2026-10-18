@@ -614,6 +614,24 @@ model PasswordResetRequest {
   @@index([createdAt])
 }
 
+/// docs/LOGIN_THROTTLING_PLAN.md — one row per password check that passed the login throttle, written BEFORE the
+/// password is verified. A row counts against its keys from the moment it exists (in flight, failed, or left behind by
+/// an error); a successful verification deletes only its own row. Keys are HMAC digests (CODE_PEPPER) of the
+/// normalized submitted email and of the client IP — never raw values — and no foreign key to User, so unknown
+/// addresses behave identically. Independent of PasswordResetRequest, RegistrationAttempt and KioskAttempt. Rows older
+/// than 24 hours are removed by a bounded sweep (src/lib/auth/login-throttle.ts).
+model LoginAttempt {
+  id            String   @id @default(cuid())
+  accountDigest String
+  ipDigest      String?
+  createdAt     DateTime @default(now())
+
+  @@index([accountDigest, createdAt])
+  @@index([ipDigest, createdAt])
+  @@index([accountDigest, ipDigest, createdAt])
+  @@index([createdAt])
+}
+
 /// MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 5 — a table of its own, NOT an
 /// extension of PasswordResetToken. Traced directly: PasswordResetToken.userId
 /// is required and non-nullable, meaning it fundamentally means "prove you

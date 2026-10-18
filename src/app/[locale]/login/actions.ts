@@ -7,6 +7,8 @@ import { prisma } from "@/lib/prisma";
 import type { ActionState } from "@/lib/action-state";
 import { sanitizeCallbackUrl } from "@/lib/callback-url";
 import { landingPathForUser } from "@/lib/auth/landing";
+import { logLoginEvent } from "@/lib/auth/login-throttle";
+import { safeErrorCode } from "@/lib/auth/password-reset-log";
 
 const loginSchema = z.object({
   email: z.string().email(),
@@ -42,11 +44,20 @@ export async function login(
     // Decided from the DATABASE (memberships and the linked student record), never
     // the global `User.role`: staff — a coach who also trains included — land in the
     // staff app, everyone else with a portal in the portal.
-    const user = await prisma.user.findUnique({
-      where: { email: parsed.data.email },
-      select: { id: true },
-    });
-    redirectTarget = `/${locale}${user ? await landingPathForUser(user.id) : "/dashboard"}`;
+    //
+    // Its own narrow boundary: plain queries only (no redirect()), so catching everything here cannot swallow a
+    // Next.js redirect. A failure answers like any other refusal, logs only an allow-listed code, and checks no
+    // password (docs/LOGIN_THROTTLING_PLAN.md §5).
+    try {
+      const user = await prisma.user.findUnique({
+        where: { email: parsed.data.email },
+        select: { id: true },
+      });
+      redirectTarget = `/${locale}${user ? await landingPathForUser(user.id) : "/dashboard"}`;
+    } catch (error) {
+      logLoginEvent({ event: "login.preauth_lookup_failed", error: safeErrorCode(error) });
+      return { error: "invalidCredentials" };
+    }
   }
 
   try {
