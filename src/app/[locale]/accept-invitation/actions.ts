@@ -7,13 +7,14 @@ import { signIn } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { digestLookupSecret, hashSecret } from "@/lib/crypto";
 import { requireEnv } from "@/lib/env";
-import { syncStaffAssignments, STAFF_ROLES, type StaffMembershipRole } from "@/lib/staff/staff-service";
+import { lockOrganizationStaff, syncStaffAssignments, STAFF_ROLES, type StaffMembershipRole } from "@/lib/staff/staff-service";
 import type { ActionState } from "@/lib/action-state";
 
 const tokenSchema = z.object({ token: z.string().min(1) });
 const passwordSchema = z.string().min(8);
 
-/** Thrown inside the transaction when another request consumed the invitation first — rolls everything back. */
+/** Thrown inside the transaction when the invitation is no longer consumable under the lock (used, revoked or expired by
+ * then) — rolls everything back. */
 class InvitationAlreadyConsumed extends Error {}
 
 /**
@@ -88,12 +89,30 @@ export async function acceptInvitation(locale: string, _prevState: ActionState, 
 
   try {
     await prisma.$transaction(async (tx) => {
-      // Consume the invitation first and exactly once: two clicks can't both win.
+      // The organization's invitation lock (shared with issue, settle and staff invitation mutations), FIRST — so a
+      // concurrent resend's settlement or a staff revocation is either fully before this or fully after it.
+      await lockOrganizationStaff(tx, invitation.organizationId);
+      // Fresh time, taken only once the lock is held: a link that expired while this request waited is refused.
+      const now = new Date();
+      // Consume the invitation first and exactly once: two clicks can't both win. Re-checks everything the pre-read
+      // above checked (that read is only an early exit), and records genuine acceptance in `acceptedAt`.
       const consumed = await tx.invitation.updateMany({
-        where: { id: invitation.id, usedAt: null, revokedAt: null },
-        data: { usedAt: new Date() },
+        where: { id: invitation.id, usedAt: null, revokedAt: null, expiresAt: { gt: now } },
+        data: { usedAt: now, acceptedAt: now },
       });
       if (consumed.count !== 1) throw new InvitationAlreadyConsumed();
+      // Every other outstanding link to this address for this organization dies with this acceptance, so no second
+      // link — e.g. both links of a resend whose email outcome was unknown — can repeat the setup.
+      await tx.invitation.updateMany({
+        where: {
+          organizationId: invitation.organizationId,
+          email: { equals: invitation.email, mode: "insensitive" },
+          id: { not: invitation.id },
+          usedAt: null,
+          revokedAt: null,
+        },
+        data: { revokedAt: now },
+      });
 
       let userId: string;
       if (!existingUser) {

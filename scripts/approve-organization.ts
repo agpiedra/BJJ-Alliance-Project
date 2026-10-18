@@ -19,7 +19,7 @@
  */
 import "dotenv/config";
 import { prisma } from "../src/lib/prisma";
-import { approveOrganization } from "../src/lib/organizations/approve-organization";
+import { approveOrganization, type ApproveOrganizationResult } from "../src/lib/organizations/approve-organization";
 
 function readFlag(name: string): string | undefined {
   const flag = process.argv.find((arg) => arg.startsWith(`--${name}=`));
@@ -43,7 +43,8 @@ async function main() {
     process.exit(1);
   }
 
-  const result = await approveOrganization(slug, approver.id);
+  // The manual-link fallback: a rejected or unconfigured send keeps the new link live so it can be shared by hand.
+  const result = await approveOrganization(slug, approver.id, { keepLinkOnFailedSend: true });
 
   console.log(`Organization "${slug}" approved.`);
   console.log(`  Default academy slug: ${result.academySlug}`);
@@ -52,11 +53,45 @@ async function main() {
   } else {
     console.log("  Academy already existed — no new kiosk token minted.");
   }
-  if (result.invitationLink) {
-    console.log(`  Invitation link: ${result.invitationLink}`);
-    console.log(`  Invitation email sent: ${result.invitationEmailSent ? "yes" : "no — see logged error above, share the link above manually"}`);
-  } else {
-    console.log("  The director already accepted a prior invitation — no new one issued.");
+  for (const line of invitationLines(result)) console.log(`  ${line}`);
+}
+
+/** What happened to the invitation, claiming nothing beyond what approveOrganization actually knows. */
+function invitationLines(result: ApproveOrganizationResult): string[] {
+  if (result.invitationIssue === "alreadyAccepted") return ["The owner already accepted an invitation — no new one issued."];
+  if (result.invitationIssue === "legacyUnresolved") {
+    return [
+      "An earlier invitation is recorded as used under the previous rules (accepted or replaced: unknown) — no new one issued.",
+      "Run scripts/report-legacy-invitations.ts; any repair is a separate, reviewed step.",
+    ];
+  }
+  const email = {
+    accepted: "Invitation email accepted by the provider (delivery not confirmed).",
+    rejected: "Invitation email NOT sent: the provider rejected it.",
+    not_configured: "Invitation email NOT sent: email sending is not configured.",
+    unknown: "Invitation email could not be confirmed as sent.",
+  }[result.invitationEmailOutcome!];
+  switch (result.invitationSettlement) {
+    case "settled":
+      return [
+        `Invitation link: ${result.invitationLink}`,
+        email,
+        result.invitationEmailOutcome === "accepted"
+          ? "Earlier links for this address retired."
+          : result.invitationEmailOutcome === "unknown"
+            ? "Earlier links not changed; the first invitation accepted ends the others."
+            : "Share the link above manually; it stays valid. Earlier links not changed.",
+      ];
+    case "acceptedMeanwhile":
+      return [email, "An invitation to this address was accepted meanwhile — no further invitation needed; the new link is not shown."];
+    case "unavailable":
+      return [email, "The new invitation is no longer available, so its link is not shown. Earlier links not changed."];
+    default:
+      return [
+        `Invitation link (may not work): ${result.invitationLink}`,
+        email,
+        "Invitation records could not be updated after sending — earlier links may still work.",
+      ];
   }
 }
 

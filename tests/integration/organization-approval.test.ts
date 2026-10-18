@@ -3,7 +3,7 @@ import { getTestPrismaClient } from "../helpers/test-db";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { hashSecret } from "../../src/lib/crypto";
 
-const sendTransactionalEmailMock = vi.fn(async (_to: string, _subject: string, _bodyLines: string[]) => ({ success: true }));
+const sendTransactionalEmailMock = vi.fn(async (_to: string, _subject: string, _bodyLines: string[]) => ({ success: true, outcome: "accepted" as const }));
 vi.mock("@/lib/email/send-transactional-email", () => ({
   sendTransactionalEmail: (...args: [string, string, string[]]) => sendTransactionalEmailMock(...args),
 }));
@@ -145,8 +145,8 @@ describe("approveOrganization", () => {
     const membershipCount = await prisma.organizationMembership.count({ where: { organizationId: org.id } });
     expect(membershipCount).toBe(1);
 
-    const validInvitations = await prisma.invitation.count({ where: { organizationId: org.id, usedAt: null } });
-    expect(validInvitations).toBe(1); // the first invitation's token was invalidated on resend
+    const validInvitations = await prisma.invitation.count({ where: { organizationId: org.id, usedAt: null, revokedAt: null } });
+    expect(validInvitations).toBe(1); // the first invitation's token was retired once the resend's email was accepted
 
     expect(first.invitationLink).not.toBe(second.invitationLink);
   });

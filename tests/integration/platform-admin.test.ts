@@ -3,7 +3,7 @@ import { getTestPrismaClient } from "../helpers/test-db";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { hashSecret } from "../../src/lib/crypto";
 
-const sendTransactionalEmailMock = vi.fn(async (_to: string, _subject: string, _bodyLines: string[]) => ({ success: true }));
+const sendTransactionalEmailMock = vi.fn(async (_to: string, _subject: string, _bodyLines: string[]) => ({ success: true, outcome: "accepted" as const }));
 vi.mock("@/lib/email/send-transactional-email", () => ({
   sendTransactionalEmail: (...args: [string, string, string[]]) => sendTransactionalEmailMock(...args),
 }));

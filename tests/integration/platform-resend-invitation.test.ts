@@ -7,6 +7,10 @@ import { hashSecret } from "../../src/lib/crypto";
  * The platform panel's "Resend invitation" result: approveOrganizationAction → approveOrganization →
  * sendTransactionalEmail → the REAL `resend` SDK. Only the network transport (`fetch`) is replaced, so the SDK's request
  * building and error parsing, and PR #133's outcome classification, all run unmocked. No request leaves the machine.
+ *
+ * The lifecycle under each outcome (docs/INVITATION_LIFECYCLE_REPAIR_PLAN.md): the earlier link is retired only when
+ * the provider accepts the new email; a rejected or unconfigured send withdraws the new link and leaves the earlier one;
+ * an unknown send leaves both. Races and failures are in invitation-lifecycle.test.ts.
  */
 let currentSession: { user: { id: string } } | null = null;
 vi.mock("@/auth", () => ({
@@ -61,18 +65,38 @@ async function activeOrganizationWithSession() {
   });
   cleanupOrgIds.push(org.id);
   stubTransport(accepting);
-  expect(await approveOrganizationAction(org.id)).toEqual({ ok: true, invitationEmail: "accepted" });
-  const first = await prisma.invitation.findFirstOrThrow({ where: { organizationId: org.id, usedAt: null } });
+  expect(await approveOrganizationAction(org.id)).toEqual({ ok: true, invitationEmail: "accepted", invitationSettlement: "settled" });
+  const first = await prisma.invitation.findFirstOrThrow({ where: { organizationId: org.id, usedAt: null, revokedAt: null } });
   consoleCalls = [];
   return { org, contactEmail, first };
 }
 
-/** The resend's token effects, unchanged by this PR: the earlier link superseded, exactly one fresh unused invitation. */
-async function expectTokenRotated(organizationId: string, first: { id: string; tokenHash: string }) {
-  expect((await prisma.invitation.findUniqueOrThrow({ where: { id: first.id } })).usedAt).not.toBeNull();
-  const live = await prisma.invitation.findMany({ where: { organizationId, usedAt: null } });
-  expect(live).toHaveLength(1);
-  expect(live[0].tokenHash).not.toBe(first.tokenHash);
+const live = (organizationId: string) =>
+  prisma.invitation.findMany({ where: { organizationId, usedAt: null, revokedAt: null }, orderBy: { createdAt: "asc" } });
+
+/** Accepted: the earlier link is retired (revokedAt — never usedAt, which now means accepted), one fresh live link. */
+async function expectEarlierRetired(organizationId: string, first: { id: string; tokenHash: string }) {
+  const earlier = await prisma.invitation.findUniqueOrThrow({ where: { id: first.id } });
+  expect(earlier.revokedAt).not.toBeNull();
+  expect(earlier.usedAt).toBeNull();
+  const rows = await live(organizationId);
+  expect(rows).toHaveLength(1);
+  expect(rows[0].tokenHash).not.toBe(first.tokenHash);
+}
+
+/** Rejected / not configured: the new link is withdrawn and the earlier one is the only live link, untouched. */
+async function expectNewWithdrawnEarlierKept(organizationId: string, first: { id: string }) {
+  expect((await live(organizationId)).map((row) => row.id)).toEqual([first.id]);
+  const withdrawn = await prisma.invitation.findMany({ where: { organizationId, id: { not: first.id } } });
+  expect(withdrawn).toHaveLength(1);
+  expect(withdrawn[0].revokedAt).not.toBeNull();
+}
+
+/** Unknown: nothing retired — the earlier link and the new one are both live. */
+async function expectBothLive(organizationId: string, first: { id: string }) {
+  const rows = await live(organizationId);
+  expect(rows).toHaveLength(2);
+  expect(rows[0].id).toBe(first.id);
 }
 
 /** Nothing from the provider, the address or the invitation link appears in console output or the action result. */
@@ -126,51 +150,52 @@ afterAll(async () => {
 });
 
 describe("platform resend invitation reports the real email outcome (real Resend SDK, fetch mocked)", () => {
-  it("REQUIRED: provider accepted → 'accepted'; token rotated exactly as before", async () => {
+  it("REQUIRED: provider accepted → 'accepted'; the earlier link is retired only now", async () => {
     const { org, contactEmail, first } = await activeOrganizationWithSession();
     const fetchMock = stubTransport(accepting);
 
     const result = await approveOrganizationAction(org.id);
 
-    expect(result).toEqual({ ok: true, invitationEmail: "accepted" });
+    expect(result).toEqual({ ok: true, invitationEmail: "accepted", invitationSettlement: "settled" });
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(String(fetchMock.mock.calls[0][0])).toBe("https://api.resend.com/emails");
-    await expectTokenRotated(org.id, first);
+    await expectEarlierRetired(org.id, first);
     expectNothingEscaped(result, contactEmail, fetchMock);
   });
 
-  it("REQUIRED: explicit provider rejection → 'rejected', logged as outcome + fixed code only", async () => {
+  it("REQUIRED: explicit provider rejection → 'rejected', the new link withdrawn, the earlier one kept; logged as outcome + fixed code only", async () => {
     const { org, contactEmail, first } = await activeOrganizationWithSession();
     const fetchMock = stubTransport((recipient) => providerError(recipient, "validation_error", 422));
 
     const result = await approveOrganizationAction(org.id);
 
-    expect(result).toEqual({ ok: true, invitationEmail: "rejected" });
-    await expectTokenRotated(org.id, first);
+    expect(result).toEqual({ ok: true, invitationEmail: "rejected", invitationSettlement: "settled" });
+    await expectNewWithdrawnEarlierKept(org.id, first);
     expect(consoleCalls).toContainEqual([LOG_PREFIX, { organizationId: org.id, outcome: "rejected", providerCode: "validation_error" }]);
     expectNothingEscaped(result, contactEmail, fetchMock);
   });
 
-  it("REQUIRED: provider-side 5xx error → 'unknown', never 'rejected'", async () => {
+  it("REQUIRED: provider-side 5xx error → 'unknown', never 'rejected'; both links stay", async () => {
     const { org, contactEmail, first } = await activeOrganizationWithSession();
     const fetchMock = stubTransport((recipient) => providerError(recipient, "internal_server_error", 500));
 
     const result = await approveOrganizationAction(org.id);
 
-    expect(result).toEqual({ ok: true, invitationEmail: "unknown" });
-    await expectTokenRotated(org.id, first);
+    expect(result).toEqual({ ok: true, invitationEmail: "unknown", invitationSettlement: "settled" });
+    await expectBothLive(org.id, first);
     expect(consoleCalls).toContainEqual([LOG_PREFIX, { organizationId: org.id, outcome: "unknown", providerCode: "internal_server_error" }]);
     expectNoNonAcceptanceClaim(org.id);
     expectNothingEscaped(result, contactEmail, fetchMock);
   });
 
   it("REQUIRED: unparseable provider response → 'unknown'", async () => {
-    const { org, contactEmail } = await activeOrganizationWithSession();
+    const { org, contactEmail, first } = await activeOrganizationWithSession();
     const fetchMock = stubTransport((recipient) => new Response(`<html>${PROVIDER_SECRET} ${recipient}</html>`, { status: 502 }));
 
     const result = await approveOrganizationAction(org.id);
 
-    expect(result).toEqual({ ok: true, invitationEmail: "unknown" });
+    expect(result).toEqual({ ok: true, invitationEmail: "unknown", invitationSettlement: "settled" });
+    await expectBothLive(org.id, first);
     expectNoNonAcceptanceClaim(org.id);
     expectNothingEscaped(result, contactEmail, fetchMock);
   });
@@ -184,9 +209,9 @@ describe("platform resend invitation reports the real email outcome (real Resend
 
     const result = await approveOrganizationAction(org.id);
 
-    expect(result).toEqual({ ok: true, invitationEmail: "unknown" });
+    expect(result).toEqual({ ok: true, invitationEmail: "unknown", invitationSettlement: "settled" });
     expect(failingFetch).toHaveBeenCalledTimes(1);
-    await expectTokenRotated(org.id, first);
+    await expectBothLive(org.id, first);
     expectNoNonAcceptanceClaim(org.id);
     expectNothingEscaped(result, contactEmail);
   });
@@ -198,24 +223,25 @@ describe("platform resend invitation reports the real email outcome (real Resend
 
     const result = await approveOrganizationAction(org.id);
 
-    expect(result).toEqual({ ok: true, invitationEmail: "not_configured" });
+    expect(result).toEqual({ ok: true, invitationEmail: "not_configured", invitationSettlement: "settled" });
     expect(fetchMock).not.toHaveBeenCalled();
-    await expectTokenRotated(org.id, first);
+    await expectNewWithdrawnEarlierKept(org.id, first);
     expect(JSON.stringify(consoleCalls)).not.toContain("RESEND_API_KEY");
     expectNothingEscaped(result, contactEmail);
   });
 
-  it("pre-existing lifecycle, reported not changed: a second resend finds the superseded link marked used and issues nothing → 'notIssued'", async () => {
+  it("REQUIRED (defect D1): repeated resends keep issuing until genuine acceptance — a superseded link never blocks", async () => {
     const { org } = await activeOrganizationWithSession();
-    stubTransport(accepting);
-    expect(await approveOrganizationAction(org.id)).toEqual({ ok: true, invitationEmail: "accepted" });
 
-    const fetchMock = stubTransport(accepting);
-    const live = await prisma.invitation.findMany({ where: { organizationId: org.id, usedAt: null } });
+    for (let i = 0; i < 5; i += 1) {
+      const fetchMock = stubTransport(accepting);
+      expect(await approveOrganizationAction(org.id)).toEqual({ ok: true, invitationEmail: "accepted", invitationSettlement: "settled" });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    }
 
-    expect(await approveOrganizationAction(org.id)).toEqual({ ok: true, invitationEmail: "notIssued" });
-    expect(fetchMock).not.toHaveBeenCalled();
-    expect(await prisma.invitation.findMany({ where: { organizationId: org.id, usedAt: null } })).toEqual(live);
+    expect(await live(org.id)).toHaveLength(1);
+    expect(await prisma.invitation.count({ where: { organizationId: org.id } })).toBe(6);
+    expect(await prisma.invitation.count({ where: { organizationId: org.id, usedAt: { not: null } } })).toBe(0);
   });
 
   it("REQUIRED: authorization preserved — a non-super-admin and an anonymous caller are refused; nothing is issued or sent", async () => {
@@ -228,7 +254,7 @@ describe("platform resend invitation reports the real email outcome (real Resend
     expect(await approveOrganizationAction(org.id)).toEqual({ error: "notFound" });
 
     expect(fetchMock).not.toHaveBeenCalled();
-    const live = await prisma.invitation.findMany({ where: { organizationId: org.id, usedAt: null } });
-    expect(live.map((invitation) => invitation.id)).toEqual([first.id]);
+    expect((await live(org.id)).map((invitation) => invitation.id)).toEqual([first.id]);
+    expect(await prisma.invitation.count({ where: { organizationId: org.id } })).toBe(1);
   });
 });

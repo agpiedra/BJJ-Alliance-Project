@@ -3,7 +3,7 @@ import { getTestPrismaClient } from "../helpers/test-db";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/email/send-transactional-email", () => ({
-  sendTransactionalEmail: vi.fn(async () => ({ success: true })),
+  sendTransactionalEmail: vi.fn(async () => ({ success: true, outcome: "accepted" as const })),
 }));
 
 // signIn() carries out its own redirect, so a real accept ends in a NEXT_REDIRECT

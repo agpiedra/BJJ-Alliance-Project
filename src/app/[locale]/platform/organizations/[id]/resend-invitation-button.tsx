@@ -3,21 +3,42 @@
 import { useState, useTransition } from "react";
 import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
+import type { InvitationSettlement } from "@/lib/organizations/approve-organization";
 import { approveOrganizationAction } from "../actions";
 
-type Result = "idle" | "error" | "accepted" | "rejected" | "not_configured" | "unknown" | "notIssued";
+type Outcome = "error" | "accepted" | "rejected" | "not_configured" | "unknown" | "notIssued" | "legacyUnresolved";
+type Result = { outcome: Outcome; settlement?: InvitationSettlement } | null;
 
-/** Messages that report a failure; "accepted", "unknown" and "notIssued" are stated neutrally. */
-const FAILED: ReadonlySet<Result> = new Set<Result>(["error", "rejected", "not_configured"]);
-
-const MESSAGE_KEY = {
+const OUTCOME_KEY = {
   error: "resendInvitationError",
   accepted: "resendInvitationAccepted",
   rejected: "resendInvitationRejected",
   not_configured: "resendInvitationNotConfigured",
   unknown: "resendInvitationUnknown",
   notIssued: "resendInvitationNotIssued",
+  legacyUnresolved: "resendInvitationLegacyUnresolved",
 } as const;
+
+/** The second sentence: what settlement found. "settled" depends on the email outcome; the others never do. */
+function settlementKey(outcome: Outcome, settlement: InvitationSettlement) {
+  switch (settlement) {
+    case "acceptedMeanwhile":
+      return "resendInvitationAcceptedMeanwhile";
+    case "unavailable":
+      return "resendInvitationUnavailable";
+    case "failed":
+      return "resendInvitationSettleFailed";
+    case "settled":
+      if (outcome === "accepted") return "resendInvitationSettledAccepted";
+      if (outcome === "unknown") return "resendInvitationSettledUnknown";
+      return "resendInvitationSettledWithdrawn";
+  }
+}
+
+/** Results an operator must act on; "accepted", "unknown" and "notIssued" are stated neutrally. */
+function isFailure(result: NonNullable<Result>): boolean {
+  return ["error", "rejected", "not_configured", "legacyUnresolved"].includes(result.outcome) || result.settlement === "failed";
+}
 
 /**
  * MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 8 — a real gap found while writing
@@ -28,19 +49,18 @@ const MESSAGE_KEY = {
  * calls (which itself calls `approveOrganization()` — one function, both
  * callers) — `approveOrganization()` already accepts PENDING or ACTIVE, so
  * no new server action was needed here. On ACTIVE it creates no new academy
- * or membership, but it issues a fresh invitation (invalidating the unused
- * one) ONLY when no invitation for the address is marked used — and
- * `Invitation.usedAt` marks superseded invitations as well as accepted ones,
- * so after one resend every later resend issues nothing ("notIssued"). That
- * lifecycle defect is tracked separately, not fixed here.
+ * or membership. It issues a fresh invitation unless one to this address was
+ * genuinely accepted (`acceptedAt`), or a row consumed under the old rules is
+ * unresolved; earlier links are retired only once the provider accepts the new
+ * email (docs/INVITATION_LIFECYCLE_REPAIR_PLAN.md).
  *
- * The message reports the email outcome the action hands back (PR #133's classification): accepted is never shown as
- * delivered, and a rejected, unconfigured or unconfirmed send is never shown as sent.
+ * The message is the email outcome (PR #133's classification — accepted is never shown as delivered) followed by
+ * what settlement found; it never claims an earlier link still works, only what this resend changed.
  */
 export function ResendInvitationButton({ organizationId }: { organizationId: string }) {
   const t = useTranslations("platform.organizations.detail.members");
   const [isPending, startTransition] = useTransition();
-  const [result, setResult] = useState<Result>("idle");
+  const [result, setResult] = useState<Result>(null);
 
   return (
     <div className="flex items-center gap-2">
@@ -51,17 +71,22 @@ export function ResendInvitationButton({ organizationId }: { organizationId: str
         disabled={isPending}
         onClick={() => {
           if (!confirm(t("confirmResendInvitation"))) return;
-          setResult("idle");
+          setResult(null);
           startTransition(async () => {
             const action = await approveOrganizationAction(organizationId);
-            setResult(action.error ? "error" : (action.invitationEmail ?? "unknown"));
+            setResult(
+              action.error ? { outcome: "error" } : { outcome: action.invitationEmail ?? "unknown", settlement: action.invitationSettlement },
+            );
           });
         }}
       >
         {t("resendInvitation")}
       </Button>
-      {result !== "idle" && (
-        <span className={FAILED.has(result) ? "text-sm text-destructive" : "text-sm text-muted-foreground"}>{t(MESSAGE_KEY[result])}</span>
+      {result && (
+        <span className={isFailure(result) ? "text-sm text-destructive" : "text-sm text-muted-foreground"}>
+          {t(OUTCOME_KEY[result.outcome])}
+          {result.settlement && ` ${t(settlementKey(result.outcome, result.settlement))}`}
+        </span>
       )}
     </div>
   );

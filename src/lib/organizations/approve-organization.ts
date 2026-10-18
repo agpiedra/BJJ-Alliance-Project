@@ -3,6 +3,7 @@ import { digestLookupSecret, generateRandomToken, hashSecret } from "@/lib/crypt
 import { requireEnv } from "@/lib/env";
 import { sendTransactionalEmail, type EmailSendOutcome } from "@/lib/email/send-transactional-email";
 import { ensureDefaultPlan } from "@/lib/payments/ensure-default-plan";
+import { lockOrganizationStaff } from "@/lib/staff/staff-service";
 import { Role } from "@/generated/prisma/client";
 
 const INVITATION_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
@@ -14,14 +15,37 @@ export class OrganizationNotApprovableError extends Error {
   }
 }
 
+/** Whether a new invitation was issued: not when one was genuinely accepted, nor while a legacy-used row is unresolved. */
+export type InvitationIssue = "issued" | "alreadyAccepted" | "legacyUnresolved";
+
+/**
+ * What settlement found, under the lock, after the send:
+ * - "settled": the new invitation was still live and was settled by the email outcome;
+ * - "acceptedMeanwhile": an invitation to this address was accepted while this one was sent — nothing further changed;
+ * - "unavailable": the new invitation was no longer usable (cause not recorded) — nothing further changed;
+ * - "failed": the settlement transaction failed — the records are as issue left them, or as a concurrent change made them.
+ */
+export type InvitationSettlement = "settled" | "acceptedMeanwhile" | "unavailable" | "failed";
+
+export interface ApproveOrganizationOptions {
+  /**
+   * The CLI's manual-link fallback: on a rejected or unconfigured send, keep the new link live so an operator can
+   * share it by hand. Panel callers never show the link, so for them it is withdrawn.
+   */
+  keepLinkOnFailedSend?: boolean;
+}
+
 export interface ApproveOrganizationResult {
   organizationId: string;
   academySlug: string;
   kioskToken: string | null; // null when the academy already existed (no new token minted)
-  invitationLink: string | null; // null when the owner already accepted a prior invitation
+  invitationIssue: InvitationIssue;
+  invitationLink: string | null; // null unless a new invitation was issued
   invitationEmailSent: boolean;
   /** What is known about the invitation email (send-transactional-email.ts); null when no invitation was issued. */
   invitationEmailOutcome: EmailSendOutcome | null;
+  /** null when no invitation was issued. */
+  invitationSettlement: InvitationSettlement | null;
 }
 
 /**
@@ -37,7 +61,11 @@ export interface ApproveOrganizationResult {
  * the membership, or issues a stray second invitation once the first has
  * already been accepted.
  */
-export async function approveOrganization(orgSlug: string, approvedById: string): Promise<ApproveOrganizationResult> {
+export async function approveOrganization(
+  orgSlug: string,
+  approvedById: string,
+  options: ApproveOrganizationOptions = {},
+): Promise<ApproveOrganizationResult> {
   const organization = await prisma.organization.findUniqueOrThrow({ where: { slug: orgSlug } });
 
   if (organization.status !== "PENDING" && organization.status !== "ACTIVE") {
@@ -133,42 +161,56 @@ export async function approveOrganization(orgSlug: string, approvedById: string)
     });
   }
 
-  // Step 4: issue the invitation — unless this owner already accepted
-  // one for this organization, in which case re-approving must not issue a
-  // fresh invite to someone who already has a working account.
-  const alreadyAccepted = await prisma.invitation.findFirst({
-    where: { organizationId: organization.id, email: organization.contactEmail, usedAt: { not: null } },
+  // Step 4: the invitation, in three steps (docs/INVITATION_LIFECYCLE_REPAIR_PLAN.md): ISSUE a new one in a short
+  // transaction, SEND the email with no transaction open, then SETTLE by the send's outcome in a second short
+  // transaction. Issue, settle, acceptance and every staff invitation mutation take the same per-organization lock.
+  const contactEmail = organization.contactEmail;
+  const sameAddress = { organizationId: organization.id, email: { equals: contactEmail, mode: "insensitive" as const } };
+  const issued = await prisma.$transaction(async (tx) => {
+    await lockOrganizationStaff(tx, organization.id);
+    // Genuine acceptance only — `acceptedAt`. `usedAt` also marked supersession before that column existed.
+    if (await tx.invitation.findFirst({ where: { ...sameAddress, acceptedAt: { not: null } }, select: { id: true } })) {
+      return { issue: "alreadyAccepted" as const };
+    }
+    // Consumed under the old rules: accepted OR superseded, and nothing on the row says which. Never reinterpreted —
+    // it blocks a resend until an operator resolves it (scripts/report-legacy-invitations.ts).
+    if (await tx.invitation.findFirst({ where: { ...sameAddress, usedAt: { not: null }, acceptedAt: null, revokedAt: null }, select: { id: true } })) {
+      return { issue: "legacyUnresolved" as const };
+    }
+    // The links live right now. Only THESE are retired at settlement, and only if the new email is accepted — never
+    // an invitation issued later by a concurrent resend.
+    const previous = await tx.invitation.findMany({ where: { ...sameAddress, usedAt: null, revokedAt: null }, select: { id: true } });
+    const rawToken = generateRandomToken();
+    const created = await tx.invitation.create({
+      data: {
+        tokenHash: digestLookupSecret(rawToken, requireEnv("CODE_PEPPER")),
+        email: contactEmail,
+        organizationId: organization.id,
+        role: Role.ADMIN,
+        invitedById: approvedById,
+        expiresAt: new Date(Date.now() + INVITATION_TTL_MS),
+      },
+      select: { id: true },
+    });
+    return { issue: "issued" as const, invitationId: created.id, previousIds: previous.map((row) => row.id), rawToken };
   });
-  if (alreadyAccepted) {
-    return { organizationId: organization.id, academySlug: academy.slug, kioskToken, invitationLink: null, invitationEmailSent: false, invitationEmailOutcome: null };
+  if (issued.issue !== "issued") {
+    return {
+      organizationId: organization.id,
+      academySlug: academy.slug,
+      kioskToken,
+      invitationIssue: issued.issue,
+      invitationLink: null,
+      invitationEmailSent: false,
+      invitationEmailOutcome: null,
+      invitationSettlement: null,
+    };
   }
 
-  // "Invalidated appropriately on resend" — same pattern as
-  // forgot-password/actions.ts's own prior-token invalidation: mark any
-  // still-unused invitation for this org+email spent before issuing a new
-  // one, so an old link in an inbox can never be replayed alongside a
-  // fresh one.
-  await prisma.invitation.updateMany({
-    where: { organizationId: organization.id, email: organization.contactEmail, usedAt: null },
-    data: { usedAt: new Date() },
-  });
-
-  const rawToken = generateRandomToken();
-  await prisma.invitation.create({
-    data: {
-      tokenHash: digestLookupSecret(rawToken, requireEnv("CODE_PEPPER")),
-      email: organization.contactEmail,
-      organizationId: organization.id,
-      role: Role.ADMIN,
-      invitedById: approvedById,
-      expiresAt: new Date(Date.now() + INVITATION_TTL_MS),
-    },
-  });
-
-  const invitationLink = `${requireEnv("APP_URL")}/es/accept-invitation?token=${rawToken}`;
+  const invitationLink = `${requireEnv("APP_URL")}/es/accept-invitation?token=${issued.rawToken}`;
 
   const emailResult = await sendTransactionalEmail(
-    organization.contactEmail,
+    contactEmail,
     `${organization.name} has been approved`,
     [
       `Good news — ${organization.name} has been approved.`,
@@ -188,12 +230,63 @@ export async function approveOrganization(orgSlug: string, approvedById: string)
     });
   }
 
+  let invitationSettlement: InvitationSettlement;
+  try {
+    invitationSettlement = await settleInvitation(organization.id, contactEmail, issued.invitationId, issued.previousIds, emailResult.outcome, options);
+  } catch {
+    // The email outcome is already known and is still reported. No error text: it can carry query parameters.
+    console.error("[approve-organization] invitation settle failed", { organizationId: organization.id, outcome: emailResult.outcome });
+    invitationSettlement = "failed";
+  }
+
   return {
     organizationId: organization.id,
     academySlug: academy.slug,
     kioskToken,
+    invitationIssue: "issued",
     invitationLink,
     invitationEmailSent: emailResult.success,
     invitationEmailOutcome: emailResult.outcome,
+    invitationSettlement,
   };
+}
+
+/**
+ * Settles a sent invitation under the organization's lock. Every write is id-scoped and only ever sets `revokedAt`
+ * on a row that is still unused and unrevoked, so it can neither revive a link nor touch one issued after this one.
+ */
+async function settleInvitation(
+  organizationId: string,
+  contactEmail: string,
+  invitationId: string,
+  previousIds: string[],
+  outcome: EmailSendOutcome,
+  options: ApproveOrganizationOptions,
+): Promise<InvitationSettlement> {
+  return prisma.$transaction(async (tx) => {
+    await lockOrganizationStaff(tx, organizationId);
+    // Evidence-backed: issue found no accepted invitation, so any `acceptedAt` now was recorded while this one was sent.
+    const accepted = await tx.invitation.findFirst({
+      where: { organizationId, email: { equals: contactEmail, mode: "insensitive" }, acceptedAt: { not: null } },
+      select: { id: true },
+    });
+    if (accepted) return "acceptedMeanwhile";
+    // No longer usable — withdrawn by an Owner, replaced by a newer resend, or otherwise retired. The row records no
+    // cause, so none is claimed. Earlier links stay as they are: retiring them for a dead link would leave none.
+    const own = await tx.invitation.findFirstOrThrow({ where: { id: invitationId, organizationId }, select: { usedAt: true, revokedAt: true } });
+    if (own.usedAt || own.revokedAt) return "unavailable";
+
+    const now = new Date();
+    if (outcome === "accepted") {
+      await tx.invitation.updateMany({
+        where: { organizationId, id: { in: previousIds }, usedAt: null, revokedAt: null },
+        data: { revokedAt: now },
+      });
+    } else if ((outcome === "rejected" || outcome === "not_configured") && !options.keepLinkOnFailedSend) {
+      // Provably not delivered by email; nobody holds it. Earlier links are left usable.
+      await tx.invitation.updateMany({ where: { organizationId, id: invitationId, usedAt: null, revokedAt: null }, data: { revokedAt: now } });
+    }
+    // "unknown": the new email may or may not have arrived — every link stays; the first accepted retires the rest.
+    return "settled";
+  });
 }
