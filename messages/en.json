@@ -2162,7 +2162,11 @@
           },
           "resendInvitation": "Resend invitation",
           "confirmResendInvitation": "Resend the invitation? This invalidates any previous invitation link for this organization.",
-          "resendInvitationSent": "Invitation resent.",
+          "resendInvitationAccepted": "New invitation issued. The email provider accepted the invitation email; delivery is not confirmed.",
+          "resendInvitationRejected": "New invitation issued, but the invitation email was not sent: the email provider rejected it. The previous link no longer works.",
+          "resendInvitationNotConfigured": "New invitation issued, but the invitation email was not sent: email sending is not configured. The previous link no longer works.",
+          "resendInvitationUnknown": "New invitation issued, but sending the invitation email could not be confirmed. The previous link no longer works.",
+          "resendInvitationNotIssued": "No new invitation was issued or sent: an earlier invitation to this address is already marked used (accepted, or replaced by an earlier resend).",
           "resendInvitationError": "Could not resend the invitation."
         },
         "promotionRules": {
