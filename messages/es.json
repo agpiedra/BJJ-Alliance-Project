@@ -2162,7 +2162,11 @@
           },
           "resendInvitation": "Reenviar invitación",
           "confirmResendInvitation": "¿Reenviar la invitación? Esto invalida cualquier enlace de invitación anterior para esta organización.",
-          "resendInvitationSent": "Invitación reenviada.",
+          "resendInvitationAccepted": "Nueva invitación emitida. El proveedor de correo aceptó el correo de invitación; la entrega no está confirmada.",
+          "resendInvitationRejected": "Nueva invitación emitida, pero el correo de invitación no se envió: el proveedor de correo lo rechazó. El enlace anterior ya no funciona.",
+          "resendInvitationNotConfigured": "Nueva invitación emitida, pero el correo de invitación no se envió: el envío de correo no está configurado. El enlace anterior ya no funciona.",
+          "resendInvitationUnknown": "Nueva invitación emitida, pero no se pudo confirmar el envío del correo de invitación. El enlace anterior ya no funciona.",
+          "resendInvitationNotIssued": "No se emitió ni se envió una nueva invitación: una invitación anterior a esta dirección ya figura como usada (aceptada, o reemplazada por un reenvío anterior).",
           "resendInvitationError": "No se pudo reenviar la invitación."
         },
         "promotionRules": {

@@ -1,7 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { digestLookupSecret, generateRandomToken, hashSecret } from "@/lib/crypto";
 import { requireEnv } from "@/lib/env";
-import { sendTransactionalEmail } from "@/lib/email/send-transactional-email";
+import { sendTransactionalEmail, type EmailSendOutcome } from "@/lib/email/send-transactional-email";
 import { ensureDefaultPlan } from "@/lib/payments/ensure-default-plan";
 import { Role } from "@/generated/prisma/client";
 
@@ -20,6 +20,8 @@ export interface ApproveOrganizationResult {
   kioskToken: string | null; // null when the academy already existed (no new token minted)
   invitationLink: string | null; // null when the owner already accepted a prior invitation
   invitationEmailSent: boolean;
+  /** What is known about the invitation email (send-transactional-email.ts); null when no invitation was issued. */
+  invitationEmailOutcome: EmailSendOutcome | null;
 }
 
 /**
@@ -138,7 +140,7 @@ export async function approveOrganization(orgSlug: string, approvedById: string)
     where: { organizationId: organization.id, email: organization.contactEmail, usedAt: { not: null } },
   });
   if (alreadyAccepted) {
-    return { organizationId: organization.id, academySlug: academy.slug, kioskToken, invitationLink: null, invitationEmailSent: false };
+    return { organizationId: organization.id, academySlug: academy.slug, kioskToken, invitationLink: null, invitationEmailSent: false, invitationEmailOutcome: null };
   }
 
   // "Invalidated appropriately on resend" — same pattern as
@@ -174,11 +176,15 @@ export async function approveOrganization(orgSlug: string, approvedById: string)
       invitationLink,
       "This link expires in 7 days.",
     ],
+    { suppressProviderErrorLogging: true },
   );
   if (!emailResult.success) {
-    console.error("[approve-organization] invitation email failed to send", {
+    // Outcome and fixed provider code only — the provider's free-text message can carry the recipient. The message is
+    // neutral: for "unknown" the provider may well have accepted the request.
+    console.error("[approve-organization] invitation email outcome", {
       organizationId: organization.id,
-      error: emailResult.error,
+      outcome: emailResult.outcome,
+      providerCode: emailResult.providerCode,
     });
   }
 
@@ -188,5 +194,6 @@ export async function approveOrganization(orgSlug: string, approvedById: string)
     kioskToken,
     invitationLink,
     invitationEmailSent: emailResult.success,
+    invitationEmailOutcome: emailResult.outcome,
   };
 }

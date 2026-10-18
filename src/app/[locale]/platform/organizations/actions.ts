@@ -6,6 +6,7 @@ import { prisma } from "@/lib/prisma";
 import { resolveSuperAdminActionContext } from "@/lib/auth/require-super-admin";
 import { approveOrganization, OrganizationNotApprovableError } from "@/lib/organizations/approve-organization";
 import type { ActionState } from "@/lib/action-state";
+import type { EmailSendOutcome } from "@/lib/email/send-transactional-email";
 
 async function revalidatePlatformPaths(organizationId?: string): Promise<void> {
   try {
@@ -27,15 +28,18 @@ async function revalidatePlatformPaths(organizationId?: string): Promise<void> {
  * first since `approveOrganization` is keyed by slug (the CLI's own natural
  * key); the panel works from ids everywhere else.
  */
-export async function approveOrganizationAction(organizationId: string): Promise<ActionState> {
+export async function approveOrganizationAction(
+  organizationId: string,
+): Promise<ActionState & { invitationEmail?: EmailSendOutcome | "notIssued" }> {
   const auth = await resolveSuperAdminActionContext();
   if (!auth.ok) return { error: "notFound" };
 
   const organization = await prisma.organization.findUnique({ where: { id: organizationId }, select: { slug: true } });
   if (!organization) return { error: "notFound" };
 
+  let result;
   try {
-    await approveOrganization(organization.slug, auth.context.actorUserId);
+    result = await approveOrganization(organization.slug, auth.context.actorUserId);
   } catch (error) {
     if (error instanceof OrganizationNotApprovableError) {
       return { error: "notApprovable" };
@@ -44,7 +48,10 @@ export async function approveOrganizationAction(organizationId: string): Promise
   }
 
   await revalidatePlatformPaths(organizationId);
-  return { ok: true };
+  // The approval itself succeeded either way; the email outcome is reported beside it, never as an error, so the
+  // pending queue's approve button behaves exactly as before. "notIssued": approveOrganization found an
+  // invitation already marked used (accepted OR superseded — Invitation.usedAt means both) and issued none.
+  return { ok: true, invitationEmail: result.invitationEmailOutcome ?? "notIssued" };
 }
 
 /**
