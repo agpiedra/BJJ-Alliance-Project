@@ -1,7 +1,7 @@
 import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import authConfig from "@/auth.config";
-import { verifyCredentials } from "@/lib/auth/verify-credentials";
+import { authorizeCredentials } from "@/lib/auth/login-throttle";
 import { signInJwtCallback } from "@/lib/auth/sign-in-jwt-callback";
 
 export const { handlers, auth, signIn, signOut, unstable_update } = NextAuth({
@@ -13,14 +13,9 @@ export const { handlers, auth, signIn, signOut, unstable_update } = NextAuth({
         email: {},
         password: {},
       },
-      authorize: async (credentials) => {
-        const email = credentials?.email;
-        const password = credentials?.password;
-        if (typeof email !== "string" || typeof password !== "string") {
-          return null;
-        }
-        return verifyCredentials(email, password);
-      },
+      // The single login-throttle enforcement point: every password check, including a direct POST to
+      // /api/auth/callback/credentials, comes through here (docs/LOGIN_THROTTLING_PLAN.md).
+      authorize: authorizeCredentials,
     }),
   ],
   callbacks: {
