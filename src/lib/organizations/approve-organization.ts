@@ -15,6 +15,22 @@ export class OrganizationNotApprovableError extends Error {
   }
 }
 
+/**
+ * One invitation recipient = one organization + one EXACT stored address — the same identity acceptInvitation resolves
+ * (`User.email` is unique case-sensitively, and acceptance looks the account up exactly), so two addresses that differ
+ * only by case may be two distinct accounts and must never block, settle or revoke each other's invitations. Issue,
+ * settlement, the legacy diagnostic and acceptance's sibling revocation all match recipients this way.
+ */
+export function sameRecipient(organizationId: string, email: string) {
+  return { organizationId, email };
+}
+
+/** Genuinely accepted. */
+export const ACCEPTED = { acceptedAt: { not: null } };
+
+/** Consumed under the old rules (before `acceptedAt` existed): accepted OR superseded — unknowable, never reinterpreted. */
+export const LEGACY_USED = { usedAt: { not: null }, acceptedAt: null, revokedAt: null };
+
 /** Whether a new invitation was issued: not when one was genuinely accepted, nor while a legacy-used row is unresolved. */
 export type InvitationIssue = "issued" | "alreadyAccepted" | "legacyUnresolved";
 
@@ -165,16 +181,16 @@ export async function approveOrganization(
   // transaction, SEND the email with no transaction open, then SETTLE by the send's outcome in a second short
   // transaction. Issue, settle, acceptance and every staff invitation mutation take the same per-organization lock.
   const contactEmail = organization.contactEmail;
-  const sameAddress = { organizationId: organization.id, email: { equals: contactEmail, mode: "insensitive" as const } };
+  const sameAddress = sameRecipient(organization.id, contactEmail);
   const issued = await prisma.$transaction(async (tx) => {
     await lockOrganizationStaff(tx, organization.id);
     // Genuine acceptance only — `acceptedAt`. `usedAt` also marked supersession before that column existed.
-    if (await tx.invitation.findFirst({ where: { ...sameAddress, acceptedAt: { not: null } }, select: { id: true } })) {
+    if (await tx.invitation.findFirst({ where: { ...sameAddress, ...ACCEPTED }, select: { id: true } })) {
       return { issue: "alreadyAccepted" as const };
     }
     // Consumed under the old rules: accepted OR superseded, and nothing on the row says which. Never reinterpreted —
     // it blocks a resend until an operator resolves it (scripts/report-legacy-invitations.ts).
-    if (await tx.invitation.findFirst({ where: { ...sameAddress, usedAt: { not: null }, acceptedAt: null, revokedAt: null }, select: { id: true } })) {
+    if (await tx.invitation.findFirst({ where: { ...sameAddress, ...LEGACY_USED }, select: { id: true } })) {
       return { issue: "legacyUnresolved" as const };
     }
     // The links live right now. Only THESE are retired at settlement, and only if the new email is accepted — never
@@ -266,10 +282,7 @@ async function settleInvitation(
   return prisma.$transaction(async (tx) => {
     await lockOrganizationStaff(tx, organizationId);
     // Evidence-backed: issue found no accepted invitation, so any `acceptedAt` now was recorded while this one was sent.
-    const accepted = await tx.invitation.findFirst({
-      where: { organizationId, email: { equals: contactEmail, mode: "insensitive" }, acceptedAt: { not: null } },
-      select: { id: true },
-    });
+    const accepted = await tx.invitation.findFirst({ where: { ...sameRecipient(organizationId, contactEmail), ...ACCEPTED }, select: { id: true } });
     if (accepted) return "acceptedMeanwhile";
     // No longer usable — withdrawn by an Owner, replaced by a newer resend, or otherwise retired. The row records no
     // cause, so none is claimed. Earlier links stay as they are: retiring them for a dead link would leave none.

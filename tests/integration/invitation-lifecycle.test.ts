@@ -57,7 +57,7 @@ const { approveOrganization } = await import("../../src/lib/organizations/approv
 const { acceptInvitation } = await import("../../src/app/[locale]/accept-invitation/actions");
 const { revokeStaffInvitation } = await import("../../src/lib/staff/staff-service");
 const { requireOrganizationAccess } = await import("../../src/lib/tenant/context");
-const { reportLegacyInvitations } = await import("../../src/lib/organizations/legacy-invitation-report");
+const { reportOwnerResendBlockers } = await import("../../src/lib/organizations/legacy-invitation-report");
 
 const prisma = getTestPrismaClient();
 const orgIds: string[] = [];
@@ -289,6 +289,79 @@ describe("lifecycle by outcome", () => {
     expect(await accept(oToken)).toBe("invalidToken");
 
     expect(await row(foreign.id)).toEqual({ usedAt: null, acceptedAt: null, revokedAt: null });
+  });
+});
+
+describe("address scope — an invitation's recipient is its exact stored address, the same identity acceptance resolves", () => {
+  /**
+   * `User.email` is unique case-SENSITIVELY and acceptance resolves the account with an exact lookup, so two addresses
+   * that differ only by case can be two distinct accounts. Lifecycle matching must never let one interfere with the other.
+   */
+  async function caseVariantAccount(contactEmail: string) {
+    const email = contactEmail.toUpperCase();
+    emails.push(email);
+    const user = await prisma.user.create({ data: { email, passwordHash: await hashSecret("variant-password-1"), role: "ADMIN", active: true } });
+    return { user, email };
+  }
+  async function invitationFor(organizationId: string, email: string, extra: { usedAt?: Date } = {}) {
+    const token = generateRandomToken();
+    const row = await prisma.invitation.create({
+      data: { tokenHash: digestLookupSecret(token, process.env.CODE_PEPPER!), email, organizationId, role: "ADMIN", expiresAt: new Date(Date.now() + 86_400_000), ...extra },
+    });
+    return { token, id: row.id };
+  }
+
+  it("two distinct case-variant accounts: accepting one's invitation neither revokes the other's nor blocks the other's resend", async () => {
+    const { org, contactEmail, oToken, oId } = await approvedOrganization();
+    const variant = await caseVariantAccount(contactEmail);
+    expect(variant.user.id).not.toBe((await prisma.user.findUniqueOrThrow({ where: { email: contactEmail } })).id);
+    const theirs = await invitationFor(org.id, variant.email);
+
+    expect(await accept(theirs.token)).toBe("accepted");
+    expect(await row(oId)).toEqual({ usedAt: null, acceptedAt: null, revokedAt: null }); // the owner's link is untouched
+
+    respondWith("accepted");
+    expect(await approveOrganization(org.slug, approverId)).toMatchObject({ invitationIssue: "issued", invitationSettlement: "settled" });
+    expect(sendMock).toHaveBeenCalledTimes(1);
+    expect(await accept(oToken)).toBe("invalidToken"); // retired by the owner's own accepted resend — not by the variant
+  });
+
+  it("two distinct case-variant accounts: an owner resend's settlement never retires the other account's live invitation", async () => {
+    const { org, contactEmail, oId } = await approvedOrganization();
+    const variant = await caseVariantAccount(contactEmail);
+    const theirs = await invitationFor(org.id, variant.email);
+
+    respondWith("accepted");
+    const resend = await approveOrganization(org.slug, approverId);
+    expect(resend.invitationSettlement).toBe("settled");
+
+    expect((await row(oId)).revokedAt).not.toBeNull();
+    expect(await row(theirs.id)).toEqual({ usedAt: null, acceptedAt: null, revokedAt: null });
+    expect(await accept(theirs.token)).toBe("accepted");
+  });
+
+  it("two distinct case-variant accounts: the other account's legacy-used or accepted row neither blocks nor short-circuits the owner's resend", async () => {
+    const { org, contactEmail } = await approvedOrganization();
+    const variant = await caseVariantAccount(contactEmail);
+    await invitationFor(org.id, variant.email, { usedAt: new Date(Date.now() - 60_000) }); // legacy-used, other account
+
+    respondWith("accepted");
+    expect(await approveOrganization(org.slug, approverId)).toMatchObject({ invitationIssue: "issued", invitationSettlement: "settled" });
+  });
+
+  it("the same recipient (identical stored address): repeated invitations still supersede, and one acceptance retires all the others", async () => {
+    const { org, oToken, oId } = await approvedOrganization();
+    respondWith("unknown");
+    const first = await approveOrganization(org.slug, approverId);
+    const second = await approveOrganization(org.slug, approverId);
+    const ids = [oId, await idOfToken(tokenOf(first.invitationLink)), await idOfToken(tokenOf(second.invitationLink))];
+    expect(await liveIds(org.id)).toEqual(ids);
+
+    expect(await accept(oToken)).toBe("accepted");
+    expect(await liveIds(org.id)).toEqual([]);
+    for (const id of ids.slice(1)) expect((await row(id)).revokedAt).not.toBeNull();
+    respondWith("accepted");
+    expect(await approveOrganization(org.slug, approverId)).toMatchObject({ invitationIssue: "alreadyAccepted" });
   });
 });
 
@@ -600,31 +673,57 @@ describe("transaction failures", () => {
   });
 });
 
-describe("legacy diagnostic (read-only)", () => {
-  it("reports organization ids and counts only, writes nothing, and labels successor timing as observation only", async () => {
-    const { org, contactEmail } = await approvedOrganization();
-    const usedAt = new Date(Date.now() - 2_000);
-    await prisma.invitation.create({
+describe("owner-resend blocker diagnostic (read-only)", () => {
+  const legacyRow = (organizationId: string, email: string, extra: { usedAt?: Date; acceptedAt?: Date } = {}) =>
+    prisma.invitation.create({
       data: {
         tokenHash: digestLookupSecret(generateRandomToken(), process.env.CODE_PEPPER!),
-        email: contactEmail,
-        organizationId: org.id,
+        email,
+        organizationId,
         role: "ADMIN",
         expiresAt: new Date(Date.now() + 86_400_000),
-        usedAt,
+        usedAt: extra.usedAt ?? new Date(Date.now() - 2_000),
+        acceptedAt: extra.acceptedAt,
       },
     });
+
+  it("reports exactly the organizations whose owner resend is blocked — same predicates as the app; ids and counts only; writes nothing", async () => {
+    // Blocked: a legacy-used invitation to the owner's exact contact address.
+    const blocked = await approvedOrganization();
+    const usedAt = new Date(Date.now() - 2_000);
+    await legacyRow(blocked.org.id, blocked.contactEmail, { usedAt });
+
+    // NOT blocked: the only legacy-used rows are an unrelated staff address and a case-variant address.
+    const unrelated = await approvedOrganization();
+    const staffEmail = `lifecycle-staff-${uniqueSuffix()}@example.test`;
+    await legacyRow(unrelated.org.id, staffEmail);
+    await legacyRow(unrelated.org.id, unrelated.contactEmail.toUpperCase());
+
+    // NOT blocked: an owner legacy row, but the owner also genuinely accepted — acceptance takes precedence.
+    const accepted = await approvedOrganization();
+    await legacyRow(accepted.org.id, accepted.contactEmail);
+    expect(await accept(accepted.oToken)).toBe("accepted");
+
     const before = await prisma.invitation.findMany({ orderBy: { id: "asc" } });
-
-    const report = await reportLegacyInvitations();
-
+    const report = await reportOwnerResendBlockers();
     expect(await prisma.invitation.findMany({ orderBy: { id: "asc" } })).toEqual(before);
-    const mine = report.find((entry) => entry.organizationId === org.id);
+
+    const reported = new Set(report.map((entry) => entry.organizationId));
+    expect(reported.has(blocked.org.id)).toBe(true);
+    expect(reported.has(unrelated.org.id)).toBe(false);
+    expect(reported.has(accepted.org.id)).toBe(false);
+    const mine = report.find((entry) => entry.organizationId === blocked.org.id)!;
     expect(mine).toMatchObject({ legacyUsedCount: 1, liveInvitationCount: 1, earliestUsedAt: usedAt, latestUsedAt: usedAt });
     // O was created within the window of the fixture's usedAt — reported, and (by the module's own label) proves nothing.
-    expect(mine!.successorObservedCount).toBe(1);
+    expect(mine.successorObservedCount).toBe(1);
     const output = JSON.stringify(report);
-    expect(output).not.toContain(contactEmail);
-    expect(output).not.toMatch(/tokenHash|token=/);
+    for (const address of [blocked.contactEmail, unrelated.contactEmail, staffEmail]) expect(output).not.toContain(address);
+    expect(output).not.toMatch(/tokenHash|token=|@/);
+
+    // The report agrees with what the application does for each organization.
+    respondWith("accepted");
+    expect(await approveOrganization(blocked.org.slug, approverId)).toMatchObject({ invitationIssue: "legacyUnresolved" });
+    expect(await approveOrganization(unrelated.org.slug, approverId)).toMatchObject({ invitationIssue: "issued" });
+    expect(await approveOrganization(accepted.org.slug, approverId)).toMatchObject({ invitationIssue: "alreadyAccepted" });
   });
 });

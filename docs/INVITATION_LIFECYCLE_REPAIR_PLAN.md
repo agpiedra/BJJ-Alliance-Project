@@ -15,6 +15,13 @@ Revision 3 (during implementation):
   see the README for the shipped copy.
 - **Settlement makes no change when its own link is no longer live,** so an unusable new link never retires the earlier
   ones.
+- **One recipient = one organization + one EXACT stored address** (`sameRecipient`), for issue, acceptance evidence,
+  settlement, sibling revocation and the diagnostic. `User.email` is unique case-sensitively and acceptance resolves the
+  account exactly, so case-variant addresses can be distinct accounts; the first implementation's case-insensitive
+  matching let one block, settle or revoke the other's invitations. Stored emails, account lookup and the staff flow's
+  own `alreadyInvited` check are unchanged.
+- **The diagnostic reports actual owner-resend blockers** with the application's predicates (§6.3), not every legacy
+  row in an organization.
 
 Revision 2 applies five corrections from review:
 
@@ -158,7 +165,7 @@ The email outcome is still reported, and the action does **not** turn into a gen
 1. Take the lock on `invitation.organizationId`.
 2. `const now = new Date()`. This is fresh time, taken **after** the lock is held.
 3. Consume: `updateMany where id AND usedAt IS NULL AND revokedAt IS NULL AND expiresAt > now` → `usedAt = now, acceptedAt = now`. If the count is not 1, throw `InvitationAlreadyConsumed` → `invalidToken`, and the whole transaction rolls back.
-4. Revoke live siblings: `updateMany where organizationId AND email (case-insensitive) AND id <> invitation.id AND usedAt IS NULL AND revokedAt IS NULL` → `revokedAt = now`.
+4. Revoke live siblings: `updateMany where organizationId AND email = invitation.email (exact — revision 3) AND id <> invitation.id AND usedAt IS NULL AND revokedAt IS NULL` → `revokedAt = now`.
 5. All existing steps are unchanged: account cases, promotion in place, staff assignments, audit rows, sign-in and the throttle redirect.
 
 The pre-transaction check at `actions.ts:56` (used, revoked or expired) stays **as an optimization only**. It avoids hashing a password for a dead link, but correctness rests on step 3.
@@ -343,13 +350,19 @@ Each of those would be a separately authorized, destructive operation and is not
 - Any *other* still-live invitation for that organization keeps working and can be accepted. That acceptance then sets `acceptedAt` normally.
 - **Affected existing organizations stay blocked from resend until each one is individually resolved** by a separately authorized repair. This PR contains no repair.
 
-**Read-only diagnostic: `scripts/report-legacy-invitations.ts`.**
+**Read-only diagnostic: `scripts/report-legacy-invitations.ts` (`reportOwnerResendBlockers`).** Revision 3: it reports
+**exactly the organizations whose owner resend is blocked**, using the application's own predicates (`sameRecipient`,
+`LEGACY_USED`, `ACCEPTED` exported from `approve-organization.ts`): a PENDING or ACTIVE organization with a contact
+address, a legacy-used invitation to that **exact** address, and **no** genuinely accepted invitation to it (acceptance
+takes precedence). Legacy rows for any other address — a staff invitation, a case-variant account — do not block the
+owner resend and are not reported. (Revision 2 inventoried every legacy-used row in an organization, which overstated
+the blockers.)
 
 - It opens a **read-only** transaction (`SET TRANSACTION READ ONLY`) and issues SELECTs only.
 - It prints organization ids and counts only: no addresses, tokens or links.
-- Per organization it prints:
+- Per blocked organization it prints, for the owner's contact address:
   - the number of legacy-used rows;
-  - whether a live invitation still exists;
+  - how many live invitations still exist;
   - the earliest and latest `usedAt` (to compare against recorded rollback windows);
   - a **successor observation**: whether a later sibling row (same organization and email) was created within N seconds of the row's `usedAt`.
 
@@ -459,7 +472,7 @@ All are labelled as mocked provider responses.
   2. the Resend SDK itself, in non-production environments, logs `console.error("[Resend API Error]:", …)` (see `send-transactional-email.ts:96-108`). It is suppressed only when the caller passes `suppressProviderErrorLogging`.
 
   The fix needs both: pass the option, and log outcome plus allowlisted `providerCode` only. It also needs the outcome classification wired into the staff UI result and tests modelled on #136's no-secret checks. Separate PR, recommended soon.
-- **Email case sensitivity.** `approveOrganization` matches `contactEmail` exactly; the staff flow matches case-insensitively. Unchanged here.
+- **Email case sensitivity.** Revision 3: every lifecycle match uses the exact stored address. Unchanged: stored emails, account lookup, and the staff flow's own case-insensitive checks (`inviteStaffMember`'s existing-account lookup and `alreadyInvited` guard) — those only refuse or pick an account; they never revoke, settle or block another recipient's invitation. A broader identity redesign (normalizing addresses, merging case-variant accounts) is out of scope.
 - **Approval screens show no email outcome.** The pending-queue approve and manual creation do not surface the first invitation's email outcome. This is an existing gap; new UI, separate decision.
 
 ## 10. Estimate

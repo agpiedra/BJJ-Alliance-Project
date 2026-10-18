@@ -42,7 +42,7 @@ Fixes the two defects PR #136 reported and left alone (plan: `docs/INVITATION_LI
 
 Inside its existing transaction: take the lock; take `now` **after** the lock; consume with
 `usedAt IS NULL AND revokedAt IS NULL AND expiresAt > now`, setting `usedAt` and `acceptedAt`; then revoke every other
-live invitation to the same address (case-insensitive) in the same organization. Everything else — the three account
+live invitation to the same recipient (exact stored address) in the same organization. Everything else — the three account
 cases, promotion in place, staff assignments, audit rows, sign-in, the throttle redirect — is unchanged. The earlier
 pre-transaction check stays as an early exit only.
 
@@ -89,8 +89,8 @@ staff-page copy (staff flow unchanged), pending-queue Approve and New organizati
 - **Settlement changes nothing when N is no longer live** (planned: retire `previousIds` regardless on accepted).
 - **Two-sentence messages** with settlement keys (`resendInvitationSettledAccepted / SettledWithdrawn / SettledUnknown /
   AcceptedMeanwhile / Unavailable / SettleFailed`) instead of per-combination keys.
-- **Issue/settle queries match the address case-insensitively** (`mode: "insensitive"`), like acceptance's sibling
-  revocation; the old `alreadyAccepted` check matched exactly. Settlement writes also carry `organizationId`.
+- **Recipient = organization + exact stored address** (`sameRecipient`), everywhere in the lifecycle — see "Address
+  scope" below. (The first commit matched case-insensitively; corrected.) Settlement writes also carry `organizationId`.
 - **Existing tests' email mocks** (`organization-approval`, `platform-admin`, `accept-invitation-existing-account`,
   `approved-owner-scope`) now return `outcome: "accepted"`, as the real helper always does; one assertion in
   `organization-approval` counts live as `usedAt` AND `revokedAt` null.
@@ -103,14 +103,39 @@ and new ambiguous `usedAt` rows. Any return to the old invitation logic needs in
 separately reviewed recovery procedure; the column and its acceptance evidence stay intact. No automatic data
 rewriting. (Plan §6.2.)
 
+## Address scope (correction commit)
+
+**Rule:** one invitation recipient = one organization + one **exact stored address** (`sameRecipient` in
+`approve-organization.ts`), applied to issuance (accepted / legacy checks, captured live ids), acceptance evidence at
+settlement, sibling revocation in `acceptInvitation`, and the diagnostic. This is the identity acceptance already resolves:
+`User.email` is unique case-sensitively and `acceptInvitation` / `approveOrganization` look the account up exactly, so two
+addresses differing only by case can be two distinct accounts.
+
+**Trace (isolated fixture, first commit `37b3594`):** an organization's owner invitation to `x@…` plus a distinct, active
+account `X@…` with its own invitation in the same organization. With the first commit's case-insensitive matching, 3 of 4
+new tests failed: accepting the variant account's invitation **revoked the owner's live link**; the owner's accepted
+resend **retired the variant account's live invitation**; and the variant account's legacy-used row **blocked the owner's
+resend**. All pass with the exact rule. The same-recipient test (identical stored address) passed both before and after.
+
+**Unchanged:** stored emails, account lookup, and the staff flow's own case-insensitive checks (`inviteStaffMember`'s
+existing-account lookup and `alreadyInvited` guard). Those only choose an account or refuse an invite; they never revoke,
+settle or block another recipient's invitation, so no staff-workflow adjustment was needed. No identity redesign.
+
 ## Existing rows and the diagnostic
 
-No backfill and no reinterpretation. **Organizations with a legacy-used row stay blocked from platform resend until each
-is individually resolved by a separately authorized repair**; any other live invitation for them can still be accepted
-normally. `scripts/report-legacy-invitations.ts` (logic in `src/lib/organizations/legacy-invitation-report.ts`) runs in a
-`READ ONLY` transaction and prints organization ids, counts and `usedAt` ranges only. Its "successor observed" count (a
-sibling created within 5 s of a legacy row's `usedAt`) is labelled **observation only — proves neither supersession nor
-acceptance**. It was not run against normal-dev or production.
+No backfill and no reinterpretation. **Organizations whose owner resend is blocked by a legacy-used row stay blocked
+until each is individually resolved by a separately authorized repair**; any other live invitation for them can still be
+accepted normally.
+
+`scripts/report-legacy-invitations.ts` (logic: `reportOwnerResendBlockers` in
+`src/lib/organizations/legacy-invitation-report.ts`) reports **exactly the organizations whose owner resend is blocked**,
+with the application's own predicates (`sameRecipient`, `LEGACY_USED`, `ACCEPTED`): PENDING or ACTIVE, a legacy-used
+invitation to the exact contact address, and no accepted invitation to it (acceptance takes precedence). Legacy rows for
+a staff address or a case-variant account are not reported — they do not block the owner resend. (The first commit
+inventoried every legacy-used row in an organization; corrected.) It runs in a `READ ONLY` transaction and prints
+organization ids, counts and `usedAt` ranges only. Its "successor observed" count (a sibling to the same address created
+within 5 s of a legacy row's `usedAt`) is labelled **observation only — proves neither supersession nor acceptance**. It
+was not run against normal-dev or production.
 
 ## Evidence
 
@@ -121,9 +146,11 @@ disposable browser database only.
 
 - `tsc --noEmit`: clean. `eslint` on changed/new files: 0 errors (warnings only on pre-existing mock signatures).
   `check:guard-usage`: OK.
-- Unit: **1800 / 1800**. Integration: **2105 / 2105** (161 files).
+- First commit: unit **1800 / 1800**, integration **2105 / 2105** (161 files).
+- After the address-scope correction: `tsc` clean, `eslint` on the changed files clean, `check:guard-usage` OK, unit
+  **1800 / 1800**, integration **2109 / 2109** (161 files).
 
-### `tests/integration/invitation-lifecycle.test.ts` (26 tests; 3 consecutive green runs before the last two were added)
+### `tests/integration/invitation-lifecycle.test.ts` (30 tests after the correction; first commit: 26, 3 consecutive green runs before its last two were added)
 
 Email helper mocked with held, test-controlled responses; real Postgres; no production test hook. Orderings under the
 lock use a **held-lock harness**: the test takes the organization's advisory lock in its own transaction, starts the
@@ -139,7 +166,8 @@ around this file's `@/lib/prisma` import.
 | Other races | R1 newer settles first (older reports `unavailable`, newer stays live); R1 older settles first (retires only captured ids, newer untouched); captured link consumed by an older build mid-flight is never touched; **concurrent staff revocation** of the new link (`unavailable`, earlier link NOT retired) and of the old link (settlement skips it); R3 both queue orders; R4 two links accepted at once (one wins, one membership, one audit) |
 | Expiry | E1: link expires while acceptance waits for the lock → refused, nothing written |
 | Transaction failures | settle fails (reported with outcome, neutral log, both live, next resend retires both); issue fails (no send, no row); process lost between issue and settle; **acceptance rollback** (a later step fails after consume + sibling revoke → both undone) |
-| Diagnostic | writes nothing (full table snapshot identical), no address or token in output, successor count reported |
+| Address scope (correction) | two distinct case-variant accounts in one organization: accepting one's invitation neither revokes the other's live link nor makes the other's resend `alreadyAccepted`; an owner resend's settlement never retires the other account's live invitation; the other account's legacy-used row does not block the owner's resend; same recipient (identical address): repeated invitations still supersede and one acceptance retires all the others, then `alreadyAccepted` |
+| Diagnostic (correction) | reports the organization blocked by a legacy row to the exact contact address; does **not** report one whose only legacy rows are an unrelated staff address and a case-variant address, nor one where the owner also genuinely accepted; agrees with `approveOrganization` for all three (`legacyUnresolved` / `issued` / `alreadyAccepted`); writes nothing (full table snapshot identical); no address (`@`) or token in output |
 
 ### `tests/integration/platform-resend-invitation.test.ts` (8 tests, updated)
 
@@ -155,8 +183,15 @@ longer works"; `unavailable` copy names no cause; no message says "delivered".
 
 ### Mutation checks (each restored byte-identical, MD5 verified)
 
+Re-run on the corrected code: **all 16 caught** (M1–M12 from the first commit, N1–N4 for the correction). "Caught by"
+lists the first-commit result; on the corrected code each M-mutation is caught by at least the same tests.
+
 | Mutation | Caught by |
 |---|---|
+| N1 recipient matched case-insensitively (issue / settle / diagnostic) | 3 case-variant tests; diagnostic test |
+| N2 sibling revocation case-insensitive | case-variant acceptance test |
+| N3 diagnostic ignores acceptance precedence | diagnostic test |
+| N4 diagnostic counts legacy rows for any address in the organization | diagnostic test |
 | M1 settle without the lock | stale pre-check; R3b |
 | M2 acceptance without the lock | stale pre-check; R3a; R3b |
 | M3 consume without `expiresAt > now` | E1 |
@@ -172,6 +207,9 @@ longer works"; `unavailable` copy names no cause; no message says "delivered".
 | Control: remove the pre-check's expiry clause | **34 / 34 still pass** — correctness rests on the locked consume |
 
 ### Rendered check — real browser, real dev server, **local fake provider (mocked)**
+
+Run on the first commit (`37b3594`). The correction changes no copy and no behavior for a single exact address, which is
+all these scenarios use; it was not re-rendered.
 
 - **Database:** disposable `invitation_lifecycle_browser_test` on the test Postgres, migrated, **dropped afterwards**.
 - **Server:** `next dev` on port 3100, `RESEND_BASE_URL=http://127.0.0.1:8914` (resend@6 setting).

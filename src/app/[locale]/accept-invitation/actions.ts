@@ -8,6 +8,7 @@ import { prisma } from "@/lib/prisma";
 import { digestLookupSecret, hashSecret } from "@/lib/crypto";
 import { requireEnv } from "@/lib/env";
 import { lockOrganizationStaff, syncStaffAssignments, STAFF_ROLES, type StaffMembershipRole } from "@/lib/staff/staff-service";
+import { sameRecipient } from "@/lib/organizations/approve-organization";
 import type { ActionState } from "@/lib/action-state";
 
 const tokenSchema = z.object({ token: z.string().min(1) });
@@ -101,16 +102,11 @@ export async function acceptInvitation(locale: string, _prevState: ActionState, 
         data: { usedAt: now, acceptedAt: now },
       });
       if (consumed.count !== 1) throw new InvitationAlreadyConsumed();
-      // Every other outstanding link to this address for this organization dies with this acceptance, so no second
-      // link — e.g. both links of a resend whose email outcome was unknown — can repeat the setup.
+      // Every other outstanding link to this recipient for this organization dies with this acceptance, so no second
+      // link — e.g. both links of a resend whose email outcome was unknown — can repeat the setup. The recipient is the
+      // EXACT stored address (`sameRecipient`): a case-variant address may be a different account, never touched here.
       await tx.invitation.updateMany({
-        where: {
-          organizationId: invitation.organizationId,
-          email: { equals: invitation.email, mode: "insensitive" },
-          id: { not: invitation.id },
-          usedAt: null,
-          revokedAt: null,
-        },
+        where: { ...sameRecipient(invitation.organizationId, invitation.email), id: { not: invitation.id }, usedAt: null, revokedAt: null },
         data: { revokedAt: now },
       });
 

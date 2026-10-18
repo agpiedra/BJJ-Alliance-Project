@@ -1,24 +1,26 @@
 /**
- * docs/INVITATION_LIFECYCLE_REPAIR_PLAN.md §6.3 — READ-ONLY. Lists the organizations whose platform "Resend
- * invitation" is blocked by a legacy-used invitation (consumed before `Invitation.acceptedAt` existed, so accepted or
- * superseded — unknowable). Prints organization ids and counts only. Writes nothing; repairs nothing.
+ * docs/INVITATION_LIFECYCLE_REPAIR_PLAN.md §6.3 — READ-ONLY. Lists the organizations whose platform owner "Resend
+ * invitation" is blocked right now by a legacy-used invitation (consumed before `Invitation.acceptedAt` existed, so
+ * accepted or superseded — unknowable), decided with the same predicates the application uses. Legacy rows for any other
+ * address (a staff invitation, a case-variant account) do not block the owner resend and are not listed. Prints
+ * organization ids and counts only. Writes nothing; repairs nothing.
  *
- * Affected organizations stay blocked from resending until each is individually resolved by a separately authorized,
- * reviewed repair. Nothing printed here is evidence enough to make that decision on its own.
+ * Listed organizations stay blocked until each is individually resolved by a separately authorized, reviewed repair.
+ * Nothing printed here is evidence enough to make that decision on its own.
  *
  * Usage: pnpm exec tsx scripts/report-legacy-invitations.ts
  */
 import "dotenv/config";
-import { reportLegacyInvitations, SUCCESSOR_OBSERVATION_NOTE, SUCCESSOR_WINDOW_MS } from "../src/lib/organizations/legacy-invitation-report";
+import { reportOwnerResendBlockers, SUCCESSOR_OBSERVATION_NOTE, SUCCESSOR_WINDOW_MS } from "../src/lib/organizations/legacy-invitation-report";
 
 async function main() {
-  const report = await reportLegacyInvitations();
-  if (report.length === 0) {
-    console.log("No legacy-used invitations. No organization is blocked by one.");
+  const blockers = await reportOwnerResendBlockers();
+  if (blockers.length === 0) {
+    console.log("No organization's owner resend is blocked by a legacy-used invitation.");
     return;
   }
-  console.log(`${report.length} organization(s) with legacy-used invitations (resend blocked until individually resolved):`);
-  for (const row of report) {
+  console.log(`${blockers.length} organization(s) whose owner resend is blocked by a legacy-used invitation to the contact address:`);
+  for (const row of blockers) {
     console.log(
       `  ${row.organizationId}: legacyUsed=${row.legacyUsedCount} live=${row.liveInvitationCount} ` +
         `usedAt=${row.earliestUsedAt.toISOString()}..${row.latestUsedAt.toISOString()} successorObserved=${row.successorObservedCount}`,
