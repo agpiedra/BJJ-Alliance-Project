@@ -3,7 +3,7 @@ import { getTestPrismaClient } from "../helpers/test-db";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/email/send-transactional-email", () => ({
-  sendTransactionalEmail: vi.fn(async () => ({ success: true })),
+  sendTransactionalEmail: vi.fn(async () => ({ success: true, outcome: "accepted" as const })),
 }));
 
 // signIn() carries out its own redirect (see login-actions.test.ts), so a real

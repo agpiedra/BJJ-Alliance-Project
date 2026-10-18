@@ -64,8 +64,11 @@ function assertOwner(context: TenantContext): void {
 
 /** One staff mutation at a time per organization. `pg_advisory_xact_lock` is
  * released with the transaction, so it is safe behind a transaction pooler
- * (unlike a session-level lock). */
-async function lockOrganizationStaff(tx: Tx, organizationId: string): Promise<void> {
+ * (unlike a session-level lock). Also taken by every invitation lifecycle
+ * write — the platform issue and settle steps (approve-organization.ts) and
+ * acceptance — so they all serialize on ONE key per organization. Always the
+ * first lock a transaction takes. */
+export async function lockOrganizationStaff(tx: Tx, organizationId: string): Promise<void> {
   await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${organizationId}))::text AS locked`;
 }
 

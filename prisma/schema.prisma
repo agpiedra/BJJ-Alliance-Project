@@ -658,12 +658,19 @@ model Invitation {
   /// again when it is accepted.
   academyIds     String[]  @default([])
   expiresAt      DateTime
-  /// Consumed by acceptance, or superseded by a newer invitation to the same
-  /// address (approve/resend). NOT the same as `revokedAt`.
+  /// Consumed. Set only by acceptance (together with `acceptedAt`). Rows consumed
+  /// before `acceptedAt` existed may instead have been superseded by the platform
+  /// approve/resend path, which used this column for that until
+  /// docs/INVITATION_LIFECYCLE_REPAIR_PLAN.md — such rows ("legacy-used") are
+  /// ambiguous and are never reinterpreted.
   usedAt         DateTime?
-  /// Withdrawn by the Owner before it was accepted. A revoked link is dead
-  /// exactly like a used one; kept as its own column so the staff page can tell
-  /// "accepted" from "withdrawn" and the audit trail stays honest.
+  /// Genuine acceptance, and nothing else: set only by acceptInvitation, in the
+  /// same conditional update that sets `usedAt`. Null on every row consumed before
+  /// this column existed — no backfill.
+  acceptedAt     DateTime?
+  /// Dead without being accepted: withdrawn by an Owner, superseded by a newer
+  /// invitation (staff resend, platform resend settlement), or retired because a
+  /// sibling invitation to the same address was accepted.
   revokedAt      DateTime?
   createdAt      DateTime  @default(now())
 

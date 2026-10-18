@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { getLocale } from "next-intl/server";
 import { prisma } from "@/lib/prisma";
 import { resolveSuperAdminActionContext } from "@/lib/auth/require-super-admin";
-import { approveOrganization, OrganizationNotApprovableError } from "@/lib/organizations/approve-organization";
+import { approveOrganization, OrganizationNotApprovableError, type InvitationSettlement } from "@/lib/organizations/approve-organization";
 import type { ActionState } from "@/lib/action-state";
 import type { EmailSendOutcome } from "@/lib/email/send-transactional-email";
 
@@ -30,7 +30,7 @@ async function revalidatePlatformPaths(organizationId?: string): Promise<void> {
  */
 export async function approveOrganizationAction(
   organizationId: string,
-): Promise<ActionState & { invitationEmail?: EmailSendOutcome | "notIssued" }> {
+): Promise<ActionState & { invitationEmail?: EmailSendOutcome | "notIssued" | "legacyUnresolved"; invitationSettlement?: InvitationSettlement }> {
   const auth = await resolveSuperAdminActionContext();
   if (!auth.ok) return { error: "notFound" };
 
@@ -48,10 +48,13 @@ export async function approveOrganizationAction(
   }
 
   await revalidatePlatformPaths(organizationId);
-  // The approval itself succeeded either way; the email outcome is reported beside it, never as an error, so the
-  // pending queue's approve button behaves exactly as before. "notIssued": approveOrganization found an
-  // invitation already marked used (accepted OR superseded — Invitation.usedAt means both) and issued none.
-  return { ok: true, invitationEmail: result.invitationEmailOutcome ?? "notIssued" };
+  // The approval itself succeeded either way; the email outcome and what settlement found are reported beside it,
+  // never as an error, so the pending queue's approve button behaves exactly as before. "notIssued": an invitation to
+  // this address was genuinely accepted (`acceptedAt`). "legacyUnresolved": a row consumed under the old rules —
+  // accepted or superseded, unknowable — blocks a new one until an operator resolves it.
+  if (result.invitationIssue === "alreadyAccepted") return { ok: true, invitationEmail: "notIssued" };
+  if (result.invitationIssue === "legacyUnresolved") return { ok: true, invitationEmail: "legacyUnresolved" };
+  return { ok: true, invitationEmail: result.invitationEmailOutcome ?? undefined, invitationSettlement: result.invitationSettlement ?? undefined };
 }
 
 /**
