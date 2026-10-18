@@ -179,8 +179,9 @@ export async function approveOrganization(orgSlug: string, approvedById: string)
     { suppressProviderErrorLogging: true },
   );
   if (!emailResult.success) {
-    // Outcome and fixed provider code only — the provider's free-text message can carry the recipient.
-    console.error("[approve-organization] invitation email not accepted", {
+    // Outcome and fixed provider code only — the provider's free-text message can carry the recipient. The message is
+    // neutral: for "unknown" the provider may well have accepted the request.
+    console.error("[approve-organization] invitation email outcome", {
       organizationId: organization.id,
       outcome: emailResult.outcome,
       providerCode: emailResult.providerCode,

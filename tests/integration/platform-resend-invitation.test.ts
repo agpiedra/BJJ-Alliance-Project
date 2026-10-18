@@ -21,7 +21,7 @@ const cleanupEmails: string[] = [];
 let consoleCalls: unknown[][] = [];
 
 const PROVIDER_SECRET = "SYNTH-PROVIDER-SECRET-r7Qw2";
-const LOG_PREFIX = "[approve-organization] invitation email not accepted";
+const LOG_PREFIX = "[approve-organization] invitation email outcome";
 
 function uniqueSuffix(): string {
   return `${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
@@ -88,6 +88,15 @@ function expectNothingEscaped(result: unknown, recipient: string, fetchMock?: Re
   for (const secret of secrets) expect(captured, `output contains ${secret}`).not.toContain(secret);
 }
 
+/** An "unknown" send may have been accepted: exactly one neutral outcome entry, and no output claims otherwise. */
+function expectNoNonAcceptanceClaim(organizationId: string) {
+  const entries = consoleCalls.filter((call) => String(call[0]).startsWith("[approve-organization]"));
+  expect(entries).toHaveLength(1);
+  expect(entries[0][0]).toBe(LOG_PREFIX);
+  expect(entries[0][1]).toMatchObject({ organizationId, outcome: "unknown" });
+  expect(JSON.stringify(consoleCalls)).not.toMatch(/not accepted|not sent|reject|undelivered/i);
+}
+
 beforeEach(() => {
   consoleCalls = [];
   vi.stubEnv("RESEND_API_KEY", "re_synthetic_test_key");
@@ -151,6 +160,7 @@ describe("platform resend invitation reports the real email outcome (real Resend
     expect(result).toEqual({ ok: true, invitationEmail: "unknown" });
     await expectTokenRotated(org.id, first);
     expect(consoleCalls).toContainEqual([LOG_PREFIX, { organizationId: org.id, outcome: "unknown", providerCode: "internal_server_error" }]);
+    expectNoNonAcceptanceClaim(org.id);
     expectNothingEscaped(result, contactEmail, fetchMock);
   });
 
@@ -161,6 +171,7 @@ describe("platform resend invitation reports the real email outcome (real Resend
     const result = await approveOrganizationAction(org.id);
 
     expect(result).toEqual({ ok: true, invitationEmail: "unknown" });
+    expectNoNonAcceptanceClaim(org.id);
     expectNothingEscaped(result, contactEmail, fetchMock);
   });
 
@@ -176,6 +187,7 @@ describe("platform resend invitation reports the real email outcome (real Resend
     expect(result).toEqual({ ok: true, invitationEmail: "unknown" });
     expect(failingFetch).toHaveBeenCalledTimes(1);
     await expectTokenRotated(org.id, first);
+    expectNoNonAcceptanceClaim(org.id);
     expectNothingEscaped(result, contactEmail);
   });
 

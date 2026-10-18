@@ -41,18 +41,34 @@ case where no invitation was issued at all.
 ## What a resend does to tokens (unchanged; reported, not fixed)
 
 1. **A resend supersedes the previous link before sending.** `approveOrganization()` marks every unused invitation for
-   the organization and address as used, creates one new invitation, then sends.
-   - If the send is rejected, unconfigured or unconfirmed, the old link is already dead.
-   - The new link exists only in the database: the platform UI never shows links.
-   - The new messages say so, but they don't change it.
+   the organization and address as used. It then creates one new invitation and sends it.
+   - **The previous link is dead before the send's outcome is known,** whatever that outcome is.
+   - **Only a hash of the new token is stored** (`Invitation.tokenHash`, via `digestLookupSecret`). The raw link cannot be recovered from the database, and the platform UI never shows it. The only copy of the link is the email request itself, and the CLI's printed output when the CLI is used.
+   - **What the owner holds after each outcome:**
+     - `accepted`: the provider took the email. Delivery is not confirmed.
+     - `rejected` or `not_configured`: the email was not sent, so nobody holds the new link. Through the panel, nobody holds any working link.
+     - `unknown`: the provider **may have accepted and delivered** the email. If so, the owner holds a working, usable new link. It is not known either way.
    - Password reset (PR #133) invalidates its new token on `rejected` / `not_configured`. Invitations don't, and adding that would be a lifecycle change.
 2. **A second resend issues nothing.**
    - `Invitation.usedAt` means "accepted **or** superseded" (`prisma/schema.prisma`, Invitation model).
-   - `approveOrganization()`'s `alreadyAccepted` check matches any `usedAt`, though, so it treats a superseded link as accepted.
-   - So after one resend, every later resend returns early, without issuing or sending anything. The old UI still said "Invitation resent."
-   - The code can't tell "accepted" from "superseded" without a lifecycle change, so the new copy states only what is known.
-   - Fixing it (for example, checking for an accepted membership or user rather than `usedAt`) changes token lifecycle and retry behavior. Per the brief, it is **reported and held for a decision, not changed here**. The integration test `pre-existing lifecycle, reported not changed` pins the current behavior.
-3. **Retrying after `unknown`** can result in two emails if the first was actually accepted; only the newest link works.
+   - `approveOrganization()`'s `alreadyAccepted` check matches any `usedAt`, though, so it treats a superseded invitation as accepted.
+   - The code cannot tell "accepted" from "superseded" without a lifecycle change, so the new copy states only what is known.
+   - The integration test `pre-existing lifecycle, reported not changed` pins the current behavior.
+3. **Which retry sequences are possible today.** Two calls can issue an invitation: the first approval (pending-queue Approve, New organization, or the CLI), and the first resend after it. Once the first resend has superseded the original, every later call (panel or CLI) returns `notIssued`, whatever happened to either email.
+   - **First approval's send was `unknown`, `rejected` or `not_configured`:** one resend is possible. It supersedes the original link and issues a new one.
+     - If the original `unknown` email was actually delivered, the owner can end up with two emails, and only the second link works.
+   - **The first resend's send was `unknown`:** no further resend can issue anything. The owner has a working link only if that email was in fact delivered.
+   - **The first resend's send was `rejected` or `not_configured`:** no further resend can issue anything. No working link reaches the owner through the panel or the CLI without a lifecycle change.
+   - So "retry after `unknown`" is available exactly once, and only when the `unknown` send was the first approval's.
+
+### Lifecycle follow-up (tracked separately; not implemented here)
+
+- **Distinguish accepted invitations from superseded ones,** so a resend after a superseded link issues a fresh invitation while one after an accepted invitation still does not.
+  - Acceptance must not be inferred from `User.active` or membership existence until those semantics are traced. `approveOrganization()` itself creates the membership, and a reused existing user can already be active.
+- **Define safe link validity** across `rejected`, `not_configured`, `unknown` and `accepted` sends. That includes:
+  - whether the previous link should survive until the new send is known;
+  - whether a rejected or unconfigured new token should be invalidated;
+  - concurrent resend and acceptance.
 
 ## Evidence
 
@@ -65,9 +81,14 @@ stubbed, and nothing leaves the machine. Run on the isolated `alliance_bjj_test`
 |---|---|---|
 | accepted | 200 `{ id }` | `{ ok: true, invitationEmail: "accepted" }`; SDK hit `https://api.resend.com/emails` once; token rotated exactly as before |
 | rejected | 422 `validation_error`, body echoing the recipient and a synthetic secret | `"rejected"`; log is `{ organizationId, outcome: "rejected", providerCode: "validation_error" }` only |
-| unknown: 5xx | 500 `internal_server_error` | `"unknown"`, never `"rejected"`; token rotated |
-| unknown: unparseable | 502 HTML | `"unknown"` |
-| unknown: network | `fetch` throws | `"unknown"`; the thrown message is not logged |
+| unknown: 5xx | 500 `internal_server_error` | `"unknown"`, never `"rejected"`; token rotated; no non-acceptance claim in logs (below) |
+| unknown: unparseable | 502 HTML | `"unknown"`; no non-acceptance claim in logs |
+| unknown: network | `fetch` throws | `"unknown"`; the thrown message is not logged; no non-acceptance claim in logs |
+
+**The "no non-acceptance claim" check, in every unknown test:**
+
+- The output holds exactly one `[approve-organization] invitation email outcome` entry, with `outcome: "unknown"`.
+- No console output matches `not accepted`, `not sent`, `reject` or `undelivered`.
 | not configured | `RESEND_API_KEY` empty | `"not_configured"`; no request made; the env-var error text is not logged |
 | lifecycle (pre-existing) | second resend | `"notIssued"`; no request; live invitations unchanged |
 | authorization | non-super-admin, then anonymous | both `{ error: "notFound" }`; no request; the invitation is untouched |
@@ -92,6 +113,7 @@ Each failure outcome must not show the accepted text, and the old key is checked
 | Action drops the outcome (`return { ok: true }`) | integration: 8 failed / 8 |
 | Log re-adds `error: emailResult.error` | integration: 3 failed / 8 |
 | SDK error logging not suppressed | integration: 4 failed / 8 |
+| Log message back to `invitation email not accepted` (accuracy correction) | integration, unknown tests only: 3 failed / 3 |
 
 ### Rendered check: real browser, real dev server, local fake provider
 
@@ -121,7 +143,10 @@ Each failure outcome must not show the accepted text, and the old key is checked
 - `[Resend API Error]`;
 - `RESEND_API_KEY`.
 
-Each failure produced exactly one `[approve-organization] invitation email not accepted` entry with these fields only:
+Each failure produced exactly one entry with these fields only. The browser run used the original message text,
+`invitation email not accepted`. That wording was later corrected to the neutral `[approve-organization] invitation email
+outcome`, because an `unknown` send may have been accepted. The fields are unchanged. The corrected wording is covered by
+the integration tests, not by a fresh browser run.
 
 - `organizationId`
 - `outcome` (`rejected`, `unknown` or `not_configured`)

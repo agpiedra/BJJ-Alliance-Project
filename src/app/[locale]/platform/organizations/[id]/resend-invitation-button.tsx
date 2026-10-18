@@ -26,9 +26,13 @@ const MESSAGE_KEY = {
  * scripts/approve-organization.ts. Calls the exact same
  * `approveOrganizationAction` the pending queue's own "Approve" button
  * calls (which itself calls `approveOrganization()` — one function, both
- * callers) — `approveOrganization()` already accepts PENDING or ACTIVE and
- * is idempotent on ACTIVE (issues a fresh invitation, invalidates the old
- * one, creates nothing new), so no new server action was needed here.
+ * callers) — `approveOrganization()` already accepts PENDING or ACTIVE, so
+ * no new server action was needed here. On ACTIVE it creates no new academy
+ * or membership, but it issues a fresh invitation (invalidating the unused
+ * one) ONLY when no invitation for the address is marked used — and
+ * `Invitation.usedAt` marks superseded invitations as well as accepted ones,
+ * so after one resend every later resend issues nothing ("notIssued"). That
+ * lifecycle defect is tracked separately, not fixed here.
  *
  * The message reports the email outcome the action hands back (PR #133's classification): accepted is never shown as
  * delivered, and a rejected, unconfigured or unconfirmed send is never shown as sent.
