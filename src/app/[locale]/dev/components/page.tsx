@@ -1,3 +1,4 @@
+import { notFound } from "next/navigation";
 import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -110,6 +111,8 @@ function ControlStates({ title }: { title: string }) {
  * these into real screens.
  */
 export default function DevComponentsPage() {
+  // Dev-only showcase: a production build compiles this to `true` and 404s before rendering anything.
+  if (process.env.NODE_ENV === "production") notFound();
   return (
     <main className="flex flex-col gap-8 p-6">
       <h1 className="text-2xl font-bold">Component library preview</h1>
