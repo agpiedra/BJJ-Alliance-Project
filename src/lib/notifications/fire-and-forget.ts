@@ -1,4 +1,5 @@
 import { after } from "next/server";
+import { safeErrorCode } from "@/lib/auth/password-reset-log";
 
 /**
  * Fires a best-effort background job (a notification dispatch) so it
@@ -21,8 +22,15 @@ import { after } from "next/server";
  * to the plain fire-and-forget behavior these direct-call tests already
  * exercise and assert on.
  */
-export function fireAndForget(label: string, work: () => Promise<void>): void {
-  const run = () => work().catch((error) => console.error(`${label} failed (non-fatal)`, error));
+const JOB_LABELS = ["notifyNewSignup", "notifyEligibilityReached"] as const;
+export type FireAndForgetLabel = (typeof JOB_LABELS)[number];
+
+export function fireAndForget(label: FireAndForgetLabel, work: () => Promise<void>): void {
+  // Fixed event, allow-listed job name and error code — never the caller's string or the raw error, either of which can
+  // carry an address, link or query parameter. The runtime check covers a caller that bypasses the type.
+  const job = (JOB_LABELS as readonly string[]).includes(label) ? label : "unrecognized_job";
+  const run = () =>
+    work().catch((error) => console.error("background job failed (non-fatal)", { job, error: safeErrorCode(error) }));
   try {
     after(run);
   } catch {

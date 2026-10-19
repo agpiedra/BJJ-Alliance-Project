@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { safeErrorCode } from "@/lib/auth/password-reset-log";
 import { resolveStaffRecipients } from "@/lib/notifications/recipients";
 import { dispatchToRecipients } from "@/lib/notifications/dispatch";
 import type { NotificationChannel } from "@/lib/notifications/types";
@@ -54,6 +55,7 @@ export async function notifyEligibilityReached(
     const resolvedChannels = channels ?? (await import("@/lib/notifications/channels")).ALL_CHANNELS;
     await dispatchToRecipients(recipients, type, data, resolvedChannels);
   } catch (error) {
-    console.error("notifyEligibilityReached failed (non-fatal)", error);
+    // Fixed code only — Prisma errors can echo query parameters, a channel error the recipient.
+    console.error("notifyEligibilityReached failed (non-fatal)", { error: safeErrorCode(error) });
   }
 }

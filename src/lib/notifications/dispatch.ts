@@ -1,3 +1,4 @@
+import { safeErrorCode } from "@/lib/auth/password-reset-log";
 import { renderNotificationMessage } from "@/lib/notifications/templates";
 import type { NotificationChannel, NotificationType, Recipient, RenderedMessage } from "@/lib/notifications/types";
 
@@ -48,7 +49,8 @@ export async function dispatchNotification(
   let failed = 0;
   for (const outcome of settled) {
     if (outcome.status === "rejected") {
-      console.error("notification channel threw", outcome.reason);
+      // Fixed code only — a thrown error's message/meta can carry the recipient, the rendered body or query parameters.
+      console.error("notification channel threw", { type: message.type, error: safeErrorCode(outcome.reason) });
       failed++;
     } else if (outcome.value) {
       sent++;
