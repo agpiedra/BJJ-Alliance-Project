@@ -97,7 +97,8 @@ describe("EmailChannel", () => {
 
     const result = await new EmailChannel(fakeClient).send(recipient, message);
 
-    expect(result).toEqual({ success: false, error: "Invalid API key" });
+    // No fixed provider code on this fake error, so acceptance is unknown (classified as sendTransactionalEmail does).
+    expect(result).toEqual({ success: false, error: "Invalid API key", outcome: "unknown" });
   });
 
   it("catches a thrown error (e.g. network failure) instead of propagating it", async () => {
@@ -106,7 +107,7 @@ describe("EmailChannel", () => {
 
     const result = await new EmailChannel(fakeClient).send(recipient, message);
 
-    expect(result).toEqual({ success: false, error: "network failure" });
+    expect(result).toEqual({ success: false, error: "network failure", outcome: "unknown" });
   });
 
   it("never lets send() throw, even for a non-Error rejection", async () => {
@@ -116,6 +117,7 @@ describe("EmailChannel", () => {
     await expect(new EmailChannel(fakeClient).send(recipient, message)).resolves.toEqual({
       success: false,
       error: "some string rejection",
+      outcome: "unknown",
     });
   });
 

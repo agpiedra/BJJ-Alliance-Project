@@ -1,4 +1,5 @@
 import { requireEnv } from "@/lib/env";
+import { classifyProviderError, silenceSdkErrorLogging } from "@/lib/email/provider-errors";
 import type { DeliveryResult, NotificationChannel, Recipient, RenderedMessage } from "@/lib/notifications/types";
 
 /**
@@ -51,26 +52,38 @@ export function bodyToHtml(body: string): string {
 export class EmailChannel implements NotificationChannel {
   supportsInboundReplies = false;
 
-  constructor(private readonly client: ResendClient) {}
+  // Every real client reaches the channel through here (ALL_CHANNELS, the weekly digest), so this is the one place
+  // the SDK's own raw error logging is silenced — the same per-instance shadow transactional email uses.
+  constructor(private readonly client: ResendClient) {
+    silenceSdkErrorLogging(client);
+  }
 
   // Must never throw: a raw Resend/network exception is translated into the
   // `DeliveryResult` contract here, the one place that owns this concern,
   // rather than pushing it onto every caller (dispatchNotification also
   // isolates failures, but shouldn't have to rely on that as the only guard).
+  // `outcome`/`providerCode` are classified exactly as sendTransactionalEmail does; `error` stays free text and is
+  // never logged.
   async send(to: Recipient, message: RenderedMessage): Promise<DeliveryResult> {
+    let from: string;
+    try {
+      from = requireEnv("EMAIL_FROM");
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err), outcome: "not_configured" };
+    }
     try {
       const { error } = await this.client.emails.send({
-        from: requireEnv("EMAIL_FROM"),
+        from,
         to: to.email,
         subject: message.title,
         html: bodyToHtml(message.body),
       });
       if (error) {
-        return { success: false, error: error.message };
+        return { success: false, error: error.message, ...classifyProviderError(error.name) };
       }
       return { success: true };
     } catch (err) {
-      return { success: false, error: err instanceof Error ? err.message : String(err) };
+      return { success: false, error: err instanceof Error ? err.message : String(err), outcome: "unknown" };
     }
   }
 }

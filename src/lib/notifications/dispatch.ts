@@ -31,10 +31,12 @@ export async function dispatchNotification(
     channels.map(async (channel) => {
       const result = await channel.send(recipient, message);
       if (!result.success) {
+        // Outcome and fixed provider code only — the provider's free-text error can carry the recipient or a link.
         console.error("notification delivery failed", {
           userId: recipient.userId,
           type: message.type,
-          error: result.error,
+          outcome: result.outcome,
+          providerCode: result.providerCode,
         });
       }
       return result.success;
