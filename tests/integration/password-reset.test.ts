@@ -249,14 +249,33 @@ describe("request: bounded cleanup", () => {
     expect(await prisma.passwordResetRequest.count({ where: { keyDigest: { startsWith: "recent-" } } })).toBe(5);
   });
 
-  it("the sweep's candidate scan can use the createdAt index", async () => {
-    const plan = await prisma.$transaction(async (tx) => {
-      await tx.$executeRawUnsafe("SET LOCAL enable_seqscan = off");
-      return tx.$queryRawUnsafe<{ "QUERY PLAN": string }[]>(
-        `EXPLAIN SELECT "id" FROM "PasswordResetRequest" WHERE "createdAt" < (now() AT TIME ZONE 'UTC') - make_interval(hours => 24) ORDER BY "createdAt" LIMIT 100`,
-      );
+  // Verifies the createdAt index is USABLE for the sweep's candidate scan under a representative fixture with fresh
+  // statistics — not that the production planner must always choose it. Without its own fixture this test inherited
+  // whatever statistics earlier tests left; on a bloated heap the composite (keyKind, keyDigest, createdAt) index plus a
+  // Sort costs within 0.01 of it and sometimes won — a valid plan returning the same rows
+  // (docs/SWEEP_BOUND_INVESTIGATION.md §3). If the createdAt index were dropped or unusable, this still fails.
+  it("the sweep's candidate scan can use the createdAt index (representative fixture, fresh statistics)", async () => {
+    await prisma.passwordResetRequest.deleteMany({});
+    const old = new Date(Date.now() - 25 * 60 * 60 * 1000);
+    await prisma.passwordResetRequest.createMany({
+      data: Array.from({ length: 300 }, (_, i) => ({ keyKind: i % 2 ? "ip" : "email", keyDigest: `plan-old-${i}`, createdAt: new Date(old.getTime() - i * 1000) })),
     });
-    expect(plan.map((row) => row["QUERY PLAN"]).join("\n")).toContain("PasswordResetRequest_createdAt_idx");
+    await prisma.passwordResetRequest.createMany({
+      data: Array.from({ length: 300 }, (_, i) => ({ keyKind: i % 2 ? "ip" : "email", keyDigest: `plan-recent-${i}` })),
+    });
+    await prisma.$executeRawUnsafe(`ANALYZE "PasswordResetRequest"`);
+    try {
+      const plan = await prisma.$transaction(async (tx) => {
+        await tx.$executeRawUnsafe("SET LOCAL enable_seqscan = off");
+        return tx.$queryRawUnsafe<{ "QUERY PLAN": string }[]>(
+          `EXPLAIN SELECT "id" FROM "PasswordResetRequest" WHERE "createdAt" < (now() AT TIME ZONE 'UTC') - make_interval(hours => 24) ORDER BY "createdAt" LIMIT 100`,
+        );
+      });
+      expect(plan.map((row) => row["QUERY PLAN"]).join("\n")).toContain("PasswordResetRequest_createdAt_idx");
+    } finally {
+      await prisma.passwordResetRequest.deleteMany({ where: { keyDigest: { startsWith: "plan-" } } });
+      await prisma.$executeRawUnsafe(`ANALYZE "PasswordResetRequest"`);
+    }
   });
 
   it("REQUIRED: a sweep failure is logged with an allow-listed code and does not change the response", async () => {
