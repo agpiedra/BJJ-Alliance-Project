@@ -2197,6 +2197,26 @@
           "noteRequired": "Se requiere un motivo para cancelar.",
           "alreadyCancelled": "Esta academia ya fue cancelada."
         }
+      },
+      "invitationFeedback": {
+        "approved": "Se aprobó {name}.",
+        "created": "Se creó {name}.",
+        "openOrganization": "Abrir la organización",
+        "email": {
+          "accepted": "El proveedor de correo aceptó el correo de invitación para el dueño; la entrega no está confirmada.",
+          "rejected": "El correo de invitación no se envió: el proveedor de correo lo rechazó.",
+          "not_configured": "El correo de invitación no se envió: el envío de correo no está configurado.",
+          "unknown": "No se pudo confirmar si se envió el correo de invitación; aún podría llegar.",
+          "notIssued": "No se emitió una invitación: ya se aceptó una invitación a esta dirección.",
+          "legacyUnresolved": "No se emitió una invitación. Una invitación anterior a esta dirección figura como usada según las reglas anteriores, y no se puede saber si se aceptó o se reemplazó. Un operador de la plataforma debe resolverlo."
+        },
+        "settlement": {
+          "withdrawn": "Este enlace de invitación se retiró. La organización ya está guardada: no la apruebes ni la crees de nuevo. Revisa la página de la organización y usa “Reenviar invitación” allí si hace falta.",
+          "unknownOpen": "La invitación seguía abierta al comprobarla después del envío. Si el dueño no la recibe, usa “Reenviar invitación” en la página de la organización.",
+          "acceptedMeanwhile": "La invitación se aceptó mientras se enviaba el correo.",
+          "unavailable": "La invitación ya no se podía usar al comprobarla después del envío, así que su enlace no funciona. Usa “Reenviar invitación” en la página de la organización.",
+          "failed": "No se pudieron actualizar los registros de la invitación después del envío, así que no se sabe si su enlace funciona. Revisa la página de la organización antes de reenviar."
+        }
       }
     },
     "admins": {

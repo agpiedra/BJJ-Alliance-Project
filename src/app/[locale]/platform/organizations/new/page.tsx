@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { INITIAL_ACTION_STATE } from "@/lib/action-state";
 import { CURRENCIES } from "@/lib/payments/format-money";
+import { invitationReportQuery } from "@/lib/organizations/invitation-feedback";
 import { createOrganizationManually, type ManualOrganizationCreationState } from "./actions";
 
 export default function NewOrganizationPage() {
@@ -17,7 +18,10 @@ export default function NewOrganizationPage() {
     async (prevState, formData) => {
       const result = await createOrganizationManually(prevState, formData);
       if (result.ok) {
-        router.push(`/${params.locale}/platform/organizations`);
+        // Same destination as before. The invitation outcome travels with it (fixed values only), so the list can say
+        // the organization was created AND what happened to the owner's email — never as a failed creation.
+        const report = result.organizationId ? `?${invitationReportQuery(result.organizationId, result)}` : "";
+        router.push(`/${params.locale}/platform/organizations${report}`);
       }
       return result;
     },

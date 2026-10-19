@@ -14,6 +14,8 @@ import {
 import { listOrganizationsForPlatformAdmin } from "@/lib/tenant/platform-lookups";
 import type { OrganizationStatus } from "@/generated/prisma/client";
 import { RowActions } from "./row-actions";
+import { InvitationFeedbackNotice } from "./invitation-feedback-notice";
+import { createdOrganizationNotice } from "@/lib/organizations/invitation-feedback";
 
 export const dynamic = "force-dynamic";
 
@@ -29,6 +31,10 @@ interface OrganizationsSearchParams {
   country?: string;
   q?: string;
   billing?: string;
+  /** Set by the New organization redirect (lib/organizations/invitation-feedback.ts). */
+  created?: string;
+  invitationEmail?: string;
+  invitationSettlement?: string;
 }
 
 export default async function PlatformOrganizationsPage({
@@ -53,11 +59,23 @@ export default async function PlatformOrganizationsPage({
     billing,
   });
 
+  // After New organization: shown only for an organization this list actually contains (the URL is untrusted).
+  const created = createdOrganizationNotice(query, organizations);
+
   return (
     <>
       <header>
         <h1 className="text-2xl font-bold">{t("heading")}</h1>
       </header>
+
+      {created && (
+        <InvitationFeedbackNotice
+          operation="created"
+          organizationId={created.organization.id}
+          organizationName={created.organization.name}
+          report={created.report}
+        />
+      )}
 
       <FilterBar>
         <form method="get" className="flex flex-wrap items-center gap-2">

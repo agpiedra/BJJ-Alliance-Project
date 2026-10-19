@@ -4,9 +4,9 @@ import { revalidatePath } from "next/cache";
 import { getLocale } from "next-intl/server";
 import { prisma } from "@/lib/prisma";
 import { resolveSuperAdminActionContext } from "@/lib/auth/require-super-admin";
-import { approveOrganization, OrganizationNotApprovableError, type InvitationSettlement } from "@/lib/organizations/approve-organization";
+import { approveOrganization, OrganizationNotApprovableError } from "@/lib/organizations/approve-organization";
+import { invitationReportOf, type InvitationReport } from "@/lib/organizations/invitation-feedback";
 import type { ActionState } from "@/lib/action-state";
-import type { EmailSendOutcome } from "@/lib/email/send-transactional-email";
 
 async function revalidatePlatformPaths(organizationId?: string): Promise<void> {
   try {
@@ -28,9 +28,7 @@ async function revalidatePlatformPaths(organizationId?: string): Promise<void> {
  * first since `approveOrganization` is keyed by slug (the CLI's own natural
  * key); the panel works from ids everywhere else.
  */
-export async function approveOrganizationAction(
-  organizationId: string,
-): Promise<ActionState & { invitationEmail?: EmailSendOutcome | "notIssued" | "legacyUnresolved"; invitationSettlement?: InvitationSettlement }> {
+export async function approveOrganizationAction(organizationId: string): Promise<ActionState & InvitationReport> {
   const auth = await resolveSuperAdminActionContext();
   if (!auth.ok) return { error: "notFound" };
 
@@ -49,12 +47,8 @@ export async function approveOrganizationAction(
 
   await revalidatePlatformPaths(organizationId);
   // The approval itself succeeded either way; the email outcome and what settlement found are reported beside it,
-  // never as an error, so the pending queue's approve button behaves exactly as before. "notIssued": an invitation to
-  // this address was genuinely accepted (`acceptedAt`). "legacyUnresolved": a row consumed under the old rules —
-  // accepted or superseded, unknowable — blocks a new one until an operator resolves it.
-  if (result.invitationIssue === "alreadyAccepted") return { ok: true, invitationEmail: "notIssued" };
-  if (result.invitationIssue === "legacyUnresolved") return { ok: true, invitationEmail: "legacyUnresolved" };
-  return { ok: true, invitationEmail: result.invitationEmailOutcome ?? undefined, invitationSettlement: result.invitationSettlement ?? undefined };
+  // never as an error (lib/organizations/invitation-feedback.ts).
+  return { ok: true, ...invitationReportOf(result) };
 }
 
 /**
