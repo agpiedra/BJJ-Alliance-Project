@@ -87,10 +87,18 @@ together.
      project's values from step 2, **never the values in your local `.env`** (that is the dev
      project, and copying it here would put production logos in the dev bucket and the dev
      service-role key in production).
-   - `NODE_ENV` — Vercel sets this to `production` automatically; don't set it by hand, and
-     confirm it's actually `production` after the first deploy (the e2e-auth-bypass route's
-     entire defense rests on this evaluating correctly).
-   Leave `E2E_AUTH_BYPASS_SECRET` unset. `TEST_DATABASE_URL`/`SHADOW_DATABASE_URL`/
+   - `NODE_ENV` — Vercel sets this to `production` automatically; don't set it by hand.
+     The e2e-auth-bypass route's production defense is the BUILD, not this runtime value:
+     `next build` compiles the route's `NODE_ENV` check to the literal `"production"`
+     (Next source: `build/define-env.js`), and CI's "Verify the production build" step
+     observes the compiled route answering 404 with no cookie even when started with
+     `NODE_ENV=test` and a bypass secret set. What would re-enable it: serving the app with
+     `next dev`, or setting `experimental.allowDevelopmentBuild`. Whether the deployed host
+     builds with `next build` and never runs `next dev` is a deployment fact to confirm on
+     the first deploy; CI does not verify the hosted environment.
+   Leave `E2E_AUTH_BYPASS_SECRET` unset (in production and preview). Do not send live
+   requests to the bypass route as a check: a POST is a state-changing request, not a
+   read-only probe, and any live probing is a separate, explicitly approved step. `TEST_DATABASE_URL`/`SHADOW_DATABASE_URL`/
    `BASELINE_DATABASE_URL` are dev/CI-only — don't set them here at all. **`DIRECT_URL` is
    also not set in Vercel** — it belongs only on the machine that runs step 5.
 5. **Run `prisma migrate deploy` against the direct connection**, from a trusted machine:

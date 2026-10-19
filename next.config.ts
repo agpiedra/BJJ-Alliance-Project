@@ -1,7 +1,34 @@
 import type { NextConfig } from "next";
 import createNextIntlPlugin from "next-intl/plugin";
 
+// Launch baseline (docs/LAUNCH_SECURITY_HEADERS_AND_BYPASS_PLAN.md). Not a full CSP — `frame-ancestors` only — and no
+// HSTS: both are separate, deployment-dependent decisions. Clipboard is deliberately not restricted (staff copy the
+// kiosk URL and invitation links).
+const SECURITY_HEADERS = [
+  { key: "X-Content-Type-Options", value: "nosniff" },
+  { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+  { key: "X-Frame-Options", value: "DENY" },
+  { key: "Content-Security-Policy", value: "frame-ancestors 'none'" },
+  { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
+];
+
+// Pages whose URL carries a token in its query: send no Referer at all, not even same-origin. This only stops the URL
+// being forwarded as a Referer; the token is still in the original request URL and in any hosting/access logs.
+// Covers both locale prefixes and the unprefixed path that the locale middleware redirects.
+const TOKEN_PAGE_SOURCES = [
+  "/:locale(es|en)/:page(reset-password|accept-invitation)",
+  "/:page(reset-password|accept-invitation)",
+];
+
 const nextConfig: NextConfig = {
+  poweredByHeader: false,
+  async headers() {
+    return [
+      { source: "/:path*", headers: SECURITY_HEADERS },
+      // Listed after the general rule: for the same key, Next applies the later match.
+      ...TOKEN_PAGE_SOURCES.map((source) => ({ source, headers: [{ key: "Referrer-Policy", value: "no-referrer" }] })),
+    ];
+  },
   experimental: {
     serverActions: {
       // This limit is GLOBAL — every Server Action in the app, not just
