@@ -17,6 +17,7 @@
     "promotion:accounting": "tsx scripts/promotion-accounting.ts",
     "db:inventory": "tsx scripts/db-inventory.ts",
     "ci:parity-check": "tsx scripts/ci-parity-check.ts",
+    "verify:production-build": "tsx scripts/verify-production-build.ts",
     "db:up": "docker compose up -d postgres",
     "db:down": "docker compose stop postgres",
     "db:migrate": "prisma migrate dev",
