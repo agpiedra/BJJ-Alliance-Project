@@ -20,12 +20,16 @@ function isCandidateMonth(month: YearMonth): boolean {
 
 /**
  * Stage 8 PR 8a: the owner's read-only readiness report for one candidate start month. Deliberately NOT a `"use server"`
- * file and not a route — nothing can call it from a browser; the owner screen (PR 8d) will call it from server code. It
- * reads one PostgreSQL-enforced REPEATABLE READ, READ ONLY snapshot, writes nothing and calls no ledger writer.
+ * file and not a route — nothing can call it from a browser; the owner screen (PR 8d) will call it from server code.
  *
- * Owner (`ADMIN`) of THIS organization only. Everyone else gets the same `notFound`: a non-member through
- * `resolveActionContext`'s own refusal, and a genuine member with another role through its `FORBIDDEN` error, mapped here so
- * a Director learns nothing about readiness. Any other error is not swallowed.
+ * Two phases, with different guarantees:
+ *  1. Authorization runs FIRST, through the shared `resolveActionContext`, outside any snapshot. Owner (`ADMIN`) of THIS
+ *     organization only; everyone else gets the same `notFound`. A genuine member with another role is refused through its
+ *     `FORBIDDEN` error, mapped here so a Director learns nothing. A NON-MEMBER's refusal is recorded by that helper's
+ *     existing security audit (`organization.accessRefused` in `AuditLog`) — deliberately kept: this is the one write a
+ *     call can cause, and it happens only when access is refused. Any other error is not swallowed.
+ *  2. Only for an authorized owner, the snapshot is loaded inside one PostgreSQL-enforced REPEATABLE READ, READ ONLY
+ *     transaction and evaluated. An authorized preview modifies no data and calls no ledger writer.
  */
 export async function getDuesReadinessForOwner(organizationId: string, candidate: YearMonth): Promise<DuesReadinessResult> {
   if (!isCandidateMonth(candidate)) return { ok: false, error: "invalid" };

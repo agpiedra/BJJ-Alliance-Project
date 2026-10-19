@@ -106,8 +106,9 @@ from this activation, not waived".
 - Any change to reviewed content, including an in-place edit that leaves id and `createdAt` unchanged, changes the
   relevant fingerprint.
 - `ready` is false, and the report names exactly which checks are `notImplemented` or `decisionPending`.
-- Nothing is written, nothing is callable from a browser, and the existing financial behavior and test suites are
-  unchanged.
+- An authorized preview modifies no data. Authorization runs first, through the unchanged `resolveActionContext`, and
+  a cross-organization refusal is recorded by its existing security audit (`organization.accessRefused`). Nothing is
+  callable from a browser, and the existing financial behavior and test suites are unchanged.
 
 ## Out of scope for 8a
 

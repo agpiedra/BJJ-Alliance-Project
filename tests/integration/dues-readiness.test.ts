@@ -29,6 +29,30 @@ vi.mock("@/lib/prisma", async () => {
   return { ...actual, prisma };
 });
 
+// Call counters around the snapshot transaction and the loader (both still run the real functions), so a refused call can be
+// shown never to open the snapshot or load anything.
+const calls = vi.hoisted(() => ({ snapshot: 0, load: 0 }));
+vi.mock("@/lib/db/read-only-snapshot", async () => {
+  const actual = await vi.importActual<typeof import("../../src/lib/db/read-only-snapshot")>("../../src/lib/db/read-only-snapshot");
+  return {
+    ...actual,
+    runReadOnlySnapshot: ((...args: Parameters<typeof actual.runReadOnlySnapshot>) => {
+      calls.snapshot++;
+      return actual.runReadOnlySnapshot(...args);
+    }) as typeof actual.runReadOnlySnapshot,
+  };
+});
+vi.mock("@/lib/dues/readiness/snapshot", async () => {
+  const actual = await vi.importActual<typeof import("../../src/lib/dues/readiness/snapshot")>("../../src/lib/dues/readiness/snapshot");
+  return {
+    ...actual,
+    loadReadinessSnapshot: (...args: Parameters<typeof actual.loadReadinessSnapshot>) => {
+      calls.load++;
+      return actual.loadReadinessSnapshot(...args);
+    },
+  };
+});
+
 let currentSession: { user: { id: string; role: string } | null; activeOrganizationId?: string } | null = null;
 vi.mock("@/auth", () => ({ auth: () => Promise.resolve(currentSession), signIn: vi.fn() }));
 
@@ -79,6 +103,23 @@ async function newStudent(fx: Fixture, label: string, status: "ACTIVE" | "INACTI
 }
 const assign = (fx: Fixture, studentId: string, planId: string | null) =>
   prisma.studentPlanAssignment.create({ data: { organizationId: fx.org.id, studentId, planId, effectiveYear: 2030, effectiveMonth: 9, createdById: fx.admin.id } });
+
+/** Financial and dues-configuration tables only — never AuditLog. */
+async function financialCounts(organizationId: string) {
+  return {
+    paymentPeriod: await prisma.paymentPeriod.count({ where: { organizationId } }),
+    obligations: await prisma.duesObligation.count({ where: { organizationId } }),
+    coverage: await prisma.duesCoverage.count({ where: { organizationId } }),
+    lateFees: await prisma.duesLateFee.count({ where: { organizationId } }),
+    settlements: await prisma.duesSettlement.count({ where: { organizationId } }),
+    payments: await prisma.duesPayment.count({ where: { organizationId } }),
+    statusChanges: await prisma.studentStatusChange.count({ where: { organizationId } }),
+    assignments: await prisma.studentPlanAssignment.count({ where: { organizationId } }),
+    terms: await prisma.paymentPlanTerms.count({ where: { organizationId } }),
+    policies: await prisma.duesPolicyVersion.count({ where: { organizationId } }),
+    plans: await prisma.paymentPlan.count({ where: { organizationId } }),
+  };
+}
 
 async function writeCounts(organizationId: string) {
   return {
@@ -252,11 +293,39 @@ describe("getDuesReadinessForOwner: authorization and isolation", () => {
 
   it.each([
     ["a DIRECTOR of the organization", () => actAs(director.id, a.org.id, "DIRECTOR")],
-    ["the owner of ANOTHER organization", () => actAs(b.admin.id, a.org.id)],
     ["nobody signed in", () => actAs(null, a.org.id)],
-  ])("%s gets notFound", async (_who, become) => {
+  ])("%s gets notFound, and the snapshot is never opened", async (_who, become) => {
     become();
+    calls.snapshot = 0;
+    calls.load = 0;
     expect(await getDuesReadinessForOwner(a.org.id, S)).toEqual({ ok: false, error: "notFound" });
+    expect(calls).toEqual({ snapshot: 0, load: 0 });
+  });
+
+  it("the owner of ANOTHER organization gets notFound with no report; the snapshot never loads; the existing security audit records the refusal; no financial data changes", async () => {
+    actAs(b.admin.id, a.org.id);
+    const financialBeforeA = await financialCounts(a.org.id);
+    const financialBeforeB = await financialCounts(b.org.id);
+    const refusalsBefore = await prisma.auditLog.findMany({ where: { organizationId: a.org.id, action: "organization.accessRefused" }, select: { id: true } });
+    calls.snapshot = 0;
+    calls.load = 0;
+
+    const result = await getDuesReadinessForOwner(a.org.id, S);
+
+    expect(result).toEqual({ ok: false, error: "notFound" });
+    expect(result).not.toHaveProperty("report");
+    expect(calls).toEqual({ snapshot: 0, load: 0 });
+
+    // Authorization runs before the snapshot and keeps its security audit: exactly one new refusal row, naming the
+    // refused actor and the organization they targeted.
+    const refusals = await prisma.auditLog.findMany({
+      where: { organizationId: a.org.id, action: "organization.accessRefused", id: { notIn: refusalsBefore.map((r) => r.id) } },
+    });
+    expect(refusals).toHaveLength(1);
+    expect(refusals[0]).toMatchObject({ actorId: b.admin.id, organizationId: a.org.id, entityType: "Organization", entityId: a.org.id });
+
+    expect(await financialCounts(a.org.id)).toEqual(financialBeforeA);
+    expect(await financialCounts(b.org.id)).toEqual(financialBeforeB);
   });
 
   it("an invalid month is refused", async () => {
@@ -274,11 +343,16 @@ describe("getDuesReadinessForOwner: authorization and isolation", () => {
     expect(Object.keys(result.report.fingerprints.students).sort()).toEqual(Object.values(st).sort());
   });
 
-  it("writes nothing", async () => {
+  // Scope: an AUTHORIZED owner's call. A refused cross-organization call writes the existing security audit row (the test
+  // above); an authorized preview writes nothing at all — no financial row and no audit row.
+  it("an authorized owner's preview writes nothing (financial tables and AuditLog)", async () => {
     actAs(a.admin.id, a.org.id);
     const before = await writeCounts(a.org.id);
+    calls.snapshot = 0;
+    calls.load = 0;
     await getDuesReadinessForOwner(a.org.id, S);
     await getDuesReadinessForOwner(a.org.id, { year: 2031, month: 1 });
+    expect(calls).toEqual({ snapshot: 2, load: 2 }); // the snapshot really ran, so this is not a vacuous check
     expect(await writeCounts(a.org.id)).toEqual(before);
   });
 });

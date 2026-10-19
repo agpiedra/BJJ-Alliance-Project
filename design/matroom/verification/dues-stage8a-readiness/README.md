@@ -26,11 +26,17 @@ consumer.
   - totals per branch and per currency;
   - checks 1–5 computed, 6–12 `notImplemented` (check 6 lists the promo/exempt students), 13 `decisionPending`;
   - `ready` is true only if every check is `pass`.
-- **`getDuesReadinessForOwner`** (`index.ts`):
-  - validates the month, then requires `ADMIN` of that organization;
-  - a non-member, unauthenticated caller or another role gets `notFound` (the existing `FORBIDDEN` error is mapped;
-    other errors propagate);
-  - not a `"use server"` file; registered in `scripts/pending-callers.ts`.
+- **`getDuesReadinessForOwner`** (`index.ts`), in two phases with different guarantees:
+  1. **Authorization first, outside any snapshot**, through the shared `resolveActionContext` (unchanged):
+     - validates the month, then requires `ADMIN` of that organization;
+     - a non-member, unauthenticated caller or another role gets `notFound` (the existing `FORBIDDEN` error is mapped;
+       other errors propagate);
+     - **a non-member's refusal is recorded by the helper's existing security audit** (`organization.accessRefused` in
+       `AuditLog`). That audit is preserved deliberately. It is the one write a call can cause, and only when access is
+       refused. An unauthenticated caller or a wrong-role member is refused before that audit step.
+  2. **Only for an authorized owner:** the snapshot is loaded inside one PostgreSQL-enforced `REPEATABLE READ, READ ONLY`
+     transaction and evaluated. **An authorized preview modifies no data.**
+  - Not a `"use server"` file; registered in `scripts/pending-callers.ts`.
 
 **Deviation from the plan:** the `server-only` package is not installed and no dependency was added. Browser exposure is
 guarded by `tests/unit/dues-readiness-not-exposed.test.ts`: no `"use server"`/`"use client"`, no importer outside the
@@ -85,11 +91,21 @@ The brief also now records that `PaymentPeriod` has `recordedAt`, not `createdAt
 - **Price correction:** an in-place price correction changes the branch fingerprint.
 - **Authorization:**
   - the owner gets a report, `ready: false`, with 6–12 `notImplemented` and 13 `decisionPending`;
-  - a Director, another organization's owner and an unauthenticated caller each get `notFound`;
+  - a Director and an unauthenticated caller each get `notFound`, and the snapshot is never opened (call counters on
+    `runReadOnlySnapshot` and `loadReadinessSnapshot` stay at 0);
+  - **another organization's owner:**
+    - gets `notFound` with no `report`;
+    - the snapshot and loader never run;
+    - exactly one new `organization.accessRefused` audit row appears, with that owner as actor and the target
+      organization as `organizationId`/`entityId`;
+    - no financial or dues-configuration row of either organization changes;
   - an invalid month gets `invalid`.
 - **Isolation:** another organization's student and branch ids never appear.
-- **No writes:** row counts of `PaymentPeriod`, obligations, coverage, late fees, status rows, assignments, terms,
-  policies and `AuditLog` are unchanged after two calls.
+- **No writes, for an authorized owner (explicit scope):**
+  - two authorized calls leave the row counts unchanged for `PaymentPeriod`, obligations, coverage, late fees, status
+    rows, assignments, terms, policies **and `AuditLog`**;
+  - the call counters show the snapshot really ran both times;
+  - refused calls are covered by the authorization tests above.
 - **Equivalence:** `@/lib/prisma` is pinned to one outer transaction, and the **real** `generateMonthlyObligationForStudent`
   runs for each of 9 fixture students with an injected active stub and its clock inside S. The transaction is then
   rolled back.
@@ -115,6 +131,7 @@ test-setup gap, not a preview defect.
 | M5: preview skips the currency-mismatch rule | 1 unit + 1 integration (equivalence) |
 | M6: loader reads students across organizations | 6 integration, including isolation |
 | M7: check 1 uses `<=` instead of `<` against the 1st of S | 1 unit |
+| M8 (correction round): the snapshot loads **before** authorization | 4 integration: all three refusal tests (snapshot opened) and the authorized-call test |
 
 ## Checks (isolated test database only)
 
