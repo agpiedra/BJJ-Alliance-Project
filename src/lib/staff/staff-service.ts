@@ -1,7 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { generateRandomToken, digestLookupSecret } from "@/lib/crypto";
 import { requireEnv } from "@/lib/env";
-import { sendTransactionalEmail } from "@/lib/email/send-transactional-email";
+import { sendTransactionalEmail, type EmailSendOutcome } from "@/lib/email/send-transactional-email";
 import type { TenantContext } from "@/lib/tenant/types";
 import { isStaffRole, type StaffMembershipRole } from "@/lib/staff/staff-role";
 
@@ -49,11 +49,24 @@ export type StaffError =
 
 export type StaffResult<T extends object = object> = ({ ok: true } & T) | { error: StaffError };
 
-/** What the Owner is handed after issuing or resending an invitation — the link is
- * always returned so it can be copied when the email never arrives. */
+/**
+ * docs/STAFF_INVITATION_RESEND_PLAN.md §2.2 — what settlement found when it checked the new invitation under the lock:
+ * - "settled": it was usable at that moment (and, for a provider-accepted resend, the links it replaced were retired);
+ * - "acceptedMeanwhile": it had been accepted (its own `acceptedAt` — the only acceptance evidence used);
+ * - "unavailable": it was no longer usable (revoked or expired). No cause is claimed;
+ * - "failed": settlement itself failed — nothing was invalidated, and whether the link works is UNKNOWN.
+ */
+export type StaffInvitationSettlement = "settled" | "acceptedMeanwhile" | "unavailable" | "failed";
+
+/** What the Owner is handed after issuing or resending an invitation. The link is returned so it can be copied when the
+ * email never arrives — but only while it may work: settled (usable when checked) or failed (unknown, shown with a
+ * warning). Never for an invitation settlement found accepted or unusable. */
 export interface InvitationDelivery {
-  invitationLink: string;
-  emailSent: boolean;
+  invitationId: string;
+  invitationLink?: string;
+  expiresAt: Date;
+  emailOutcome: EmailSendOutcome;
+  settlement: StaffInvitationSettlement;
 }
 
 type Tx = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
@@ -132,13 +145,90 @@ async function findStaffMembership(tx: Tx, organizationId: string, membershipId:
   return { ...membership, role: membership.role as StaffMembershipRole };
 }
 
-/** The email, in the organization's own language (the link opens in it too). */
-async function deliverInvitation(
+/** Same academies, ignoring order and duplicates. Only for FINDING matching invitations — stored values are never rewritten. */
+function sameAcademySet(a: string[], b: string[]): boolean {
+  const left = [...new Set(a)].sort();
+  const right = [...new Set(b)].sort();
+  return left.length === right.length && left.every((id, index) => id === right[index]);
+}
+
+/**
+ * The live invitations carrying the same OFFER as `invitation` (docs/STAFF_INVITATION_RESEND_PLAN.md §2.1): same
+ * organization, EXACT stored address (the identity acceptance and its sibling revocation use — never case-folded), same
+ * role, same academy set. Includes `invitation` itself while it is live. Call under the organization lock.
+ */
+async function liveSameOffer(
+  tx: Tx,
   organizationId: string,
-  email: string,
-  rawToken: string,
-  role: StaffMembershipRole,
-): Promise<InvitationDelivery> {
+  invitation: { email: string; role: string; academyIds: string[] },
+): Promise<string[]> {
+  const candidates = await tx.invitation.findMany({
+    where: { organizationId, email: invitation.email, role: invitation.role as StaffMembershipRole, usedAt: null, revokedAt: null },
+    select: { id: true, academyIds: true },
+  });
+  return candidates.filter((candidate) => sameAcademySet(candidate.academyIds, invitation.academyIds)).map((candidate) => candidate.id);
+}
+
+/**
+ * Settles one issued invitation once its email outcome is known (§2.2 step 3), under the organization lock with fresh
+ * time. Only the new invitation's own `acceptedAt` counts as acceptance; any other reason it is no longer usable is
+ * "unavailable", cause unclaimed. Only a provider-accepted send retires anything, and only the still-live ids captured
+ * at issue — never an invitation issued later. Rejected, unconfigured and unknown sends change nothing.
+ */
+async function settleStaffInvitation(
+  actorUserId: string,
+  organizationId: string,
+  invitationId: string,
+  previousIds: string[],
+  outcome: EmailSendOutcome,
+): Promise<Exclude<StaffInvitationSettlement, "failed">> {
+  return prisma.$transaction(async (tx) => {
+    await lockOrganizationStaff(tx, organizationId);
+    const now = new Date();
+    const own = await tx.invitation.findFirstOrThrow({
+      where: { id: invitationId, organizationId },
+      select: { acceptedAt: true, usedAt: true, revokedAt: true, expiresAt: true },
+    });
+    if (own.acceptedAt) return "acceptedMeanwhile";
+    if (own.usedAt || own.revokedAt || own.expiresAt <= now) return "unavailable";
+
+    if (outcome === "accepted" && previousIds.length > 0) {
+      const stillLive = await tx.invitation.findMany({
+        where: { organizationId, id: { in: previousIds }, usedAt: null, revokedAt: null },
+        select: { id: true },
+      });
+      if (stillLive.length > 0) {
+        const ids = stillLive.map((invitation) => invitation.id);
+        await tx.invitation.updateMany({ where: { organizationId, id: { in: ids }, usedAt: null, revokedAt: null }, data: { revokedAt: now } });
+        await tx.auditLog.create({
+          data: {
+            actorId: actorUserId,
+            organizationId,
+            action: "staff.invitationSuperseded",
+            entityType: "Invitation",
+            entityId: invitationId,
+            before: { invitationIds: ids },
+          },
+        });
+      }
+    }
+    return "settled";
+  });
+}
+
+interface IssuedInvitation {
+  invitationId: string;
+  rawToken: string;
+  email: string;
+  role: StaffMembershipRole;
+  expiresAt: Date;
+  /** Replacement candidates captured at issue (empty for a first invite). */
+  previousIds: string[];
+}
+
+/** The email, in the organization's own language (the link opens in it too) — sent with no transaction open — then settled. */
+async function deliverInvitation(actorUserId: string, organizationId: string, issued: IssuedInvitation): Promise<InvitationDelivery> {
+  const { email, rawToken, role } = issued;
   const organization = await prisma.organization.findUniqueOrThrow({
     where: { id: organizationId },
     select: { name: true, defaultLocale: true },
@@ -164,7 +254,23 @@ async function deliverInvitation(
     // Outcome and fixed provider code only — the provider's free-text message can carry the recipient or the link.
     console.error("[staff] invitation email outcome", { organizationId, outcome: result.outcome, providerCode: result.providerCode });
   }
-  return { invitationLink, emailSent: result.success };
+
+  let settlement: StaffInvitationSettlement;
+  try {
+    settlement = await settleStaffInvitation(actorUserId, organizationId, issued.invitationId, issued.previousIds, result.outcome);
+  } catch {
+    // The transaction rolled back: nothing was invalidated. No error text — it can carry query parameters.
+    console.error("[staff] invitation settle failed", { organizationId, outcome: result.outcome });
+    settlement = "failed";
+  }
+  const mayWork = settlement === "settled" || settlement === "failed";
+  return {
+    invitationId: issued.invitationId,
+    expiresAt: issued.expiresAt,
+    emailOutcome: result.outcome,
+    settlement,
+    ...(mayWork ? { invitationLink } : {}),
+  };
 }
 
 export interface InviteStaffInput {
@@ -180,7 +286,7 @@ export async function inviteStaffMember(context: TenantContext, input: InviteSta
   if (!isStaffRole(input.role)) return { error: "invalid" };
   const role = input.role;
 
-  const issued = await prisma.$transaction(async (tx): Promise<{ error: StaffError } | { rawToken: string; email: string }> => {
+  const issued = await prisma.$transaction(async (tx): Promise<{ error: StaffError } | IssuedInvitation> => {
     await lockOrganizationStaff(tx, organizationId);
 
     const academies = await resolveAcademyIds(tx, organizationId, role, input.academyIds);
@@ -236,25 +342,31 @@ export async function inviteStaffMember(context: TenantContext, input: InviteSta
         after: { email, role, academyIds: academies.academyIds },
       },
     });
-    return { rawToken, email };
+    return { invitationId: invitation.id, rawToken, email, role, expiresAt: invitation.expiresAt, previousIds: [] };
   });
 
   if ("error" in issued) return { error: issued.error };
-  return { ok: true, ...(await deliverInvitation(organizationId, issued.email, issued.rawToken, role)) };
+  return { ok: true, ...(await deliverInvitation(context.actorUserId, organizationId, issued)) };
 }
 
-/** A new link for the same invitation. The old one dies (`revokedAt`); role and academies carry over. An expired invitation may be resent; a used or revoked one may not. */
+/**
+ * A new link for the same invitation (docs/STAFF_INVITATION_RESEND_PLAN.md §2.2). Nothing is invalidated here: the
+ * earlier links are only captured, and settlement retires them once the provider has accepted the new email. Role and
+ * academies are copied exactly as stored. An expired invitation may be resent; a used or revoked one may not.
+ */
 export async function resendStaffInvitation(context: TenantContext, invitationId: string): Promise<StaffResult<InvitationDelivery>> {
   assertOwner(context);
   const { organizationId } = context;
 
-  const reissued = await prisma.$transaction(async (tx): Promise<{ error: StaffError } | { rawToken: string; email: string; role: StaffMembershipRole }> => {
+  const reissued = await prisma.$transaction(async (tx): Promise<{ error: StaffError } | IssuedInvitation> => {
     await lockOrganizationStaff(tx, organizationId);
     const previous = await tx.invitation.findFirst({ where: { id: invitationId, organizationId } });
     if (!previous) return { error: "notFound" as const };
     if (previous.usedAt || previous.revokedAt || !isStaffRole(previous.role)) return { error: "notPending" as const };
 
-    await tx.invitation.update({ where: { id: previous.id }, data: { revokedAt: new Date() } });
+    // Replacement candidates, captured NOW: the resent invitation and every other live link of the same offer. A later
+    // settlement may retire only these — never an invitation issued after this point.
+    const previousIds = await liveSameOffer(tx, organizationId, previous);
     const rawToken = generateRandomToken();
     const replacement = await tx.invitation.create({
       data: {
@@ -274,17 +386,29 @@ export async function resendStaffInvitation(context: TenantContext, invitationId
         action: "staff.invitationResend",
         entityType: "Invitation",
         entityId: replacement.id,
-        before: { invitationId: previous.id },
+        before: { invitationId: previous.id, previousIds },
         after: { email: previous.email, role: previous.role, academyIds: previous.academyIds },
       },
     });
-    return { rawToken, email: previous.email, role: previous.role as StaffMembershipRole };
+    return {
+      invitationId: replacement.id,
+      rawToken,
+      email: previous.email,
+      role: previous.role as StaffMembershipRole,
+      expiresAt: replacement.expiresAt,
+      previousIds,
+    };
   });
 
   if ("error" in reissued) return { error: reissued.error };
-  return { ok: true, ...(await deliverInvitation(organizationId, reissued.email, reissued.rawToken, reissued.role)) };
+  return { ok: true, ...(await deliverInvitation(context.actorUserId, organizationId, reissued)) };
 }
 
+/**
+ * Withdraws the OFFER, not just one link (docs/STAFF_INVITATION_RESEND_PLAN.md §2.4, D2): every live invitation with
+ * the same exact address, role and academy set — including a resend's replacement whose email is still in flight, so
+ * that settlement then finds it unusable and changes nothing. A different-scope offer to the same address is untouched.
+ */
 export async function revokeStaffInvitation(context: TenantContext, invitationId: string): Promise<StaffResult> {
   assertOwner(context);
   const { organizationId } = context;
@@ -295,7 +419,8 @@ export async function revokeStaffInvitation(context: TenantContext, invitationId
     if (!invitation) return { error: "notFound" as const };
     if (invitation.usedAt || invitation.revokedAt) return { error: "notPending" as const };
 
-    await tx.invitation.update({ where: { id: invitation.id }, data: { revokedAt: new Date() } });
+    const invitationIds = await liveSameOffer(tx, organizationId, invitation);
+    await tx.invitation.updateMany({ where: { organizationId, id: { in: invitationIds }, usedAt: null, revokedAt: null }, data: { revokedAt: new Date() } });
     await tx.auditLog.create({
       data: {
         actorId: context.actorUserId,
@@ -303,7 +428,7 @@ export async function revokeStaffInvitation(context: TenantContext, invitationId
         action: "staff.invitationRevoke",
         entityType: "Invitation",
         entityId: invitation.id,
-        before: { email: invitation.email, role: invitation.role, academyIds: invitation.academyIds },
+        before: { email: invitation.email, role: invitation.role, academyIds: invitation.academyIds, invitationIds },
       },
     });
     return { ok: true as const };

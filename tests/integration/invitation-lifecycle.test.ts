@@ -504,28 +504,35 @@ describe("other races", () => {
     expect(await row(oId)).toEqual({ usedAt, acceptedAt: null, revokedAt: null });
   });
 
-  it("concurrent staff revocation of the NEW link while its email is in flight: 'unavailable', the earlier link NOT retired", async () => {
+  // A staff-page Revoke withdraws the whole OFFER (docs/STAFF_INVITATION_RESEND_PLAN.md §2.4, D2 approved): every live
+  // invitation with the same exact address, role and academy set. The owner's links (role ADMIN, no academies, the
+  // contact address) are one offer, so revoking either one withdraws both — settlement then revives nothing.
+  for (const which of ["NEW", "OLD"] as const) {
+    it(`concurrent staff revocation of the ${which} link while the email is in flight withdraws the offer: 'unavailable', nothing revived`, async () => {
+      const { org, oId } = await approvedOrganization();
+      const context = await coOwnerContext(org.id);
+      const releases = holdSends();
+      const resend = approveOrganization(org.slug, approverId);
+      await vi.waitFor(() => expect(releases).toHaveLength(1));
+      const nId = (await prisma.invitation.findFirstOrThrow({ where: { organizationId: org.id, id: { not: oId } } })).id;
+
+      expect(await revokeStaffInvitation(context, which === "NEW" ? nId : oId)).toEqual({ ok: true });
+      const revokedAt = [(await row(oId)).revokedAt, (await row(nId)).revokedAt];
+      releases[0]("accepted");
+
+      expect((await resend).invitationSettlement).toBe("unavailable");
+      expect(await liveIds(org.id)).toEqual([]);
+      expect([(await row(oId)).revokedAt, (await row(nId)).revokedAt]).toEqual(revokedAt);
+    });
+  }
+
+  it("an earlier link retired by something else before an accepted settlement: settlement skips it (its revokedAt unchanged) and completes", async () => {
     const { org, oId } = await approvedOrganization();
-    const context = await coOwnerContext(org.id);
     const releases = holdSends();
     const resend = approveOrganization(org.slug, approverId);
     await vi.waitFor(() => expect(releases).toHaveLength(1));
-    const nId = (await prisma.invitation.findFirstOrThrow({ where: { organizationId: org.id, id: { not: oId } } })).id;
-
-    expect(await revokeStaffInvitation(context, nId)).toEqual({ ok: true });
-    releases[0]("accepted");
-
-    expect((await resend).invitationSettlement).toBe("unavailable");
-    expect(await liveIds(org.id)).toEqual([oId]);
-  });
-
-  it("concurrent staff revocation of the OLD link before an accepted settlement: settlement skips it (its revokedAt unchanged) and completes", async () => {
-    const { org, oId } = await approvedOrganization();
-    const context = await coOwnerContext(org.id);
-    const releases = holdSends();
-    const resend = approveOrganization(org.slug, approverId);
-    await vi.waitFor(() => expect(releases).toHaveLength(1));
-    expect(await revokeStaffInvitation(context, oId)).toEqual({ ok: true });
+    // A one-row retirement (e.g. by an older settlement), not the offer-wide staff Revoke.
+    await prisma.invitation.update({ where: { id: oId }, data: { revokedAt: new Date() } });
     const revokedAt = (await row(oId)).revokedAt;
     releases[0]("accepted");
 

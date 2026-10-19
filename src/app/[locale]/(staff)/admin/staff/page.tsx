@@ -2,7 +2,7 @@ import { getLocale, getTranslations } from "next-intl/server";
 import { requireTenantContext } from "@/lib/tenant/context";
 import { getOrganizationBranding } from "@/lib/branding/get-branding";
 import { prisma } from "@/lib/prisma";
-import { listStaff } from "@/lib/staff/list-staff";
+import { listStaff, usableInvitationIds } from "@/lib/staff/list-staff";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { InviteForm, InvitationRowActions, LatestInvitationLink, MemberRowActions, StaffLinkProvider } from "./staff-forms";
@@ -94,7 +94,8 @@ export default async function StaffPage() {
           <CardTitle>{t("invitations.heading")}</CardTitle>
         </CardHeader>
         <CardContent className="flex flex-col gap-4 pt-4">
-          <LatestInvitationLink />
+          {/* Usable = still pending AND not expired at this render — listStaff's own data, no extra query. */}
+          <LatestInvitationLink usableIds={usableInvitationIds(invitations)} />
           {invitations.length === 0 ? (
             <p className="text-sm text-muted-foreground">{t("invitations.empty")}</p>
           ) : (

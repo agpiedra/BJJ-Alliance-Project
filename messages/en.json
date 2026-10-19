@@ -2456,12 +2456,25 @@
       "success": "Invitation created."
     },
     "link": {
-      "emailSent": "We emailed the link.",
-      "emailNotSent": "The email couldn't be sent. Copy the link below and send it yourself.",
       "label": "Invitation link",
       "copy": "Copy link",
       "copied": "Copied",
-      "note": "Shown now only. If you lose it, resend the invitation to get a new one."
+      "note": "Shown now only. If you lose it, resend the invitation to get a new link.",
+      "outcome": {
+        "accepted": "The email provider accepted the message. That doesn't confirm delivery.",
+        "rejected": "The email provider refused the message. Copy the link below and send it yourself.",
+        "notConfigured": "Email sending isn't set up. Copy the link below and send it yourself.",
+        "unknown": "We couldn't confirm whether the email was sent — it may still arrive. Copy the link below if needed."
+      },
+      "resend": {
+        "retired": "The earlier links this resend replaced no longer work.",
+        "kept": "This resend did not invalidate earlier links."
+      },
+      "checked": "Usable when checked just now (valid until {expiresAt}). It can still be revoked, used or expire later.",
+      "acceptedMeanwhile": "This new link was accepted while the email was being sent.",
+      "unavailable": "This new link was no longer usable when we checked after sending (it may have been revoked, replaced, or expired). Check the pending invitations below.",
+      "unverified": "We couldn't finish checking this invitation, so we don't know whether this link works. Refresh the page before sharing it.",
+      "noLongerUsable": "This link is no longer usable — it was accepted, revoked, replaced or has expired."
     },
     "edit": {
       "open": "Edit",
@@ -2481,7 +2494,7 @@
     },
     "revoke": {
       "button": "Revoke",
-      "confirm": "Revoke this invitation? The link stops working."
+      "confirm": "Revoke this invitation? All of its links stop working."
     },
     "error": {
       "notFound": "That wasn't found.",
