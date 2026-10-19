@@ -7,6 +7,7 @@ import { formDataToObject } from "@/lib/form-data";
 import { CURRENCIES } from "@/lib/payments/format-money";
 import { seedOrganizationDefaults } from "@/lib/organizations/seed-defaults";
 import { approveOrganization } from "@/lib/organizations/approve-organization";
+import { invitationReportOf, type InvitationReport } from "@/lib/organizations/invitation-feedback";
 import type { ActionState } from "@/lib/action-state";
 
 /**
@@ -36,7 +37,9 @@ const manualCreationSchema = z.strictObject({
   promotionMode: z.enum(["ATTENDANCE", "TIME", "MANUAL"]),
 });
 
-export type ManualOrganizationCreationState = ActionState & { slugTaken?: boolean };
+/** On success, the new organization's id and what happened to the owner's invitation (reported beside `ok`, never as
+ * an error: the organization is created whatever the email outcome). */
+export type ManualOrganizationCreationState = ActionState & InvitationReport & { slugTaken?: boolean; organizationId?: string };
 
 /**
  * Creates the `Organization` row directly `ACTIVE` (never `PENDING` — this
@@ -105,7 +108,7 @@ export async function createOrganizationManually(
   // registration takes once approved. Status is already ACTIVE, so this
   // is the "already ACTIVE" branch of approveOrganization's own idempotent
   // check, never re-running the PENDING->ACTIVE transition or its audit row.
-  await approveOrganization(organization.slug, auth.context.actorUserId);
+  const approval = await approveOrganization(organization.slug, auth.context.actorUserId);
 
-  return { ok: true };
+  return { ok: true, organizationId: organization.id, ...invitationReportOf(approval) };
 }

@@ -2197,6 +2197,26 @@
           "noteRequired": "A reason is required to cancel.",
           "alreadyCancelled": "This organization has already been cancelled."
         }
+      },
+      "invitationFeedback": {
+        "approved": "{name} was approved.",
+        "created": "{name} was created.",
+        "openOrganization": "Open the organization",
+        "email": {
+          "accepted": "The email provider accepted the invitation email to the owner; delivery is not confirmed.",
+          "rejected": "The invitation email was not sent: the email provider rejected it.",
+          "not_configured": "The invitation email was not sent: email sending is not configured.",
+          "unknown": "It could not be confirmed whether the invitation email was sent; it may still arrive.",
+          "notIssued": "No invitation was issued: an invitation to this address has already been accepted.",
+          "legacyUnresolved": "No invitation was issued. An earlier invitation to this address is recorded as used under the previous rules, and it cannot be told whether it was accepted or replaced. A platform operator must resolve it."
+        },
+        "settlement": {
+          "withdrawn": "Its link was withdrawn, so the owner has no working invitation yet. The organization itself is saved — do not approve or create it again; use “Resend invitation” on the organization’s page.",
+          "unknownOpen": "The invitation was still open when checked after sending. If the owner does not receive it, use “Resend invitation” on the organization’s page.",
+          "acceptedMeanwhile": "The invitation was accepted while the email was being sent.",
+          "unavailable": "The invitation was no longer usable when checked after sending, so its link does not work. Use “Resend invitation” on the organization’s page.",
+          "failed": "The invitation records could not be updated after sending, so it is not known whether its link works. Check the organization’s page before resending."
+        }
       }
     },
     "admins": {

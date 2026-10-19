@@ -2,7 +2,7 @@ import { getTranslations } from "next-intl/server";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Card, CardContent } from "@/components/ui/card";
 import { listPendingOrganizations } from "@/lib/tenant/platform-lookups";
-import { PendingRowActions } from "./pending-row-actions";
+import { ApprovalFeedbackProvider, LatestApprovalFeedback, PendingRowActions } from "./pending-row-actions";
 
 export const dynamic = "force-dynamic";
 
@@ -21,10 +21,12 @@ export default async function PendingOrganizationsPage() {
   const pending = await listPendingOrganizations();
 
   return (
-    <>
+    <ApprovalFeedbackProvider>
       <header>
         <h1 className="text-2xl font-bold">{t("heading")}</h1>
       </header>
+
+      <LatestApprovalFeedback />
 
       {pending.length === 0 ? (
         <EmptyState message={t("empty.description")} />
@@ -65,12 +67,12 @@ export default async function PendingOrganizationsPage() {
                     <dd>{organization.referralSource || "—"}</dd>
                   </div>
                 </dl>
-                <PendingRowActions organizationId={organization.id} />
+                <PendingRowActions organizationId={organization.id} organizationName={organization.name} />
               </CardContent>
             </Card>
           ))}
         </div>
       )}
-    </>
+    </ApprovalFeedbackProvider>
   );
 }
