@@ -159,9 +159,10 @@ async function deliverInvitation(
           subject: `Te invitaron a ${organization.name}`,
           lines: [`Te invitaron a unirte a ${organization.name} como ${roleLabel}.`, "Abre este enlace para continuar:", invitationLink, "Este enlace vence en 7 días."],
         };
-  const result = await sendTransactionalEmail(email, message.subject, message.lines);
+  const result = await sendTransactionalEmail(email, message.subject, message.lines, { suppressProviderErrorLogging: true });
   if (!result.success) {
-    console.error("[staff] invitation email failed to send", { organizationId, error: result.error });
+    // Outcome and fixed provider code only — the provider's free-text message can carry the recipient or the link.
+    console.error("[staff] invitation email outcome", { organizationId, outcome: result.outcome, providerCode: result.providerCode });
   }
   return { invitationLink, emailSent: result.success };
 }
