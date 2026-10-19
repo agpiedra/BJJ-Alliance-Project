@@ -164,6 +164,15 @@ const PENDING_CALLERS: PendingCaller[] = [
   // production caller exists on purpose — not a route, not a server action, no scheduler entry (vercel.json's crons array is
   // untouched). tests/unit/dues-ledger-not-exposed.test.ts and dues-eligibility-not-exposed.test.ts both name this file as the
   // one authorized caller of the ledger and the eligibility reader respectively.
+  // Stage 8 PR 8a (docs/dues/STAGE-8-READINESS-BRIEF.md): the owner's read-only readiness report. Built ahead of the owner
+  // readiness screen (PR 8d); not a server action, not a route.
+  {
+    symbol: "getDuesReadinessForOwner",
+    file: "src/lib/dues/readiness/index.ts",
+    dueBy: "stage 8 PR 8d (owner readiness screen)",
+    reason:
+      "Read-only, owner-only readiness report over one REPEATABLE READ, READ ONLY snapshot: content fingerprints, a dry-run preview with per-currency totals, checks 1-5 computed and checks 6-13 reported as notImplemented/decisionPending. Its caller is the owner screen, which is a later PR.",
+  },
   {
     symbol: "generateMonthlyObligationForStudent",
     file: "src/lib/dues/monthly-generation.ts",
