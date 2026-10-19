@@ -82,18 +82,23 @@ export async function claimResetRequest(keys: ResetThrottleKeys, now: Date = new
  * What it bounds: expired rows drain while requests keep arriving (each request adds at most 2 rows and removes up to
  * 100). What it does NOT bound: rows inside the retention period (no fixed ceiling), or expired rows when requests
  * stop entirely. `createdAt` holds UTC wall-clock values (timestamp without time zone), hence the UTC cutoff.
+ *
+ * The candidates are a MATERIALIZED CTE, evaluated exactly once: as `WHERE "id" IN (SELECT … LIMIT … SKIP LOCKED)` the
+ * planner could make the subquery the re-executed inner side of a nested loop (bloated-heap statistics), and each
+ * re-execution admitted further rows — one call deleted 150 (docs/SWEEP_BOUND_INVESTIGATION.md). This bounds the rows
+ * deleted and the candidate set, not the statement's total runtime or scan cost.
  */
 export async function sweepExpiredResetRequests(): Promise<number> {
   try {
     return await prisma.$executeRaw`
-      DELETE FROM "PasswordResetRequest"
-      WHERE "id" IN (
+      WITH candidates AS MATERIALIZED (
         SELECT "id" FROM "PasswordResetRequest"
         WHERE "createdAt" < (now() AT TIME ZONE 'UTC') - make_interval(hours => ${RESET_RETENTION_HOURS}::int)
         ORDER BY "createdAt"
         LIMIT ${RESET_SWEEP_BATCH}::int
         FOR UPDATE SKIP LOCKED
-      )`;
+      )
+      DELETE FROM "PasswordResetRequest" target USING candidates WHERE target."id" = candidates."id"`;
   } catch (error) {
     logPasswordResetEvent({ event: "password_reset.throttle_cleanup_failed", error: safeErrorCode(error) });
     return 0;

@@ -114,19 +114,20 @@ export async function releaseLoginReservation(reservationId: string): Promise<vo
 /**
  * Bounded cleanup, the same shape as the password-reset sweep: at most LOGIN_SWEEP_BATCH rows older than the retention
  * period, oldest first; `SKIP LOCKED` keeps concurrent sweeps from blocking each other. Never throws. `createdAt` holds
- * UTC wall-clock values (timestamp without time zone), hence the UTC cutoff.
+ * UTC wall-clock values (timestamp without time zone), hence the UTC cutoff. The candidates are a MATERIALIZED CTE,
+ * evaluated exactly once — see sweepExpiredResetRequests (password-reset-throttle.ts) for why.
  */
 export async function sweepExpiredLoginAttempts(): Promise<number> {
   try {
     return await prisma.$executeRaw`
-      DELETE FROM "LoginAttempt"
-      WHERE "id" IN (
+      WITH candidates AS MATERIALIZED (
         SELECT "id" FROM "LoginAttempt"
         WHERE "createdAt" < (now() AT TIME ZONE 'UTC') - make_interval(hours => ${LOGIN_RETENTION_HOURS}::int)
         ORDER BY "createdAt"
         LIMIT ${LOGIN_SWEEP_BATCH}::int
         FOR UPDATE SKIP LOCKED
-      )`;
+      )
+      DELETE FROM "LoginAttempt" target USING candidates WHERE target."id" = candidates."id"`;
   } catch (error) {
     logLoginEvent({ event: "login.throttle_cleanup_failed", error: safeErrorCode(error) });
     return 0;
