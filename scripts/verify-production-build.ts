@@ -7,9 +7,10 @@
  * 404 with no session cookie for an active synthetic user, the correct secret and a localhost Host. The negative
  * control then sends the SAME request to `next dev` with the same env and requires a session cookie, so a missing
  * user, a bad secret or a wrong URL cannot produce a false pass. Both servers' headers are checked on pages, an
- * API route, redirects (not followed) and real static assets.
+ * API route, redirects (not followed) and real static assets. /{es,en}/dev/{belts,components} must answer HTTP 404
+ * with none of their content on the production build, and render (with a synthetic belt rank) on `next dev`.
  *
- * Isolated test database only (guarded TEST_DATABASE_URL); the one synthetic user is deleted afterwards. Secrets and
+ * Isolated test database only (guarded TEST_DATABASE_URL); the synthetic user and belt rank are deleted afterwards. Secrets and
  * cookies are never printed. Note: `next dev` writes into `.next`, so the production build is no longer intact after
  * this script — run it last, after anything else that needs the build.
  *
@@ -160,6 +161,31 @@ async function checkHeaders(label: string, base: string) {
   }
 }
 
+// Text only these pages render. The production 404 must contain none of it; the dev control must contain its own.
+// Not the translated "devBelts.heading": next-intl ships the whole message catalog on every page (login included),
+// so that string is present everywhere and says nothing about this route.
+const DEV_PAGE_CONTENT = ["Component library preview", "Harbor Jiu-Jitsu"];
+
+async function checkDevPages(label: string, base: string, served: boolean, beltMarker: string) {
+  for (const locale of ["es", "en"]) {
+    for (const page of ["belts", "components"]) {
+      const path = `/${locale}/dev/${page}`;
+      const response = await get(`${base}${path}`);
+      const body = await response.text();
+      if (served) {
+        check(response.status === 200, `${label} ${path}: status ${response.status} (want 200)`);
+        const marker = page === "belts" ? beltMarker : "Component library preview";
+        check(body.includes(marker), `${label} ${path}: renders its content`);
+      } else {
+        // The real HTTP status, not a rendered "not found" message inside a 200 stream.
+        check(response.status === 404, `${label} ${path}: status ${response.status} (want 404)`);
+        const leaked = [...DEV_PAGE_CONTENT, beltMarker].filter((text) => body.includes(text));
+        check(leaked.length === 0, `${label} ${path}: no preview content (found: ${leaked.join(", ") || "none"})`);
+      }
+    }
+  }
+}
+
 async function main() {
   if (!existsSync(".next/BUILD_ID")) throw new Error("No production build (.next/BUILD_ID). Run `pnpm build` first.");
 
@@ -169,12 +195,31 @@ async function main() {
   const env = { ...testDatabaseChildEnv(testUrl), NODE_ENV: "test", E2E_AUTH_BYPASS_SECRET: secret } as NodeJS.ProcessEnv;
 
   const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: testUrl }) });
+  // Read-only, and before any write, so a missing fixture leaves nothing behind.
+  const organization = await prisma.organization.findUniqueOrThrow({ where: { slug: "alliance-cr" } });
   const user = await prisma.user.create({
     data: {
       email: `verify-build-${Date.now()}-${randomBytes(4).toString("hex")}@example.test`,
       passwordHash: "synthetic-not-a-real-hash",
       role: "ADMIN",
       active: true,
+    },
+  });
+  // /dev/belts renders the alliance-cr rank catalog; one synthetic rank gives it a unique marker, so the dev control
+  // proves real rendering and the production check can look for that exact text.
+  const beltMarker = `SYNTH-BELT-${randomBytes(4).toString("hex")}`;
+  const rank = await prisma.beltRank.create({
+    data: {
+      organizationId: organization.id,
+      track: "ADULT",
+      code: beltMarker,
+      labelEs: beltMarker,
+      labelEn: beltMarker,
+      order: 900_000 + randomBytes(2).readUInt16BE(0),
+      maxStripes: 0,
+      stripeColors: [],
+      primaryColor: "#123456",
+      barColor: "#000000",
     },
   });
 
@@ -190,6 +235,7 @@ async function main() {
     checkSecurityHeaders("production", "/api/e2e-auth-bypass", prod, GENERAL);
     await prod.arrayBuffer();
     await checkHeaders("production", prodBase);
+    await checkDevPages("production", prodBase, false, beltMarker);
     stopServer(server);
 
     console.log(`negative control: development server (next dev, same env) on :${DEV_PORT}`);
@@ -201,6 +247,7 @@ async function main() {
     check(hasSessionCookie(dev), "development bypass (negative control): session cookie set");
     await dev.arrayBuffer();
     await checkHeaders("development", devBase);
+    await checkDevPages("development", devBase, true, beltMarker);
   } catch (error) {
     failures.push(error instanceof Error ? error.message : String(error));
     const tail = server?.stderrTail();
@@ -208,6 +255,7 @@ async function main() {
   } finally {
     stopServer(server);
     await prisma.user.delete({ where: { id: user.id } }).catch(() => {});
+    await prisma.beltRank.delete({ where: { id: rank.id } }).catch(() => {});
     await prisma.$disconnect();
   }
 

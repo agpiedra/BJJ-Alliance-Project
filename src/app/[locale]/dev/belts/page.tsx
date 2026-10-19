@@ -1,3 +1,4 @@
+import { notFound } from "next/navigation";
 import { getTranslations } from "next-intl/server";
 import { prisma } from "@/lib/prisma";
 import { BeltGraphic, type BeltSize, type BeltVisualData } from "@/components/belt-graphic/belt-graphic";
@@ -18,6 +19,8 @@ const SIZES: BeltSize[] = ["xs", "sm", "lg"];
  * assumed.
  */
 export default async function DevBeltsPage({ params }: { params: Promise<{ locale: string }> }) {
+  // Dev-only preview: a production build compiles this to `true` and 404s before any data is read.
+  if (process.env.NODE_ENV === "production") notFound();
   const { locale } = await params;
   const t = await getTranslations({ locale, namespace: "devBelts" });
 
