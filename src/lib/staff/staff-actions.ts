@@ -27,8 +27,8 @@ import {
  * exported action here stops demanding the Owner.
  */
 
-/** What issuing or resending an invitation hands back: the link is always
- * returned so the Owner can copy it when the email never arrives. */
+/** What issuing or resending an invitation hands back: the email outcome, what settlement found, and — while it may
+ * work — the link, so the Owner can copy it when the email never arrives (see `InvitationDelivery`). */
 export type StaffInviteState = ActionState & Partial<InvitationDelivery>;
 
 async function refreshStaffPage(): Promise<void> {

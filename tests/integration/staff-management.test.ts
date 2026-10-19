@@ -3,7 +3,7 @@ import { getTestPrismaClient } from "../helpers/test-db";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/email/send-transactional-email", () => ({
-  sendTransactionalEmail: vi.fn(async () => ({ success: true })),
+  sendTransactionalEmail: vi.fn(async () => ({ success: true, outcome: "accepted" })),
 }));
 
 let currentSession: { user: { id: string; role: string } | null; activeOrganizationId?: string } | null = null;
@@ -188,7 +188,7 @@ describe("staff management", () => {
 
       const result = await inviteStaff(org.organizationId, {}, form({ email: "  Coach.One@Example.com ", role: "INSTRUCTOR", academyIds: [org.academyB] }));
 
-      expect(result).toMatchObject({ ok: true, emailSent: true });
+      expect(result).toMatchObject({ ok: true, emailOutcome: "accepted", settlement: "settled" });
       const link = (result as { invitationLink: string }).invitationLink;
       expect(link).toContain("/accept-invitation?token=");
       const invitation = await prisma.invitation.findFirstOrThrow({ where: { organizationId: org.organizationId, email: "coach.one@example.com" } });
@@ -244,11 +244,11 @@ describe("staff management", () => {
     it("when the email fails to send, the invitation still exists and the link is still handed back to copy", async () => {
       const org = await newOrganization();
       actAs(org.ownerId, org.organizationId);
-      sendMock.mockResolvedValueOnce({ success: false, error: "sandbox" } as never);
+      sendMock.mockResolvedValueOnce({ success: false, error: "sandbox", outcome: "rejected" } as never);
 
       const result = await inviteStaff(org.organizationId, {}, form({ email: "nomail@example.com", role: "INSTRUCTOR", academyIds: [org.academyA] }));
 
-      expect(result).toMatchObject({ ok: true, emailSent: false });
+      expect(result).toMatchObject({ ok: true, emailOutcome: "rejected", settlement: "settled" });
       expect((result as { invitationLink: string }).invitationLink).toContain("token=");
       expect(await prisma.invitation.count({ where: { organizationId: org.organizationId, email: "nomail@example.com" } })).toBe(1);
     });
@@ -322,7 +322,7 @@ describe("staff management", () => {
   });
 
   describe("resending and revoking", () => {
-    it("REQUIRED: resending kills the old link, issues a new working one, and is audited", async () => {
+    it("REQUIRED: a provider-accepted resend kills the old link (once settled), issues a new working one, and is audited", async () => {
       const org = await newOrganization();
       actAs(org.ownerId, org.organizationId);
       const first = await inviteStaff(org.organizationId, {}, form({ email: "resend@example.com", role: "INSTRUCTOR", academyIds: [org.academyA] }));
@@ -330,7 +330,7 @@ describe("staff management", () => {
 
       const resent = await resendInvitation(org.organizationId, invitation.id);
 
-      expect(resent).toMatchObject({ ok: true, emailSent: true });
+      expect(resent).toMatchObject({ ok: true, emailOutcome: "accepted", settlement: "settled" });
       const oldToken = tokenOf((first as { invitationLink: string }).invitationLink);
       const newToken = tokenOf((resent as { invitationLink: string }).invitationLink);
       expect(newToken).not.toBe(oldToken);

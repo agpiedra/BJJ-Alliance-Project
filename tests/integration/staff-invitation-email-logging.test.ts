@@ -148,7 +148,7 @@ describe("staff invitation email logging through the real Resend SDK (fetch mock
       const sent = sentRequest(fetchMock.mock.calls[0][1]);
       expect(sent.recipient).toBe(email);
       expect(sent.link).not.toBe("");
-      expect(result).toMatchObject({ ok: true, emailSent: false });
+      expect(result).toMatchObject({ ok: true, emailOutcome: "rejected", settlement: "settled" });
       const link = (result as { invitationLink: string }).invitationLink;
       expect(link).toBe(sent.link);
       expect(await prisma.invitation.count({ where: { organizationId: org.organizationId, email, usedAt: null, revokedAt: null } })).toBe(1);
@@ -156,13 +156,13 @@ describe("staff invitation email logging through the real Resend SDK (fetch mock
     });
   }
 
-  it("REQUIRED: a resend hit by a provider-side error logs only 'unknown' + the fixed code; the earlier link is revoked and the new one returned, exactly as before", async () => {
+  it("REQUIRED: a resend hit by a provider-side error logs only 'unknown' + the fixed code; an unknown send leaves the earlier link live and returns the new one", async () => {
     vi.stubEnv("NODE_ENV", "development");
     const org = await newOrganization();
     const email = `staff-log-resend-${suffix}@example.com`;
     stubTransport(() => new Response(JSON.stringify({ id: "synthetic-accepted" }), { status: 200 }));
     const first = await inviteStaff(org.organizationId, {}, form({ email, role: "DIRECTOR", academyIds: org.academyId }));
-    expect(first).toMatchObject({ ok: true, emailSent: true });
+    expect(first).toMatchObject({ ok: true, emailOutcome: "accepted", settlement: "settled" });
     expect(consoleCalls, "an accepted send logs nothing").toEqual([]);
     const original = await prisma.invitation.findFirstOrThrow({ where: { organizationId: org.organizationId, email } });
 
@@ -170,12 +170,13 @@ describe("staff invitation email logging through the real Resend SDK (fetch mock
     const resent = await resendInvitation(org.organizationId, original.id);
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(resent).toMatchObject({ ok: true, emailSent: false });
+    expect(resent).toMatchObject({ ok: true, emailOutcome: "unknown", settlement: "settled" });
     const newLink = (resent as { invitationLink: string }).invitationLink;
     const oldLink = (first as { invitationLink: string }).invitationLink;
     expect(newLink).not.toBe(oldLink);
-    expect((await prisma.invitation.findUniqueOrThrow({ where: { id: original.id } })).revokedAt).not.toBeNull();
-    expect(await prisma.invitation.count({ where: { organizationId: org.organizationId, email, usedAt: null, revokedAt: null } })).toBe(1);
+    // An unknown outcome invalidates nothing (docs/STAFF_INVITATION_RESEND_PLAN.md D1).
+    expect((await prisma.invitation.findUniqueOrThrow({ where: { id: original.id } })).revokedAt).toBeNull();
+    expect(await prisma.invitation.count({ where: { organizationId: org.organizationId, email, usedAt: null, revokedAt: null } })).toBe(2);
     expectOnlyFixedEvent([email, newLink, tokenOf(newLink), oldLink, tokenOf(oldLink)], {
       organizationId: org.organizationId,
       outcome: "unknown",
@@ -190,7 +191,7 @@ describe("staff invitation email logging through the real Resend SDK (fetch mock
     const unparseableEmail = `staff-log-html-${suffix}@example.com`;
     stubTransport((recipient, link) => new Response(`<html>${PROVIDER_SECRET} ${recipient} ${link}</html>`, { status: 502 }));
     const unparseable = await inviteStaff(org.organizationId, {}, form({ email: unparseableEmail, role: "INSTRUCTOR", academyIds: org.academyId }));
-    expect(unparseable).toMatchObject({ ok: true, emailSent: false });
+    expect(unparseable).toMatchObject({ ok: true, emailOutcome: "unknown", settlement: "settled" });
     const unparseableLink = (unparseable as { invitationLink: string }).invitationLink;
     expectOnlyFixedEvent([unparseableEmail, unparseableLink, tokenOf(unparseableLink)], {
       organizationId: org.organizationId,
@@ -207,7 +208,7 @@ describe("staff invitation email logging through the real Resend SDK (fetch mock
     vi.stubGlobal("fetch", failingFetch);
     const network = await inviteStaff(org.organizationId, {}, form({ email: networkEmail, role: "INSTRUCTOR", academyIds: org.academyId }));
     expect(failingFetch).toHaveBeenCalledTimes(1);
-    expect(network).toMatchObject({ ok: true, emailSent: false });
+    expect(network).toMatchObject({ ok: true, emailOutcome: "unknown", settlement: "settled" });
     const networkLink = (network as { invitationLink: string }).invitationLink;
     expectOnlyFixedEvent([networkEmail, networkLink, tokenOf(networkLink), "ECONNREFUSED"], {
       organizationId: org.organizationId,
@@ -237,7 +238,7 @@ describe("staff invitation email logging through the real Resend SDK (fetch mock
     const result = await inviteStaff(org.organizationId, {}, form({ email, role: "INSTRUCTOR", academyIds: org.academyId }));
 
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(result).toMatchObject({ ok: true, emailSent: false });
+    expect(result).toMatchObject({ ok: true, emailOutcome: "not_configured", settlement: "settled" });
     const link = (result as { invitationLink: string }).invitationLink;
     expectOnlyFixedEvent([email, link, tokenOf(link), "RESEND_API_KEY"], { organizationId: org.organizationId, outcome: "not_configured" });
   });

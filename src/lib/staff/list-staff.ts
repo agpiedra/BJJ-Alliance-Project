@@ -26,6 +26,15 @@ export interface PendingInvitationRow {
 const ROLE_ORDER: Record<StaffMembershipRole, number> = { ADMIN: 0, DIRECTOR: 1, INSTRUCTOR: 2 };
 
 /**
+ * The pending invitations whose link could still be used when the page rendered: listed (not accepted or revoked) AND
+ * not expired. Expired ones stay in the list on purpose (to be resent or revoked), so being listed is not enough.
+ * Drives the staff page's link panel (docs/STAFF_INVITATION_RESEND_PLAN.md §3.3).
+ */
+export function usableInvitationIds(invitations: Pick<PendingInvitationRow, "id" | "expired">[]): string[] {
+  return invitations.filter((invitation) => !invitation.expired).map((invitation) => invitation.id);
+}
+
+/**
  * The staff page's data: this organization's staff (never students, never
  * another organization's) and its pending invitations — not yet accepted, not
  * revoked, not superseded. Plain function, not a server action: it trusts its

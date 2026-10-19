@@ -1,7 +1,9 @@
 "use client";
 
 import { createContext, useActionState, useContext, useState, useTransition, type ReactNode } from "react";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
+import type { EmailSendOutcome } from "@/lib/email/provider-errors";
+import type { StaffInvitationSettlement } from "@/lib/staff/staff-service";
 import { Button } from "@/components/ui/button";
 import {
   deactivateStaffMember,
@@ -91,11 +93,38 @@ function AcademyCheckboxes({
   );
 }
 
+/** One issue or resend, as the action reported it (docs/STAFF_INVITATION_RESEND_PLAN.md §3). */
 export interface IssuedLink {
   email: string;
-  link: string;
-  emailSent: boolean;
+  invitationId: string;
+  /** Absent when settlement found the new invitation accepted or no longer usable. */
+  link?: string;
+  expiresAt: Date;
+  emailOutcome: EmailSendOutcome;
+  settlement: StaffInvitationSettlement;
+  /** A resend says what it did to earlier links; a first invite has none. */
+  resend: boolean;
 }
+
+function issuedFrom(result: StaffInviteState, email: string, resend: boolean): IssuedLink | null {
+  if (!result.ok || !result.invitationId || !result.emailOutcome || !result.settlement || !result.expiresAt) return null;
+  return {
+    email,
+    invitationId: result.invitationId,
+    link: result.invitationLink,
+    expiresAt: new Date(result.expiresAt),
+    emailOutcome: result.emailOutcome,
+    settlement: result.settlement,
+    resend,
+  };
+}
+
+const OUTCOME_KEY: Record<EmailSendOutcome, string> = {
+  accepted: "link.outcome.accepted",
+  rejected: "link.outcome.rejected",
+  not_configured: "link.outcome.notConfigured",
+  unknown: "link.outcome.unknown",
+};
 
 const IssuedLinkContext = createContext<{ issued: IssuedLink | null; setIssued: (issued: IssuedLink | null) => void }>({
   issued: null,
@@ -114,19 +143,35 @@ export function StaffLinkProvider({ children }: { children: ReactNode }) {
   return <IssuedLinkContext.Provider value={{ issued, setIssued }}>{children}</IssuedLinkContext.Provider>;
 }
 
-export function LatestInvitationLink() {
+/**
+ * `usableIds`: the pending invitations that were NOT expired when the page rendered (the existing listStaff data). Every
+ * staff action re-renders the page, so after a refresh a link whose invitation was accepted, revoked, replaced — or is
+ * still listed but has expired — is hidden. Accurate as of the last render only; there is no polling.
+ */
+export function LatestInvitationLink({ usableIds }: { usableIds: string[] }) {
   const { issued } = useContext(IssuedLinkContext);
+  // The list current when this result arrived. The result can render BEFORE the page refresh that lists the new
+  // invitation (the action's state update lands outside the refresh's transition), so absence from THAT list proves
+  // nothing; only a newer list — a real refresh — is re-checked. Until then, settlement's own check stands.
+  const [arrivedWith, setArrivedWith] = useState<{ issued: IssuedLink | null; usableIds: string[] }>({ issued, usableIds });
+  if (arrivedWith.issued !== issued) setArrivedWith({ issued, usableIds });
   if (!issued) return null;
-  return <InvitationLinkPanel key={issued.link} issued={issued} />;
+  const refreshedSince = usableIds !== arrivedWith.usableIds;
+  const stillUsable = issued.expiresAt.getTime() > Date.now() && (!refreshedSince || usableIds.includes(issued.invitationId));
+  return <InvitationLinkPanel key={`${issued.invitationId}:${issued.link ?? ""}`} issued={issued} stillUsable={stillUsable} />;
 }
 
-/** The invitation link, always shown so it can be copied when the email never arrives. */
-function InvitationLinkPanel({ issued }: { issued: IssuedLink }) {
+/** The email outcome, what this resend did to earlier links, and the link — only while it may work, labelled for what is known. */
+function InvitationLinkPanel({ issued, stillUsable }: { issued: IssuedLink; stillUsable: boolean }) {
   const t = useTranslations("staffManagement");
+  const locale = useLocale();
   const [copied, setCopied] = useState(false);
-  const { link, emailSent, email } = issued;
+  const { link, email, emailOutcome, settlement, resend } = issued;
+  const showLink = link !== undefined && stillUsable && (settlement === "settled" || settlement === "failed");
+  const success = emailOutcome === "accepted" && settlement === "settled" && stillUsable;
 
   async function copy() {
+    if (!link) return;
     try {
       await navigator.clipboard.writeText(link);
       setCopied(true);
@@ -136,21 +181,41 @@ function InvitationLinkPanel({ issued }: { issued: IssuedLink }) {
     }
   }
 
+  let status: string;
+  if (settlement === "acceptedMeanwhile") status = t("link.acceptedMeanwhile");
+  else if (settlement === "unavailable") status = t("link.unavailable");
+  else if (!stillUsable) status = t("link.noLongerUsable");
+  else if (settlement === "failed") status = t("link.unverified");
+  else {
+    const expiresAt = new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }).format(issued.expiresAt);
+    status = t("link.checked", { expiresAt });
+  }
+
   return (
     <div className="flex flex-col gap-2 rounded-lg border border-border bg-muted/30 p-3" data-testid="invitation-link-panel">
-      <p className={emailSent ? "text-sm text-ok" : "text-sm text-warn"}>{emailSent ? t("link.emailSent") : t("link.emailNotSent")}</p>
-      <label className="flex flex-col gap-1 text-sm">
-        <span>
-          {t("link.label")} · {email}
-        </span>
-        <input type="text" readOnly value={link} onFocus={(event) => event.currentTarget.select()} className={`${INPUT} font-mono text-xs`} />
-      </label>
-      <div className="flex items-center gap-3">
-        <Button type="button" variant="outline" size="sm" onClick={copy}>
-          {copied ? t("link.copied") : t("link.copy")}
-        </Button>
-        <span className="text-xs text-muted-foreground">{t("link.note")}</span>
-      </div>
+      <p className={success ? "text-sm text-ok" : "text-sm text-warn"}>{t(OUTCOME_KEY[emailOutcome] as never)}</p>
+      {/* What THIS resend did. Retiring happens only on a provider-accepted send that settled; in every other case
+          (failed send, unusable new link, or a settle that rolled back) it invalidated nothing. */}
+      {resend && <p className="text-sm">{t(emailOutcome === "accepted" && settlement === "settled" ? "link.resend.retired" : "link.resend.kept")}</p>}
+      <p className={settlement === "settled" && stillUsable ? "text-xs text-muted-foreground" : "text-sm text-warn"} data-testid="invitation-link-status">
+        {status}
+      </p>
+      {showLink && (
+        <>
+          <label className="flex flex-col gap-1 text-sm">
+            <span>
+              {t("link.label")} · {email}
+            </span>
+            <input type="text" readOnly value={link} onFocus={(event) => event.currentTarget.select()} className={`${INPUT} font-mono text-xs`} />
+          </label>
+          <div className="flex items-center gap-3">
+            <Button type="button" variant="outline" size="sm" onClick={copy}>
+              {copied ? t("link.copied") : t("link.copy")}
+            </Button>
+            <span className="text-xs text-muted-foreground">{t("link.note")}</span>
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -166,9 +231,8 @@ export function InviteForm({ organizationId, academies }: { organizationId: stri
   const [state, formAction, isPending] = useActionState(async (previous: StaffInviteState, formData: FormData) => {
     const result = await inviteStaff(organizationId, previous, formData);
     if (result.ok) {
-      if (result.invitationLink) {
-        setIssued({ email: String(formData.get("email") ?? "").trim().toLowerCase(), link: result.invitationLink, emailSent: Boolean(result.emailSent) });
-      }
+      const issued = issuedFrom(result, String(formData.get("email") ?? "").trim().toLowerCase(), false);
+      if (issued) setIssued(issued);
       setEmail("");
       setAcademyIds([]);
     }
@@ -283,7 +347,7 @@ export function MemberRowActions({
   );
 }
 
-/** One pending invitation's actions. A resend hands back a NEW link (the old one dies), shown to copy. */
+/** One pending invitation's actions. A resend hands back a NEW link, shown to copy; earlier links are retired only once the provider accepts the email. Revoke withdraws every live link of the offer. */
 export function InvitationRowActions({ organizationId, invitation }: { organizationId: string; invitation: PendingInvitationRow }) {
   const t = useTranslations("staffManagement");
   const [error, setError] = useState<string | null>(null);
@@ -295,7 +359,10 @@ export function InvitationRowActions({ organizationId, invitation }: { organizat
     startTransition(async () => {
       const result = await resendInvitation(organizationId, invitation.id);
       if (result.error) setError(result.error);
-      else if (result.invitationLink) setIssued({ email: invitation.email, link: result.invitationLink, emailSent: Boolean(result.emailSent) });
+      else {
+        const issued = issuedFrom(result, invitation.email, true);
+        if (issued) setIssued(issued);
+      }
     });
   }
 

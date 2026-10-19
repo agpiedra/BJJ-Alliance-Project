@@ -2456,12 +2456,25 @@
       "success": "Invitación creada."
     },
     "link": {
-      "emailSent": "Enviamos el enlace por correo.",
-      "emailNotSent": "No se pudo enviar el correo. Copia el enlace de abajo y envíalo tú.",
       "label": "Enlace de invitación",
       "copy": "Copiar enlace",
       "copied": "Copiado",
-      "note": "Solo se muestra ahora. Si lo pierdes, reenvía la invitación para obtener uno nuevo."
+      "note": "Solo se muestra ahora. Si lo pierdes, reenvía la invitación para obtener un enlace nuevo.",
+      "outcome": {
+        "accepted": "El proveedor de correo aceptó el mensaje. Eso no confirma la entrega.",
+        "rejected": "El proveedor de correo rechazó el mensaje. Copia el enlace de abajo y envíalo tú.",
+        "notConfigured": "El envío de correos no está configurado. Copia el enlace de abajo y envíalo tú.",
+        "unknown": "No pudimos confirmar si se envió el correo; aún podría llegar. Copia el enlace de abajo si lo necesitas."
+      },
+      "resend": {
+        "retired": "Los enlaces anteriores que este reenvío reemplazó ya no funcionan.",
+        "kept": "Este reenvío no invalidó los enlaces anteriores."
+      },
+      "checked": "Se podía usar al comprobarlo hace un momento (vence el {expiresAt}). Aún puede revocarse, usarse o vencer después.",
+      "acceptedMeanwhile": "Este enlace nuevo se aceptó mientras se enviaba el correo.",
+      "unavailable": "Este enlace nuevo ya no se podía usar al comprobarlo después del envío (puede haberse revocado, reemplazado o vencido). Revisa las invitaciones pendientes abajo.",
+      "unverified": "No pudimos terminar de comprobar esta invitación, así que no sabemos si este enlace funciona. Actualiza la página antes de compartirlo.",
+      "noLongerUsable": "Este enlace ya no se puede usar: se aceptó, se revocó, se reemplazó o venció."
     },
     "edit": {
       "open": "Editar",
@@ -2481,7 +2494,7 @@
     },
     "revoke": {
       "button": "Revocar",
-      "confirm": "¿Revocar esta invitación? El enlace deja de funcionar."
+      "confirm": "¿Revocar esta invitación? Todos sus enlaces dejan de funcionar."
     },
     "error": {
       "notFound": "No se encontró.",
