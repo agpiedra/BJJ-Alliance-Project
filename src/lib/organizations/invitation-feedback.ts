@@ -34,15 +34,16 @@ export interface InvitationFeedbackCopy {
   email: string;
   /** What settlement found, when it adds something; absent for a provider-accepted send that settled. */
   settlement?: string;
-  /** The operator should act (the owner may have no working invitation, or it is not known). */
+  /** The operator should look: this link was withdrawn or is not usable, or what happened to it is not known. */
   needsAttention: boolean;
 }
 
 /**
  * The organization itself is saved in every case. A first invitation has no earlier links, so — unlike a resend —
  * nothing here talks about them. The platform withdraws a new link whose email was rejected or unconfigured
- * (approve-organization.ts settleInvitation), so then the owner has no working invitation and the copy points to the
- * existing "Resend invitation" button — never to approving or creating again. No outcome promises a working link.
+ * (approve-organization.ts settleInvitation). The copy states only that THIS link was withdrawn — a concurrent resend
+ * may have issued another, still valid one — and points to the organization's page and its existing "Resend
+ * invitation" button, never to approving or creating again. No outcome promises a working link, or the lack of one.
  */
 export function invitationFeedbackCopy(report: InvitationReport): InvitationFeedbackCopy {
   const email = report.invitationEmail ?? "unknown";

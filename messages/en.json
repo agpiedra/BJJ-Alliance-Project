@@ -2211,7 +2211,7 @@
           "legacyUnresolved": "No invitation was issued. An earlier invitation to this address is recorded as used under the previous rules, and it cannot be told whether it was accepted or replaced. A platform operator must resolve it."
         },
         "settlement": {
-          "withdrawn": "Its link was withdrawn, so the owner has no working invitation yet. The organization itself is saved — do not approve or create it again; use “Resend invitation” on the organization’s page.",
+          "withdrawn": "This invitation link was withdrawn. The organization is saved — do not approve or create it again. Check the organization’s page and use “Resend invitation” there if needed.",
           "unknownOpen": "The invitation was still open when checked after sending. If the owner does not receive it, use “Resend invitation” on the organization’s page.",
           "acceptedMeanwhile": "The invitation was accepted while the email was being sent.",
           "unavailable": "The invitation was no longer usable when checked after sending, so its link does not work. Use “Resend invitation” on the organization’s page.",

@@ -37,9 +37,12 @@ displays. There is no new resend workflow.
 A first invitation has no earlier links, so — unlike the resend copy — nothing mentions them.
 
 - **Provider acceptance** is stated as acceptance, never delivery.
-- **Rejected / not configured:** the platform withdraws that first link (existing policy), so the copy says the owner
-  has no working invitation, that **the organization is saved — do not approve or create it again**, and to use
-  "Resend invitation".
+- **Rejected / not configured:** the platform withdraws that link (existing policy). The copy states only the
+  demonstrated result: **this invitation link was withdrawn**, **the organization is saved — do not approve or create it
+  again**, and to check the organization's page and use its existing "Resend invitation" if needed.
+
+  It makes **no claim about other invitations**: a concurrent resend may have issued another, still valid link
+  (correction commit; see "Correction" below).
 - **Unknown:** "still open when checked after sending".
 - **Unavailable:** no cause is claimed.
 - **Settle failure:** "not known whether its link works".
@@ -164,10 +167,62 @@ repo folder. The dev server's watcher recompiled, and a request during that reco
 page), so the run stopped after scenario C. The final run wrote screenshots outside the repo and copied them in
 afterwards, from a fresh database. That run had 0 invariant errors and 0 HTTP 500s.
 
+## Correction (separate commit after `bf061f6`)
+
+**The problem.** `settlement.withdrawn` said that withdrawing the link meant *the owner has no working invitation*.
+That is not established: a concurrent resend may have issued another, still valid link.
+
+**The new EN/ES copy** states only the demonstrated result:
+
+- this invitation link was withdrawn;
+- the organization is saved — do not approve or create it again;
+- check the organization's page and use its existing "Resend invitation" if needed.
+
+The same overclaim was removed from the `invitation-feedback.ts` comments. The invitation lifecycle, actions,
+redirects and URL transport are unchanged.
+
+**Regression.** Added to `tests/integration/platform-org-email-feedback.test.ts`:
+
+1. Approve with the first email **held** (N1).
+2. A second Approve on the now-ACTIVE organization issues **N2 to the same recipient**, its email also held.
+3. The first send settles **rejected**: N1 is withdrawn and N2 is untouched.
+4. N2's send settles accepted, and **N2 is then accepted for real**.
+5. The first report maps to `settlement.withdrawn`, whose EN and ES text makes no claim about all invitations.
+
+**Proof.** With the previous wording temporarily restored (then restored byte-identical, checksum verified), this
+regression **fails** on exactly that claim, after the lifecycle part has passed.
+
+**Screenshots not re-rendered.** `02-en-approve-rejected-withdrawn` and `06-es-create-rejected-withdrawn` were rendered
+on `bf061f6` and **show the previous wording**. They are kept as the record of that run. The new wording is covered by
+the unit tests (exact EN/ES text per state) and this regression.
+
 ## Checks (isolated test database only)
+
+### Original commit (`bf061f6`)
 
 `tsc --noEmit` clean · eslint clean on changed files · `check:guard-usage` OK · unit **1846/1846** (1818 + 28 new) ·
 integration **2162/2162** (2148 + 14 new).
+
+### Correction commit
+
+`tsc` clean · eslint clean · `check:guard-usage` OK · unit **1846/1846**. The new regression and the rest of this
+PR's tests pass (integration file 15/15, unit 28/28).
+
+The full integration suite ran twice after a test-database container restart. Each run had **one failure, both in
+`tests/integration/password-reset.test.ts`**, which this PR does not touch; everything else passed (**2162/2163**).
+
+1. **Run 1 — "the sweep's candidate scan can use the createdAt index."** The planner chose
+   `PasswordResetRequest_keyKind_keyDigest_createdAt_idx` plus a sort, instead of `PasswordResetRequest_createdAt_idx`.
+   The test asserts the exact index name.
+2. **Run 2 — "each sweep removes at most 100 expired rows":** `expected 178 to be 100`. The first sweep **deleted 178
+   rows, more than its 100-row bound.** This is the earlier unattributed failure, now with its assertion captured.
+   - **Likely cause (not proven here):** the sweep deletes
+     `WHERE id IN (SELECT … ORDER BY createdAt LIMIT 100 FOR UPDATE SKIP LOCKED)`. If the planner chooses a plan that
+     re-executes that subquery, each execution can return different rows, so the bound does not hold.
+   - **Consistency with run 1:** run 1 shows the planner choosing differently under the same statistics.
+
+Both pass when the file runs alone (24/24, twice). They stay **tracked separately**, as the password-reset sweep item;
+this PR does not change them.
 
 ## Limitations
 

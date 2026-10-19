@@ -2211,7 +2211,7 @@
           "legacyUnresolved": "No se emitió una invitación. Una invitación anterior a esta dirección figura como usada según las reglas anteriores, y no se puede saber si se aceptó o se reemplazó. Un operador de la plataforma debe resolverlo."
         },
         "settlement": {
-          "withdrawn": "Su enlace se retiró, así que el dueño todavía no tiene una invitación que funcione. La organización ya está guardada: no la apruebes ni la crees de nuevo; usa “Reenviar invitación” en la página de la organización.",
+          "withdrawn": "Este enlace de invitación se retiró. La organización ya está guardada: no la apruebes ni la crees de nuevo. Revisa la página de la organización y usa “Reenviar invitación” allí si hace falta.",
           "unknownOpen": "La invitación seguía abierta al comprobarla después del envío. Si el dueño no la recibe, usa “Reenviar invitación” en la página de la organización.",
           "acceptedMeanwhile": "La invitación se aceptó mientras se enviaba el correo.",
           "unavailable": "La invitación ya no se podía usar al comprobarla después del envío, así que su enlace no funciona. Usa “Reenviar invitación” en la página de la organización.",

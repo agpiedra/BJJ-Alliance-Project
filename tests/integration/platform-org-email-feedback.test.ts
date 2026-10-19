@@ -49,6 +49,9 @@ vi.mock("@/lib/prisma", async (importOriginal) => {
 const { approveOrganizationAction } = await import("../../src/app/[locale]/platform/organizations/actions");
 const { createOrganizationManually } = await import("../../src/app/[locale]/platform/organizations/new/actions");
 const { acceptInvitation } = await import("../../src/app/[locale]/accept-invitation/actions");
+const { invitationFeedbackCopy } = await import("../../src/lib/organizations/invitation-feedback");
+const { default: enMessages } = await import("../../messages/en.json");
+const { default: esMessages } = await import("../../messages/es.json");
 
 const prisma = getTestPrismaClient();
 const orgIds: string[] = [];
@@ -213,6 +216,44 @@ describe("Approve: the approval is reported separately from the email outcome", 
     expect(await approveOrganizationAction(org.id)).toEqual({ error: "notFound" });
     expect((await prisma.organization.findUniqueOrThrow({ where: { id: org.id } })).status).toBe("PENDING");
     expect(sendMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("correction: a withdrawn link says nothing about other invitations", () => {
+  it("REQUIRED a rejected first send withdraws only ITS link; a concurrent second invitation to the same recipient stays valid — and the first report's wording claims nothing about all invitations", async () => {
+    const org = await pendingOrganization();
+    const releases = holdSends();
+    const first = approveOrganizationAction(org.id); // approves, issues N1, its email held
+    await untilSends(releases, 1);
+    const second = approveOrganizationAction(org.id); // already ACTIVE: issues N2 to the same recipient, its email held
+    await untilSends(releases, 2);
+    const [n1, n2] = await invitationsOf(org.id);
+    expect(n2.email).toBe(n1.email);
+
+    releases[0]("rejected");
+    const firstReport = await first;
+    expect(firstReport).toEqual({ ok: true, invitationEmail: "rejected", invitationSettlement: "settled" });
+    expect((await prisma.invitation.findUniqueOrThrow({ where: { id: n1.id } })).revokedAt).not.toBeNull(); // N1 withdrawn
+    expect(await prisma.invitation.findUniqueOrThrow({ where: { id: n2.id } })).toMatchObject({ usedAt: null, revokedAt: null }); // N2 untouched
+
+    releases[1]("accepted");
+    expect(await second).toEqual({ ok: true, invitationEmail: "accepted", invitationSettlement: "settled" });
+    // N2 is genuinely valid: its link is accepted for real.
+    const fd = new FormData();
+    fd.set("token", sentToken(1));
+    fd.set("password", "Feedback-owner-password-1");
+    await expect(acceptInvitation("en", {}, fd)).rejects.toMatchObject({ digest: expect.stringContaining("NEXT_REDIRECT") });
+    expect((await prisma.invitation.findUniqueOrThrow({ where: { id: n2.id } })).acceptedAt).not.toBeNull();
+
+    // The first report's copy states only what happened to ITS link.
+    const copy = invitationFeedbackCopy(firstReport);
+    expect(copy.settlement).toBe("settlement.withdrawn");
+    for (const messages of [enMessages, esMessages]) {
+      const text = `${messages.platform.organizations.invitationFeedback.email.rejected} ${messages.platform.organizations.invitationFeedback.settlement.withdrawn}`;
+      expect(text).not.toMatch(/no working invitation|has no working|no (?:tiene|hay) (?:una )?invitación que funcione/i);
+    }
+    expect(enMessages.platform.organizations.invitationFeedback.settlement.withdrawn).toMatch(/^This invitation link was withdrawn\./);
+    expect(esMessages.platform.organizations.invitationFeedback.settlement.withdrawn).toMatch(/^Este enlace de invitación se retiró\./);
   });
 });
 
