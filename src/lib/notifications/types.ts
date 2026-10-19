@@ -1,4 +1,5 @@
 import type { NotificationType } from "@/generated/prisma/client";
+import type { EmailSendOutcome, ResendErrorCode } from "@/lib/email/provider-errors";
 
 export type { NotificationType };
 
@@ -23,6 +24,9 @@ export interface RenderedMessage {
 export interface DeliveryResult {
   success: boolean;
   error?: string;
+  /** Email channel only: what is known about the request, and the provider's fixed code — the only fields ever logged. */
+  outcome?: EmailSendOutcome;
+  providerCode?: ResendErrorCode;
 }
 
 /**

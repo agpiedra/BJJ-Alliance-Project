@@ -225,14 +225,18 @@ export async function registerOrganization(_prevState: RegistrationState, formDa
   // Sent AFTER the transaction commits, per the doc's own "email failure
   // does not roll back signup" — the organization/branding/ranks above are
   // already durably written regardless of whether this send succeeds.
-  const emailResult = await sendTransactionalEmail(data.contactEmail, `${data.organizationName} — registration received`, [
-    `Thanks for registering ${data.organizationName}.`,
-    "Your request is under review. We'll email you again once it's approved.",
-  ]);
+  const emailResult = await sendTransactionalEmail(
+    data.contactEmail,
+    `${data.organizationName} — registration received`,
+    [`Thanks for registering ${data.organizationName}.`, "Your request is under review. We'll email you again once it's approved."],
+    { suppressProviderErrorLogging: true },
+  );
   if (!emailResult.success) {
-    console.error("[register-academy] confirmation email failed to send", {
+    // Outcome and fixed provider code only — the provider's free-text message can carry the recipient.
+    console.error("[register-academy] confirmation email outcome", {
       organizationId,
-      error: emailResult.error,
+      outcome: emailResult.outcome,
+      providerCode: emailResult.providerCode,
     });
   }
 
