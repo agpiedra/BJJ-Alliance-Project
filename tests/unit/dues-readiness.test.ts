@@ -54,6 +54,7 @@ function base(): ReadinessSnapshot {
     coverage: [],
     openingItems: [],
     withdrawnOpeningItems: [],
+    confirmations: [],
   };
 }
 const clone = (s: ReadinessSnapshot): ReadinessSnapshot => structuredClone(s);
@@ -249,7 +250,7 @@ describe("stage 8b: opening-debt drafts in the student fingerprint (format r2)",
     expect(after.preview).toEqual(before.preview);
     expect(after.checks).toEqual(before.checks);
     expect(after.ready).toBe(false);
-    expect(after.checks.filter((c) => c.status === "notImplemented").map((c) => c.id)).toEqual([6, 7, 8, 9, 10, 11, 12]);
+    expect(after.checks.filter((c) => c.status === "notImplemented").map((c) => c.id)).toEqual([10, 11, 12]);
     expect(after.checks.find((c) => c.id === 13)!.status).toBe("decisionPending");
   });
 });
@@ -333,21 +334,21 @@ describe("readiness: checks 1-5 are computed", () => {
 });
 
 describe("readiness: never falsely ready", () => {
-  it("checks 6-12 are notImplemented and 13 is decisionPending, even when 1-5 pass", () => {
+  it("stage 8c: checks 6-9 are computed, 10-12 stay notImplemented and 13 decisionPending; 9 fails with no reviews", () => {
     const report = evaluateReadiness(base(), S);
     expect(report.checks.map((c) => [c.id, c.status])).toEqual([
       [1, "pass"], [2, "pass"], [3, "pass"], [4, "pass"], [5, "pass"],
-      [6, "notImplemented"], [7, "notImplemented"], [8, "notImplemented"], [9, "notImplemented"],
+      [6, "pass"], [7, "pass"], [8, "pass"], [9, "fail"],
       [10, "notImplemented"], [11, "notImplemented"], [12, "notImplemented"], [13, "decisionPending"],
     ]);
     expect(report.ready).toBe(false);
   });
 
-  it("check 6 is never silently empty: it lists every promo/exempt student", () => {
+  it("check 6 is never silently empty: it fails listing every promo/exempt student without an acknowledgement", () => {
     const s = base();
     s.legacyPayments[1].status = "EXEMPT";
     s.legacyPayments.push({ ...s.legacyPayments[0], id: "l-promo", studentId: "s2", status: "PROMO" });
-    expect(check(s, 6)).toMatchObject({ status: "notImplemented", items: ["student:s2", "student:s3"] });
+    expect(check(s, 6)).toMatchObject({ status: "fail", items: ["student:s2", "student:s3"] });
   });
 
   it("check 12 is about the mechanism existing, not about the organization being active", () => {
@@ -388,5 +389,181 @@ describe("dry-run preview", () => {
 
   it("states that pre-switch signup debt is excluded, not waived", () => {
     expect(evaluateReadiness(base(), S).notes.join(" ")).toMatch(/excluded.*not waived/);
+  });
+});
+
+describe("stage 8c: confirmations, checks 6-9, warnings and opening totals", () => {
+  type Confirmation = ReadinessSnapshot["confirmations"][number];
+  type Active = ReadinessSnapshot["openingItems"][number];
+  let n = 0;
+  const draft = (over: Partial<Active> = {}): Active => ({
+    id: `d${++n}`, studentId: "s1", coverageYear: 2031, coverageMonth: 1, amount: "100.00", currency: "USD", note: "Unpaid", legacyPaymentPeriodId: null, ...over,
+  });
+  /** A confirmation bound to `snap` as it is now (what the 8c writer stores after a matching review). */
+  const confirm = (snap: ReadinessSnapshot, studentId: string, kind: "OPENING_REVIEWED" | "PRICING_ACKNOWLEDGED", over: Partial<Confirmation> = {}): Confirmation => {
+    const studentFp = studentFingerprint(snap, studentId);
+    const home = snap.students.find((st) => st.id === studentId)!.homeAcademyId;
+    const binding = kind === "OPENING_REVIEWED" ? openingReviewBinding(S, studentFp) : pricingAckBinding(S, studentFp, branchFingerprint(snap, home));
+    return {
+      id: `c${++n}`, studentId, candidateYear: S.year, candidateMonth: S.month, kind, sequence: 1, fingerprintFormat: FINGERPRINT_FORMAT, binding,
+      declaredNoOpeningDebt: kind === "OPENING_REVIEWED" ? true : null, confirmedAt: "2031-02-20T10:00:00.000Z", ...over,
+    };
+  };
+  const reviewAll = (snap: ReadinessSnapshot) => {
+    for (const st of snap.students) snap.confirmations.push(confirm(snap, st.id, "OPENING_REVIEWED"));
+    return snap;
+  };
+  const report = (snap: ReadinessSnapshot) => evaluateReadiness(snap, S);
+  const stateOf = (snap: ReadinessSnapshot, id: string) => report(snap).confirmations.find((c) => c.studentId === id)!;
+
+  it("confirmation records are in no fingerprint", () => {
+    const s = clone(base());
+    const before = report(s).fingerprints;
+    reviewAll(s);
+    s.confirmations.push(confirm(s, "s1", "PRICING_ACKNOWLEDGED"));
+    expect(report(s).fingerprints).toEqual(before);
+  });
+
+  it("check 9 passes when every active student has a valid review; ready stays false with checks 1-9 passing", () => {
+    const r = report(reviewAll(clone(base())));
+    expect(r.checks.filter((c) => c.id <= 9).every((c) => c.status === "pass")).toBe(true);
+    expect(r.checks.filter((c) => c.status === "notImplemented").map((c) => c.id)).toEqual([10, 11, 12]);
+    expect(r.checks.find((c) => c.id === 13)!.status).toBe("decisionPending");
+    expect(r.ready).toBe(false);
+  });
+
+  it("check 9 (U1): an inactive student needs a review only with an active draft; withdrawing it does not revive an older review", () => {
+    const s = reviewAll(clone(base()));
+    s.students.push({ id: "s4", homeAcademyId: "b-usd", status: "INACTIVE" });
+    expect(check(s, 9).status).toBe("pass"); // s4 is inactive with no draft: not listed
+    s.openingItems.push(draft({ id: "d-s4", studentId: "s4" }));
+    expect(check(s, 9)).toMatchObject({ status: "fail", items: ["student:s4"] });
+    const reviewed = clone(s);
+    reviewed.confirmations.push(confirm(reviewed, "s4", "OPENING_REVIEWED", { declaredNoOpeningDebt: false }));
+    expect(check(reviewed, 9).status).toBe("pass");
+    // The draft is withdrawn: s4 is no longer required, but its earlier review does not become valid again.
+    reviewed.openingItems = reviewed.openingItems.filter((d) => d.id !== "d-s4");
+    reviewed.withdrawnOpeningItems.push({ id: "d-s4", studentId: "s4", withdrawalKind: "WITHDRAWN", supersededById: null });
+    expect(stateOf(reviewed, "s4").openingReview.state).toBe("stale");
+  });
+
+  it("an added draft makes a no-opening-debt review stale, and add-then-withdraw does not revive it", () => {
+    const s = reviewAll(clone(base()));
+    expect(stateOf(s, "s1").openingReview.state).toBe("valid");
+    s.openingItems.push(draft({ id: "d-x" }));
+    expect(stateOf(s, "s1").openingReview.state).toBe("stale");
+    s.openingItems = [];
+    s.withdrawnOpeningItems.push({ id: "d-x", studentId: "s1", withdrawalKind: "WITHDRAWN", supersededById: null });
+    expect(stateOf(s, "s1").openingReview.state).toBe("stale");
+    expect(check(s, 9)).toMatchObject({ status: "fail", items: ["student:s1"] });
+  });
+
+  it("the current confirmation is the highest sequence, whatever the timestamps; an old format or another S never counts", () => {
+    const s = clone(base());
+    const valid = confirm(s, "s1", "OPENING_REVIEWED", { sequence: 1, confirmedAt: "2031-02-20T10:00:00.000Z" });
+    const staleLater = { ...valid, id: "c-stale", sequence: 2, binding: "f".repeat(64) }; // the same timestamp
+    s.confirmations.push(valid, staleLater);
+    expect(stateOf(s, "s1").openingReview).toMatchObject({ state: "stale", sequence: 2 });
+    s.confirmations = [
+      { ...staleLater, sequence: 1, confirmedAt: "2031-02-21T00:00:00.000Z" },
+      { ...valid, sequence: 2, confirmedAt: "2031-02-01T00:00:00.000Z" }, // older timestamp, higher sequence
+    ];
+    expect(stateOf(s, "s1").openingReview).toMatchObject({ state: "valid", sequence: 2 });
+    s.confirmations = [{ ...valid, fingerprintFormat: "r1" }];
+    expect(stateOf(s, "s1").openingReview.state).toBe("stale");
+    s.confirmations = [{ ...valid, candidateMonth: S.month + 1 }];
+    expect(stateOf(s, "s1").openingReview.state).toBe("missing");
+  });
+
+  it("check 6: a promo student passes with a valid acknowledgement; a branch price or policy change alone makes it stale", () => {
+    const s = clone(base());
+    s.legacyPayments.push({ ...s.legacyPayments[0], id: "l-promo", studentId: "s2", status: "PROMO" });
+    expect(check(s, 6)).toMatchObject({ status: "fail", items: ["student:s2"] });
+    s.confirmations.push(confirm(s, "s2", "PRICING_ACKNOWLEDGED"));
+    expect(check(s, 6).status).toBe("pass");
+    const priced = clone(s);
+    priced.terms[0].priceAmount = "110.00"; // a D25 correction on s2's branch
+    expect(check(priced, 6)).toMatchObject({ status: "fail", items: ["student:s2"] });
+    expect(stateOf(priced, "s2").pricingAck.state).toBe("stale");
+    const policy = clone(s);
+    policy.policies[0].graceDay = 6;
+    expect(check(policy, 6).status).toBe("fail");
+    const otherBranch = clone(s);
+    otherBranch.terms[1].priceAmount = "26000.00"; // the CRC branch, not s2's
+    expect(check(otherBranch, 6).status).toBe("pass");
+  });
+
+  it("check 7: an active draft over a PAID month without a link fails; with the link it passes and warns; withdrawn drafts and PENDING months are ignored", () => {
+    const s = clone(base()); // l2: s3, 2031-02, PAID, CRC
+    s.openingItems.push(draft({ id: "d-paid", studentId: "s3", coverageMonth: 2, currency: "CRC", amount: "5000.00" }));
+    expect(check(s, 7)).toMatchObject({ status: "fail", items: ["openingItem:d-paid"] });
+    s.openingItems[0].legacyPaymentPeriodId = "l2";
+    expect(check(s, 7).status).toBe("pass");
+    expect(report(s).warnings).toContainEqual({ key: "openingItemLinkedToPaidRow", items: ["openingItem:d-paid"] });
+    const pending = clone(base()); // l1: s1, 2031-01, PENDING
+    pending.openingItems.push(draft({ id: "d-pending" }));
+    expect(check(pending, 7).status).toBe("pass");
+    const gone = clone(base());
+    gone.withdrawnOpeningItems.push({ id: "d-gone", studentId: "s3", withdrawalKind: "WITHDRAWN", supersededById: null });
+    expect(check(gone, 7).status).toBe("pass");
+  });
+
+  it("check 8: an active draft for S or later fails; the month before S passes; a withdrawn one is ignored", () => {
+    const s = clone(base());
+    s.openingItems.push(draft({ id: "d-s", coverageYear: S.year, coverageMonth: S.month }), draft({ id: "d-before", coverageMonth: 2 }));
+    expect(check(s, 8)).toMatchObject({ status: "fail", items: ["openingItem:d-s"] });
+    s.openingItems = s.openingItems.filter((d) => d.id !== "d-s");
+    s.withdrawnOpeningItems.push({ id: "d-s", studentId: "s1", withdrawalKind: "WITHDRAWN", supersededById: null });
+    expect(check(s, 8).status).toBe("pass");
+  });
+
+  it("warnings: above the legacy amount or the plan price (same currency only), a currency differing from the plan; no reference, no amount warning", () => {
+    const s = clone(base()); // s1: legacy 2031-01 100.00 USD; plan p-usd 100.00 USD from 2031-01
+    s.assignments.push({ id: "a1-early", studentId: "s1", planId: "p-usd", effectiveYear: 2031, effectiveMonth: 1 });
+    s.openingItems.push(
+      draft({ id: "d-above-legacy", coverageMonth: 1, amount: "100.01" }),
+      draft({ id: "d-equal", studentId: "s2", coverageMonth: 2, amount: "100.00" }),
+      draft({ id: "d-crc", studentId: "s1", coverageMonth: 2, amount: "99999.00", currency: "CRC" }),
+      draft({ id: "d-noref", studentId: "s2", coverageYear: 2030, coverageMonth: 12, amount: "999.00" }),
+      // s3's legacy row for 2031-02 is 25000.00 CRC: a larger NUMBER in another currency is not "above" it.
+      draft({ id: "d-usd-vs-crc-legacy", studentId: "s3", coverageMonth: 2, amount: "30000.00", currency: "USD" }),
+    );
+    const warnings = Object.fromEntries(report(s).warnings.map((w) => [w.key, w.items]));
+    expect(warnings.openingItemAboveReference).toEqual(["openingItem:d-above-legacy"]);
+    // d-usd-vs-crc-legacy: s3's assignment starts in 2031-03, so no plan terms exist for 2031-02 and no currency warning either.
+    expect(warnings.openingItemCurrencyDiffersFromPlan).toEqual(["openingItem:d-crc"]);
+    expect(warnings.openingItemLinkedToPaidRow).toBeUndefined();
+  });
+
+  it("the plan reference alone raises the amount warning (no legacy row for that month)", () => {
+    const s = clone(base());
+    s.openingItems.push(draft({ id: "d-above-plan", studentId: "s2", coverageMonth: 2, amount: "150.00" })); // a2: p-usd from 2031-02
+    expect(report(s).warnings).toContainEqual({ key: "openingItemAboveReference", items: ["openingItem:d-above-plan"] });
+  });
+
+  it("opening totals are per branch and per currency, active drafts only, never summed across currencies; the MONTHLY preview is untouched", () => {
+    const s = clone(base());
+    s.openingItems.push(
+      draft({ id: "d1a", amount: "10.10" }),
+      draft({ id: "d1b", studentId: "s2", coverageMonth: 2, amount: "0.90" }),
+      draft({ id: "d1c", studentId: "s2", coverageMonth: 1, amount: "5000.00", currency: "CRC" }),
+      draft({ id: "d3", studentId: "s3", amount: "25000.00", currency: "CRC" }),
+    );
+    s.withdrawnOpeningItems.push({ id: "d-w", studentId: "s1", withdrawalKind: "WITHDRAWN", supersededById: null });
+    expect(report(s).openingDrafts).toEqual([
+      { academyId: "b-crc", currency: "CRC", count: 1, total: "25000.00" },
+      { academyId: "b-usd", currency: "CRC", count: 1, total: "5000.00" },
+      { academyId: "b-usd", currency: "USD", count: 2, total: "11.00" },
+    ]);
+    expect(report(s).preview).toEqual(report(base()).preview);
+  });
+
+  it("regression: opening totals above one column's maximum (99,999,999.99) are reported exactly, never a thrown report", () => {
+    const s = clone(base());
+    s.openingItems.push(
+      draft({ id: "d-max", amount: "99999999.99", currency: "CRC" }),
+      draft({ id: "d-more", studentId: "s2", coverageMonth: 2, amount: "0.02", currency: "CRC" }),
+    );
+    expect(report(s).openingDrafts).toEqual([{ academyId: "b-usd", currency: "CRC", count: 2, total: "100000000.01" }]);
   });
 });

@@ -52,6 +52,20 @@ export interface ReadinessSnapshot {
    * the loader, so nothing can count or hash them; the row's permanent presence is what stops a stale confirmation reviving
    * after an add-and-withdraw (plan §5). */
   withdrawnOpeningItems: { id: string; studentId: string; withdrawalKind: string; supersededById: string | null }[];
+  /** Stage 8c: every readiness confirmation of the organization. Never part of any fingerprint (a confirmation must not
+   * invalidate itself); `evaluate.ts` picks the current one per identity by highest `sequence`. `confirmedAt` is display only. */
+  confirmations: {
+    id: string;
+    studentId: string;
+    candidateYear: number;
+    candidateMonth: number;
+    kind: string;
+    sequence: number;
+    fingerprintFormat: string;
+    binding: string;
+    declaredNoOpeningDebt: boolean | null;
+    confirmedAt: string;
+  }[];
 }
 
 const isoDate = (d: Date) => d.toISOString().slice(0, 10);
@@ -103,6 +117,13 @@ export async function loadReadinessSnapshot(
       withdrawnAt: true, withdrawalKind: true, supersededById: true,
     },
   });
+  const confirmations = await tx.duesReadinessConfirmation.findMany({
+    where,
+    select: {
+      id: true, studentId: true, candidateYear: true, candidateMonth: true, kind: true, sequence: true, fingerprintFormat: true, binding: true,
+      declaredNoOpeningDebt: true, confirmedAt: true,
+    },
+  });
 
   return {
     organization: { id: organization.id, currency: organization.currency },
@@ -124,5 +145,6 @@ export async function loadReadinessSnapshot(
     withdrawnOpeningItems: drafts
       .filter((d) => d.withdrawnAt !== null)
       .map(({ id, studentId, withdrawalKind, supersededById }) => ({ id, studentId, withdrawalKind: withdrawalKind!, supersededById })),
+    confirmations: confirmations.map((c) => ({ ...c, confirmedAt: c.confirmedAt.toISOString() })),
   };
 }

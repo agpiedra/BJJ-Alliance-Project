@@ -299,7 +299,7 @@ describe("getDuesReadinessForOwner: authorization and isolation", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.report.ready).toBe(false);
-    expect(result.report.checks.filter((c) => c.status === "notImplemented").map((c) => c.id)).toEqual([6, 7, 8, 9, 10, 11, 12]);
+    expect(result.report.checks.filter((c) => c.status === "notImplemented").map((c) => c.id)).toEqual([10, 11, 12]);
     expect(result.report.checks.find((c) => c.id === 13)!.status).toBe("decisionPending");
   });
 
@@ -533,7 +533,7 @@ describe("stage 8b: opening-debt drafts in the snapshot and the fingerprints (fo
     const after = evaluateReadiness(snapshot, S);
     expect(after.preview).toEqual(reportBeforeDrafts.preview);
     expect(after.checks).toEqual(reportBeforeDrafts.checks);
-    expect(after.checks.filter((c) => c.status === "notImplemented").map((c) => c.id)).toEqual([6, 7, 8, 9, 10, 11, 12]);
+    expect(after.checks.filter((c) => c.status === "notImplemented").map((c) => c.id)).toEqual([10, 11, 12]);
     expect(after.checks.find((c) => c.id === 13)!.status).toBe("decisionPending");
     expect(after.ready).toBe(false);
     actAs(a.admin.id, a.org.id);
