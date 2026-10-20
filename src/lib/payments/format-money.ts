@@ -30,6 +30,26 @@ export function currencySymbol(currency: Currency): string {
  * its currency is silently wrong. For a recorded payment pass
  * `PaymentPeriod.currency` (the snapshot), not the organization's current one.
  */
+const CANONICAL = /^(0|[1-9][0-9]*)\.([0-9]{2})$/;
+
+/**
+ * Stage 8d readiness screen: an EXACT amount — a canonical two-decimal string such as a readiness total or an opening-draft amount
+ * — as text, never through a JavaScript `number` (a total may exceed one column's range, and a float would lose cents). The integer
+ * part is grouped by `Intl` on a `BigInt` (exact at any size) with the same locale and separators as `formatMoney`. Dollars always
+ * show two decimals; colones omit cents only when they are zero and otherwise keep them exactly (owner decision for this screen:
+ * `formatMoney`'s whole-colón convention would round ₡25,000.50). Anything that is not a canonical amount is refused, not guessed.
+ */
+export function formatExactMoney(amount: string, currency: Currency, locale: string): string {
+  const match = CANONICAL.exec(amount);
+  if (!match) throw new RangeError(`Not a canonical two-decimal amount: ${JSON.stringify(amount)}`);
+  const [, whole, cents] = match;
+  const tag = locale === "es" ? "es-CR" : "en-US";
+  const grouped = new Intl.NumberFormat(tag).format(BigInt(whole));
+  if (currency === "CRC" && cents === "00") return `${SYMBOLS[currency]} ${grouped}`;
+  const decimal = new Intl.NumberFormat(tag).formatToParts(1.5).find((part) => part.type === "decimal")!.value;
+  return `${SYMBOLS[currency]} ${grouped}${decimal}${cents}`;
+}
+
 export function formatMoney(amount: number, currency: Currency, locale: string): string {
   const digits = FRACTION_DIGITS[currency];
   const formatted = new Intl.NumberFormat(locale === "es" ? "es-CR" : "en-US", {

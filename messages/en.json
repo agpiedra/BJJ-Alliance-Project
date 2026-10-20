@@ -1290,6 +1290,11 @@
           "unexpected": "This receipt is in an unexpected state. Please contact support.",
           "transportFailure": "A connection issue occurred while trying to complete this. Confirming the current status before you try again."
         }
+      },
+      "readinessLink": {
+        "title": "Dues readiness",
+        "body": "Owner only. See what still has to be ready before the dues ledger can start. Nothing on that page activates it.",
+        "link": "Open dues readiness"
       }
     },
     "table": {
@@ -1691,6 +1696,142 @@
         "selectableTotalsDetail": "Valid totals in this currency: {totals}",
         "unexpected": "Something unexpected happened."
       }
+    },
+    "readiness": {
+      "eyebrow": "{orgName} · Dues readiness",
+      "heading": "Dues readiness",
+      "sub": "A read-only report for one candidate start month. Nothing on this page changes data or activates the dues ledger.",
+      "backToPlans": "Back to payment plans",
+      "month": {
+        "label": "Start month",
+        "submit": "Show",
+        "invalid": "That is not a valid start month. Choose one from the list.",
+        "defaultNote": "By default this is next month in your branches' time zone.",
+        "disagree": "Your branches are in different months right now, so the default is the later next month.",
+        "perMonth": "Reviews and acknowledgements count only for the start month they were recorded for."
+      },
+      "status": {
+        "notReady": "Not ready",
+        "notReadyBody": "This report never activates the dues ledger. Activation is a separate, later stage that is not built yet.",
+        "asOf": "Data as of {time}.",
+        "asOfBody": "Changes made after that moment are not shown until you reload this page. This page does not lock anything or prevent changes."
+      },
+      "checksHeading": "Readiness checks",
+      "checkStatus": {
+        "pass": "Passed",
+        "fail": "Failing",
+        "notImplemented": "Not available yet",
+        "decisionPending": "Owner decision pending"
+      },
+      "checks": {
+        "statusBeforeStart": {
+          "title": "Status history before {month}",
+          "fail": "Active students with no status record before the 1st of {month}."
+        },
+        "statusConsistent": {
+          "title": "Status matches history",
+          "fail": "Students whose status does not match their latest status record."
+        },
+        "branchConfiguration": {
+          "title": "Prices and policy for {month}",
+          "fail": "Branches without a dues policy for {month}, or students with no applicable price."
+        },
+        "assignments": {
+          "title": "Plan assignments",
+          "fail": "Active students without a plan, or an explicit \"no plan\", for {month}."
+        },
+        "noLegacyFromStart": {
+          "title": "No old-system payments from {month} on",
+          "fail": "Payments recorded in the old system for {month} or later. They would be charged twice."
+        },
+        "pricingAcknowledged": {
+          "title": "Pricing acknowledged for promo or exempt students",
+          "fail": "Promo or exempt students without a current pricing acknowledgement for {month}."
+        },
+        "openingItemsOverPaidMonths": {
+          "title": "Opening debt over paid months",
+          "fail": "Opening debt for a month already marked PAID, without a link to that payment."
+        },
+        "openingItemsBeforeStart": {
+          "title": "Opening debt before {month}",
+          "fail": "Opening debt for {month} or a later month."
+        },
+        "openingReviewed": {
+          "title": "Opening debt reviewed",
+          "fail": "Active students, and students with opening debt, without a current opening-debt review for {month}."
+        },
+        "monthlyGenerationScheduled": {
+          "title": "Monthly charges scheduled",
+          "unavailable": "The monthly charge job is not built yet, so this cannot pass."
+        },
+        "openingCancellationAvailable": {
+          "title": "Cancelling an opening charge",
+          "unavailable": "Cancelling an erroneous opening charge (owner decision O2) is not built yet, so this cannot pass."
+        },
+        "activationMechanismAvailable": {
+          "title": "Activation mechanism",
+          "unavailable": "The activation steps (approval, manual start, stopping the old system) are not built yet. This is about the mechanism existing, not about activating."
+        },
+        "prepaidReversalPolicy": {
+          "title": "Prepaid-payment reversal policy",
+          "pending": "Waiting for an owner decision (O4) on how reversing a prepaid payment works. Still undecided."
+        }
+      },
+      "passed": "Passed.",
+      "warnings": {
+        "heading": "Warnings (not blocking)",
+        "none": "No warnings.",
+        "notEligibleForStart": "Not eligible to be charged for {month}",
+        "openingItemLinkedToPaidRow": "Opening debt linked to a PAID payment",
+        "openingItemAboveReference": "Opening debt above that month's plan price or recorded amount",
+        "openingItemCurrencyDiffersFromPlan": "Opening debt in a different currency than the plan"
+      },
+      "noteO3": "Pre-switch signup debt is excluded from this start. It is not waived.",
+      "totals": {
+        "heading": "Totals by branch and currency",
+        "monthlyHeading": "Monthly charges {month} would create",
+        "monthlyBody": "Never added across currencies. Nothing is charged by this page.",
+        "openingHeading": "Opening debt drafted",
+        "openingBody": "Drafts only, not charges. Kept separate from monthly charges.",
+        "branch": "Branch",
+        "currency": "Currency",
+        "count": "Count",
+        "total": "Total",
+        "noneMonthly": "No monthly charges would be created.",
+        "noneOpening": "No opening debt drafted.",
+        "lists": {
+          "undecidable": "Status unknown for {month}",
+          "notEligible": "Not eligible",
+          "explicitNoPlan": "No plan (chosen)",
+          "unassigned": "No plan assigned",
+          "configurationGap": "Missing price or policy"
+        }
+      },
+      "students": {
+        "heading": "Students",
+        "sub": "Active students, students with opening debt, and students with a promo or exemption.",
+        "none": "No students to show.",
+        "openingReview": "Opening-debt review",
+        "pricingAck": "Pricing acknowledgement",
+        "state": {
+          "missing": "Not reviewed",
+          "valid": "Current",
+          "stale": "Changed since review"
+        },
+        "recorded": "Recorded {time} (#{sequence})",
+        "atReviewNoDebt": "At that review: no opening debt declared.",
+        "atReviewDebt": "At that review: opening debt declared.",
+        "drafts": "Opening debt",
+        "noDrafts": "No opening debt drafted.",
+        "linked": "Linked to the {month} payment ({status})",
+        "promo": "Promo or exempt in the old system"
+      },
+      "items": {
+        "unknown": "Unknown item",
+        "legacy": "{student}, {month} ({status})",
+        "openingItem": "{student}, opening debt for {month}"
+      },
+      "empty": "No branches or students yet. Readiness is computed for your students."
     }
   },
   "portal": {

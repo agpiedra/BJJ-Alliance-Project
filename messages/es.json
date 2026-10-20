@@ -1290,6 +1290,11 @@
           "unexpected": "Este recibo está en un estado inesperado. Por favor contacta soporte.",
           "transportFailure": "Ocurrió un problema de conexión al intentar completar esto. Confirmando el estado actual antes de volver a intentarlo."
         }
+      },
+      "readinessLink": {
+        "title": "Preparación de cuotas",
+        "body": "Solo la persona dueña. Muestra lo que falta antes de que pueda iniciar el registro de cuotas. Nada en esa página lo activa.",
+        "link": "Abrir preparación de cuotas"
       }
     },
     "table": {
@@ -1691,6 +1696,142 @@
         "selectableTotalsDetail": "Totales validos en esta moneda: {totals}",
         "unexpected": "Ocurrio algo inesperado."
       }
+    },
+    "readiness": {
+      "eyebrow": "{orgName} · Preparación de cuotas",
+      "heading": "Preparación de cuotas",
+      "sub": "Un informe de solo lectura para un mes de inicio candidato. Nada en esta página cambia datos ni activa el registro de cuotas.",
+      "backToPlans": "Volver a planes de pago",
+      "month": {
+        "label": "Mes de inicio",
+        "submit": "Mostrar",
+        "invalid": "Ese no es un mes de inicio válido. Elija uno de la lista.",
+        "defaultNote": "Por defecto es el mes siguiente en la zona horaria de sus sedes.",
+        "disagree": "Sus sedes están en meses distintos en este momento, así que por defecto se usa el mes siguiente más tardío.",
+        "perMonth": "Las revisiones y confirmaciones cuentan solo para el mes de inicio en que se registraron."
+      },
+      "status": {
+        "notReady": "No está listo",
+        "notReadyBody": "Este informe nunca activa el registro de cuotas. La activación es una etapa aparte, posterior, que aún no existe.",
+        "asOf": "Datos al {time}.",
+        "asOfBody": "Los cambios hechos después de ese momento no se muestran hasta que recargue esta página. Esta página no bloquea nada ni impide cambios."
+      },
+      "checksHeading": "Verificaciones de preparación",
+      "checkStatus": {
+        "pass": "Aprobada",
+        "fail": "Con fallas",
+        "notImplemented": "Aún no disponible",
+        "decisionPending": "Pendiente de decisión"
+      },
+      "checks": {
+        "statusBeforeStart": {
+          "title": "Historial de estado antes de {month}",
+          "fail": "Estudiantes activos sin registro de estado antes del 1 de {month}."
+        },
+        "statusConsistent": {
+          "title": "Estado coincide con el historial",
+          "fail": "Estudiantes cuyo estado no coincide con su último registro de estado."
+        },
+        "branchConfiguration": {
+          "title": "Precios y política para {month}",
+          "fail": "Sedes sin política de cuotas para {month}, o estudiantes sin un precio aplicable."
+        },
+        "assignments": {
+          "title": "Asignación de planes",
+          "fail": "Estudiantes activos sin plan, o sin un \"sin plan\" explícito, para {month}."
+        },
+        "noLegacyFromStart": {
+          "title": "Sin pagos del sistema anterior desde {month}",
+          "fail": "Pagos registrados en el sistema anterior para {month} o después. Se cobrarían dos veces."
+        },
+        "pricingAcknowledged": {
+          "title": "Precio confirmado para estudiantes con promoción o exoneración",
+          "fail": "Estudiantes con promoción o exoneración sin una confirmación de precio vigente para {month}."
+        },
+        "openingItemsOverPaidMonths": {
+          "title": "Deuda inicial sobre meses pagados",
+          "fail": "Deuda inicial para un mes ya marcado PAGADO, sin vínculo con ese pago."
+        },
+        "openingItemsBeforeStart": {
+          "title": "Deuda inicial antes de {month}",
+          "fail": "Deuda inicial para {month} o un mes posterior."
+        },
+        "openingReviewed": {
+          "title": "Deuda inicial revisada",
+          "fail": "Estudiantes activos, y estudiantes con deuda inicial, sin una revisión de deuda inicial vigente para {month}."
+        },
+        "monthlyGenerationScheduled": {
+          "title": "Cobros mensuales programados",
+          "unavailable": "El proceso de cobros mensuales aún no existe, así que esto no puede aprobarse."
+        },
+        "openingCancellationAvailable": {
+          "title": "Anular un cobro inicial",
+          "unavailable": "Anular un cobro inicial erróneo (decisión O2) aún no existe, así que esto no puede aprobarse."
+        },
+        "activationMechanismAvailable": {
+          "title": "Mecanismo de activación",
+          "unavailable": "Los pasos de activación (aprobación, inicio manual, detener el sistema anterior) aún no existen. Se trata de que el mecanismo exista, no de activar."
+        },
+        "prepaidReversalPolicy": {
+          "title": "Política de reversión de pagos adelantados",
+          "pending": "En espera de una decisión (O4) sobre cómo funciona revertir un pago adelantado. Aún sin decidir."
+        }
+      },
+      "passed": "Aprobada.",
+      "warnings": {
+        "heading": "Advertencias (no bloquean)",
+        "none": "Sin advertencias.",
+        "notEligibleForStart": "No corresponde cobrar en {month}",
+        "openingItemLinkedToPaidRow": "Deuda inicial vinculada a un pago PAGADO",
+        "openingItemAboveReference": "Deuda inicial mayor que el precio del plan o el monto registrado de ese mes",
+        "openingItemCurrencyDiffersFromPlan": "Deuda inicial en una moneda distinta a la del plan"
+      },
+      "noteO3": "La deuda de inscripción anterior al cambio queda fuera de este inicio. No se condona.",
+      "totals": {
+        "heading": "Totales por sede y moneda",
+        "monthlyHeading": "Cobros mensuales que crearía {month}",
+        "monthlyBody": "Nunca se suman entre monedas. Esta página no cobra nada.",
+        "openingHeading": "Deuda inicial en borrador",
+        "openingBody": "Solo borradores, no cobros. Separados de los cobros mensuales.",
+        "branch": "Sede",
+        "currency": "Moneda",
+        "count": "Cantidad",
+        "total": "Total",
+        "noneMonthly": "No se crearía ningún cobro mensual.",
+        "noneOpening": "No hay deuda inicial en borrador.",
+        "lists": {
+          "undecidable": "Estado desconocido para {month}",
+          "notEligible": "No corresponde",
+          "explicitNoPlan": "Sin plan (elegido)",
+          "unassigned": "Sin plan asignado",
+          "configurationGap": "Falta precio o política"
+        }
+      },
+      "students": {
+        "heading": "Estudiantes",
+        "sub": "Estudiantes activos, estudiantes con deuda inicial y estudiantes con promoción o exoneración.",
+        "none": "No hay estudiantes para mostrar.",
+        "openingReview": "Revisión de deuda inicial",
+        "pricingAck": "Confirmación de precio",
+        "state": {
+          "missing": "Sin revisar",
+          "valid": "Vigente",
+          "stale": "Cambió desde la revisión"
+        },
+        "recorded": "Registrada {time} (n.º {sequence})",
+        "atReviewNoDebt": "En esa revisión: no se declaró deuda inicial.",
+        "atReviewDebt": "En esa revisión: se declaró deuda inicial.",
+        "drafts": "Deuda inicial",
+        "noDrafts": "No hay deuda inicial en borrador.",
+        "linked": "Vinculada al pago de {month} ({status})",
+        "promo": "Con promoción o exoneración en el sistema anterior"
+      },
+      "items": {
+        "unknown": "Ítem desconocido",
+        "legacy": "{student}, {month} ({status})",
+        "openingItem": "{student}, deuda inicial de {month}"
+      },
+      "empty": "Aún no hay sedes ni estudiantes. La preparación se calcula para sus estudiantes."
     }
   },
   "portal": {

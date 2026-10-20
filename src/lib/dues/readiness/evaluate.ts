@@ -127,6 +127,11 @@ function previewStudent(snapshot: ReadinessSnapshot, student: ReadinessSnapshot[
   return { ...base, outcome: "created", amount: terms.priceAmount, currency: terms.currency };
 }
 
+/** Students check 6 requires a pricing acknowledgement from: any legacy row PROMO, EXEMPT or recurring-promo (8a's definition). */
+export function promoStudentIds(snapshot: ReadinessSnapshot): string[] {
+  return sortedIds(snapshot.legacyPayments.filter((p) => p.status === "PROMO" || p.status === "EXEMPT" || p.promoRecurring).map((p) => p.studentId));
+}
+
 export function evaluateReadiness(snapshot: ReadinessSnapshot, candidate: YearMonth): ReadinessReport {
   const s = candidate;
   const gOfS: CalendarDate = { year: s.year, month: s.month, day: 1 };
@@ -166,9 +171,7 @@ export function evaluateReadiness(snapshot: ReadinessSnapshot, candidate: YearMo
   // 5. No legacy PaymentPeriod for S or later (the legacy one-month-ahead window): it would be charged twice.
   const check5 = snapshot.legacyPayments.filter((p) => compareYearMonth({ year: p.year, month: p.month }, s) >= 0);
 
-  const promoStudents = sortedIds(
-    snapshot.legacyPayments.filter((p) => p.status === "PROMO" || p.status === "EXEMPT" || p.promoRecurring).map((p) => p.studentId),
-  );
+  const promoStudents = promoStudentIds(snapshot);
 
   // Stage 8c. A confirmation is valid only when its format is current and its binding equals the binding recomputed from THIS
   // snapshot; the current one per identity is the highest `sequence` (never a timestamp or an id).
