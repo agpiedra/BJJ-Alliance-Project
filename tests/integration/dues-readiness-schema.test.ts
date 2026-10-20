@@ -137,6 +137,9 @@ function draftData(over: DraftInput = {}) {
   };
 }
 const createDraft = (db: Db | typeof prisma, over: DraftInput = {}) => db.duesOpeningItem.create({ data: draftData(over) });
+/** An INSERT that carries marker columns directly (the constraints must hold on INSERT, not only on UPDATE). */
+const createDraftWithMarker = (db: Db, marker: Record<string, unknown>) =>
+  db.duesOpeningItem.create({ data: { ...draftData(), ...marker } as ReturnType<typeof draftData> });
 
 const editedMarker = (successorId: string) => ({ withdrawnAt: new Date(), withdrawnById: a.admin.id, withdrawalKind: "EDITED" as const, supersededById: successorId });
 const withdrawnMarker = (reason = "Entered by mistake") => ({ withdrawnAt: new Date(), withdrawnById: a.admin.id, withdrawalKind: "WITHDRAWN" as const, withdrawalReason: reason });
@@ -354,6 +357,55 @@ describe("invalid values are refused", () => {
       await probe(withdrawnMarker("x".repeat(501)), "DuesOpeningItem_withdrawal_reason_length", "501-character reason");
       const self = await createDraft(tx);
       await refused(tx, () => tx.duesOpeningItem.update({ where: { id: self.id }, data: editedMarker(self.id) }), "DuesOpeningItem_not_self_superseding");
+    });
+  });
+
+  // Review finding on PR #147: with withdrawalKind NULL, both kind comparisons are UNKNOWN, the original CHECK evaluated to NULL,
+  // and PostgreSQL accepts a CHECK that is NULL. The malformed row left the active set and the set-once trigger then blocked any
+  // correction. Fixed by 20261020120000_dues_opening_item_marker_kind_required.
+  describe("regression: a withdrawal marker with a NULL withdrawalKind (SQL three-valued logic)", () => {
+    const marker = "DuesOpeningItem_withdrawal_marker_complete";
+    const kindless = () => ({ withdrawnAt: new Date(), withdrawnById: a.admin.id, withdrawalReason: "Entered by mistake" });
+
+    it("an UPDATE setting withdrawnAt, withdrawnById and a reason but no kind is refused; the draft stays active and unchanged", async () => {
+      await isolated(async (tx) => {
+        const d = await createDraft(tx);
+        await refused(tx, () => tx.duesOpeningItem.update({ where: { id: d.id }, data: { ...kindless(), withdrawalKind: null, supersededById: null } }), marker);
+        expect(await tx.duesOpeningItem.findUniqueOrThrow({ where: { id: d.id } })).toEqual(d);
+        // Still in the active set: a second active draft for the same month is still refused.
+        await refused(tx, () => createDraft(tx, { coverageYear: d.coverageYear, coverageMonth: d.coverageMonth }), "DuesOpeningItem_one_active_per_month_key");
+      });
+    });
+
+    it("an INSERT carrying the same incomplete marker is refused", async () => {
+      await isolated(async (tx) => {
+        await refused(tx, () => createDraftWithMarker(tx, { ...kindless(), withdrawalKind: null, supersededById: null }), marker);
+      });
+    });
+
+    it("a NULL kind with a VALID successor reference is refused by the marker CHECK itself, not by the foreign key", async () => {
+      await isolated(async (tx) => {
+        const d = await createDraft(tx);
+        const successor = await createDraft(tx); // same organization and student: the FK would be satisfied
+        await refused(
+          tx,
+          () => tx.duesOpeningItem.update({ where: { id: d.id }, data: { withdrawnAt: new Date(), withdrawnById: a.admin.id, withdrawalKind: null, supersededById: successor.id } }),
+          marker,
+        );
+        await tx.$executeRawUnsafe("SET CONSTRAINTS ALL IMMEDIATE"); // nothing deferred is pending: the refusal was the CHECK
+        expect(await tx.duesOpeningItem.findUniqueOrThrow({ where: { id: d.id } })).toEqual(d);
+      });
+    });
+
+    it("valid states still pass: active, WITHDRAWN with a reason, EDITED with a successor (insert and update)", async () => {
+      await isolated(async (tx) => {
+        const w = await createDraft(tx);
+        await tx.duesOpeningItem.update({ where: { id: w.id }, data: withdrawnMarker() });
+        const e = await createDraft(tx);
+        await editDraft(tx, e.id, { amount: "80.00" });
+        await createDraftWithMarker(tx, withdrawnMarker()); // a row inserted already withdrawn is a complete marker too
+        await tx.$executeRawUnsafe("SET CONSTRAINTS ALL IMMEDIATE");
+      });
     });
   });
 

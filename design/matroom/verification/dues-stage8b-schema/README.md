@@ -12,7 +12,7 @@ still passes.
 
 ## What was built
 
-- **Migration `20261019120000_dues_readiness_drafts_and_confirmations`** (additive; no data, backfill or defaults):
+- **Migration `20261019120000_dues_readiness_drafts_and_confirmations`** (additive; no data, backfill or defaults), plus the forward fix `20261020120000_dues_opening_item_marker_kind_required` (see the review finding below):
   - **Enums:** `DuesOpeningItemWithdrawalKind`, `DuesReadinessConfirmationKind`.
   - **`DuesOpeningItem`:**
     - tenant/student composite FKs;
@@ -36,6 +36,71 @@ still passes.
   A withdrawn draft's amount, currency and note never leave the loader, so nothing downstream can count or hash them.
 - **Fingerprint format `r2`** (`fingerprint.ts`): the student fingerprint adds active drafts' content and withdrawn
   drafts' id, kind and successor. Confirmations are in no hash.
+
+## Review finding: a NULL loophole in the withdrawal-marker CHECK (fixed)
+
+**Finding (reported in review of PR #147).** As first migrated, `DuesOpeningItem_withdrawal_marker_complete` was:
+
+```
+(all five marker columns NULL)
+OR (withdrawnAt IS NOT NULL AND withdrawnById IS NOT NULL AND (
+     (withdrawalKind = 'EDITED' AND supersededById IS NOT NULL)
+  OR (withdrawalKind = 'WITHDRAWN' AND supersededById IS NULL AND withdrawalReason IS NOT NULL)))
+```
+
+**What went wrong.** With `withdrawalKind` NULL, both kind comparisons are UNKNOWN, so the whole predicate is NULL, and
+PostgreSQL accepts a row whose CHECK is NULL. Concretely, with `withdrawnAt`, a valid `withdrawnById` and a reason set,
+but kind and successor NULL:
+- the UPDATE was accepted;
+- the draft left the one-active index;
+- the set-once marker trigger then refused any correction.
+
+**Reproduced** on the isolated test database before the fix:
+- **Raw evaluation:** the original predicate on exactly those values evaluates to `NULL`.
+- **Regression tests, run against the original constraint:** 3 failed, because the database accepted each write:
+  1. the malformed UPDATE;
+  2. an INSERT carrying the same incomplete marker;
+  3. a NULL kind with a **valid** successor reference (same student, so the foreign key would pass).
+
+  The fourth new test, valid states still pass, passed.
+
+**Fix: forward migration `20261020120000_dues_opening_item_marker_kind_required`.**
+- **Why forward:** migrations are append-only (`docs/superpowers/plans/2026-09-08-phase-2-students-and-auth.md:20`).
+  `20261019120000` was already applied to the test databases, so it is not edited, and no `_prisma_migrations` record
+  was touched.
+- **What it does:** one `ALTER TABLE` drops the constraint and re-adds it under the same name. The complete-marker
+  branch adds `"withdrawalKind" IS NOT NULL`.
+- **Why that is enough:** every remaining term is then an `IS [NOT] NULL` test or a comparison of a non-null value, so
+  the predicate is always TRUE or FALSE.
+- **Unchanged:** valid states (active; `EDITED` with a successor; `WITHDRAWN` with a reason) and the shared
+  `dues_set_once_marker` trigger.
+
+**Audit of the other CHECKs on both tables for the same pattern:** none is affected.
+- **Draft CHECKs:** `amount`, `coverageMonth`, `coverageYear` and `note` are NOT NULL columns. The reason-length and
+  self-supersession CHECKs start with an explicit `IS NULL OR …`.
+- **Confirmation CHECKs:** `kind`, `binding`, `studentFingerprint`, `fingerprintFormat` and `sequence` are NOT NULL, and
+  the nullable `branchFingerprint` and `declaredNoOpeningDebt` appear only under `IS [NOT] NULL` tests or an explicit
+  `IS NULL OR …`.
+
+**After the fix:**
+- **Shared test database**, after `pnpm db:test:migrate`:
+  - the 4 new tests pass, including that the malformed draft stays active and unchanged and the CHECK, not the FK,
+    refuses test 3;
+  - the full schema test file passes (30/30);
+  - `db:check-drift` is clean.
+- **Fresh application** on two new scratch databases on 5433 (dropped afterwards):
+  - all 52 migrations applied;
+  - `db:check-drift` clean on both comparisons;
+  - `pg_get_constraintdef` shows the new `("withdrawalKind" IS NOT NULL)` term.
+- **Raw `INSERT` probes on that fresh database**, with placeholder parent ids (CHECKs run before the row's FK
+  triggers, so a passing CHECK surfaces as an FK error):
+  - the kindless marker and the NULL kind with a successor are both refused by
+    `DuesOpeningItem_withdrawal_marker_complete`;
+  - a valid `WITHDRAWN` marker and an active row both pass the CHECK and stop only at the placeholder FK.
+
+**Lesson recorded for 8c and later schema work.** A CHECK built from `=` comparisons over nullable columns must
+either test those columns `IS NOT NULL` explicitly or be written so it can never be UNKNOWN. The negative tests here
+had covered each column missing *with a kind present*, never the kind itself missing.
 
 ## Primary constraint design: verified first, before any other code
 
@@ -74,7 +139,7 @@ CI's parity check (seed → snapshot → migrate → snapshot → diff) runs on 
 
 ## Tests
 
-### `tests/integration/dues-readiness-schema.test.ts` (new, 26 tests, real test database)
+### `tests/integration/dues-readiness-schema.test.ts` (new, 30 tests, real test database; 4 added by the NULL-loophole fix above)
 
 | Area | Proved |
 |---|---|
@@ -143,7 +208,7 @@ CI's parity check (seed → snapshot → migrate → snapshot → diff) runs on 
 | M4: protocol reads `MAX(sequence)` before taking the student lock | the start-order-vs-lock-order test (T1 also gets sequence 1) |
 
 **Database mutations** on the isolated test database (each applied with SQL, run, then restored from the migration's own
-statements; the full schema test passed 26/26 afterwards):
+statements; the full schema test passed 26/26 afterwards, before the NULL-loophole tests were added):
 
 | Mutation | Caught by |
 |---|---|
@@ -164,7 +229,7 @@ timed out in cascade. Each release is now in `finally`; a D2 re-run fails only i
 | `pnpm check:guard-usage` | all 80 guards have a production call site |
 | `pnpm db:check-drift` (fresh scratch database + scratch shadow, both on 5433; repeated on the migrated shared test database after the mutation runs) | both comparisons clean each time (see the limit above) |
 | `pnpm test:unit` | 131 files, 1920 tests passed, including the unchanged `dues-ledger-not-exposed` and `dues-eligibility-not-exposed` structural tests |
-| `pnpm test:integration` | 168 files, 2214 tests passed (full suite, isolated test database) |
+| `pnpm test:integration` | 168 files, 2214 tests passed (full suite, isolated test database); after the NULL-loophole fix: 168 files, 2218 passed |
 
 ## Deviations from the plan (all small, none weakening integrity)
 
