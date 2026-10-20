@@ -1,7 +1,7 @@
 import { compareDates, compareYearMonth, type CalendarDate, type YearMonth } from "@/lib/dues/calendar";
 import { eligibleAndAssigned, type AssignmentRow, type StatusHistoryRow } from "@/lib/dues/eligibility";
 import { latestEffective } from "@/lib/dues/ledger/common";
-import { decimalToMinor, minorToDecimal } from "@/lib/dues/ledger/minor-units";
+import { decimalToMinor } from "@/lib/dues/ledger/minor-units";
 import type { StudentStatus } from "@/generated/prisma/client";
 import {
   FINGERPRINT_FORMAT,
@@ -309,7 +309,7 @@ export function evaluateReadiness(snapshot: ReadinessSnapshot, candidate: YearMo
     const notEligibleBecause = (reason: string) => mine.filter((p) => p.outcome === "notEligible" && p.reason === reason);
     return {
       academyId,
-      wouldCreate: [...byCurrency.entries()].sort(([a], [b]) => (a < b ? -1 : 1)).map(([currency, e]) => ({ currency, count: e.count, total: minorToDecimal(e.minor) })),
+      wouldCreate: [...byCurrency.entries()].sort(([a], [b]) => (a < b ? -1 : 1)).map(([currency, e]) => ({ currency, count: e.count, total: totalToDecimal(e.minor) })),
       undecidable: notEligibleBecause("UNDECIDABLE").map((p) => p.studentId),
       notEligible: notEligibleBecause("NOT_ELIGIBLE").map((p) => p.studentId),
       explicitNoPlan: notEligibleBecause("NO_ASSIGNMENT").filter((p) => effectiveAssignment(p.studentId)?.planId === null).map((p) => p.studentId),
