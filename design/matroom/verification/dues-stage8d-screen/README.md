@@ -91,6 +91,12 @@ disagree. With no branches, UTC is used. `now` is the snapshot's own database ti
 | W1 | EN "opening debt declared" line also says "Declared: the items shown" | integration: replacement test fails |
 | W2 | ES "no opening debt" line back to "Declarado: sin deuda inicial" | integration: no-debt test fails |
 | W3 | the declaration line includes a current draft's amount | integration: replacement test fails |
+| T1 | (test control) the first version of the no-debt assertion, `not.toMatch(/55\|Added/)` over the whole line including its timestamp | integration: fails when the review time contains `:55` |
+
+T1 was a defect in the first version of the Finding 5 test: a valid timestamp such as `11:55` failed it. The fixture now pins the
+display-only `confirmedAt` to `…:55` in both scenarios (a test-only update in the isolated database). The assertions check the
+time and sequence apart from the declaration: the declaration must equal the historical message exactly and contain no draft
+content. With the `:55` time, both locales pass. Restoring the old "items shown" wording still fails (W1, also in ES).
 
 ### Browser (synthetic data, isolated test database)
 

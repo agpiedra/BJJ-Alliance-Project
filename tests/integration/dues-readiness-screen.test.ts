@@ -299,8 +299,25 @@ describe("a stale opening review is worded historically: it never claims the cur
     const start = html.lastIndexOf("<li", link);
     const end = html.indexOf("rounded-lg border border-border p-3", link);
     const card = html.slice(start, end === -1 ? undefined : end);
+    // "Recorded {time} (#{sequence}) · {declaration}": the time and sequence are checked apart from the historical declaration,
+    // so a timestamp's digits (e.g. ":55") can never satisfy or break an assertion about the declaration.
     const recorded = /<p class="text-xs text-muted-foreground">([^<]*)<\/p>/.exec(card)?.[1] ?? "";
-    return { screen: result.screen, card, recorded };
+    const separator = recorded.lastIndexOf(" · ");
+    const stamp = separator === -1 ? recorded : recorded.slice(0, separator);
+    const declaration = separator === -1 ? "" : recorded.slice(separator + " · ".length);
+    return { screen: result.screen, card, stamp, declaration };
+  }
+
+  /** Test fixture only: pins the display-only `confirmedAt` to a time whose minutes are 55 (8b rejects UPDATE, so triggers are off
+   * for this one transaction, as in afterAll). Validity and fingerprints never read `confirmedAt`. */
+  async function pinConfirmedAt(studentId: string) {
+    await prisma.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe("SET LOCAL session_replication_role = replica");
+      await tx.$executeRawUnsafe(
+        `UPDATE "DuesReadinessConfirmation" SET "confirmedAt" = $1::timestamptz WHERE "organizationId" = $2 AND "studentId" = $3`,
+        "2026-10-20T17:55:00Z", b.org.id, studentId,
+      );
+    });
   }
 
   async function review(studentId: string, declaration: "itemsAsShown" | "noOpeningDebt") {
@@ -315,19 +332,21 @@ describe("a stale opening review is worded historically: it never claims the cur
     const id = await newStudent(b, "Rita", "Revisada");
     expect(await createOpeningDraftCore(ctx(b), id, { coverageYear: 2025, coverageMonth: 5, amount: "4321.00", currency: "CRC", note: "Original draft 2025-05", legacyPaymentPeriodId: null })).toEqual({ ok: true });
     await review(id, "itemsAsShown");
+    await pinConfirmedAt(id);
     const original = (await renderCard(id, "en")).screen.activeDrafts.find((d) => d.studentId === id)!;
     expect(await replaceOpeningDraftCore(ctx(b), original.id, { coverageYear: 2025, coverageMonth: 5, amount: "8765.00", currency: "CRC", note: "Replacement draft 2025-05", legacyPaymentPeriodId: null })).toEqual({ ok: true });
 
     for (const locale of ["en", "es"] as const) {
-      const { screen, card, recorded } = await renderCard(id, locale);
+      const { screen, card, stamp, declaration } = await renderCard(id, locale);
       expect(screen.report.confirmations.find((c) => c.studentId === id)!.openingReview).toMatchObject({ state: "stale", declaredNoOpeningDebt: false });
       expect(screen.activeDrafts.filter((d) => d.studentId === id).map((d) => [d.amount, d.note])).toEqual([["8765.00", "Replacement draft 2025-05"]]);
       expect(card).toContain(readiness(locale).state.stale);
       expect(card).toContain("Replacement draft 2025-05");
       expect(card).not.toContain("Original draft 2025-05");
-      // The declaration line: the recorded time plus the historical wording, and nothing about any draft's content.
-      expect(recorded).toContain(readiness(locale).atReviewDebt);
-      expect(recorded).not.toMatch(/8.?765|4.?321|Replacement|Original/);
+      // The recorded time (pinned to :55) and sequence, then exactly the historical wording — nothing about any draft's content.
+      expect(stamp).toMatch(/:55\D.*\b1\)$/); // EN "(#1)", ES "(n.º 1)"
+      expect(declaration).toBe(readiness(locale).atReviewDebt);
+      expect(declaration).not.toMatch(/8.?765|4.?321|Replacement|Original/);
       for (const old of OLD_WORDING) expect(card, `${locale}: ${old}`).not.toContain(old);
     }
   });
@@ -336,15 +355,18 @@ describe("a stale opening review is worded historically: it never claims the cur
     owner(b);
     const id = await newStudent(b, "Nora", "Sindeuda");
     await review(id, "noOpeningDebt");
+    await pinConfirmedAt(id);
     expect(await createOpeningDraftCore(ctx(b), id, { coverageYear: 2025, coverageMonth: 6, amount: "55.00", currency: "USD", note: "Added after review", legacyPaymentPeriodId: null })).toEqual({ ok: true });
 
     for (const locale of ["en", "es"] as const) {
-      const { screen, card, recorded } = await renderCard(id, locale);
+      const { screen, card, stamp, declaration } = await renderCard(id, locale);
       expect(screen.report.confirmations.find((c) => c.studentId === id)!.openingReview).toMatchObject({ state: "stale", declaredNoOpeningDebt: true });
       expect(card).toContain(readiness(locale).state.stale);
       expect(card).toContain("Added after review");
-      expect(recorded).toContain(readiness(locale).atReviewNoDebt);
-      expect(recorded).not.toMatch(/55|Added/);
+      // The time contains ":55" (pinned); the draft amount is 55.00. Only the declaration is checked for draft content.
+      expect(stamp).toMatch(/:55\D.*\b1\)$/);
+      expect(declaration).toBe(readiness(locale).atReviewNoDebt);
+      expect(declaration).not.toMatch(/55|Added/);
       for (const old of OLD_WORDING) expect(card, `${locale}: ${old}`).not.toContain(old);
     }
   });
