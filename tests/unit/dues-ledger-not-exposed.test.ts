@@ -118,6 +118,10 @@ const AUTHORIZED_CALLERS = [
   // `latestEffective` from `ledger/common.ts` and `decimalToMinor`/`minorToDecimal` from `ledger/minor-units.ts` — the same
   // version selection and minor-unit arithmetic the monthly writer uses — never a writer, a lock or a transaction.
   "src/lib/dues/readiness/evaluate.ts",
+  // Stage 8 PR 8c (docs/dues/STAGE-8C-IMPLEMENTATION-PLAN.md §3.1): the owner's opening-draft and confirmation writers take the
+  // ledger's lock order (branch FOR SHARE, then student FOR UPDATE) and import only the `lockBranchShared` lock primitive from
+  // `ledger/common.ts` — never a ledger writer. They write only `DuesOpeningItem`, `DuesReadinessConfirmation` and `AuditLog`.
+  "src/lib/dues/readiness/opening-core.ts",
 ];
 
 describe("the ledger writers are not reachable from production code", () => {

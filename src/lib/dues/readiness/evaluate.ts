@@ -3,7 +3,14 @@ import { eligibleAndAssigned, type AssignmentRow, type StatusHistoryRow } from "
 import { latestEffective } from "@/lib/dues/ledger/common";
 import { decimalToMinor, minorToDecimal } from "@/lib/dues/ledger/minor-units";
 import type { StudentStatus } from "@/generated/prisma/client";
-import { branchFingerprint, organizationFingerprint, studentFingerprint } from "@/lib/dues/readiness/fingerprint";
+import {
+  FINGERPRINT_FORMAT,
+  branchFingerprint,
+  openingReviewBinding,
+  organizationFingerprint,
+  pricingAckBinding,
+  studentFingerprint,
+} from "@/lib/dues/readiness/fingerprint";
 import type { ReadinessSnapshot } from "@/lib/dues/readiness/snapshot";
 
 /**
@@ -43,6 +50,25 @@ export interface BranchPreview {
   configurationGap: string[];
 }
 
+/** Stage 8c: a student's current confirmation of one kind for S (highest `sequence`), and whether it still matches the content. */
+export type ConfirmationState =
+  | { state: "missing" }
+  | { state: "valid" | "stale"; sequence: number; confirmedAt: string; declaredNoOpeningDebt: boolean | null };
+
+export interface StudentConfirmations {
+  studentId: string;
+  openingReview: ConfirmationState;
+  pricingAck: ConfirmationState;
+}
+
+/** Stage 8c: ACTIVE opening drafts per branch and currency (brief §10). Separate from the MONTHLY preview; never summed across currencies. */
+export interface OpeningDraftTotal {
+  academyId: string;
+  currency: string;
+  count: number;
+  total: string;
+}
+
 export interface ReadinessReport {
   candidate: YearMonth;
   ready: boolean;
@@ -51,10 +77,21 @@ export interface ReadinessReport {
   notes: string[];
   preview: { students: StudentPreview[]; branches: BranchPreview[] };
   fingerprints: { organization: string; branches: Record<string, string>; students: Record<string, string> };
+  confirmations: StudentConfirmations[];
+  openingDrafts: OpeningDraftTotal[];
 }
 
 const toDate = (iso: string): CalendarDate => ({ year: Number(iso.slice(0, 4)), month: Number(iso.slice(5, 7)), day: Number(iso.slice(8, 10)) });
 const sortedIds = (ids: Iterable<string>) => [...new Set(ids)].sort();
+
+/**
+ * A SUM of amounts in minor units as a two-decimal string. Not `minorToDecimal`: that one is bounded by a single column's range
+ * (99,999,999.99) on purpose, and a total of several drafts may legitimately exceed it. Exact while the sum is a safe integer.
+ */
+function totalToDecimal(minor: number): string {
+  if (!Number.isSafeInteger(minor) || minor < 0) throw new RangeError(`Total out of range: ${minor}`);
+  return `${Math.floor(minor / 100)}.${String(minor % 100).padStart(2, "0")}`;
+}
 
 function previewStudent(snapshot: ReadinessSnapshot, student: ReadinessSnapshot["students"][number], s: YearMonth): StudentPreview {
   const base = { studentId: student.id, academyId: student.homeAcademyId };
@@ -133,6 +170,78 @@ export function evaluateReadiness(snapshot: ReadinessSnapshot, candidate: YearMo
     snapshot.legacyPayments.filter((p) => p.status === "PROMO" || p.status === "EXEMPT" || p.promoRecurring).map((p) => p.studentId),
   );
 
+  // Stage 8c. A confirmation is valid only when its format is current and its binding equals the binding recomputed from THIS
+  // snapshot; the current one per identity is the highest `sequence` (never a timestamp or an id).
+  const studentFps = new Map(students.map((st) => [st.id, studentFingerprint(snapshot, st.id)]));
+  const branchFps = new Map(snapshot.branches.map((b) => [b.id, branchFingerprint(snapshot, b.id)]));
+  const confirmationState = (st: ReadinessSnapshot["students"][number], kind: "OPENING_REVIEWED" | "PRICING_ACKNOWLEDGED"): ConfirmationState => {
+    const current = snapshot.confirmations
+      .filter((c) => c.studentId === st.id && c.kind === kind && c.candidateYear === s.year && c.candidateMonth === s.month)
+      .reduce<ReadinessSnapshot["confirmations"][number] | null>((best, c) => (best === null || c.sequence > best.sequence ? c : best), null);
+    if (!current) return { state: "missing" };
+    const studentFp = studentFps.get(st.id)!;
+    const branchFp = branchFps.get(st.homeAcademyId);
+    const expected = kind === "OPENING_REVIEWED" ? openingReviewBinding(s, studentFp) : branchFp ? pricingAckBinding(s, studentFp, branchFp) : null;
+    const valid = current.fingerprintFormat === FINGERPRINT_FORMAT && current.binding === expected;
+    return { state: valid ? "valid" : "stale", sequence: current.sequence, confirmedAt: current.confirmedAt, declaredNoOpeningDebt: current.declaredNoOpeningDebt };
+  };
+  const confirmations: StudentConfirmations[] = students.map((st) => ({
+    studentId: st.id,
+    openingReview: confirmationState(st, "OPENING_REVIEWED"),
+    pricingAck: confirmationState(st, "PRICING_ACKNOWLEDGED"),
+  }));
+  const stateOf = new Map(confirmations.map((c) => [c.studentId, c]));
+
+  // 6. Every promo/exempt student (8a's definition) has a valid pricing acknowledgement for S.
+  const check6 = promoStudents.filter((id) => stateOf.get(id)?.pricingAck.state !== "valid");
+
+  const drafts = [...snapshot.openingItems].sort((a, b) => (a.id < b.id ? -1 : 1));
+  const legacyFor = (studentId: string, year: number, month: number) =>
+    snapshot.legacyPayments.find((p) => p.studentId === studentId && p.year === year && p.month === month);
+  // 7. No active draft over a PAID legacy month without an explicit link.
+  const check7 = drafts.filter((d) => d.legacyPaymentPeriodId === null && legacyFor(d.studentId, d.coverageYear, d.coverageMonth)?.status === "PAID");
+  // 8. No active draft for S or later.
+  const check8 = drafts.filter((d) => compareYearMonth({ year: d.coverageYear, month: d.coverageMonth }, s) >= 0);
+  // 9. U1: every currently ACTIVE student plus every student with an active draft has a valid opening review for S. Current status
+  // only selects who must be reviewed; it does not decide monthly eligibility (the history-based preview above does).
+  const mustReview = new Set([...active.map((st) => st.id), ...drafts.map((d) => d.studentId)]);
+  const check9 = students.filter((st) => mustReview.has(st.id) && stateOf.get(st.id)!.openingReview.state !== "valid");
+
+  // Brief §12 warnings (acknowledged, not blocking). Amounts are compared only within one currency; with no reference, no warning.
+  const studentById = new Map(students.map((st) => [st.id, st]));
+  const planTermsFor = (studentId: string, month: YearMonth) => {
+    const assignment = latestEffective(snapshot.assignments.filter((a) => a.studentId === studentId), month);
+    return assignment?.planId ? latestEffective(snapshot.terms.filter((t) => t.planId === assignment.planId), month) : null;
+  };
+  const linkedToPaid: string[] = [];
+  const aboveReference: string[] = [];
+  const currencyDiffers: string[] = [];
+  for (const d of drafts) {
+    const month = { year: d.coverageYear, month: d.coverageMonth };
+    const linked = d.legacyPaymentPeriodId === null ? undefined : snapshot.legacyPayments.find((p) => p.id === d.legacyPaymentPeriodId);
+    if (linked?.status === "PAID") linkedToPaid.push(`openingItem:${d.id}`);
+    const legacy = legacyFor(d.studentId, d.coverageYear, d.coverageMonth);
+    const terms = planTermsFor(d.studentId, month);
+    const aboveLegacy = legacy?.amount != null && legacy.currency === d.currency && decimalToMinor(d.amount) > decimalToMinor(legacy.amount);
+    const abovePlan = !!terms && terms.monthsCovered === 1 && terms.currency === d.currency && decimalToMinor(d.amount) > decimalToMinor(terms.priceAmount);
+    if (aboveLegacy || abovePlan) aboveReference.push(`openingItem:${d.id}`);
+    if (terms && terms.currency !== d.currency) currencyDiffers.push(`openingItem:${d.id}`);
+  }
+
+  const draftTotals = new Map<string, OpeningDraftTotal & { minor: number }>();
+  for (const d of drafts) {
+    const academyId = studentById.get(d.studentId)?.homeAcademyId;
+    if (!academyId) continue;
+    const key = `${academyId}\u0000${d.currency}`;
+    const entry = draftTotals.get(key) ?? { academyId, currency: d.currency, count: 0, total: "", minor: 0 };
+    entry.count += 1;
+    entry.minor += decimalToMinor(d.amount);
+    draftTotals.set(key, entry);
+  }
+  const openingDrafts: OpeningDraftTotal[] = [...draftTotals.values()]
+    .sort((a, b) => (a.academyId === b.academyId ? (a.currency < b.currency ? -1 : 1) : a.academyId < b.academyId ? -1 : 1))
+    .map(({ academyId, currency, count, minor }) => ({ academyId, currency, count, total: totalToDecimal(minor) }));
+
   const computed = (id: number, key: string, failing: string[], passDetail: string, failDetail: string): ReadinessCheck => ({
     id,
     key,
@@ -153,16 +262,28 @@ export function evaluateReadiness(snapshot: ReadinessSnapshot, candidate: YearMo
     ),
     computed(4, "assignments", check4.map((st) => `student:${st.id}`), "Every active student has a plan (or an explicit 'no plan') effective for S.", "Active students with no assignment effective for S, or one on another branch's plan."),
     computed(5, "noLegacyFromStart", check5.map((p) => `legacy:${p.id}`), "No legacy payment exists for S or later.", "Legacy payments recorded for S or later would be charged again."),
-    {
-      id: 6,
-      key: "pricingAcknowledged",
-      status: "notImplemented",
-      detail: "Pricing acknowledgements are not implemented yet (stage 8b/8c). These promo/exempt students will need one.",
-      items: promoStudents.map((id) => `student:${id}`),
-    },
-    { id: 7, key: "openingItemsOverPaidMonths", status: "notImplemented", detail: "Opening-item drafts are not implemented yet (stage 8b/8c).", items: [] },
-    { id: 8, key: "openingItemsBeforeStart", status: "notImplemented", detail: "Opening-item drafts are not implemented yet (stage 8b/8c).", items: [] },
-    { id: 9, key: "openingReviewed", status: "notImplemented", detail: "Opening-debt review confirmations are not implemented yet (stage 8b/8c).", items: [] },
+    computed(
+      6,
+      "pricingAcknowledged",
+      check6.map((id) => `student:${id}`),
+      "Every promo/exempt student has a current pricing acknowledgement for S.",
+      "Promo/exempt students without a current pricing acknowledgement for S (missing, or stale since a student, price or policy change).",
+    ),
+    computed(
+      7,
+      "openingItemsOverPaidMonths",
+      check7.map((d) => `openingItem:${d.id}`),
+      "No opening item is over a PAID legacy month without an explicit link.",
+      "Opening items over a PAID legacy month without an explicit link to that payment.",
+    ),
+    computed(8, "openingItemsBeforeStart", check8.map((d) => `openingItem:${d.id}`), "Every opening item is for a month before S.", "Opening items for S or a later month."),
+    computed(
+      9,
+      "openingReviewed",
+      check9.map((st) => `student:${st.id}`),
+      "Every active student, and every student with an opening item, has a current opening-debt review for S.",
+      "Students (active, or with an opening item) without a current opening-debt review for S (missing, or stale since a change).",
+    ),
     { id: 10, key: "monthlyGenerationScheduled", status: "notImplemented", detail: "The monthly-generation trigger is not built or scheduled.", items: [] },
     { id: 11, key: "openingCancellationAvailable", status: "notImplemented", detail: "The approved owner cancellation of erroneous opening obligations (O2) is not implemented.", items: [] },
     {
@@ -203,13 +324,20 @@ export function evaluateReadiness(snapshot: ReadinessSnapshot, candidate: YearMo
     candidate: { year: s.year, month: s.month },
     ready: checks.every((c) => c.status === "pass"),
     checks,
-    warnings: notEligibleForS.length ? [{ key: "notEligibleForStart", items: notEligibleForS }] : [],
+    warnings: [
+      ...(notEligibleForS.length ? [{ key: "notEligibleForStart", items: notEligibleForS }] : []),
+      ...(linkedToPaid.length ? [{ key: "openingItemLinkedToPaidRow", items: linkedToPaid }] : []),
+      ...(aboveReference.length ? [{ key: "openingItemAboveReference", items: aboveReference }] : []),
+      ...(currencyDiffers.length ? [{ key: "openingItemCurrencyDiffersFromPlan", items: currencyDiffers }] : []),
+    ],
     notes: ["Pre-switch signup debt is excluded from this activation scope (owner decision O3); it is not waived."],
     preview: { students: previews, branches },
     fingerprints: {
       organization: organizationFingerprint(snapshot, s),
-      branches: Object.fromEntries(snapshot.branches.map((b) => [b.id, branchFingerprint(snapshot, b.id)])),
-      students: Object.fromEntries(students.map((st) => [st.id, studentFingerprint(snapshot, st.id)])),
+      branches: Object.fromEntries(branchFps),
+      students: Object.fromEntries(studentFps),
     },
+    confirmations,
+    openingDrafts,
   };
 }

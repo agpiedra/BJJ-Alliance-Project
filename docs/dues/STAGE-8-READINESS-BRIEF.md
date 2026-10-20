@@ -340,10 +340,10 @@ as pass.
 | 3 | Every branch has policy and terms effective for S | Yes |
 | 4 | Every active student assigned or explicitly "no plan" | Yes |
 | 5 | No legacy row for a month ≥ S | Yes |
-| 6 | Every promo/exempt student has a valid `PRICING_ACKNOWLEDGED` | **Not yet implemented** (confirmations: 8b/8c). Fails if any promo student exists |
-| 7 | No opening item over a `PAID` month without an explicit link | Not yet implemented (drafts: 8b/8c) |
-| 8 | No opening item for a month ≥ S | Not yet implemented (8b/8c) |
-| 9 | Every relevant student has a valid `OPENING_REVIEWED` | **Not yet implemented** (8b/8c) |
+| 6 | Every promo/exempt student has a valid `PRICING_ACKNOWLEDGED` | **Computed (8c)**: fails listing each promo/exempt student whose current acknowledgement for S is missing or stale |
+| 7 | No opening item over a `PAID` month without an explicit link | **Computed (8c)**, over active drafts |
+| 8 | No opening item for a month ≥ S | **Computed (8c)**, over active drafts |
+| 9 | Every relevant student has a valid `OPENING_REVIEWED` | **Computed (8c)**. "Relevant" (U1, recorded): every student currently `ACTIVE` plus every student with an active opening draft. Current status only selects who must be reviewed; it does not decide monthly eligibility (the history-based preview does) |
 | 10 | Monthly generation built, scheduled and healthy | **Not yet implemented** (trigger not built) |
 | 11 | O2 cancellation writer exists | **Not yet implemented** (decided, deferred) |
 | 12 | The stage 9 activation **mechanism** is implemented and available (approval, manual execution, legacy refusal, gate lock). This requires the mechanism to exist; it does **not** require the organization to be activated already | **Not yet implemented** (stage 9) |
