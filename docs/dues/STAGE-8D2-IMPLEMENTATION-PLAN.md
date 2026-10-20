@@ -1,7 +1,6 @@
 # Stage 8 PR 8d-2 — implementation plan (the readiness screen's interactive forms)
 
-**Status:** revision 2, D1–D4 recorded as the working design. **Implementation complete on its branch; verification in
-progress; no PR opened yet.** Evidence and deviations: `design/matroom/verification/dues-stage8d2-forms/README.md`.
+**Status:** revision 2, D1–D4 recorded as the working design. **PR #151 open, held unmerged for review.** Evidence and deviations: `design/matroom/verification/dues-stage8d2-forms/README.md`.
 - **Revision 2:** D1–D4 recorded as the working design (§10).
 - **§4.4 rewritten:** a lost response is "outcome unknown". There is no inferred "saved" or "not saved" and no comparison
   inspector.
