@@ -114,6 +114,10 @@ const AUTHORIZED_CALLERS = [
   // activation-boundary refusal — reads `inactiveLedgerActivation.isActive(organizationId)` directly, the same
   // read-only binding `payments/page.tsx` already imports, never a writer call.
   "src/lib/payments/payment-actions.ts",
+  // Stage 8 PR 8a (docs/dues/STAGE-8-READINESS-BRIEF.md §10): the read-only readiness preview imports only the pure
+  // `latestEffective` from `ledger/common.ts` and `decimalToMinor`/`minorToDecimal` from `ledger/minor-units.ts` — the same
+  // version selection and minor-unit arithmetic the monthly writer uses — never a writer, a lock or a transaction.
+  "src/lib/dues/readiness/evaluate.ts",
 ];
 
 describe("the ledger writers are not reachable from production code", () => {

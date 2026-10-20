@@ -15,7 +15,9 @@ import { productionSourceFiles, stripComments } from "../helpers/source-files";
  */
 const FILE = "src/lib/dues/eligibility.ts";
 const IMPORTS_ELIGIBILITY = /(?:from\s+|import\s*\(\s*|require\s*\(\s*)["'][^"']*dues\/eligibility["']/;
-const AUTHORIZED_CALLERS = ["src/lib/dues/monthly-generation.ts", "src/lib/dues/ledger/dues-facts.ts"];
+// Stage 8 PR 8a: `src/lib/dues/readiness/evaluate.ts` reuses `eligibleAndAssigned` read-only, to predict exactly what the
+// monthly writer would decide for a candidate start month (proved equal by tests/integration/dues-readiness.test.ts).
+const AUTHORIZED_CALLERS = ["src/lib/dues/monthly-generation.ts", "src/lib/dues/ledger/dues-facts.ts", "src/lib/dues/readiness/evaluate.ts"];
 
 describe("the eligibility reader is not reachable from production code", () => {
   it("no file other than itself and the authorized callers imports it", () => {
