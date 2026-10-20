@@ -12,21 +12,40 @@ const FILES = [
   "src/lib/dues/readiness/evaluate.ts",
   "src/lib/dues/readiness/fingerprint.ts",
   "src/lib/dues/readiness/snapshot.ts",
+  // Stage 8d-1: the screen's read model and the pure start-month rules. Read-only, like the report.
+  "src/lib/dues/readiness/screen.ts",
+  "src/lib/dues/readiness/candidate.ts",
   "src/lib/db/read-only-snapshot.ts",
 ];
 const IMPORTS_READINESS = /(?:from\s+|import\s*\(\s*)["'][^"']*dues\/readiness(?:\/[a-z-]+)?["']/;
+
+/**
+ * Stage 8d-1 (docs/dues/STAGE-8D-IMPLEMENTATION-PLAN.md): the owner's READ-ONLY readiness screen is the first caller outside the
+ * folder, named here deliberately. It is two server components that may import only the read model (`screen`), the start-month
+ * rules (`candidate`) and report types (`evaluate`) — never the 8c actions, which are the interactive PR's (8d-2).
+ */
+const SCREEN_FILES = ["src/app/[locale]/(staff)/payments/readiness/page.tsx", "src/app/[locale]/(staff)/payments/readiness/readiness-view.tsx"];
 
 describe("the readiness report is not reachable from a browser", () => {
   it.each(FILES)("%s is a plain server module: no \"use server\" / \"use client\"", (file) => {
     expect(readFileSync(file, "utf8")).not.toMatch(/^\s*["']use (server|client)["']/m);
   });
 
-  it("nothing outside the readiness folder imports it", () => {
+  it("outside the readiness folder, only the 8d-1 screen imports it", () => {
     const importers = productionSourceFiles()
       .filter((f) => !f.file.replaceAll("\\", "/").startsWith("src/lib/dues/readiness/"))
       .filter((f) => IMPORTS_READINESS.test(stripComments(f.text)))
-      .map((f) => f.file);
-    expect(importers).toEqual([]);
+      .map((f) => f.file.replaceAll("\\", "/"))
+      .sort();
+    expect(importers).toEqual([...SCREEN_FILES].sort());
+  });
+
+  it.each(SCREEN_FILES)("%s is a server component that imports only the read model, the month rules and report types, and has no write form", (file) => {
+    const text = stripComments(readFileSync(file, "utf8"));
+    expect(text).not.toMatch(/^\s*["']use (server|client)["']/m);
+    const modules = [...text.matchAll(/from\s+["'][^"']*dues\/readiness(?:\/([a-z-]+))?["']/g)].map((m) => m[1] ?? "index");
+    expect(modules.every((m) => ["screen", "candidate", "evaluate"].includes(m)), modules.join(",")).toBe(true);
+    expect(text).not.toMatch(/opening-actions|method=["']post["']|formAction|action=\{/i);
   });
 
   it("calls no ledger writer and takes no row lock", () => {

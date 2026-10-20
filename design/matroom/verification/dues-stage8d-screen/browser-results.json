@@ -1,0 +1,412 @@
+[
+  {
+    "name": "[en-light-1280] no horizontal page scroll",
+    "ok": true,
+    "detail": "scrollWidth - clientWidth = 0"
+  },
+  {
+    "name": "[en-light-1280] theme applied",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "[en-light-1280] no activation control",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "[en-light-1280] expected text present (exact amounts, states, unavailable/pending)",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "[en-light-1280] legacy payment statuses are translated, never raw codes",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "[en-light-1280] only the GET month form exists",
+    "ok": true,
+    "detail": "[{\"method\":\"get\",\"fields\":[\"s\"]}]"
+  },
+  {
+    "name": "[en-light-390] no horizontal page scroll",
+    "ok": true,
+    "detail": "scrollWidth - clientWidth = 0"
+  },
+  {
+    "name": "[en-light-390] theme applied",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "[en-light-390] no activation control",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "[en-light-390] expected text present (exact amounts, states, unavailable/pending)",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "[en-light-390] legacy payment statuses are translated, never raw codes",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "[en-light-390] only the GET month form exists",
+    "ok": true,
+    "detail": "[{\"method\":\"get\",\"fields\":[\"s\"]}]"
+  },
+  {
+    "name": "[en-light-320] no horizontal page scroll",
+    "ok": true,
+    "detail": "scrollWidth - clientWidth = 0"
+  },
+  {
+    "name": "[en-light-320] theme applied",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "[en-light-320] no activation control",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "[en-light-320] expected text present (exact amounts, states, unavailable/pending)",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "[en-light-320] legacy payment statuses are translated, never raw codes",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "[en-light-320] only the GET month form exists",
+    "ok": true,
+    "detail": "[{\"method\":\"get\",\"fields\":[\"s\"]}]"
+  },
+  {
+    "name": "[en-dark-1280] no horizontal page scroll",
+    "ok": true,
+    "detail": "scrollWidth - clientWidth = 0"
+  },
+  {
+    "name": "[en-dark-1280] theme applied",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "[en-dark-1280] no activation control",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "[en-dark-1280] expected text present (exact amounts, states, unavailable/pending)",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "[en-dark-1280] legacy payment statuses are translated, never raw codes",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "[en-dark-1280] only the GET month form exists",
+    "ok": true,
+    "detail": "[{\"method\":\"get\",\"fields\":[\"s\"]}]"
+  },
+  {
+    "name": "[en-dark-390] no horizontal page scroll",
+    "ok": true,
+    "detail": "scrollWidth - clientWidth = 0"
+  },
+  {
+    "name": "[en-dark-390] theme applied",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "[en-dark-390] no activation control",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "[en-dark-390] expected text present (exact amounts, states, unavailable/pending)",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "[en-dark-390] legacy payment statuses are translated, never raw codes",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "[en-dark-390] only the GET month form exists",
+    "ok": true,
+    "detail": "[{\"method\":\"get\",\"fields\":[\"s\"]}]"
+  },
+  {
+    "name": "[en-dark-320] no horizontal page scroll",
+    "ok": true,
+    "detail": "scrollWidth - clientWidth = 0"
+  },
+  {
+    "name": "[en-dark-320] theme applied",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "[en-dark-320] no activation control",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "[en-dark-320] expected text present (exact amounts, states, unavailable/pending)",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "[en-dark-320] legacy payment statuses are translated, never raw codes",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "[en-dark-320] only the GET month form exists",
+    "ok": true,
+    "detail": "[{\"method\":\"get\",\"fields\":[\"s\"]}]"
+  },
+  {
+    "name": "[es-light-1280] no horizontal page scroll",
+    "ok": true,
+    "detail": "scrollWidth - clientWidth = 0"
+  },
+  {
+    "name": "[es-light-1280] theme applied",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "[es-light-1280] no activation control",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "[es-light-1280] expected text present (exact amounts, states, unavailable/pending)",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "[es-light-1280] legacy payment statuses are translated, never raw codes",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "[es-light-1280] only the GET month form exists",
+    "ok": true,
+    "detail": "[{\"method\":\"get\",\"fields\":[\"s\"]}]"
+  },
+  {
+    "name": "[es-light-390] no horizontal page scroll",
+    "ok": true,
+    "detail": "scrollWidth - clientWidth = 0"
+  },
+  {
+    "name": "[es-light-390] theme applied",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "[es-light-390] no activation control",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "[es-light-390] expected text present (exact amounts, states, unavailable/pending)",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "[es-light-390] legacy payment statuses are translated, never raw codes",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "[es-light-390] only the GET month form exists",
+    "ok": true,
+    "detail": "[{\"method\":\"get\",\"fields\":[\"s\"]}]"
+  },
+  {
+    "name": "[es-light-320] no horizontal page scroll",
+    "ok": true,
+    "detail": "scrollWidth - clientWidth = 0"
+  },
+  {
+    "name": "[es-light-320] theme applied",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "[es-light-320] no activation control",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "[es-light-320] expected text present (exact amounts, states, unavailable/pending)",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "[es-light-320] legacy payment statuses are translated, never raw codes",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "[es-light-320] only the GET month form exists",
+    "ok": true,
+    "detail": "[{\"method\":\"get\",\"fields\":[\"s\"]}]"
+  },
+  {
+    "name": "[es-dark-1280] no horizontal page scroll",
+    "ok": true,
+    "detail": "scrollWidth - clientWidth = 0"
+  },
+  {
+    "name": "[es-dark-1280] theme applied",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "[es-dark-1280] no activation control",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "[es-dark-1280] expected text present (exact amounts, states, unavailable/pending)",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "[es-dark-1280] legacy payment statuses are translated, never raw codes",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "[es-dark-1280] only the GET month form exists",
+    "ok": true,
+    "detail": "[{\"method\":\"get\",\"fields\":[\"s\"]}]"
+  },
+  {
+    "name": "[es-dark-390] no horizontal page scroll",
+    "ok": true,
+    "detail": "scrollWidth - clientWidth = 0"
+  },
+  {
+    "name": "[es-dark-390] theme applied",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "[es-dark-390] no activation control",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "[es-dark-390] expected text present (exact amounts, states, unavailable/pending)",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "[es-dark-390] legacy payment statuses are translated, never raw codes",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "[es-dark-390] only the GET month form exists",
+    "ok": true,
+    "detail": "[{\"method\":\"get\",\"fields\":[\"s\"]}]"
+  },
+  {
+    "name": "[es-dark-320] no horizontal page scroll",
+    "ok": true,
+    "detail": "scrollWidth - clientWidth = 0"
+  },
+  {
+    "name": "[es-dark-320] theme applied",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "[es-dark-320] no activation control",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "[es-dark-320] expected text present (exact amounts, states, unavailable/pending)",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "[es-dark-320] legacy payment statuses are translated, never raw codes",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "[es-dark-320] only the GET month form exists",
+    "ok": true,
+    "detail": "[{\"method\":\"get\",\"fields\":[\"s\"]}]"
+  },
+  {
+    "name": "keyboard: the month select is reachable by Tab",
+    "ok": true,
+    "detail": "after 17 stops"
+  },
+  {
+    "name": "keyboard: focus is visible on the select",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "keyboard: Show button follows the select, focus visible",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "keyboard: Enter submits the GET form and changes ?s=",
+    "ok": true,
+    "detail": "s=2027-01"
+  },
+  {
+    "name": "keyboard: the branch details disclosure opens with Enter",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "invalid ?s= shows the error and no report",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "no ?s= selects the default (next month in the branch time zone)",
+    "ok": true,
+    "detail": "selected=2026-11"
+  },
+  {
+    "name": "Payments › Plans shows the owner link",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "[empty en] empty states shown",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "[empty es] empty states shown",
+    "ok": true,
+    "detail": ""
+  }
+]

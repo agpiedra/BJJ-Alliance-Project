@@ -207,9 +207,28 @@ describe("every page route renders through a real running server (non-5xx)", () 
     }
   });
 
+  // Its own test (and so its own time budget): under `next dev` the first request to a route compiles it, and these two routes
+  // are new; folding them into the list above pushed that test past its timeout on a cold server.
+  it("stage 8d-1: the owner readiness screen and its entry page (ADMIN)", async () => {
+    const routes: RouteCase[] = [
+      { label: "dues readiness", path: "/en/payments/readiness" },
+      { label: "dues readiness (month)", path: "/en/payments/readiness?s=2026-12" },
+      { label: "dues readiness (malformed month)", path: "/en/payments/readiness?s=2026-13" },
+      { label: "payment plans (owner link)", path: "/en/payments/plans" },
+    ];
+    for (const route of routes) {
+      await assertNotServerError({ ...route, cookie: adminCookie });
+    }
+  });
+
   it("staff pages render for DIRECTOR and INSTRUCTOR too, not only ADMIN", async () => {
     await assertNotServerError({ label: "dashboard (DIRECTOR)", path: "/en/dashboard", cookie: directorCookie });
     await assertNotServerError({ label: "dashboard (INSTRUCTOR)", path: "/en/dashboard", cookie: instructorCookie });
+  });
+
+  it("stage 8d-1: the readiness screen is owner-only — a DIRECTOR and an INSTRUCTOR get exactly 404", async () => {
+    await assertRefusedWithExactly404({ label: "dues readiness (DIRECTOR)", path: "/en/payments/readiness", cookie: directorCookie });
+    await assertRefusedWithExactly404({ label: "dues readiness (INSTRUCTOR)", path: "/en/payments/readiness", cookie: instructorCookie });
   });
 
   it("platform admin pages (SUPER_ADMIN)", async () => {
