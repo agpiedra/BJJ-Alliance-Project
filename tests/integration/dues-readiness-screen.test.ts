@@ -3,6 +3,9 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { getTestPrismaClient } from "../helpers/test-db";
 import { makeAccountingOrg } from "../helpers/accounting-org";
 import type { TenantContext } from "../../src/lib/tenant/types";
+import { renderToStaticMarkup } from "react-dom/server";
+import enMessages from "../../messages/en.json";
+import esMessages from "../../messages/es.json";
 
 /**
  * Stage 8d-1 (docs/dues/STAGE-8D-IMPLEMENTATION-PLAN.md): the owner's READ-ONLY readiness screen, against the REAL isolated test
@@ -27,11 +30,23 @@ type MockSession = { user: { id: string; role?: string }; activeOrganizationId: 
 let currentSession: MockSession = null;
 vi.mock("@/auth", () => ({ auth: () => Promise.resolve(currentSession), signIn: vi.fn(), unstable_update: vi.fn(async () => null) }));
 vi.mock("@/lib/email/send-transactional-email", () => ({ sendTransactionalEmail: vi.fn(async () => ({ success: true })) }));
+// Real EN/ES messages through next-intl's own translator; the locale is switched per render.
+const intl = vi.hoisted(() => ({ locale: "en" as "en" | "es" }));
+vi.mock("next-intl/server", async () => {
+  const { createTranslator } = await import("next-intl");
+  const en = (await import("../../messages/en.json")).default;
+  const es = (await import("../../messages/es.json")).default;
+  return {
+    getTranslations: async (namespace: string) => createTranslator({ locale: intl.locale, messages: intl.locale === "es" ? es : en, namespace } as never),
+    getLocale: async () => intl.locale,
+  };
+});
 
 const { getReadinessScreenForOwner } = await import("../../src/lib/dues/readiness/screen");
 const { getDuesReadinessForOwner } = await import("../../src/lib/dues/readiness");
 const { defaultCandidateMonth } = await import("../../src/lib/dues/readiness/candidate");
-const { createOpeningDraftCore, recordConfirmationCore } = await import("../../src/lib/dues/readiness/opening-core");
+const { createOpeningDraftCore, replaceOpeningDraftCore, recordConfirmationCore } = await import("../../src/lib/dues/readiness/opening-core");
+const { Students } = await import("../../src/app/[locale]/(staff)/payments/readiness/readiness-view");
 const { openingReviewBinding } = await import("../../src/lib/dues/readiness/fingerprint");
 const { default: DuesReadinessPage } = await import("../../src/app/[locale]/(staff)/payments/readiness/page");
 
@@ -264,5 +279,73 @@ describe("the read model", () => {
     await getReadinessScreenForOwner(a.org.id, S);
     await getReadinessScreenForOwner(a.org.id, null);
     expect(await counts()).toEqual(before);
+  });
+});
+
+// Runs last, in organization B, so the earlier totals in A are untouched.
+describe("a stale opening review is worded historically: it never claims the current drafts were reviewed", () => {
+  const messages = { en: enMessages, es: esMessages };
+  const readiness = (locale: "en" | "es") => messages[locale].payments.readiness.students;
+  const OLD_WORDING = ["Declared", "items shown", "Declarado", "ítems mostrados"];
+
+  /** The real `Students` component over the real screen read model, rendered with the real messages. */
+  async function renderCard(studentId: string, locale: "en" | "es") {
+    intl.locale = locale;
+    const result = await getReadinessScreenForOwner(b.org.id, S);
+    if (!result.ok) throw new Error("expected a screen");
+    const html = renderToStaticMarkup(await Students({ screen: result.screen, locale }));
+    const link = html.indexOf(`href="/${locale}/students/${studentId}"`);
+    expect(link, "the student's card is rendered").toBeGreaterThan(-1);
+    const start = html.lastIndexOf("<li", link);
+    const end = html.indexOf("rounded-lg border border-border p-3", link);
+    const card = html.slice(start, end === -1 ? undefined : end);
+    const recorded = /<p class="text-xs text-muted-foreground">([^<]*)<\/p>/.exec(card)?.[1] ?? "";
+    return { screen: result.screen, card, recorded };
+  }
+
+  async function review(studentId: string, declaration: "itemsAsShown" | "noOpeningDebt") {
+    const before = await getDuesReadinessForOwner(b.org.id, S);
+    if (!before.ok) throw new Error("expected a report");
+    const binding = openingReviewBinding(S, before.report.fingerprints.students[studentId]);
+    expect(await recordConfirmationCore(ctx(b), { studentId, candidate: S, kind: "OPENING_REVIEWED", binding, declaration })).toEqual({ ok: true });
+  }
+
+  it("review over a draft, then the draft is replaced: stale, the replacement is shown, the line only states what the review recorded", async () => {
+    owner(b);
+    const id = await newStudent(b, "Rita", "Revisada");
+    expect(await createOpeningDraftCore(ctx(b), id, { coverageYear: 2025, coverageMonth: 5, amount: "4321.00", currency: "CRC", note: "Original draft 2025-05", legacyPaymentPeriodId: null })).toEqual({ ok: true });
+    await review(id, "itemsAsShown");
+    const original = (await renderCard(id, "en")).screen.activeDrafts.find((d) => d.studentId === id)!;
+    expect(await replaceOpeningDraftCore(ctx(b), original.id, { coverageYear: 2025, coverageMonth: 5, amount: "8765.00", currency: "CRC", note: "Replacement draft 2025-05", legacyPaymentPeriodId: null })).toEqual({ ok: true });
+
+    for (const locale of ["en", "es"] as const) {
+      const { screen, card, recorded } = await renderCard(id, locale);
+      expect(screen.report.confirmations.find((c) => c.studentId === id)!.openingReview).toMatchObject({ state: "stale", declaredNoOpeningDebt: false });
+      expect(screen.activeDrafts.filter((d) => d.studentId === id).map((d) => [d.amount, d.note])).toEqual([["8765.00", "Replacement draft 2025-05"]]);
+      expect(card).toContain(readiness(locale).state.stale);
+      expect(card).toContain("Replacement draft 2025-05");
+      expect(card).not.toContain("Original draft 2025-05");
+      // The declaration line: the recorded time plus the historical wording, and nothing about any draft's content.
+      expect(recorded).toContain(readiness(locale).atReviewDebt);
+      expect(recorded).not.toMatch(/8.?765|4.?321|Replacement|Original/);
+      for (const old of OLD_WORDING) expect(card, `${locale}: ${old}`).not.toContain(old);
+    }
+  });
+
+  it("review declaring no opening debt, then a draft is added: stale, the new draft is shown, the line says no debt was declared AT THAT REVIEW", async () => {
+    owner(b);
+    const id = await newStudent(b, "Nora", "Sindeuda");
+    await review(id, "noOpeningDebt");
+    expect(await createOpeningDraftCore(ctx(b), id, { coverageYear: 2025, coverageMonth: 6, amount: "55.00", currency: "USD", note: "Added after review", legacyPaymentPeriodId: null })).toEqual({ ok: true });
+
+    for (const locale of ["en", "es"] as const) {
+      const { screen, card, recorded } = await renderCard(id, locale);
+      expect(screen.report.confirmations.find((c) => c.studentId === id)!.openingReview).toMatchObject({ state: "stale", declaredNoOpeningDebt: true });
+      expect(card).toContain(readiness(locale).state.stale);
+      expect(card).toContain("Added after review");
+      expect(recorded).toContain(readiness(locale).atReviewNoDebt);
+      expect(recorded).not.toMatch(/55|Added/);
+      for (const old of OLD_WORDING) expect(card, `${locale}: ${old}`).not.toContain(old);
+    }
   });
 });

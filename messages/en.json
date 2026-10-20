@@ -1819,8 +1819,8 @@
           "stale": "Changed since review"
         },
         "recorded": "Recorded {time} (#{sequence})",
-        "declaredNone": "Declared: no opening debt",
-        "declaredItems": "Declared: the items shown",
+        "atReviewNoDebt": "At that review: no opening debt declared.",
+        "atReviewDebt": "At that review: opening debt declared.",
         "drafts": "Opening debt",
         "noDrafts": "No opening debt drafted.",
         "linked": "Linked to the {month} payment ({status})",

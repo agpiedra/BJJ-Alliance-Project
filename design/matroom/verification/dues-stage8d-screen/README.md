@@ -74,6 +74,7 @@ disagree. With no branches, UTC is used. `now` is the snapshot's own database ti
 | `?s=` validation and default | unit: format, range, branch-timezone default, boundary disagreement (latest), year rollover, UTC fallback. Integration: default from the snapshot. Mutations C1, C2 | pass |
 | Confirmation states | integration: a review recorded through the real 8c core shows current, then changed after a later draft | pass |
 | Writes nothing | integration: no financial, readiness or audit row changes on an authorized load | pass |
+| Stale review worded historically (Finding 5) | integration, rendered: the real `Students` component over the real screen read model, with the real EN and ES messages. (1) review over a draft → the draft is replaced through `replaceOpeningDraftCore` → stale, only the replacement is shown, and the declaration line is the recorded time plus "At that review: opening debt declared." with no amount or note of any draft. (2) "no opening debt" review → a draft is added → stale, the new draft is shown, and the line says "At that review: no opening debt declared." The superseded wording appears in neither locale. Mutations W1–W3 | pass |
 | Not exposed beyond the screen | unit (`dues-readiness-not-exposed`): only the page and view import from the folder; they import only `screen`, `candidate`, `evaluate`; no `opening-actions`, `method="post"`, `formAction` or `action={` | pass |
 | Browser | 82/82 checks, `browser-results.json` (below) | pass |
 
@@ -87,6 +88,9 @@ disagree. With no branches, UTC is used. `now` is the snapshot's own database ti
 | A1 | the read model skips `authorizeOwner` | integration: refusal test fails |
 | A2 | the page admits DIRECTOR | integration: page 404 test fails |
 | S1 | student names read outside the snapshot transaction | integration: one-snapshot test fails |
+| W1 | EN "opening debt declared" line also says "Declared: the items shown" | integration: replacement test fails |
+| W2 | ES "no opening debt" line back to "Declarado: sin deuda inicial" | integration: no-debt test fails |
+| W3 | the declaration line includes a current draft's amount | integration: replacement test fails |
 
 ### Browser (synthetic data, isolated test database)
 
@@ -109,13 +113,20 @@ form as a fixture owner. Results are in `browser-results.json` (82 checks, 0 fai
   - 320 px crops: `crop-status-en-light-320.png`, `crop-student-en-light-320.png`, `crop-totals-es-dark-320.png`,
     `crop-checks-es-dark-320.png`;
   - other states: `invalid-month-en-390.png`, `keyboard-after-submit-en-1280.png`, `empty-en-1280.png`, `empty-es-1280.png`.
+- **Superseded wording in screenshots (Finding 5):** `crop-student-en-light-320.png`, `populated-en-light-1280.png`,
+  `populated-es-dark-1280.png` and `populated-en-dark-390.png` were taken before the correction. They still show
+  "Declared: the items shown" / "Declarado: los ítems mostrados" next to a stale review, and so display the defect itself. They
+  were **not retaken**: the synthetic browser fixture was removed when the integration suite reseeded the test database. The
+  corrected wording is proven by the rendered integration test only, not by a browser screenshot. The other screenshots show
+  no student card.
 
 ### Commands
 
 - `pnpm typecheck`: clean. `pnpm lint`: 0 errors; no warning in a changed file.
 - `pnpm check:guard-usage`, `pnpm check:pending-callers`: pass.
 - `pnpm test:unit`: 132 files, 1952 tests passed.
-- `pnpm test:integration`: see the PR description (full run on this tree).
+- `pnpm test:integration`: 170 files, 2260 tests passed at the first PR head (`87364dd`). After the Finding 5 correction:
+  170 files, 2262 tests passed (the screen file now has 12).
 - Smoke (`tests/smoke/page-routes.test.ts`): 23/23, run warm (see gaps).
 - No schema change, so no drift run is relevant.
 
@@ -129,6 +140,14 @@ form as a fixture owner. Results are in `browser-results.json` (82 checks, 0 fai
 3. **Raw `PENDING` / `PAID` codes** were shown for linked legacy rows. They are now translated through `students.paymentStatus`.
 4. **The browser activation probe was vacuous for a time.** `/activ/i` matched "Iván Inactivo", and a later edit dropped the
    backslash from the corrected pattern. It is now `/\bactiva(te|tion|r|ción)/i` and was re-run.
+
+5. **The opening-review declaration was worded as if it covered the drafts on screen** (found in review after the PR opened).
+   "Declared: the items shown" was shown for both current and stale confirmations, while the drafts listed are the
+   **current** active ones. After a replacement, it claimed the earlier review covered the replacement. The line now states
+   only what the confirmation records: "At that review: opening debt declared." / "At that review: no opening debt declared."
+   (ES: "En esa revisión: se declaró deuda inicial." / "En esa revisión: no se declaró deuda inicial."). The current/stale
+   badge, recorded time and current drafts are unchanged. Historical draft contents are not reconstructed or displayed.
+   Fingerprints, confirmation validity, actions, schema and financial behaviour are unchanged.
 
 ## Deviations from the plan
 
@@ -156,4 +175,7 @@ form as a fixture owner. Results are in `browser-results.json` (82 checks, 0 fai
 - **Smoke was run warm.** A cold run timed out locally on first compilation, before the readiness routes moved into their own
   test. A cache clear was not done, so CI is the cold run.
 - **Contrast is checked visually** in the screenshots, not measured.
+- **The Finding 5 regression renders the `Students` component, not the whole page.** The page tree contains async server
+  components that `react-dom/server` cannot render in a test. The component, read model and messages are the real ones; the
+  page only passes the same `screen` and `locale` to it.
 - **The fixture password is only in a scratch file outside the repository** and is not committed.

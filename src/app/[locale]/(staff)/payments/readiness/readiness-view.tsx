@@ -316,8 +316,9 @@ function ConfirmationLine({ label, state, locale, t }: { label: string; state: C
       {state.state !== "missing" && (
         <p className="text-xs text-muted-foreground">
           {t("students.recorded", { time: dateTime(new Date(state.confirmedAt), locale), sequence: String(state.sequence) })}
-          {state.declaredNoOpeningDebt === true && ` · ${t("students.declaredNone")}`}
-          {state.declaredNoOpeningDebt === false && ` · ${t("students.declaredItems")}`}
+          {/* Historical: only what the confirmation recorded. The drafts below are the CURRENT ones, not the reviewed ones. */}
+          {state.declaredNoOpeningDebt === true && ` · ${t("students.atReviewNoDebt")}`}
+          {state.declaredNoOpeningDebt === false && ` · ${t("students.atReviewDebt")}`}
         </p>
       )}
     </div>

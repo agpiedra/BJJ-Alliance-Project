@@ -1819,8 +1819,8 @@
           "stale": "Cambió desde la revisión"
         },
         "recorded": "Registrada {time} (n.º {sequence})",
-        "declaredNone": "Declarado: sin deuda inicial",
-        "declaredItems": "Declarado: los ítems mostrados",
+        "atReviewNoDebt": "En esa revisión: no se declaró deuda inicial.",
+        "atReviewDebt": "En esa revisión: se declaró deuda inicial.",
         "drafts": "Deuda inicial",
         "noDrafts": "No hay deuda inicial en borrador.",
         "linked": "Vinculada al pago de {month} ({status})",
