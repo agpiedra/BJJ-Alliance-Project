@@ -8,8 +8,13 @@ import type { ReadinessSnapshot } from "@/lib/dues/readiness/snapshot";
  * version in place — both must still change the fingerprint. Rows are sorted by id and object keys are sorted, so the
  * order the database returned them in never matters. `FORMAT` is hashed in so a future change of what is covered can
  * never collide with an old fingerprint.
+ *
+ * r2 (stage 8b) adds opening-debt drafts to the student fingerprint: an active draft's full content, and for every withdrawn
+ * draft only its id, kind and successor (never its amount, currency or note). Drafts are never deleted, so a draft that ever
+ * existed changes the hash for good and a confirmation bound before it can never become valid again (plan §5).
+ * Confirmations themselves are in no hash: including them would make every confirmation invalidate itself.
  */
-export const FINGERPRINT_FORMAT = "r1";
+export const FINGERPRINT_FORMAT = "r2";
 
 function canonical(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonical);
@@ -42,6 +47,10 @@ export function studentFingerprint(snapshot: ReadinessSnapshot, studentId: strin
     })),
     monthlyObligations: mine(snapshot.monthlyObligations).map(({ id, coverageYear, coverageMonth }) => ({ id, coverageYear, coverageMonth })),
     coverage: mine(snapshot.coverage).map(({ id, year, month }) => ({ id, year, month })),
+    openingItems: mine(snapshot.openingItems).map(({ id, coverageYear, coverageMonth, amount, currency, note, legacyPaymentPeriodId }) => ({
+      id, coverageYear, coverageMonth, amount, currency, note, legacyPaymentPeriodId,
+    })),
+    withdrawnOpeningItems: mine(snapshot.withdrawnOpeningItems).map(({ id, withdrawalKind, supersededById }) => ({ id, withdrawalKind, supersededById })),
   });
 }
 

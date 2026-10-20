@@ -37,6 +37,21 @@ export interface ReadinessSnapshot {
   }[];
   monthlyObligations: { id: string; studentId: string; coverageYear: number; coverageMonth: number }[];
   coverage: { id: string; studentId: string; year: number; month: number }[];
+  /** Stage 8b: ACTIVE opening-debt drafts (never withdrawn) — the only drafts whose content exists outside the loader. */
+  openingItems: {
+    id: string;
+    studentId: string;
+    coverageYear: number;
+    coverageMonth: number;
+    amount: string;
+    currency: string;
+    note: string;
+    legacyPaymentPeriodId: string | null;
+  }[];
+  /** Stage 8b: every withdrawn draft (EDITED or WITHDRAWN), identity and marker only. Its amount, currency and note never leave
+   * the loader, so nothing can count or hash them; the row's permanent presence is what stops a stale confirmation reviving
+   * after an add-and-withdraw (plan §5). */
+  withdrawnOpeningItems: { id: string; studentId: string; withdrawalKind: string; supersededById: string | null }[];
 }
 
 const isoDate = (d: Date) => d.toISOString().slice(0, 10);
@@ -80,6 +95,14 @@ export async function loadReadinessSnapshot(
     select: { id: true, studentId: true, coverageYear: true, coverageMonth: true },
   });
   const coverage = await tx.duesCoverage.findMany({ where, select: { id: true, studentId: true, year: true, month: true } });
+  // ALL drafts, active and withdrawn (rows are never deleted), in one read of the same snapshot.
+  const drafts = await tx.duesOpeningItem.findMany({
+    where,
+    select: {
+      id: true, studentId: true, coverageYear: true, coverageMonth: true, amount: true, currency: true, note: true, legacyPaymentPeriodId: true,
+      withdrawnAt: true, withdrawalKind: true, supersededById: true,
+    },
+  });
 
   return {
     organization: { id: organization.id, currency: organization.currency },
@@ -93,5 +116,13 @@ export async function loadReadinessSnapshot(
     legacyPayments: legacyPayments.map((p) => ({ ...p, amount: p.amount === null ? null : p.amount.toFixed(2) })),
     monthlyObligations,
     coverage,
+    openingItems: drafts
+      .filter((d) => d.withdrawnAt === null)
+      .map(({ id, studentId, coverageYear, coverageMonth, amount, currency, note, legacyPaymentPeriodId }) => ({
+        id, studentId, coverageYear, coverageMonth, amount: amount.toFixed(2), currency, note, legacyPaymentPeriodId,
+      })),
+    withdrawnOpeningItems: drafts
+      .filter((d) => d.withdrawnAt !== null)
+      .map(({ id, studentId, withdrawalKind, supersededById }) => ({ id, studentId, withdrawalKind: withdrawalKind!, supersededById })),
   };
 }

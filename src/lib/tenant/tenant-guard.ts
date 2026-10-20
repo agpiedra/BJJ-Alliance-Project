@@ -45,6 +45,9 @@ export const TENANT_SCOPED_MODELS = new Set([
   // Payment-submission-identity prerequisite: tenant-scoped from day one, before any caller of
   // recordDuesPaymentWithSubmissionIdentity/getSubmissionOutcome exists.
   "DuesPaymentAttempt",
+  // Stage 8b opening-debt drafts and readiness confirmations: tenant-scoped from day one, before any writer exists.
+  "DuesOpeningItem",
+  "DuesReadinessConfirmation",
   "KioskAttempt",
   "QueuedCheckIn",
   "StaffAssignment",

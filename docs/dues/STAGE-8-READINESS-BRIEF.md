@@ -88,7 +88,7 @@ Latest id or timestamp is not a freshness signal: legacy edits keep a `PaymentPe
 
 | Fingerprint | Content |
 |---|---|
-| **Student** | `Student.status`, `homeAcademyId`; every status row (`status`, `effectiveOn`, `sequence`, `source`); every assignment (`planId`, effective month); every legacy `PaymentPeriod` (`year`, `month`, `status`, `amount`, `currency`, `planId`, `promoName`, `promoRecurring`); every non-withdrawn opening item (all fields, `revision`; stage 8b+) |
+| **Student** | `Student.status`, `homeAcademyId`; every status row (`status`, `effectiveOn`, `sequence`, `source`); every assignment (`planId`, effective month); every legacy `PaymentPeriod` (`year`, `month`, `status`, `amount`, `currency`, `planId`, `promoName`, `promoRecurring`); since format `r2` (stage 8b): every **active** opening draft (`id`, month, `amount`, `currency`, `note`, legacy link) and every **withdrawn** one as `id`, `withdrawalKind`, `supersededById` only — never its amount, currency or note. Drafts are never deleted, so a draft that ever existed changes the hash permanently and an add-then-withdraw cannot revive an older confirmation |
 | **Branch pricing/policy** | `Academy.timezone`; every `DuesPolicyVersion` (due day, grace day, fee amount and currency, prepayment limit, effective month); every `PaymentPlan` of the branch (`active`, `name`, which drives promo classification); every `PaymentPlanTerms` (price, currency, months covered, effective month) |
 | **Organization** | Version tag, candidate S, `Organization.currency`, all branch fingerprints, all student fingerprints (id order) |
 
@@ -176,28 +176,63 @@ the student changed.
 Submitting a confirmation sends the fingerprint the page showed. The server recomputes it and refuses on mismatch
 ("review again"). Opening items have **no** confirmed state of their own.
 
-## 7. Minimal schema (stage 8b)
+**Which confirmation is current (stage 8b schema; 8c writer protocol).** Confirmations are append-only. Within one
+identity (organization, student, candidate S, kind) the current one is the highest `sequence`. The 8c writer, in a
+READ COMMITTED transaction, takes the branch `FOR SHARE` and the student `FOR UPDATE`, **then** reads `MAX(sequence)` and
+inserts `MAX + 1`, and computes the fingerprint under that lock. A unique key on (identity, `sequence`) is the
+backstop. `confirmedAt` is display only: neither a timestamp nor an id says which review came last. Prisma's
+`@default(now())` is filled on the app server at insert time, the database default is the transaction start, and a
+writer may stamp its action's start; none of these is the lock order (proved in
+`tests/integration/dues-readiness-schema.test.ts`).
 
-1. **`DuesOpeningItem`** (draft):
+**Valid** = `fingerprintFormat` equals the current format **and** the stored `binding` equals the binding recomputed now.
+The stored row is never modified. Confirmation rows are in no content hash.
+
+## 7. Schema (stage 8b, implemented)
+
+Migration `20261019120000_dues_readiness_drafts_and_confirmations`; plan and rationale in
+`docs/dues/STAGE-8B-IMPLEMENTATION-PLAN.md` (revision 2); evidence in
+`design/matroom/verification/dues-stage8b-schema/README.md`.
+
+1. **`DuesOpeningItem`** (draft, never a charge):
    - **Columns:**
-     - `organizationId`, `studentId`, `academyId`, `year`, `month`;
-     - `amount`, `currency`;
-     - optional `legacyPaymentPeriodId`, required `note`;
-     - `state` (`DRAFT`/`WITHDRAWN`), `revision`;
+     - `organizationId`, `studentId`, `coverageYear`, `coverageMonth`;
+     - `amount` (unpaid principal only, D7), `currency`;
+     - required `note` (1–500 characters after trimming) and optional `legacyPaymentPeriodId`;
      - created-by/at;
-     - nullable unique `materializedObligationId`.
+     - a once-only withdrawal marker: `withdrawnAt`, `withdrawnById`, `withdrawalKind` (`EDITED`/`WITHDRAWN`),
+       `withdrawalReason` (required for `WITHDRAWN`), `supersededById` (required for `EDITED`, unique).
+   - **No `academyId`:** the branch is the student's home branch.
+   - **`materializedObligationId`:** deferred to stage 9.
+   - **No fee column (D7).**
    - **Constraints:**
-     - tenant-safe composite foreign keys;
-     - unique per student and month among non-withdrawn rows;
-     - positive amount; range checks;
-     - no deletes.
-   - No fee column (D7).
-2. **`DuesReadinessConfirmation`**:
-   - **Columns:** `organizationId`, `studentId`, `kind`, candidate S, `fingerprint`, actor, time.
-   - **Constraints:** unique per (student, kind); replaced on re-confirmation; each also written to `AuditLog` as a
-     record only, never read as state.
+     - tenant- and student-safe composite FKs;
+     - the legacy link is pinned to the same organization, student **and** month, via an added
+       `PaymentPeriod(organizationId, studentId, year, month, id)` unique index;
+     - at most one **active** draft per student and month (partial unique index, immediate);
+     - the successor FK is the same organization and student (the month may change), `DEFERRABLE INITIALLY DEFERRED`;
+     - positive amount; range checks; marker completeness; no self-supersession;
+     - no deletes, and no update except setting the marker once.
+   - **Edit:** under the student lock, set the old row's marker first (naming a pre-generated successor id), then insert
+     the successor; the deferred FK is checked at commit.
+2. **`DuesReadinessConfirmation`** (append-only):
+   - **Columns:**
+     - `organizationId`, `studentId`, candidate S, `kind`, `sequence`;
+     - `fingerprintFormat`, `binding`, `studentFingerprint`, `branchFingerprint` (iff pricing);
+     - `declaredNoOpeningDebt` (iff opening review);
+     - actor, `confirmedAt` (display only).
+   - **Constraints:**
+     - unique (identity, `sequence`); `sequence ≥ 1`;
+     - hex-64 hashes; shape by kind;
+     - no update, no delete.
+   - **Audit:** 8c also writes an `AuditLog` record per operation, as a record only, never read as state.
 
-Both tables are in the tenant guard. Preview and readiness are computed, not stored.
+Both tables are in the tenant guard. Preview and readiness are computed, not stored. Nothing writes either table until
+stage 8c.
+
+**Drift-check limit (found in 8b):** `pnpm db:check-drift` does not see `DEFERRABLE` or partial unique indexes. It stays
+clean even with the successor FK made immediate or the one-active index dropped, so the schema test asserts both from
+the PostgreSQL catalog.
 
 **Stage 9 schema, outlined only:**
 - the `OPENING` type, with nullable `planTermsId` for it and the check and trigger changes;

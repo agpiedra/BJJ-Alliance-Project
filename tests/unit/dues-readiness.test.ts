@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ReadinessSnapshot } from "../../src/lib/dues/readiness/snapshot";
-import { branchFingerprint, openingReviewBinding, organizationFingerprint, pricingAckBinding, studentFingerprint } from "../../src/lib/dues/readiness/fingerprint";
+import { FINGERPRINT_FORMAT, branchFingerprint, openingReviewBinding, organizationFingerprint, pricingAckBinding, studentFingerprint } from "../../src/lib/dues/readiness/fingerprint";
 import { evaluateReadiness } from "../../src/lib/dues/readiness/evaluate";
 
 /**
@@ -52,6 +52,8 @@ function base(): ReadinessSnapshot {
     ],
     monthlyObligations: [],
     coverage: [],
+    openingItems: [],
+    withdrawnOpeningItems: [],
   };
 }
 const clone = (s: ReadinessSnapshot): ReadinessSnapshot => structuredClone(s);
@@ -137,6 +139,118 @@ describe("confirmation bindings (used by stage 8c)", () => {
     expect(openingReviewBinding(next, studentFp)).not.toBe(openingReviewBinding(S, studentFp));
     expect(pricingAckBinding(next, studentFp, branchFp)).not.toBe(pricingAckBinding(S, studentFp, branchFp));
     expect(openingReviewBinding(S, studentFp)).not.toBe(pricingAckBinding(S, studentFp, branchFp));
+  });
+});
+
+describe("stage 8b: opening-debt drafts in the student fingerprint (format r2)", () => {
+  type Active = ReadinessSnapshot["openingItems"][number];
+  type Withdrawn = ReadinessSnapshot["withdrawnOpeningItems"][number];
+  const draft = (id: string, over: Partial<Active> = {}): Active => ({
+    id, studentId: "s1", coverageYear: 2031, coverageMonth: 1, amount: "100.00", currency: "USD", note: "Unpaid January", legacyPaymentPeriodId: null, ...over,
+  });
+  const withdrawn = (id: string, withdrawalKind: Withdrawn["withdrawalKind"], supersededById: string | null = null): Withdrawn => ({
+    id, studentId: "s1", withdrawalKind, supersededById,
+  });
+  const state = (active: Active[], gone: Withdrawn[]) => {
+    const s = clone(base());
+    s.openingItems.push(...active);
+    s.withdrawnOpeningItems.push(...gone);
+    return s;
+  };
+  const binding = (s: ReadinessSnapshot) => openingReviewBinding(S, studentFingerprint(s, "s1"));
+
+  // The binding an owner's "no opening debt" confirmation (B0) was stored with must never come back once a draft has existed.
+  it("revival regression: add then withdraw does not return to the no-draft binding", () => {
+    const b0 = binding(base());
+    const b1 = binding(state([draft("d1")], []));
+    const b2 = binding(state([], [withdrawn("d1", "WITHDRAWN")]));
+    expect(b2).not.toBe(b0);
+    expect(b2).not.toBe(b1);
+  });
+
+  it("revival regression: edit then withdraw does not return to the no-draft binding", () => {
+    const bindings = [
+      binding(base()),
+      binding(state([draft("d1")], [])),
+      binding(state([draft("d2", { amount: "80.00" })], [withdrawn("d1", "EDITED", "d2")])),
+      binding(state([], [withdrawn("d1", "EDITED", "d2"), withdrawn("d2", "WITHDRAWN")])),
+    ];
+    expect(new Set(bindings).size).toBe(bindings.length);
+  });
+
+  it("revival regression: edit then revert (the original values re-entered) is a new id, hence a new binding", () => {
+    const original = binding(state([draft("d1")], []));
+    const reverted = binding(state([draft("d3")], [withdrawn("d1", "EDITED", "d2"), withdrawn("d2", "EDITED", "d3")]));
+    expect(reverted).not.toBe(original);
+  });
+
+  const activeEdits: [string, (d: Active) => void][] = [
+    ["amount", (d) => void (d.amount = "90.00")],
+    ["currency", (d) => void (d.currency = "CRC")],
+    ["note", (d) => void (d.note = "Unpaid January (corrected)")],
+    ["month", (d) => void (d.coverageMonth = 2)],
+    ["year", (d) => void (d.coverageYear = 2030)],
+    ["legacy link", (d) => void (d.legacyPaymentPeriodId = "l1")],
+  ];
+  it.each(activeEdits)("an active draft's %s changes the student and organization fingerprints and the opening binding, not other students'", (_label, edit) => {
+    const before = state([draft("d1")], []);
+    const after = clone(before);
+    edit(after.openingItems[0]);
+    expect(studentFingerprint(after, "s1")).not.toBe(studentFingerprint(before, "s1"));
+    expect(organizationFingerprint(after, S)).not.toBe(organizationFingerprint(before, S));
+    expect(binding(after)).not.toBe(binding(before));
+    expect(studentFingerprint(after, "s3")).toBe(studentFingerprint(before, "s3"));
+  });
+
+  it("a withdrawn draft contributes only its id, kind and successor: an amount, currency or note on it is never hashed", () => {
+    const plain = state([], [withdrawn("d1", "WITHDRAWN")]);
+    const carryingMoney = clone(plain);
+    Object.assign(carryingMoney.withdrawnOpeningItems[0], { amount: "999.00", currency: "CRC", note: "should not count" });
+    expect(studentFingerprint(carryingMoney, "s1")).toBe(studentFingerprint(plain, "s1"));
+    expect(studentFingerprint(state([], [withdrawn("d1", "EDITED", "d2")]), "s1")).not.toBe(studentFingerprint(plain, "s1"));
+    expect(studentFingerprint(state([], [withdrawn("d9", "WITHDRAWN")]), "s1")).not.toBe(studentFingerprint(plain, "s1"));
+  });
+
+  it("an active draft and a withdrawn row with the same id never hash alike", () => {
+    expect(studentFingerprint(state([draft("d1")], []), "s1")).not.toBe(studentFingerprint(state([], [withdrawn("d1", "WITHDRAWN")]), "s1"));
+  });
+
+  // Recorded from the stage 8a (r1) code on 6c907cf for this exact base() snapshot, before the r2 change.
+  const R1 = {
+    student: "0d03de7a4afb9b6c33a92a64bc1a24bfac92b95ff25a0a6b1354ce0efd331414",
+    branch: "885bbb43512f7af19940ff460e595da15401e5f537716cbab4a6f2141c66d904",
+    organization: "3b69fa6b240a47d2ecf21641336ccd74cff10cdb98bf0e67a32b51291d14f47b",
+    openingReview: "c0d823f3ba2417b90b0a53fc1f9752f504d1a350295bcca50005220b9f6322b7",
+  };
+  it("format r2: no fingerprint or binding equals the r1 value for the same content", () => {
+    expect(FINGERPRINT_FORMAT).toBe("r2");
+    expect(studentFingerprint(base(), "s1")).not.toBe(R1.student);
+    expect(branchFingerprint(base(), "b-usd")).not.toBe(R1.branch);
+    expect(organizationFingerprint(base(), S)).not.toBe(R1.organization);
+    expect(binding(base())).not.toBe(R1.openingReview);
+  });
+
+  it("a branch-only change still invalidates the pricing acknowledgement with drafts present", () => {
+    const s = state([draft("d1")], [withdrawn("d0", "WITHDRAWN")]);
+    const changed = clone(s);
+    changed.terms[0].priceAmount = "110.00";
+    const studentFp = studentFingerprint(s, "s1");
+    expect(studentFingerprint(changed, "s1")).toBe(studentFp);
+    expect(pricingAckBinding(S, studentFp, branchFingerprint(changed, "b-usd"))).not.toBe(pricingAckBinding(S, studentFp, branchFingerprint(s, "b-usd")));
+  });
+
+  it("drafts (active or withdrawn) never change the MONTHLY preview, its totals or any check; ready stays false", () => {
+    const withDrafts = state(
+      [draft("d1"), draft("d4", { studentId: "s3", amount: "5000.00", currency: "CRC" })],
+      [withdrawn("d0", "WITHDRAWN"), { ...withdrawn("d5", "WITHDRAWN"), studentId: "s2" }],
+    );
+    const before = evaluateReadiness(base(), S);
+    const after = evaluateReadiness(withDrafts, S);
+    expect(after.preview).toEqual(before.preview);
+    expect(after.checks).toEqual(before.checks);
+    expect(after.ready).toBe(false);
+    expect(after.checks.filter((c) => c.status === "notImplemented").map((c) => c.id)).toEqual([6, 7, 8, 9, 10, 11, 12]);
+    expect(after.checks.find((c) => c.id === 13)!.status).toBe("decisionPending");
   });
 });
 

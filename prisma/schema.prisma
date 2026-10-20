@@ -290,6 +290,8 @@ model Organization {
   duesSettlements        DuesSettlement[]
   duesPaymentAttempts    DuesPaymentAttempt[]
   awaitingRateReceipts   AwaitingRateReceipt[]
+  duesOpeningItems       DuesOpeningItem[]
+  duesReadinessConfirmations DuesReadinessConfirmation[]
   kioskAttempts       KioskAttempt[]
   queuedCheckIns      QueuedCheckIn[]
   staffAssignments    StaffAssignment[]
@@ -567,6 +569,9 @@ model User {
   duesPaymentsRecorded           DuesPayment[]           @relation("DuesPaymentRecordedBy")
   duesPaymentsReversed           DuesPayment[]           @relation("DuesPaymentReversedBy")
   duesSettlementsReversed        DuesSettlement[]
+  duesOpeningItemsCreated        DuesOpeningItem[]           @relation("DuesOpeningItemCreatedBy")
+  duesOpeningItemsWithdrawn      DuesOpeningItem[]           @relation("DuesOpeningItemWithdrawnBy")
+  duesReadinessConfirmations     DuesReadinessConfirmation[]
   awaitingRateReceiptsCaptured   AwaitingRateReceipt[]   @relation("AwaitingRateReceiptCapturedBy")
   awaitingRateReceiptsResolved   AwaitingRateReceipt[]   @relation("AwaitingRateReceiptResolvedBy")
   awaitingRateReceiptsCancelled  AwaitingRateReceipt[]   @relation("AwaitingRateReceiptCancelledBy")
@@ -806,6 +811,8 @@ model Student {
   duesPayments      DuesPayment[]
   duesPaymentAttempts DuesPaymentAttempt[]
   awaitingRateReceipts AwaitingRateReceipt[]
+  duesOpeningItems  DuesOpeningItem[]
+  duesReadinessConfirmations DuesReadinessConfirmation[]
   organization      Organization       @relation(fields: [organizationId], references: [id])
 
   @@unique([organizationId, codeHash])
@@ -1183,8 +1190,12 @@ model PaymentPeriod {
   plan         PaymentPlan  @relation(fields: [organizationId, planId], references: [organizationId, id])
   recordedBy   User         @relation(fields: [recordedById], references: [id])
   organization Organization @relation(fields: [organizationId], references: [id])
+  openingItems DuesOpeningItem[]
 
   @@unique([studentId, year, month])
+  /// Stage 8b: the target of `DuesOpeningItem`'s legacy link, so the database pins a link to the same organization,
+  /// student AND month. It includes `id`, so it can never conflict with an existing row.
+  @@unique([organizationId, studentId, year, month, id])
   @@index([academyId, year, month])
   @@index([organizationId])
 }
@@ -1729,6 +1740,105 @@ model DuesPaymentAttempt {
   @@unique([organizationId, receiptId, studentId])
   @@index([organizationId])
   @@index([studentId])
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Stage 8b (docs/dues/STAGE-8B-IMPLEMENTATION-PLAN.md): opening-debt DRAFTS and readiness CONFIRMATIONS. Additive and dark:
+// no writer, action, screen or job uses them yet (stage 8c adds the owner writers). A draft is never a charge: no relation
+// to the ledger, and nothing here creates a DuesObligation.
+//
+// Both tables are append-only in the DATABASE (triggers in 20261019120000_dues_readiness_drafts_and_confirmations): never
+// deleted; a draft's only permitted UPDATE sets its withdrawal marker once; a confirmation is never updated. CHECKs, the
+// partial unique index and the deferred successor FK are in the migration SQL (Prisma cannot express them) and are proved
+// by tests/integration/dues-readiness-schema.test.ts.
+// ---------------------------------------------------------------------------------------------------------------------
+
+enum DuesOpeningItemWithdrawalKind {
+  /// Superseded by a newer draft (`supersededById` set).
+  EDITED
+  /// Withdrawn by the owner (`withdrawalReason` required).
+  WITHDRAWN
+}
+
+enum DuesReadinessConfirmationKind {
+  OPENING_REVIEWED
+  PRICING_ACKNOWLEDGED
+}
+
+/// An owner-staged opening debt for one past month: the unpaid principal only (D7, no automatic late fee), in the currency
+/// the owner typed. At most one ACTIVE (unwithdrawn) draft per student and month (partial unique index, immediate).
+///
+/// Edit protocol (stage 8c; one transaction, after the student row lock): pre-generate the successor id, set THIS row's
+/// marker first (`EDITED`, `supersededById` = that id) so it leaves the one-active index, THEN insert the successor. The
+/// successor FK is `DEFERRABLE INITIALLY DEFERRED` (migration SQL only) because the marker names a row that does not exist
+/// yet; it is checked at commit, so an edit that never inserts its successor fails as a whole.
+model DuesOpeningItem {
+  id                    String                         @id @default(cuid())
+  organizationId        String
+  studentId             String
+  coverageYear          Int
+  coverageMonth         Int
+  amount                Decimal                        @db.Decimal(10, 2)
+  currency              Currency
+  note                  String
+  legacyPaymentPeriodId String?
+  createdById           String
+  createdAt             DateTime                       @default(now())
+  withdrawnAt           DateTime?
+  withdrawnById         String?
+  withdrawalKind        DuesOpeningItemWithdrawalKind?
+  withdrawalReason      String?
+  supersededById        String?                        @unique
+
+  student             Student          @relation(fields: [organizationId, studentId], references: [organizationId, id])
+  /// Same organization, student AND month (MATCH SIMPLE: unchecked when the link is null).
+  legacyPaymentPeriod PaymentPeriod?   @relation(fields: [organizationId, studentId, coverageYear, coverageMonth, legacyPaymentPeriodId], references: [organizationId, studentId, year, month, id], onDelete: Restrict)
+  /// Same organization and student; the month may change. DEFERRABLE INITIALLY DEFERRED in the migration SQL.
+  supersededBy        DuesOpeningItem? @relation("DuesOpeningItemSuccession", fields: [organizationId, studentId, supersededById], references: [organizationId, studentId, id], onDelete: Restrict)
+  supersedes          DuesOpeningItem? @relation("DuesOpeningItemSuccession")
+  createdBy           User             @relation("DuesOpeningItemCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  withdrawnBy         User?            @relation("DuesOpeningItemWithdrawnBy", fields: [withdrawnById], references: [id], onDelete: Restrict)
+  organization        Organization     @relation(fields: [organizationId], references: [id])
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, studentId, id])
+  /// Required by Prisma for the one-to-one succession relation (`supersededById @unique` already makes it unique).
+  @@unique([organizationId, studentId, supersededById])
+  @@index([organizationId])
+  @@index([organizationId, studentId])
+}
+
+/// The owner's statement about one student for one candidate start month. Append-only; the CURRENT one for an identity
+/// (organization, student, candidate month, kind) is the row with the highest `sequence`. `confirmedAt` is display only and
+/// is never used for ordering.
+///
+/// Writer protocol (stage 8c; tested directly in SQL in tests/integration/dues-readiness-schema.test.ts): in a READ
+/// COMMITTED transaction, take the student row lock (`lockStudent`, after the branch `FOR SHARE` in the ledger's order),
+/// THEN read MAX(sequence) for the identity and insert MAX + 1, and compute the fingerprint under the same lock. Each
+/// statement after the lock sees every confirmation committed before the lock was granted. The unique key below is the
+/// backstop: two writers that skipped the lock cannot both take one number.
+model DuesReadinessConfirmation {
+  id                    String                        @id @default(cuid())
+  organizationId        String
+  studentId             String
+  candidateYear         Int
+  candidateMonth        Int
+  kind                  DuesReadinessConfirmationKind
+  sequence              Int
+  fingerprintFormat     String
+  binding               String
+  studentFingerprint    String
+  branchFingerprint     String?
+  declaredNoOpeningDebt Boolean?
+  confirmedById         String
+  confirmedAt           DateTime                      @default(now())
+
+  student      Student      @relation(fields: [organizationId, studentId], references: [organizationId, id])
+  confirmedBy  User         @relation(fields: [confirmedById], references: [id], onDelete: Restrict)
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@unique([organizationId, studentId, candidateYear, candidateMonth, kind, sequence])
+  @@index([organizationId])
 }
 
 model KioskAttempt {
