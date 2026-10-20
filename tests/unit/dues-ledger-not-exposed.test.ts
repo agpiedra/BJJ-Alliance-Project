@@ -115,8 +115,9 @@ const AUTHORIZED_CALLERS = [
   // read-only binding `payments/page.tsx` already imports, never a writer call.
   "src/lib/payments/payment-actions.ts",
   // Stage 8 PR 8a (docs/dues/STAGE-8-READINESS-BRIEF.md §10): the read-only readiness preview imports only the pure
-  // `latestEffective` from `ledger/common.ts` and `decimalToMinor`/`minorToDecimal` from `ledger/minor-units.ts` — the same
-  // version selection and minor-unit arithmetic the monthly writer uses — never a writer, a lock or a transaction.
+  // `latestEffective` from `ledger/common.ts` and `decimalToMinor` from `ledger/minor-units.ts` — the same version selection
+  // and minor-unit arithmetic the monthly writer uses — never a writer, a lock or a transaction. (Totals are formatted by its
+  // own `totalToDecimal`: a sum may exceed one column's range.)
   "src/lib/dues/readiness/evaluate.ts",
   // Stage 8 PR 8c (docs/dues/STAGE-8C-IMPLEMENTATION-PLAN.md §3.1): the owner's opening-draft and confirmation writers take the
   // ledger's lock order (branch FOR SHARE, then student FOR UPDATE) and import only the `lockBranchShared` lock primitive from

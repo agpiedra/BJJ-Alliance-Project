@@ -567,3 +567,49 @@ describe("stage 8c: confirmations, checks 6-9, warnings and opening totals", () 
     expect(report(s).openingDrafts).toEqual([{ academyId: "b-usd", currency: "CRC", count: 2, total: "100000000.01" }]);
   });
 });
+
+describe("regression: MONTHLY wouldCreate totals above one column's maximum (99,999,999.99)", () => {
+  /**
+   * Each charge below is individually valid (at most the column's 99,999,999.99); only their SUM per branch and currency
+   * crosses the single-column limit. Before the fix the whole report threw a RangeError from `minorToDecimal`.
+   * s1 stays on p-usd; s2 moves to a second USD plan of the same branch; s3 stays on the CRC branch.
+   */
+  function withPrices(usd1: string, usd2: string, crc: string): ReadinessSnapshot {
+    const s = clone(base());
+    s.plans.push({ id: "p-usd2", academyId: "b-usd", name: "Monthly 2", active: true });
+    s.terms[0].priceAmount = usd1;
+    s.terms.push({ id: "t-usd2", planId: "p-usd2", effectiveYear: 2031, effectiveMonth: 1, priceAmount: usd2, currency: "USD", monthsCovered: 1 });
+    s.terms[1].priceAmount = crc;
+    s.assignments[1].planId = "p-usd2";
+    return s;
+  }
+  const wouldCreate = (snap: ReadinessSnapshot) =>
+    Object.fromEntries(evaluateReadiness(snap, S).preview.branches.map((b) => [b.academyId, b.wouldCreate]));
+
+  it("a branch total of exactly 99,999,999.99 is reported exactly", () => {
+    expect(wouldCreate(withPrices("99999999.98", "0.01", "25000.00"))).toEqual({
+      "b-usd": [{ currency: "USD", count: 2, total: "99999999.99" }],
+      "b-crc": [{ currency: "CRC", count: 1, total: "25000.00" }],
+    });
+  });
+
+  it("a total above the limit, from individually valid charges, is reported to the exact cent; other branches and currencies stay separate", () => {
+    const snap = withPrices("99999999.98", "0.05", "99999999.99");
+    expect(wouldCreate(snap)).toEqual({
+      "b-usd": [{ currency: "USD", count: 2, total: "100000000.03" }],
+      "b-crc": [{ currency: "CRC", count: 1, total: "99999999.99" }],
+    });
+    expect(wouldCreate(withPrices("99999999.99", "99999999.99", "25000.00"))["b-usd"]).toEqual([{ currency: "USD", count: 2, total: "199999999.98" }]);
+  });
+
+  it("student outcomes, amounts and checks are unchanged; ready stays false", () => {
+    const report = evaluateReadiness(withPrices("99999999.98", "0.05", "25000.00"), S);
+    expect(report.preview.students.map((p) => [p.studentId, p.outcome, p.outcome === "created" ? `${p.amount} ${p.currency}` : ""])).toEqual([
+      ["s1", "created", "99999999.98 USD"],
+      ["s2", "created", "0.05 USD"],
+      ["s3", "created", "25000.00 CRC"],
+    ]);
+    expect(report.checks.filter((c) => c.status === "notImplemented").map((c) => c.id)).toEqual([10, 11, 12]);
+    expect(report.ready).toBe(false);
+  });
+});
