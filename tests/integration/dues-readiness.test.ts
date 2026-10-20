@@ -61,6 +61,7 @@ const { getDuesReadinessForOwner } = await import("../../src/lib/dues/readiness"
 const { runReadOnlySnapshot } = await import("../../src/lib/db/read-only-snapshot");
 const { loadReadinessSnapshot } = await import("../../src/lib/dues/readiness/snapshot");
 const { evaluateReadiness } = await import("../../src/lib/dues/readiness/evaluate");
+const { FINGERPRINT_FORMAT, openingReviewBinding, studentFingerprint } = await import("../../src/lib/dues/readiness/fingerprint");
 const { generateMonthlyObligationForStudent } = await import("../../src/lib/dues/monthly-generation");
 
 const prisma = getTestPrismaClient();
@@ -189,6 +190,17 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(async () => {
+  const orgIds = [a?.org.id, b?.org.id].filter(Boolean) as string[];
+  if (orgIds.length > 0) {
+    // Test-only: stage 8b drafts and confirmations reject DELETE, so the committed fixture rows are removed with the triggers off
+    // for this transaction alone (the same technique as tests/integration/dues-readiness-schema.test.ts).
+    await prisma.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe("SET LOCAL session_replication_role = replica");
+      for (const table of ["DuesReadinessConfirmation", "DuesOpeningItem"]) {
+        await tx.$executeRawUnsafe(`DELETE FROM "${table}" WHERE "organizationId" = ANY($1::text[])`, orgIds);
+      }
+    });
+  }
   for (const fx of [a, b]) {
     if (!fx) continue;
     await prisma.paymentPeriod.deleteMany({ where: { organizationId: fx.org.id } });
@@ -414,4 +426,120 @@ describe("equivalence with the real monthly writer (active stub, rolled back)", 
     expect(await prisma.duesObligation.count({ where: { organizationId: a.org.id } })).toBe(0);
     expect(await prisma.duesCoverage.count({ where: { organizationId: a.org.id } })).toBe(0);
   }, 120_000);
+});
+
+describe("stage 8b: opening-debt drafts in the snapshot and the fingerprints (format r2)", () => {
+  const load = (hooks = {}) => runReadOnlySnapshot(appPrisma, (tx) => loadReadinessSnapshot(tx, a.org.id, hooks));
+  const binding = (snapshot: Awaited<ReturnType<typeof load>>, studentId: string) => openingReviewBinding(S, studentFingerprint(snapshot, studentId));
+  const draft = (studentId: string, coverageMonth: number, over: { amount?: string; note?: string; legacyPaymentPeriodId?: string } = {}) =>
+    prisma.duesOpeningItem.create({
+      data: { organizationId: a.org.id, studentId, coverageYear: 2030, coverageMonth, amount: "100.00", currency: "USD", note: "Unpaid before the switch", createdById: a.admin.id, ...over },
+    });
+  const withdraw = (id: string) =>
+    prisma.duesOpeningItem.update({ where: { id }, data: { withdrawnAt: new Date(), withdrawnById: a.admin.id, withdrawalKind: "WITHDRAWN", withdrawalReason: "Entered by mistake" } });
+  /** The documented edit order (marker first, then the successor), in one transaction. */
+  const edit = (oldId: string, studentId: string, coverageMonth: number, amount: string) =>
+    prisma.$transaction(async (tx) => {
+      const successorId = crypto.randomUUID();
+      await tx.duesOpeningItem.update({ where: { id: oldId }, data: { withdrawnAt: new Date(), withdrawnById: a.admin.id, withdrawalKind: "EDITED", supersededById: successorId } });
+      return tx.duesOpeningItem.create({
+        data: { id: successorId, organizationId: a.org.id, studentId, coverageYear: 2030, coverageMonth, amount, currency: "USD", note: "Unpaid before the switch", createdById: a.admin.id },
+      });
+    });
+
+  let reportBeforeDrafts: Awaited<ReturnType<typeof evaluateReadiness>>;
+  beforeAll(async () => {
+    reportBeforeDrafts = evaluateReadiness(await load(), S);
+  });
+
+  it("revival regression against the real database: a stored 'no opening debt' confirmation stays stale after add-then-withdraw", async () => {
+    const studentId = st.created2;
+    const b0 = binding(await load(), studentId);
+    // The owner's statement, as stage 8c will store it (sequence 1, current format, binding B0).
+    const stored = await prisma.duesReadinessConfirmation.create({
+      data: {
+        organizationId: a.org.id, studentId, candidateYear: S.year, candidateMonth: S.month, kind: "OPENING_REVIEWED", sequence: 1, fingerprintFormat: FINGERPRINT_FORMAT,
+        binding: b0, studentFingerprint: studentFingerprint(await load(), studentId), declaredNoOpeningDebt: true, confirmedById: a.admin.id,
+      },
+    });
+    const valid = async () => stored.fingerprintFormat === FINGERPRINT_FORMAT && stored.binding === binding(await load(), studentId);
+    expect(await valid()).toBe(true);
+
+    const d = await draft(studentId, 9);
+    const b1 = binding(await load(), studentId);
+    expect(await valid()).toBe(false);
+    await withdraw(d.id);
+    const b2 = binding(await load(), studentId);
+    expect(b2).not.toBe(b0);
+    expect(b2).not.toBe(b1);
+    expect(await valid(), "the add-then-withdraw cycle must not revive the B0 confirmation").toBe(false);
+    // The confirmation row itself never changes, and it is in no content hash: recording it changed no fingerprint.
+    expect(await prisma.duesReadinessConfirmation.findUniqueOrThrow({ where: { id: stored.id } })).toEqual(stored);
+  });
+
+  it("revival regression against the real database: edit-then-withdraw and edit-then-revert never return to an earlier binding", async () => {
+    const studentId = st.created;
+    const seen = [binding(await load(), studentId)];
+    const d1 = await draft(studentId, 10, { amount: "100.00" });
+    seen.push(binding(await load(), studentId));
+    const d2 = await edit(d1.id, studentId, 10, "80.00");
+    seen.push(binding(await load(), studentId));
+    const d3 = await edit(d2.id, studentId, 10, "100.00"); // revert: the original values re-entered
+    seen.push(binding(await load(), studentId));
+    await withdraw(d3.id);
+    seen.push(binding(await load(), studentId));
+    expect(new Set(seen).size, "every step must produce a binding never seen before").toBe(seen.length);
+  });
+
+  it("the loader returns active drafts with their content and withdrawn drafts as identity and marker only (no amount, currency or note)", async () => {
+    const studentId = st.mismatch;
+    const active = await draft(studentId, 11, { amount: "123.45", note: "active draft note" });
+    const gone = await draft(studentId, 8, { amount: "777.77", note: "withdrawn draft note" });
+    await withdraw(gone.id);
+    const snapshot = await load();
+    expect(snapshot.openingItems.filter((d) => d.studentId === studentId)).toEqual([
+      { id: active.id, studentId, coverageYear: 2030, coverageMonth: 11, amount: "123.45", currency: "USD", note: "active draft note", legacyPaymentPeriodId: null },
+    ]);
+    expect(snapshot.withdrawnOpeningItems.filter((d) => d.studentId === studentId)).toEqual([
+      { id: gone.id, studentId, withdrawalKind: "WITHDRAWN", supersededById: null },
+    ]);
+    const text = JSON.stringify(snapshot);
+    expect(text).not.toContain("777.77");
+    expect(text).not.toContain("withdrawn draft note");
+    // Active debt (the active drafts) never includes a withdrawn draft.
+    expect(snapshot.openingItems.map((d) => d.id)).not.toContain(gone.id);
+    // Another organization's drafts are never loaded.
+    expect(snapshot.openingItems.concat(snapshot.withdrawnOpeningItems as never[]).every((d) => Object.values(st).includes(d.studentId))).toBe(true);
+  });
+
+  it("a draft committed after the snapshot started is invisible to it; the next report sees it", async () => {
+    const studentId = st.package;
+    const baseline = evaluateReadiness(await load(), S);
+    let inserted = "";
+    const during = await load({
+      afterFirstRead: async () => {
+        inserted = (await draft(studentId, 7)).id;
+      },
+    });
+    expect(during.openingItems.map((d) => d.id)).not.toContain(inserted);
+    expect(evaluateReadiness(during, S).fingerprints).toEqual(baseline.fingerprints);
+    const after = evaluateReadiness(await load(), S);
+    expect(after.fingerprints.students[studentId]).not.toBe(baseline.fingerprints.students[studentId]);
+  });
+
+  it("with drafts present, the MONTHLY preview and its totals are unchanged, checks 6-12 stay notImplemented, 13 decisionPending, ready false", async () => {
+    const snapshot = await load();
+    expect(snapshot.openingItems.length + snapshot.withdrawnOpeningItems.length).toBeGreaterThan(0); // not vacuous
+    const after = evaluateReadiness(snapshot, S);
+    expect(after.preview).toEqual(reportBeforeDrafts.preview);
+    expect(after.checks).toEqual(reportBeforeDrafts.checks);
+    expect(after.checks.filter((c) => c.status === "notImplemented").map((c) => c.id)).toEqual([6, 7, 8, 9, 10, 11, 12]);
+    expect(after.checks.find((c) => c.id === 13)!.status).toBe("decisionPending");
+    expect(after.ready).toBe(false);
+    actAs(a.admin.id, a.org.id);
+    const result = await getDuesReadinessForOwner(a.org.id, S);
+    if (!result.ok) throw new Error("expected a report");
+    expect(result.report.preview).toEqual(reportBeforeDrafts.preview);
+    expect(result.report.ready).toBe(false);
+  });
 });

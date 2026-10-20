@@ -53,6 +53,10 @@ export const TENANT_SCOPED_MODELS = new Set([
   // accessor union below, matching duesObligation/duesPayment/etc. — this table has no general-purpose staff-facing
   // reader; the ledger engine always uses the plain prisma client, scoping explicitly itself.
   "DuesPaymentAttempt",
+  // Stage 8b opening-debt drafts and readiness confirmations: tenant-scoped from day one, before any writer exists. Absent
+  // from ScopedDb's accessor union for the same reason as DuesPaymentAttempt.
+  "DuesOpeningItem",
+  "DuesReadinessConfirmation",
   "KioskAttempt",
   "QueuedCheckIn",
   "StaffAssignment",
