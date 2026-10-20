@@ -4,6 +4,8 @@ import { getTestPrismaClient } from "../helpers/test-db";
 import { makeAccountingOrg } from "../helpers/accounting-org";
 import type { TenantContext } from "../../src/lib/tenant/types";
 import { renderToStaticMarkup } from "react-dom/server";
+import { createElement } from "react";
+import { NextIntlClientProvider } from "next-intl";
 import enMessages from "../../messages/en.json";
 import esMessages from "../../messages/es.json";
 
@@ -30,6 +32,7 @@ type MockSession = { user: { id: string; role?: string }; activeOrganizationId: 
 let currentSession: MockSession = null;
 vi.mock("@/auth", () => ({ auth: () => Promise.resolve(currentSession), signIn: vi.fn(), unstable_update: vi.fn(async () => null) }));
 vi.mock("@/lib/email/send-transactional-email", () => ({ sendTransactionalEmail: vi.fn(async () => ({ success: true })) }));
+vi.mock("next/navigation", async () => ({ ...(await vi.importActual<object>("next/navigation")), useRouter: () => ({ refresh: vi.fn() }) }));
 // Real EN/ES messages through next-intl's own translator; the locale is switched per render.
 const intl = vi.hoisted(() => ({ locale: "en" as "en" | "es" }));
 vi.mock("next-intl/server", async () => {
@@ -47,6 +50,7 @@ const { getDuesReadinessForOwner } = await import("../../src/lib/dues/readiness"
 const { defaultCandidateMonth } = await import("../../src/lib/dues/readiness/candidate");
 const { createOpeningDraftCore, replaceOpeningDraftCore, recordConfirmationCore } = await import("../../src/lib/dues/readiness/opening-core");
 const { Students } = await import("../../src/app/[locale]/(staff)/payments/readiness/readiness-view");
+const { ReadinessClientRoot } = await import("../../src/app/[locale]/(staff)/payments/readiness/use-readiness-action");
 const { openingReviewBinding } = await import("../../src/lib/dues/readiness/fingerprint");
 const { default: DuesReadinessPage } = await import("../../src/app/[locale]/(staff)/payments/readiness/page");
 
@@ -200,7 +204,14 @@ describe("the read model", () => {
     const result = await getReadinessScreenForOwner(a.org.id, S);
     if (!result.ok) throw new Error("expected a screen");
     const { screen } = result;
-    expect(screen.branches).toEqual([{ id: a.academy.id, name: `${LONG} Academy ${suffix}` }]);
+    expect(screen.branches).toHaveLength(1);
+    // 8d-2 (M2): the branch's offerable plans with their exact terms for S, and its local today / current month.
+    expect(screen.branches[0]).toMatchObject({
+      id: a.academy.id,
+      name: `${LONG} Academy ${suffix}`,
+      plans: [{ id: plan.id, name: `Monthly ${suffix}`, termsForS: { priceAmount: "99999999.99", currency: "CRC" } }],
+    });
+    expect(screen.branches[0].today).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     expect(screen.students.find((s) => s.id === st.long)).toMatchObject({ name: `${LONG} Uno`, academyId: a.academy.id, status: "ACTIVE", promoOrExempt: false });
     expect(screen.activeDrafts.map((d) => [d.studentId, d.amount, d.currency])).toEqual([
       [st.long, "99999999.99", "CRC"],
@@ -293,7 +304,18 @@ describe("a stale opening review is worded historically: it never claims the cur
     intl.locale = locale;
     const result = await getReadinessScreenForOwner(b.org.id, S);
     if (!result.ok) throw new Error("expected a screen");
-    const html = renderToStaticMarkup(await Students({ screen: result.screen, locale }));
+    // 8d-2: the card now holds client forms, rendered through the same providers the page uses.
+    const html = renderToStaticMarkup(
+      createElement(
+        NextIntlClientProvider,
+        { locale, messages: messages[locale] } as never,
+        createElement(
+          ReadinessClientRoot,
+          { asOf: result.screen.asOf.toISOString() } as { asOf: string; children: React.ReactNode },
+          await Students({ screen: result.screen, locale, candidate: S, organizationId: b.org.id }),
+        ),
+      ),
+    );
     const link = html.indexOf(`href="/${locale}/students/${studentId}"`);
     expect(link, "the student's card is rendered").toBeGreaterThan(-1);
     const start = html.lastIndexOf("<li", link);

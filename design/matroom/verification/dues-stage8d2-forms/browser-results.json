@@ -1,0 +1,266 @@
+[
+  {
+    "name": "owner: registration submitted through the browser form; approval then ran as a direct approveOrganization call",
+    "ok": true,
+    "detail": "approval is NOT a browser step",
+    "kind": "real-browser + direct-call"
+  },
+  {
+    "name": "owner: invitation accepted through the browser",
+    "ok": true,
+    "detail": "http://localhost:3100/en/onboarding",
+    "kind": "real-browser"
+  },
+  {
+    "name": "owner: onboarding completed through the browser UI (no SQL)",
+    "ok": true,
+    "detail": "http://localhost:3100/en/dashboard",
+    "kind": "real-browser"
+  },
+  {
+    "name": "fixture: synthetic plans, students, history, legacy rows and drafts inserted",
+    "ok": true,
+    "detail": "labelled synthetic",
+    "kind": "synthetic-fixture"
+  },
+  {
+    "name": "the readiness screen itself loaded (no redirect)",
+    "ok": true,
+    "detail": "http://localhost:3100/en/payments/readiness?s=2026-12",
+    "kind": "real-browser"
+  },
+  {
+    "name": "Not ready banner present; no activation control",
+    "ok": true,
+    "detail": "",
+    "kind": "real-browser"
+  },
+  {
+    "name": "keyboard: add-draft form filled and submitted by keyboard alone; focus ring visible; focus moves to the status",
+    "ok": true,
+    "detail": "focus=status",
+    "kind": "real-browser"
+  },
+  {
+    "name": "add draft: saved, automatic refresh, exact ₡ 25,000.50 shown",
+    "ok": true,
+    "detail": "",
+    "kind": "real-browser"
+  },
+  {
+    "name": "replace: month changed to April, ₡ 0.51 exact, linked to the April legacy payment; the March draft is gone",
+    "ok": true,
+    "detail": "April 2025 ₡ 0.51 Marzo sin pagar (teclado) Linked to the April 2025 payment (Pending) Replace Withdraw",
+    "kind": "real-browser"
+  },
+  {
+    "name": "withdraw: dialog opens on the reason field; saved; the draft leaves the card",
+    "ok": true,
+    "detail": "",
+    "kind": "real-browser"
+  },
+  {
+    "name": "review dialog: opens on Cancel, restates the displayed item, Escape closes and returns focus to the trigger",
+    "ok": true,
+    "detail": "focus=Cancel",
+    "kind": "real-browser"
+  },
+  {
+    "name": "review with drafts recorded: Current, historical wording",
+    "ok": true,
+    "detail": "",
+    "kind": "real-browser"
+  },
+  {
+    "name": "no-debt review recorded: 'At that review: no opening debt declared.'",
+    "ok": true,
+    "detail": "",
+    "kind": "real-browser"
+  },
+  {
+    "name": "pricing acknowledgement: dialog restates the promo row; recorded",
+    "ok": true,
+    "detail": "",
+    "kind": "real-browser"
+  },
+  {
+    "name": "assign a plan: saved; Diego leaves the check-4 list",
+    "ok": true,
+    "detail": "",
+    "kind": "real-browser"
+  },
+  {
+    "name": "explicit 'No plan': its own dialog first (no request before confirming), then saved",
+    "ok": true,
+    "detail": "",
+    "kind": "real-browser"
+  },
+  {
+    "name": "future correction: March 2027 changed to no plan",
+    "ok": true,
+    "detail": "",
+    "kind": "real-browser"
+  },
+  {
+    "name": "baseline: dialog states scope and timing; 'Status history recorded for 2 students.'",
+    "ok": true,
+    "detail": "Status history recorded for 2 students.Updating the page…",
+    "kind": "real-browser"
+  },
+  {
+    "name": "validation: bad amount refused under the field, value kept, focus on the amount",
+    "ok": true,
+    "detail": "focus=amount",
+    "kind": "real-browser"
+  },
+  {
+    "name": "validation: a month after the current one is refused as future",
+    "ok": true,
+    "detail": "",
+    "kind": "real-browser"
+  },
+  {
+    "name": "double click: exactly one action request",
+    "ok": true,
+    "detail": "requests=1",
+    "kind": "real-browser"
+  },
+  {
+    "name": "a 500-character note wraps inside the card",
+    "ok": true,
+    "detail": "overflow=0",
+    "kind": "real-browser"
+  },
+  {
+    "name": "stale (real second tab): refused, nothing saved, page refreshed",
+    "ok": true,
+    "detail": "",
+    "kind": "real-browser"
+  },
+  {
+    "name": "after stale: the reopened dialog restates the refreshed items; a new explicit press records it",
+    "ok": true,
+    "detail": "",
+    "kind": "real-browser"
+  },
+  {
+    "name": "[en] outcome unknown (beforeServer): unknown → still unknown after reload; no saved or rejection claim; locked until \"checked\"; typed values kept; one request",
+    "ok": true,
+    "detail": "t1=true checkedBefore=0 t2=true claims= typed=true locked=true unlocked=true requests=1 draftCurrentlyRecorded=false",
+    "kind": "real-browser"
+  },
+  {
+    "name": "[en] outcome unknown (afterCommit): unknown → still unknown after reload; no saved or rejection claim; locked until \"checked\"; typed values kept; one request",
+    "ok": true,
+    "detail": "t1=true checkedBefore=0 t2=true claims= typed=true locked=true unlocked=true requests=1 draftCurrentlyRecorded=true",
+    "kind": "real-browser"
+  },
+  {
+    "name": "the two lost-request cases show the same messages; only the currently recorded data differs, never attributed",
+    "ok": true,
+    "detail": "beforeServer recorded=false, afterCommit recorded=true",
+    "kind": "real-browser"
+  },
+  {
+    "name": "[es] add draft: 'Guardado.', ₡ 25 000,50 in Spanish format",
+    "ok": true,
+    "detail": "Guardado.Actualizando la página…",
+    "kind": "real-browser"
+  },
+  {
+    "name": "[es] no untranslated message keys on the page",
+    "ok": true,
+    "detail": "",
+    "kind": "real-browser"
+  },
+  {
+    "name": "[es] outcome unknown (beforeServer): unknown → still unknown after reload; no saved or rejection claim; locked until \"checked\"; typed values kept; one request",
+    "ok": true,
+    "detail": "t1=true checkedBefore=0 t2=true claims= typed=true locked=true unlocked=true requests=1 draftCurrentlyRecorded=false",
+    "kind": "real-browser"
+  },
+  {
+    "name": "dark theme applied",
+    "ok": true,
+    "detail": "",
+    "kind": "real-browser"
+  },
+  {
+    "name": "[dark] a rejection shows its documented message",
+    "ok": true,
+    "detail": "",
+    "kind": "real-browser"
+  },
+  {
+    "name": "[en] outcome unknown (beforeServer): unknown → still unknown after reload; no saved or rejection claim; locked until \"checked\"; typed values kept; one request",
+    "ok": true,
+    "detail": "t1=true checkedBefore=0 t2=true claims= typed=true locked=true unlocked=true requests=1 draftCurrentlyRecorded=false",
+    "kind": "real-browser"
+  },
+  {
+    "name": "[en 1280-real-window] every form expanded: no horizontal page scroll",
+    "ok": true,
+    "detail": "overflow=0",
+    "kind": "real-browser"
+  },
+  {
+    "name": "[1280-real-window] the long-name card wraps (no overflow)",
+    "ok": true,
+    "detail": "overflow=0",
+    "kind": "real-browser"
+  },
+  {
+    "name": "[es 1280-real-window] every form expanded: no horizontal page scroll",
+    "ok": true,
+    "detail": "overflow=0",
+    "kind": "real-browser"
+  },
+  {
+    "name": "[en 390-emulated] every form expanded: no horizontal page scroll",
+    "ok": true,
+    "detail": "overflow=0",
+    "kind": "emulated-viewport"
+  },
+  {
+    "name": "[390-emulated] the long-name card wraps (no overflow)",
+    "ok": true,
+    "detail": "overflow=0",
+    "kind": "emulated-viewport"
+  },
+  {
+    "name": "[es 390-emulated] every form expanded: no horizontal page scroll",
+    "ok": true,
+    "detail": "overflow=0",
+    "kind": "emulated-viewport"
+  },
+  {
+    "name": "[en 320-emulated] every form expanded: no horizontal page scroll",
+    "ok": true,
+    "detail": "overflow=0",
+    "kind": "emulated-viewport"
+  },
+  {
+    "name": "[320-emulated] the long-name card wraps (no overflow)",
+    "ok": true,
+    "detail": "overflow=0",
+    "kind": "emulated-viewport"
+  },
+  {
+    "name": "[es 320-emulated] every form expanded: no horizontal page scroll",
+    "ok": true,
+    "detail": "overflow=0",
+    "kind": "emulated-viewport"
+  },
+  {
+    "name": "exact amounts: ₡ 99,999,999.99 drafts, ₡ 0.51, $ 85.50, and an opening total above one column's limit",
+    "ok": true,
+    "detail": "",
+    "kind": "real-browser"
+  },
+  {
+    "name": "coarse pointer: every visible button at least 44 px tall",
+    "ok": true,
+    "detail": "[]",
+    "kind": "emulated-viewport"
+  }
+]

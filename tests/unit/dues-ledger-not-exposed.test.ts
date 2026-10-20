@@ -123,6 +123,10 @@ const AUTHORIZED_CALLERS = [
   // ledger's lock order (branch FOR SHARE, then student FOR UPDATE) and import only the `lockBranchShared` lock primitive from
   // `ledger/common.ts` — never a ledger writer. They write only `DuesOpeningItem`, `DuesReadinessConfirmation` and `AuditLog`.
   "src/lib/dues/readiness/opening-core.ts",
+  // Stage 8 PR 8d-2 (docs/dues/STAGE-8D2-IMPLEMENTATION-PLAN.md §2, M2): the read-only screen model imports only the pure
+  // `latestEffective` from `ledger/common.ts` — the same version selection `evaluate.ts` uses — to show each branch's plan
+  // terms for S and each student's assignment for S. Never a writer, a lock or a transaction.
+  "src/lib/dues/readiness/screen.ts",
 ];
 
 describe("the ledger writers are not reachable from production code", () => {

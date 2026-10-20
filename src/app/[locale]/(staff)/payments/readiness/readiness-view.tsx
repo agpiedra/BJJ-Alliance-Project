@@ -10,11 +10,17 @@ import { addMonths, compareYearMonth, type YearMonth } from "@/lib/dues/calendar
 import type { Currency } from "@/generated/prisma/client";
 import type { ReadinessScreen } from "@/lib/dues/readiness/screen";
 import type { CheckStatus, ConfirmationState } from "@/lib/dues/readiness/evaluate";
+import { AssignPlanForm, BaselineControl, CorrectAssignmentForm } from "./before-start-panel";
+import { OpeningReviewControl, PricingAckControl } from "./confirmation-forms";
+import { AddDraftForm, ReplaceDraftForm, WithdrawDraftButton } from "./draft-forms";
+import { ScopeStatus } from "./use-readiness-action";
 
 /**
- * Stage 8d-1: the owner's READ-ONLY readiness screen. Server components only: no client JavaScript, no form that writes. The
- * single form here is the start-month picker, a plain GET form. Recording drafts, reviews, baselines and assignments is the
- * interactive PR (8d-2); nothing here pretends to do it.
+ * Stage 8d-1: the owner's readiness screen, rendered on the server. The start-month picker is a plain GET form.
+ *
+ * Stage 8d-2: the writes (baseline, assignments, opening drafts, reviews, pricing acknowledgements) are client forms in this
+ * folder, mounted inside these server-rendered sections. They call the existing actions unchanged; the read-only display here
+ * (checks, totals, states, historical review wording) is unchanged.
  *
  * Money is shown with `formatExactMoney` (exact decimal strings; never a JavaScript number), and monthly charges and opening debt
  * are two separate tables, grouped by branch and currency, never added together.
@@ -305,6 +311,136 @@ export async function Totals({ screen, candidate, locale }: { screen: ReadinessS
   );
 }
 
+const STUDENT_SCOPE = (id: string) => `student:${id}`;
+
+/** One draft as text: the dialog's and the withdraw prompt's restatement of what is on screen. */
+function draftLabel(d: ReadinessScreen["activeDrafts"][number], locale: string) {
+  return `${formatMonthYear(d.coverageYear, d.coverageMonth, locale)} · ${money(d.amount, d.currency, locale)} · ${d.note}`;
+}
+
+/**
+ * Stage 8d-2: before S — the status baseline (checks 1-2) and plan assignments (check 4). Server-rendered; the controls are the
+ * client forms in `before-start-panel.tsx`, calling the existing actions unchanged.
+ */
+export async function BeforeStart({ screen, candidate, locale, organizationId }: { screen: ReadinessScreen; candidate: YearMonth; locale: string; organizationId: string }) {
+  const t = await getTranslations("payments.readiness");
+  const tf = await getTranslations("payments.readiness.forms");
+  const month = formatMonthYear(candidate.year, candidate.month, locale);
+  const check = (id: number) => screen.report.checks.find((c) => c.id === id)!;
+  const cannotHelp = screen.branches.filter((b) => !b.baselineHelpsS && (screen.baseline.byBranch[b.id] ?? 0) > 0).map((b) => b.name);
+  const branchesWithMissing = screen.branches.filter((b) => (screen.baseline.byBranch[b.id] ?? 0) > 0);
+  const check4 = new Set(check(4).items.filter((i) => i.startsWith("student:")).map((i) => i.slice(8)));
+  const active = screen.students.filter((s) => s.status === "ACTIVE");
+  const listed = active.filter((s) => check4.has(s.id));
+  const others = active.filter((s) => !check4.has(s.id));
+  const branchOf = new Map(screen.branches.map((b) => [b.id, b]));
+  const planName = new Map(screen.branches.flatMap((b) => b.plans.map((p) => [p.id, p.name] as const)));
+
+  const row = (student: ReadinessScreen["students"][number]) => {
+    const branch = branchOf.get(student.academyId);
+    const plans = (branch?.plans ?? []).map((p) => ({
+      id: p.id,
+      label: p.termsForS
+        ? tf("assignment.priceFor", { plan: p.name, price: money(p.termsForS.priceAmount, p.termsForS.currency, locale), month })
+        : tf("assignment.noPriceFor", { plan: p.name, month }),
+    }));
+    const forS = student.assignment.forS;
+    const current = forS === null ? tf("assignment.forSNone", { month }) : forS.planId === null ? tf("assignment.forSNoPlan", { month }) : tf("assignment.forS", { month, plan: planName.get(forS.planId) ?? "—" });
+    const minMonth = branch?.currentMonth ?? candidate;
+    return (
+      <li key={student.id} className="flex min-w-0 flex-col gap-2 rounded-lg border border-border p-3">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <a href={`/${locale}/students/${student.id}`} className="min-w-0 font-medium break-words underline underline-offset-2">
+            {student.name}
+          </a>
+          <span className="text-xs break-words text-muted-foreground">{branch?.name}</span>
+        </div>
+        <p className="text-sm">{current}</p>
+        <ScopeStatus scope={STUDENT_SCOPE(student.id)} place="assignment" activeTargets={student.assignment.future.map((a) => a.id)} />
+        {student.assignment.future.map((a) => (
+          <CorrectAssignmentForm
+            key={a.id}
+            organizationId={organizationId}
+            studentId={student.id}
+            studentName={student.name}
+            assignment={{ id: a.id, planId: a.planId, revision: a.revision }}
+            plans={plans}
+            monthLabel={tf("assignment.futureLabel", { month: formatMonthYear(a.year, a.month, locale), plan: a.planId === null ? tf("assignment.noPlan") : (planName.get(a.planId) ?? "—") })}
+          />
+        ))}
+        <AssignPlanForm
+          organizationId={organizationId}
+          studentId={student.id}
+          studentName={student.name}
+          plans={plans}
+          defaultMonth={compareYearMonth(candidate, minMonth) >= 0 ? candidate : minMonth}
+          monthLegend={tf("assignment.monthLegend", { month: formatMonthYear(minMonth.year, minMonth.month, locale) })}
+        />
+      </li>
+    );
+  };
+
+  return (
+    <Card>
+      <CardHeader className="border-b">
+        <CardTitle>
+          <h2>{tf("beforeStart.heading", { month })}</h2>
+        </CardTitle>
+        <p className="text-sm text-muted-foreground">{tf("beforeStart.orderHint")}</p>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-6 pt-4">
+        <section aria-labelledby="readiness-baseline" className="flex flex-col gap-2">
+          <h3 id="readiness-baseline" className="text-sm font-semibold">{tf("baseline.heading")}</h3>
+          <ul className="flex flex-col gap-1 text-sm">
+            {[1, 2].map((id) => (
+              <li key={id} className="flex flex-wrap items-center gap-2">
+                <span className="font-mono text-muted-foreground">{id}.</span>
+                <span className="min-w-0 break-words">{t(`checks.${check(id).key}.title` as never, { month } as never)}</span>
+                <Pill variant={STATUS_VARIANT[check(id).status]}>{t(`checkStatus.${check(id).status}`)}</Pill>
+              </li>
+            ))}
+          </ul>
+          {branchesWithMissing.length > 0 && (
+            <ul className="flex flex-col gap-1 text-xs text-muted-foreground">
+              {branchesWithMissing.map((b) => (
+                <li key={b.id} className="break-words">
+                  {b.baselineHelpsS
+                    ? tf("baseline.branchHelps", { branch: b.name, count: screen.baseline.byBranch[b.id] ?? 0, month })
+                    : tf("baseline.branchCannotHelp", { branch: b.name, count: screen.baseline.byBranch[b.id] ?? 0, month })}
+                </li>
+              ))}
+            </ul>
+          )}
+          <BaselineControl
+            organizationId={organizationId}
+            total={screen.baseline.total}
+            active={screen.baseline.active}
+            cannotHelp={cannotHelp}
+            allCannotHelp={cannotHelp.length > 0 && cannotHelp.length === branchesWithMissing.length}
+            candidateLabel={month}
+          />
+        </section>
+
+        <section aria-labelledby="readiness-assignments" className="flex flex-col gap-3 border-t pt-4">
+          <h3 id="readiness-assignments" className="text-sm font-semibold">{tf("assignment.heading")}</h3>
+          <p className="text-sm text-muted-foreground">{tf("assignment.intro", { month })}</p>
+          {listed.length === 0 ? (
+            <p className="text-sm text-muted-foreground">{tf("assignment.noneListed", { month })}</p>
+          ) : (
+            <ul className="grid gap-3 xl:grid-cols-2">{listed.map(row)}</ul>
+          )}
+          {others.length > 0 && (
+            <details className="rounded-lg border border-border">
+              <summary className="cursor-pointer px-3 py-2 text-sm font-medium">{tf("assignment.showAll", { count: others.length })}</summary>
+              <ul className="grid gap-3 border-t border-border p-3 xl:grid-cols-2">{others.map(row)}</ul>
+            </details>
+          )}
+        </section>
+      </CardContent>
+    </Card>
+  );
+}
+
 function ConfirmationLine({ label, state, locale, t }: { label: string; state: ConfirmationState; locale: string; t: Translate }) {
   const variant = state.state === "valid" ? "ok" : state.state === "stale" ? "warn" : "plain";
   return (
@@ -325,14 +461,38 @@ function ConfirmationLine({ label, state, locale, t }: { label: string; state: C
   );
 }
 
-export async function Students({ screen, locale }: { screen: ReadinessScreen; locale: string }) {
+export async function Students({ screen, locale, candidate, organizationId }: { screen: ReadinessScreen; locale: string; candidate: YearMonth; organizationId: string }) {
   const t = await getTranslations("payments.readiness");
+  const tf = await getTranslations("payments.readiness.forms");
   const tStatus = await getTranslations("students.status");
   const tPayment = await getTranslations("students.paymentStatus");
   const tt: Translate = (key, values) => t(key as never, values as never);
+  const month = formatMonthYear(candidate.year, candidate.month, locale);
   const withDraft = new Set(screen.activeDrafts.map((d) => d.studentId));
   const shown = screen.students.filter((s) => s.status === "ACTIVE" || withDraft.has(s.id) || s.promoOrExempt);
   const confirmations = new Map(screen.report.confirmations.map((c) => [c.studentId, c]));
+  const branchOf = new Map(screen.branches.map((b) => [b.id, b]));
+  const planName = new Map(screen.branches.flatMap((b) => b.plans.map((p) => [p.id, p.name] as const)));
+  const reviewCandidate = { year: candidate.year, month: candidate.month, label: month };
+
+  const pricingLines = (student: ReadinessScreen["students"][number]) => {
+    const promoRows = student.legacyRows
+      .filter((r) => r.status === "PROMO" || r.status === "EXEMPT" || r.promoRecurring)
+      .map((r) =>
+        tf("pricing.legacyRow", {
+          month: formatMonthYear(r.year, r.month, locale),
+          status: tPayment(r.status as never),
+          promo: r.promoName ?? "—",
+          amount: r.amount === null ? "—" : money(r.amount, r.currency, locale),
+        }),
+      );
+    const forS = student.assignment.forS;
+    const plan = forS === null ? tf("assignment.forSNone", { month }) : forS.planId === null ? tf("assignment.forSNoPlan", { month }) : tf("assignment.forS", { month, plan: planName.get(forS.planId) ?? "—" });
+    const p = student.preview;
+    const reason = p && p.outcome !== "created" ? p.reason : "unknown";
+    const charge = p?.outcome === "created" ? tf("pricing.wouldCharge", { month, amount: money(p.amount, p.currency, locale) }) : tf("pricing.wouldNotCharge", { month, reason: tf(`pricing.reason.${reason}` as never) });
+    return [...promoRows, plan, charge];
+  };
 
   return (
     <Card>
@@ -350,10 +510,18 @@ export async function Students({ screen, locale }: { screen: ReadinessScreen; lo
           return (
             <section key={branch.id} aria-label={branch.name} className="flex flex-col gap-3">
               <h3 className="text-sm font-semibold break-words">{branch.name}</h3>
-              <ul className="grid gap-3 md:grid-cols-2">
+              <ul className="grid gap-3 xl:grid-cols-2">
                 {inBranch.map((student) => {
                   const c = confirmations.get(student.id);
                   const drafts = screen.activeDrafts.filter((d) => d.studentId === student.id);
+                  const draftViews = drafts.map((d) => ({ ...d, label: draftLabel(d, locale) }));
+                  const legacyOptions = student.legacyRows.map((r) => ({
+                    id: r.id,
+                    label: `${formatMonthYear(r.year, r.month, locale)} · ${tPayment(r.status as never)}${r.amount === null ? "" : ` · ${money(r.amount, r.currency, locale)}`}`,
+                  }));
+                  const current = branchOf.get(student.academyId)?.currentMonth ?? candidate;
+                  const monthLegend = tf("drafts.monthLegend", { current: formatMonthYear(current.year, current.month, locale), month });
+                  const mustReview = student.status === "ACTIVE" || drafts.length > 0;
                   return (
                     <li key={student.id} className="flex min-w-0 flex-col gap-3 rounded-lg border border-border p-3">
                       <div className="flex flex-wrap items-center gap-2">
@@ -363,16 +531,17 @@ export async function Students({ screen, locale }: { screen: ReadinessScreen; lo
                         <Pill>{tStatus(student.status as never)}</Pill>
                         {student.promoOrExempt && <Pill variant="accent">{t("students.promo")}</Pill>}
                       </div>
+                      <ScopeStatus scope={STUDENT_SCOPE(student.id)} place="card" activeTargets={drafts.map((d) => d.id)} />
                       {c && <ConfirmationLine label={t("students.openingReview")} state={c.openingReview} locale={locale} t={tt} />}
                       {c && student.promoOrExempt && <ConfirmationLine label={t("students.pricingAck")} state={c.pricingAck} locale={locale} t={tt} />}
-                      <div className="flex flex-col gap-1">
+                      <div className="flex flex-col gap-2">
                         <h4 className="text-sm text-muted-foreground">{t("students.drafts")}</h4>
                         {drafts.length === 0 ? (
                           <p className="text-sm text-muted-foreground">{t("students.noDrafts")}</p>
                         ) : (
-                          <ul className="flex flex-col gap-2 text-sm">
-                            {drafts.map((d) => (
-                              <li key={d.id} className="flex min-w-0 flex-col">
+                          <ul className="flex flex-col gap-3 text-sm">
+                            {draftViews.map((d) => (
+                              <li key={d.id} className="flex min-w-0 flex-col gap-2">
                                 <span className="flex flex-wrap justify-between gap-x-3">
                                   <span>{formatMonthYear(d.coverageYear, d.coverageMonth, locale)}</span>
                                   <span className="whitespace-nowrap tabular-nums">{money(d.amount, d.currency, locale)}</span>
@@ -383,11 +552,42 @@ export async function Students({ screen, locale }: { screen: ReadinessScreen; lo
                                     {t("students.linked", { month: formatMonthYear(d.linkedLegacy.year, d.linkedLegacy.month, locale), status: tPayment(d.linkedLegacy.status as never) })}
                                   </span>
                                 )}
+                                <div className="flex flex-col gap-2">
+                                  <ReplaceDraftForm organizationId={organizationId} studentId={student.id} draft={d} legacyOptions={legacyOptions} monthLegend={monthLegend} />
+                                  <div>
+                                    <WithdrawDraftButton organizationId={organizationId} studentId={student.id} draft={d} />
+                                  </div>
+                                </div>
                               </li>
                             ))}
                           </ul>
                         )}
+                        <AddDraftForm organizationId={organizationId} studentId={student.id} legacyOptions={legacyOptions} monthLegend={monthLegend} />
                       </div>
+                      {(mustReview || student.promoOrExempt) && (
+                        <div className="flex flex-col gap-2 border-t pt-3">
+                          {mustReview && (
+                            <OpeningReviewControl
+                              organizationId={organizationId}
+                              studentId={student.id}
+                              studentName={student.name}
+                              candidate={reviewCandidate}
+                              binding={student.openingBinding}
+                              drafts={draftViews.map((d) => d.label)}
+                            />
+                          )}
+                          {student.promoOrExempt && student.pricingBinding && (
+                            <PricingAckControl
+                              organizationId={organizationId}
+                              studentId={student.id}
+                              studentName={student.name}
+                              candidate={reviewCandidate}
+                              binding={student.pricingBinding}
+                              lines={pricingLines(student)}
+                            />
+                          )}
+                        </div>
+                      )}
                     </li>
                   );
                 })}
