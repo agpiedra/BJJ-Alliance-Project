@@ -1,7 +1,6 @@
 # Stage 8 PR 8d — implementation plan (the owner readiness screen)
 
-**Status:** the owner decided U1–U3 (recorded in §11). **8d-1 (the read-only screen): implementation complete on its branch;
-verification in progress; no PR opened yet.** Evidence and deviations: `design/matroom/verification/dues-stage8d-screen/README.md`. 8d-2 (the interactive forms) is
+**Status:** the owner decided U1–U3 (recorded in §11). **8d-1 (the read-only screen): PR #150 open, held unmerged for review.** Evidence and deviations: `design/matroom/verification/dues-stage8d-screen/README.md`. 8d-2 (the interactive forms) is
 not started.
 **Base:** `main` @ `157d594e88df8d863dd79a54c87467e3e0d6f50c`. 8a, 8b and 8c are merged, as is the MONTHLY-total fix. 8b's
 migrations are applied only to isolated test databases.
