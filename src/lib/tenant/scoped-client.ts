@@ -57,6 +57,8 @@ export const TENANT_SCOPED_MODELS = new Set([
   // from ScopedDb's accessor union for the same reason as DuesPaymentAttempt.
   "DuesOpeningItem",
   "DuesReadinessConfirmation",
+  // Monthly-generation progress (G1): tenant-scoped from day one, before any production caller exists.
+  "DuesGenerationProgress",
   "KioskAttempt",
   "QueuedCheckIn",
   "StaffAssignment",

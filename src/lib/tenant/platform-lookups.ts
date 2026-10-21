@@ -128,6 +128,32 @@ export async function listActiveAcademyIdsForDigest(): Promise<string[]> {
   return academies.map((academy) => academy.id);
 }
 
+/**
+ * Monthly-generation discovery (docs/dues/MONTHLY-GENERATION-TRIGGER-PLAN.md revision 4, §5): up to `limit` progress rows whose
+ * lease is free or expired, least recently visited first. Cross-organization by design — the job discovers which organization
+ * it owes work to, so this read cannot be scoped by one. Bounded before reading (an indexed ORDER BY with LIMIT, under a
+ * statement timeout). A candidate list only: the claim re-checks the lease against the database clock and may still lose.
+ * Rows exist only for organizations stage 9 activates, so in production this returns nothing until then.
+ */
+export async function listClaimableGenerationSegments(
+  limit: number,
+  bounds: { statementTimeoutMs: number; lockTimeoutMs: number; maxWaitMs: number; timeoutMs: number },
+): Promise<{ id: string; organizationId: string }[]> {
+  // maxWait bounds waiting for a pool connection; timeout plus statement_timeout bound the transaction itself.
+  return unscopedPrisma.$transaction(
+    async (tx) => {
+      await tx.$executeRawUnsafe(`SET LOCAL statement_timeout = ${Math.trunc(bounds.statementTimeoutMs)}`);
+      await tx.$executeRawUnsafe(`SET LOCAL lock_timeout = ${Math.trunc(bounds.lockTimeoutMs)}`);
+      return tx.$queryRaw<{ id: string; organizationId: string }[]>`
+      SELECT "id", "organizationId" FROM "DuesGenerationProgress"
+      WHERE "leaseUntil" IS NULL OR "leaseUntil" < (now() AT TIME ZONE 'UTC')
+      ORDER BY "lastVisitedAt", "id"
+      LIMIT ${Math.trunc(limit)}`;
+    },
+    { maxWait: bounds.maxWaitMs, timeout: bounds.timeoutMs },
+  );
+}
+
 export interface OrganizationAuditEntry {
   id: string;
   actorEmail: string | null;
