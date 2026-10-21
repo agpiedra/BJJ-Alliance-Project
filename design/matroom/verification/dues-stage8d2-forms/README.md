@@ -48,7 +48,7 @@ that review: …") is unchanged.
 - **`…/readiness/form-fields.tsx`:** the shared fields and `ConfirmDialog` (focus starts on Cancel; dismissal is blocked while
   pending).
 - **`readiness-view.tsx` / `page.tsx`:** a new "Before {S}" section (checks 1–2, the baseline, assignments for check 4's
-  students, and the other active students behind "Show the other active students" — D4); the forms mounted in each student
+  students, and the other active students behind "Show the other active students" — D4; one list, see "Correction" below); the forms mounted in each student
   card. `page.tsx` wraps the sections in the client root.
 - **Messages:** `payments.readiness.forms.*` in EN and ES (merged by script, additive; the parity test passes).
 - **Guards:**
@@ -215,6 +215,64 @@ dark mode.
      expected state);
    - a `<summary>` click toggles (disclosures are now opened idempotently);
    - draft assertions now read only the drafts list (form options list legacy amounts).
+
+## Correction: assignment rows across a check-4 transition (review of PR #151)
+
+**Defect.** BeforeStart rendered check-4 students and the other active students under two different parent lists (the second
+inside a collapsed `<details>`). An assignment that clears check 4 moves the student between them on refresh, so React
+remounted the row and its forms.
+
+**Reproduced first, through the real `BeforeStart` layout** (jsdom, real reads on the isolated test database, the real
+`assignPlan` behind a test wrapper that loses the response after the commit), on the unfixed code. After "Reload current data",
+both for a committed lost assignment and for another owner's assignment during recovery:
+- the row was a different element (remounted) and sat behind the collapsed "Show the other active students": not reachable;
+- the assign form was closed, the typed month back to the default (December), the chosen plan unchecked;
+- "Outcome still unknown" and "I have checked the current data" were rendered but not reachable;
+- still exactly one `assignPlan` call (nothing resubmitted).
+The new tests failed on the unfixed code (all three, on the row-identity assertion).
+
+**Fix (UI only; no action, financial, schema or activation change).**
+- `BeforeStart` now renders every active student under ONE list (`AssignmentRows` in `before-start-panel.tsx`), keyed by
+  student, in the screen's own order, never regrouped by check 4. A refresh only toggles a row's `hidden`; it never moves or
+  remounts it, so typed values, open forms and the outcome region survive.
+- The approved default filtering (D4) is kept: check-4 rows show; the others are hidden behind a button with `aria-expanded`
+  ("Show the other active students (n)").
+- A row whose student scope has a submission or outcome at the assignment place (pending, refreshing, saved/rejected, unknown)
+  stays visible regardless of the filter (`useActiveAt` in `use-readiness-action.tsx`). The outcome is never reset,
+  acknowledged or resubmitted by this: after "I have checked the current data" the scope is idle and the filter applies again.
+  A saved row stays visible with "Saved." until the next load.
+
+**Tests** (`tests/integration/dues-readiness-assignment-transition.test.tsx`, real BeforeStart, 3 tests):
+1. a committed assignment with a lost response clearing check 4 — same element, still unknown, typed values and open form kept,
+   acknowledgement reachable and focusable, one call, one assignment row; after acknowledging, hidden behind the toggle and
+   shown again (same element) by it;
+2. another owner's assignment clearing check 4 during recovery — same element, still unknown, typed values kept, one call, only
+   the other owner's assignment recorded;
+3. a normal successful assignment moving out of the default list — same element, "Saved." visible, form reset only on the
+   explicit success; a fresh load hides it.
+
+**Mutations** (both caught, file restored): rows not kept visible while their scope is active (3/3 fail); toggle not reporting
+`aria-expanded` (1/3 fail).
+
+**Checks:** typecheck clean; lint 0 errors (23 existing warnings); guard-usage and pending-callers pass; unit 133 files / 1965
+tests; integration 173 files / 2285 tests (isolated test database).
+
+**Browser — 44/44 (`transition/transition-results.json`).** Same setup and owner path as above (registration, invitation and
+onboarding in the browser; approval a **direct call**); **synthetic fixture** (two more plan-less students). The lost response is
+real: the action request is let through, the server commits, then the browser's response is failed.
+
+| Class | Count | What it covers |
+|---|---|---|
+| Real browser, 1280 px real window | 30 | EN light: default view (others hidden, toggle collapsed); lost after commit → "Outcome still unknown", the row still visible after the student passes check 4, typed values kept (form open, November, plan), focus on the outcome, Tab reaches "Reload again" then "I have checked…", one request; Enter on "I have checked…" → row hidden, the keyboard toggle shows the same form with its values. Normal success: row stays with "Saved.", form reset, one request; a fresh load hides it. ES dark: the same lost-after-commit transition |
+| Emulated viewport | 12 | 390 px: the same transition; 390 and 320 px: no horizontal page scroll, the recovery row stays visible |
+| Synthetic fixture | 1 | the fixture insert |
+| Real browser + direct call | 1 | registration in the browser, approval by a direct call |
+
+Screenshots in `transition/`: `20-default…`, `21-still-unknown-{en-light-1280,es-dark-1280,en-390-emulated}-row`,
+`22-acknowledged-expanded…`, `23-success…`, `24-still-unknown-en-320-emulated`, and `25-assignments-section-default…`
+(headless, after the run: every check-4 student assigned, the empty message and the toggle). Same limits as above: the dev
+indicator is visible, element shots can crop a few pixels at the right edge, and contrast is judged visually. "Another owner
+during recovery" is covered by integration test 2, not repeated in the browser.
 
 ## Findings during implementation
 

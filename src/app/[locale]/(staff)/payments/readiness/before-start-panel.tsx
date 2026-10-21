@@ -1,12 +1,12 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useId, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { runStatusHistoryBaseline } from "@/lib/students/baseline-action";
 import { assignPlan, correctAssignment } from "@/lib/dues/assignment-actions";
 import { ConfirmDialog, focusFirstInvalid, MonthYearFields } from "./form-fields";
-import { ScopeStatus, useScopedSubmit } from "./use-readiness-action";
+import { ScopeStatus, useActiveAt, useScopedSubmit } from "./use-readiness-action";
 
 /**
  * Stage 8d-2 (plan §3.1, §3.2): before S — the status baseline and plan assignments, calling the existing actions unchanged.
@@ -69,6 +69,39 @@ export function BaselineControl({ organizationId, total, active, cannotHelp, all
         <p>{t("staleNote")}</p>
       </ConfirmDialog>
     </div>
+  );
+}
+
+/**
+ * Every active student's assignment row under ONE parent, keyed by student, so a refresh that moves a student across check 4
+ * never remounts its forms (typed values, open forms and the outcome region survive). The default view shows the check-4 rows;
+ * the others are hidden behind the toggle, except a row whose scope has a submission or outcome at "assignment", which stays
+ * visible so its recovery controls remain reachable. Hiding never resets, acknowledges or resubmits anything.
+ */
+export function AssignmentRows({ rows }: { rows: readonly { id: string; listed: boolean; content: React.ReactNode }[] }) {
+  const t = useTranslations("payments.readiness.forms.assignment");
+  const activeAt = useActiveAt("assignment");
+  const [expanded, setExpanded] = useState(false);
+  const listId = useId();
+  const visible = (r: (typeof rows)[number]) => r.listed || expanded || activeAt(`student:${r.id}`);
+  const others = rows.filter((r) => !r.listed && !activeAt(`student:${r.id}`)).length;
+  return (
+    <>
+      <ul id={listId} hidden={!rows.some(visible)} className="grid gap-3 xl:grid-cols-2">
+        {rows.map((r) => (
+          <li key={r.id} hidden={!visible(r)} className="flex min-w-0 flex-col gap-2 rounded-lg border border-border p-3">
+            {r.content}
+          </li>
+        ))}
+      </ul>
+      {others > 0 && (
+        <div>
+          <Button type="button" variant="outline" aria-expanded={expanded} aria-controls={listId} onClick={() => setExpanded((e) => !e)}>
+            {t("showAll", { count: others })}
+          </Button>
+        </div>
+      )}
+    </>
   );
 }
 

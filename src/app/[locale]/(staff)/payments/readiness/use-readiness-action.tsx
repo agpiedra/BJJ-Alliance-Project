@@ -99,6 +99,15 @@ export function useScopeLocked(scope: string): boolean {
   return phase === "pending" || phase === "refreshing" || phase === "unknown";
 }
 
+/** Whether a scope has a submission in flight or an outcome showing at `place`: its controls must stay on screen. */
+export function useActiveAt(place: Place): (scope: string) => boolean {
+  const root = useRoot();
+  return (scope) => {
+    const state = root.get(scope);
+    return state.phase !== "idle" && state.place === place;
+  };
+}
+
 /**
  * Submit `formData` through `action` for `scope`. Returns the field errors of a field-level rejection (for the caller's fields),
  * and calls `onSaved` (e.g. reset the form) only on an explicit `{ ok: true }`.

@@ -10,7 +10,7 @@ import { addMonths, compareYearMonth, type YearMonth } from "@/lib/dues/calendar
 import type { Currency } from "@/generated/prisma/client";
 import type { ReadinessScreen } from "@/lib/dues/readiness/screen";
 import type { CheckStatus, ConfirmationState } from "@/lib/dues/readiness/evaluate";
-import { AssignPlanForm, BaselineControl, CorrectAssignmentForm } from "./before-start-panel";
+import { AssignmentRows, AssignPlanForm, BaselineControl, CorrectAssignmentForm } from "./before-start-panel";
 import { OpeningReviewControl, PricingAckControl } from "./confirmation-forms";
 import { AddDraftForm, ReplaceDraftForm, WithdrawDraftButton } from "./draft-forms";
 import { ScopeStatus } from "./use-readiness-action";
@@ -331,8 +331,6 @@ export async function BeforeStart({ screen, candidate, locale, organizationId }:
   const branchesWithMissing = screen.branches.filter((b) => (screen.baseline.byBranch[b.id] ?? 0) > 0);
   const check4 = new Set(check(4).items.filter((i) => i.startsWith("student:")).map((i) => i.slice(8)));
   const active = screen.students.filter((s) => s.status === "ACTIVE");
-  const listed = active.filter((s) => check4.has(s.id));
-  const others = active.filter((s) => !check4.has(s.id));
   const branchOf = new Map(screen.branches.map((b) => [b.id, b]));
   const planName = new Map(screen.branches.flatMap((b) => b.plans.map((p) => [p.id, p.name] as const)));
 
@@ -348,7 +346,7 @@ export async function BeforeStart({ screen, candidate, locale, organizationId }:
     const current = forS === null ? tf("assignment.forSNone", { month }) : forS.planId === null ? tf("assignment.forSNoPlan", { month }) : tf("assignment.forS", { month, plan: planName.get(forS.planId) ?? "—" });
     const minMonth = branch?.currentMonth ?? candidate;
     return (
-      <li key={student.id} className="flex min-w-0 flex-col gap-2 rounded-lg border border-border p-3">
+      <>
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <a href={`/${locale}/students/${student.id}`} className="min-w-0 font-medium break-words underline underline-offset-2">
             {student.name}
@@ -376,7 +374,7 @@ export async function BeforeStart({ screen, candidate, locale, organizationId }:
           defaultMonth={compareYearMonth(candidate, minMonth) >= 0 ? candidate : minMonth}
           monthLegend={tf("assignment.monthLegend", { month: formatMonthYear(minMonth.year, minMonth.month, locale) })}
         />
-      </li>
+      </>
     );
   };
 
@@ -424,17 +422,9 @@ export async function BeforeStart({ screen, candidate, locale, organizationId }:
         <section aria-labelledby="readiness-assignments" className="flex flex-col gap-3 border-t pt-4">
           <h3 id="readiness-assignments" className="text-sm font-semibold">{tf("assignment.heading")}</h3>
           <p className="text-sm text-muted-foreground">{tf("assignment.intro", { month })}</p>
-          {listed.length === 0 ? (
-            <p className="text-sm text-muted-foreground">{tf("assignment.noneListed", { month })}</p>
-          ) : (
-            <ul className="grid gap-3 xl:grid-cols-2">{listed.map(row)}</ul>
-          )}
-          {others.length > 0 && (
-            <details className="rounded-lg border border-border">
-              <summary className="cursor-pointer px-3 py-2 text-sm font-medium">{tf("assignment.showAll", { count: others.length })}</summary>
-              <ul className="grid gap-3 border-t border-border p-3 xl:grid-cols-2">{others.map(row)}</ul>
-            </details>
-          )}
+          {!active.some((s) => check4.has(s.id)) && <p className="text-sm text-muted-foreground">{tf("assignment.noneListed", { month })}</p>}
+          {/* One list in the screen's order, never regrouped by check 4: a refresh only toggles visibility (AssignmentRows). */}
+          <AssignmentRows rows={active.map((s) => ({ id: s.id, listed: check4.has(s.id), content: row(s) }))} />
         </section>
       </CardContent>
     </Card>

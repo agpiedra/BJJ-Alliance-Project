@@ -1,0 +1,266 @@
+[
+  {
+    "name": "owner: registration submitted through the browser form; approval then ran as a direct approveOrganization call",
+    "ok": true,
+    "detail": "approval is NOT a browser step",
+    "kind": "real-browser + direct-call"
+  },
+  {
+    "name": "owner: invitation accepted through the browser",
+    "ok": true,
+    "detail": "http://localhost:3100/en/onboarding",
+    "kind": "real-browser"
+  },
+  {
+    "name": "owner: onboarding completed through the browser UI",
+    "ok": true,
+    "detail": "http://localhost:3100/en/dashboard",
+    "kind": "real-browser"
+  },
+  {
+    "name": "fixture: synthetic plans and students inserted",
+    "ok": true,
+    "detail": "labelled synthetic",
+    "kind": "synthetic-fixture"
+  },
+  {
+    "name": "[en] default view: rows of other active students are hidden",
+    "ok": true,
+    "detail": "Ana has a plan",
+    "kind": "real-browser"
+  },
+  {
+    "name": "[en] default view: the toggle is collapsed",
+    "ok": true,
+    "detail": "",
+    "kind": "real-browser"
+  },
+  {
+    "name": "[en-light-1280] the check-4 student's row is in the default view",
+    "ok": true,
+    "detail": "",
+    "kind": "real-browser"
+  },
+  {
+    "name": "[en-light-1280] lost response: \"Outcome unknown\" shown",
+    "ok": true,
+    "detail": "",
+    "kind": "real-browser"
+  },
+  {
+    "name": "[en-light-1280] after reload the current data shows the plan for December 2026 (student passes check 4)",
+    "ok": true,
+    "detail": "For December 2026: Mensualidad adultos ilimitada con acceso a todas las clases del horario regular",
+    "kind": "real-browser"
+  },
+  {
+    "name": "[en-light-1280] the row is still visible after moving out of check 4",
+    "ok": true,
+    "detail": "",
+    "kind": "real-browser"
+  },
+  {
+    "name": "[en-light-1280] still unknown: \"Outcome still unknown\", no saved or rejection message",
+    "ok": true,
+    "detail": "",
+    "kind": "real-browser"
+  },
+  {
+    "name": "[en-light-1280] typed values kept (form open, November, the chosen plan)",
+    "ok": true,
+    "detail": "{\"open\":true,\"month\":\"11\",\"plan\":true}",
+    "kind": "real-browser"
+  },
+  {
+    "name": "[en-light-1280] keyboard: focus on the outcome, Tab reaches \"Reload again\" then \"I have checked the current data\"",
+    "ok": true,
+    "detail": "alertFocused=true, tab1=\"Reload again\", tab2=\"I have checked the current data\"",
+    "kind": "real-browser"
+  },
+  {
+    "name": "[en-light-1280] exactly one action request; nothing resubmitted",
+    "ok": true,
+    "detail": "posts=1",
+    "kind": "real-browser"
+  },
+  {
+    "name": "[en-light-1280] acknowledged: the default filtering applies again (row hidden behind the toggle)",
+    "ok": true,
+    "detail": "",
+    "kind": "real-browser"
+  },
+  {
+    "name": "[en-light-1280] toggle collapsed (aria-expanded=false)",
+    "ok": true,
+    "detail": "",
+    "kind": "real-browser"
+  },
+  {
+    "name": "[en-light-1280] keyboard toggle shows the row again: same mounted form, values still there",
+    "ok": true,
+    "detail": "{\"expanded\":\"true\",\"visible\":true,\"month\":\"11\"}",
+    "kind": "real-browser"
+  },
+  {
+    "name": "[en-light-1280] still exactly one action request after acknowledging",
+    "ok": true,
+    "detail": "posts=1",
+    "kind": "real-browser"
+  },
+  {
+    "name": "[success] Elena's row is in the default view",
+    "ok": true,
+    "detail": "",
+    "kind": "real-browser"
+  },
+  {
+    "name": "[success] after the refresh the row stays visible with \"Saved.\"",
+    "ok": true,
+    "detail": "",
+    "kind": "real-browser"
+  },
+  {
+    "name": "[success] the form was reset only after the explicit success",
+    "ok": true,
+    "detail": "",
+    "kind": "real-browser"
+  },
+  {
+    "name": "[success] exactly one action request",
+    "ok": true,
+    "detail": "posts=1",
+    "kind": "real-browser"
+  },
+  {
+    "name": "[success] a fresh load applies the default filtering (row hidden)",
+    "ok": true,
+    "detail": "",
+    "kind": "real-browser"
+  },
+  {
+    "name": "[es dark] dark theme applied",
+    "ok": true,
+    "detail": "",
+    "kind": "real-browser"
+  },
+  {
+    "name": "[es-dark-1280] the check-4 student's row is in the default view",
+    "ok": true,
+    "detail": "",
+    "kind": "real-browser"
+  },
+  {
+    "name": "[es-dark-1280] lost response: \"Outcome unknown\" shown",
+    "ok": true,
+    "detail": "",
+    "kind": "real-browser"
+  },
+  {
+    "name": "[es-dark-1280] after reload the current data shows the plan for December 2026 (student passes check 4)",
+    "ok": true,
+    "detail": "Para diciembre de 2026: Mensualidad adultos ilimitada con acceso a todas las clases del horario regular",
+    "kind": "real-browser"
+  },
+  {
+    "name": "[es-dark-1280] the row is still visible after moving out of check 4",
+    "ok": true,
+    "detail": "",
+    "kind": "real-browser"
+  },
+  {
+    "name": "[es-dark-1280] still unknown: \"Outcome still unknown\", no saved or rejection message",
+    "ok": true,
+    "detail": "",
+    "kind": "real-browser"
+  },
+  {
+    "name": "[es-dark-1280] typed values kept (form open, November, the chosen plan)",
+    "ok": true,
+    "detail": "{\"open\":true,\"month\":\"11\",\"plan\":true}",
+    "kind": "real-browser"
+  },
+  {
+    "name": "[es-dark-1280] keyboard: focus on the outcome, Tab reaches \"Recargar de nuevo\" then \"Ya revisé los datos actuales\"",
+    "ok": true,
+    "detail": "alertFocused=true, tab1=\"Recargar de nuevo\", tab2=\"Ya revisé los datos actuales\"",
+    "kind": "real-browser"
+  },
+  {
+    "name": "[es-dark-1280] exactly one action request; nothing resubmitted",
+    "ok": true,
+    "detail": "posts=1",
+    "kind": "real-browser"
+  },
+  {
+    "name": "[en-390-emulated] the check-4 student's row is in the default view",
+    "ok": true,
+    "detail": "",
+    "kind": "emulated-viewport"
+  },
+  {
+    "name": "[en-390-emulated] lost response: \"Outcome unknown\" shown",
+    "ok": true,
+    "detail": "",
+    "kind": "emulated-viewport"
+  },
+  {
+    "name": "[en-390-emulated] after reload the current data shows the plan for December 2026 (student passes check 4)",
+    "ok": true,
+    "detail": "For December 2026: Mensualidad adultos ilimitada con acceso a todas las clases del horario regular",
+    "kind": "emulated-viewport"
+  },
+  {
+    "name": "[en-390-emulated] the row is still visible after moving out of check 4",
+    "ok": true,
+    "detail": "",
+    "kind": "emulated-viewport"
+  },
+  {
+    "name": "[en-390-emulated] still unknown: \"Outcome still unknown\", no saved or rejection message",
+    "ok": true,
+    "detail": "",
+    "kind": "emulated-viewport"
+  },
+  {
+    "name": "[en-390-emulated] typed values kept (form open, November, the chosen plan)",
+    "ok": true,
+    "detail": "{\"open\":true,\"month\":\"11\",\"plan\":true}",
+    "kind": "emulated-viewport"
+  },
+  {
+    "name": "[en-390-emulated] keyboard: focus on the outcome, Tab reaches \"Reload again\" then \"I have checked the current data\"",
+    "ok": true,
+    "detail": "alertFocused=true, tab1=\"Reload again\", tab2=\"I have checked the current data\"",
+    "kind": "emulated-viewport"
+  },
+  {
+    "name": "[en-390-emulated] exactly one action request; nothing resubmitted",
+    "ok": true,
+    "detail": "posts=1",
+    "kind": "emulated-viewport"
+  },
+  {
+    "name": "[390 emulated] still-unknown row: no horizontal page scroll",
+    "ok": true,
+    "detail": "overflow=0",
+    "kind": "emulated-viewport"
+  },
+  {
+    "name": "[390 emulated] the recovery row stays visible",
+    "ok": true,
+    "detail": "",
+    "kind": "emulated-viewport"
+  },
+  {
+    "name": "[320 emulated] still-unknown row: no horizontal page scroll",
+    "ok": true,
+    "detail": "overflow=0",
+    "kind": "emulated-viewport"
+  },
+  {
+    "name": "[320 emulated] the recovery row stays visible",
+    "ok": true,
+    "detail": "",
+    "kind": "emulated-viewport"
+  }
+]
