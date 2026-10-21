@@ -2,6 +2,7 @@ import { cache } from "react";
 import { notFound, redirect } from "next/navigation";
 import { getLocale } from "next-intl/server";
 import { auth } from "@/auth";
+import type { OrganizationStatus } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import { resolveActiveOrganizationForSignIn } from "@/lib/tenant/active-organization";
 import type { AccessContext, MembershipRole, SystemJobContext, TenantContext, TenantContextResult } from "./types";
@@ -164,12 +165,21 @@ export async function resolveActionContext(
  * acting user, so it is never represented as a nulled-out `TenantContext`.
  * Callers iterate every organization and skip whichever ones this returns
  * `null` for (spec: "Skip non-active organizations").
+ *
+ * `db` lets a job run this read inside its own bounded transaction (statement/lock
+ * timeouts, connection-acquisition wait); it defaults to the shared client.
  */
+/** The one read this resolver makes: the shared client, or any transaction client of it. */
+export interface SystemJobContextReader {
+  organization: { findUnique(args: { where: { id: string }; select: { status: true } }): PromiseLike<{ status: OrganizationStatus } | null> };
+}
+
 export async function resolveSystemJobContext(
   organizationId: string,
   jobName: string,
+  db: SystemJobContextReader = prisma,
 ): Promise<SystemJobContext | null> {
-  const organization = await prisma.organization.findUnique({
+  const organization = await db.organization.findUnique({
     where: { id: organizationId },
     select: { status: true },
   });

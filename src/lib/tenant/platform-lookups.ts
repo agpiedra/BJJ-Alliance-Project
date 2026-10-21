@@ -135,15 +135,23 @@ export async function listActiveAcademyIdsForDigest(): Promise<string[]> {
  * statement timeout). A candidate list only: the claim re-checks the lease against the database clock and may still lose.
  * Rows exist only for organizations stage 9 activates, so in production this returns nothing until then.
  */
-export async function listClaimableGenerationSegments(limit: number, statementTimeoutMs: number): Promise<{ id: string; organizationId: string }[]> {
-  return unscopedPrisma.$transaction(async (tx) => {
-    await tx.$executeRawUnsafe(`SET LOCAL statement_timeout = ${Math.trunc(statementTimeoutMs)}`);
-    return tx.$queryRaw<{ id: string; organizationId: string }[]>`
+export async function listClaimableGenerationSegments(
+  limit: number,
+  bounds: { statementTimeoutMs: number; lockTimeoutMs: number; maxWaitMs: number; timeoutMs: number },
+): Promise<{ id: string; organizationId: string }[]> {
+  // maxWait bounds waiting for a pool connection; timeout plus statement_timeout bound the transaction itself.
+  return unscopedPrisma.$transaction(
+    async (tx) => {
+      await tx.$executeRawUnsafe(`SET LOCAL statement_timeout = ${Math.trunc(bounds.statementTimeoutMs)}`);
+      await tx.$executeRawUnsafe(`SET LOCAL lock_timeout = ${Math.trunc(bounds.lockTimeoutMs)}`);
+      return tx.$queryRaw<{ id: string; organizationId: string }[]>`
       SELECT "id", "organizationId" FROM "DuesGenerationProgress"
       WHERE "leaseUntil" IS NULL OR "leaseUntil" < (now() AT TIME ZONE 'UTC')
       ORDER BY "lastVisitedAt", "id"
       LIMIT ${Math.trunc(limit)}`;
-  });
+    },
+    { maxWait: bounds.maxWaitMs, timeout: bounds.timeoutMs },
+  );
 }
 
 export interface OrganizationAuditEntry {

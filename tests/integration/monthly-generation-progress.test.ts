@@ -482,7 +482,7 @@ describe("future-month refusal under the branch lock", () => {
 
     // Generous timeouts so the held lock is waited on, not timed out; the deadline grows with them (each unit's maximum duration
     // is derived from the timeouts, and a unit starts only if it fits).
-    const slow = { statementTimeoutMs: 20_000, lockTimeoutMs: 20_000, timeoutMs: 30_000, deadlineMs: 10_000_000 };
+    const slow = { statementTimeoutMs: 20_000, lockTimeoutMs: 20_000, shortTimeoutMs: 20_000, studentTimeoutMs: 30_000, deadlineMs: 10_000_000 };
     const running = runMonthlyGeneration(deps({ now: JAN_31_2031, limits: slow }));
     expect(await waitUntilBlocked(['FROM "Academy"', "FOR SHARE"]), "the runner must wait on the branch lock").toBe(true);
     release();
@@ -506,7 +506,7 @@ describe("bounded reads and rollover", () => {
 
     const report = await runMonthlyGeneration(
       deps({
-        limits: { historyCap: 1, statementTimeoutMs: 300 },
+        limits: { historyCap: 1, statementTimeoutMs: 300, lockTimeoutMs: 300 },
         beforeRecordForTest: async (tx, studentId) => {
           if (studentId === thrown) throw new Error("injected failure");
           if (studentId === slow) await tx.$queryRaw`SELECT pg_sleep(2)`; // exceeds the 300 ms statement_timeout
@@ -616,7 +616,7 @@ describe("overlapping runs", () => {
     const holding = new Promise<void>((r) => (inside = r));
     const runA = runMonthlyGeneration(
       deps({
-        limits: { leaseSeconds: 1, timeoutMs: 30_000, statementTimeoutMs: 30_000, deadlineMs: 10_000_000 },
+        limits: { leaseSeconds: 1, studentTimeoutMs: 30_000, deadlineMs: 10_000_000 }, // the transaction outlives the 1 s lease while the test holds it
         beforeRecordForTest: async (_tx, studentId) => {
           if (studentId !== a1) return;
           inside();
@@ -699,7 +699,258 @@ describe("configuration failures remain visible and cannot produce a clean pass"
   });
 });
 
+describe("failure isolation: a recoverable database failure ends only its student or segment; later organizations progress", () => {
+  /** Two organizations, one priced student each; A is visited first. */
+  async function pair(label: string) {
+    const a = await makeOrg(`${label}-a`);
+    const [aStudent] = await studentsInOrder(a, ["priced"]);
+    const b = await makeOrg(`${label}-b`);
+    const [bStudent] = await studentsInOrder(b, ["priced"]);
+    const segA = await addSegment(a.id, S, new Date(0));
+    const segB = await addSegment(b.id, S, new Date(1000));
+    return { a, b, aStudent, bStudent, segA, segB };
+  }
+  /** Locks the lock (another connection) at `onBoundary` of segment A; releases it when B is claimed. */
+  function lockDuringA(segA: string, segB: string, onBoundary: GenerationBoundary, sql: string): MonthlyGenerationRunDeps["boundaryForTest"] {
+    let lock: ReturnType<typeof holdLock> | undefined;
+    return async (boundary, where) => {
+      if (boundary === onBoundary && where.segmentId === segA && !lock) {
+        lock = holdLock(sql);
+        await lock.held;
+      }
+      if (boundary === "afterClaim" && where.segmentId === segB && lock) await lock.release();
+    };
+  }
+  const SAFE = /^(P\d{4}|PrismaClient\w+Error|TypeError|RangeError|unrecognized_error)$/;
+
+  it("the student lookup runs inside the student's bounded transaction: blocked, it fails that student (recorded PENDING), and the next organization is billed", async () => {
+    const { a, b, aStudent, bStudent, segA, segB } = await pair("lookup");
+    let lock: ReturnType<typeof holdLock> | undefined;
+    const report = await runMonthlyGeneration(
+      deps({
+        boundaryForTest: async (boundary, where) => {
+          // After A's page read and marker, the Student table is locked: the first statement to block is the lookup.
+          if (boundary === "afterMarker" && where.segmentId === segA.id) {
+            lock = holdLock(`LOCK TABLE "Student" IN ACCESS EXCLUSIVE MODE`);
+            await lock.held;
+          }
+          if (boundary === "afterFailureRecord" && lock) await lock.release();
+        },
+      }),
+    );
+    const [visitA, visitB] = report.visits;
+    expect(visitA).toMatchObject({ segmentId: segA.id, reasons: { unexpected: 1 }, passFinished: { pending: 1, clean: false } });
+    expect(Object.keys(visitA.errorCodes).every((code) => SAFE.test(code))).toBe(true);
+    expect(visitB).toMatchObject({ segmentId: segB.id, created: 1 });
+    expect(await obligationsFor(a.id, aStudent)).toHaveLength(0);
+    expect(await obligationsFor(b.id, bStudent)).toHaveLength(1);
+  }, 60_000);
+
+  const stages: Array<{ stage: string; boundary: GenerationBoundary; sql: (segA: string) => string; failStudent?: boolean; cursorAfter: "none" | "student" }> = [
+    { stage: "gate", boundary: "afterClaim", sql: () => `LOCK TABLE "Organization" IN ACCESS EXCLUSIVE MODE`, cursorAfter: "none" },
+    { stage: "page", boundary: "afterClaim", sql: () => `LOCK TABLE "Student" IN ACCESS EXCLUSIVE MODE`, cursorAfter: "none" },
+    { stage: "marker", boundary: "afterClaim", sql: (segA) => `SELECT 1 FROM "DuesGenerationProgress" WHERE "id" = '${segA}' FOR UPDATE`, cursorAfter: "none" },
+    { stage: "failureRecord", boundary: "afterStudentFailure", sql: (segA) => `SELECT 1 FROM "DuesGenerationProgress" WHERE "id" = '${segA}' FOR UPDATE`, failStudent: true, cursorAfter: "none" },
+    { stage: "passEnd", boundary: "beforePassEnd", sql: (segA) => `SELECT 1 FROM "DuesGenerationProgress" WHERE "id" = '${segA}' FOR UPDATE`, cursorAfter: "student" },
+  ];
+  for (const { stage, boundary, sql, failStudent, cursorAfter } of stages) {
+    it(`a real database failure in the ${stage} ends only A's visit (reported, committed state kept), and B is billed`, async () => {
+      const { a, b, aStudent, bStudent, segA, segB } = await pair(stage);
+      const before = await segment(segA.id);
+      const t0 = Date.now();
+      const report = await runMonthlyGeneration(
+        deps({
+          boundaryForTest: lockDuringA(segA.id, segB.id, boundary, sql(segA.id)),
+          beforeRecordForTest: failStudent
+            ? async (_tx, id) => {
+                if (id === aStudent) throw new Error("student failure");
+              }
+            : undefined,
+        }),
+      );
+      const [visitA, visitB] = report.visits;
+      expect(visitA).toMatchObject({ segmentId: segA.id, ended: "error", error: { stage } });
+      expect(visitA.error!.code).toMatch(SAFE);
+      expect(visitB).toMatchObject({ segmentId: segB.id, created: 1 });
+      expect(await obligationsFor(b.id, bStudent)).toHaveLength(1);
+
+      const after = await expectContiguous(a, segA.id);
+      expect(after.cursorStudentId).toBe(cursorAfter === "none" ? null : aStudent);
+      expect(after.lastPassCompletedAt).toBe(before.lastPassCompletedAt); // no pass end recorded
+      // failureRecord: A's student failed and its outcome could not be recorded, so the cursor did not pass it.
+      if (failStudent) expect(after).toMatchObject({ cursorStudentId: null, passPending: 0, inFlightStudentId: aStudent, inFlightAttempts: 1 });
+      const leaseLeftMs = after.leaseUntil!.getTime() - Date.now();
+      if (sql(segA.id).includes('"DuesGenerationProgress')) {
+        // The progress row itself is locked, so the release (a bounded update of that row) also times out and is skipped:
+        // the lease is left to expire after L, which only delays the next claim.
+        expect(leaseLeftMs).toBeGreaterThan(60_000);
+      } else {
+        expect(leaseLeftMs).toBeLessThan(60_000); // released at once, not left for L
+      }
+      expect(Date.now() - t0).toBeLessThan(20_000);
+    }, 60_000);
+  }
+
+  it("discovery waiting for a connection (pool exhausted for real) ends the run within maxWait with a safe code, writing nothing", async () => {
+    const org = await makeOrg("pool");
+    await studentsInOrder(org, ["priced"]);
+    const seg = await addSegment(org.id);
+    const holders = await exhaustAppPool();
+    try {
+      const t0 = Date.now();
+      const report = await runMonthlyGeneration(deps({ limits: { shortMaxWaitMs: 500 } }));
+      const waited = Date.now() - t0;
+      expect(report).toMatchObject({ visits: [], stoppedBy: "discoveryFailed" });
+      expect(report.discoveryError).toMatch(SAFE);
+      expect(waited).toBeGreaterThanOrEqual(450); // it really waited for a connection...
+      expect(waited).toBeLessThan(3_000); // ...and no longer than maxWait (plus overhead)
+    } finally {
+      await holders.release();
+    }
+    expect((await segment(seg.id)).leaseToken).toBeNull();
+    expect(await obligationsFor(org.id)).toHaveLength(0);
+  }, 60_000);
+});
+
+describe("deadline accounting with real waits", () => {
+  it("students whose transactions really block until statement_timeout are processed one by one, each recorded, and the run returns before the deadline", async () => {
+    const org = await makeOrg("deadline-real");
+    await studentsInOrder(org, Array.from({ length: 30 }, () => "priced" as const));
+    const seg = await addSegment(org.id);
+    // A configuration save holds the branch FOR UPDATE for the whole run: every student transaction waits on the branch
+    // FOR SHARE lock until its statement_timeout, fails, and is recorded PENDING.
+    const lock = holdLock(`SELECT 1 FROM "Academy" WHERE "id" = '${org.main.academyId}' FOR UPDATE`);
+    await lock.held;
+    const limits = { statementTimeoutMs: 300, lockTimeoutMs: 300, shortMaxWaitMs: 200, shortTimeoutMs: 400, studentMaxWaitMs: 200, studentTimeoutMs: 1_000, deadlineMs: 9_000 };
+    const t0 = Date.now();
+    let report: Awaited<ReturnType<typeof runMonthlyGeneration>>;
+    try {
+      report = await runMonthlyGeneration(deps({ limits }));
+    } finally {
+      await lock.release();
+    }
+    const wall = Date.now() - t0;
+    expect(wall).toBeLessThan(limits.deadlineMs); // the guarantee: returns by T (here with room to spare)
+    const [visit] = report.visits;
+    expect(visit.ended).toBe("deadline"); // stopped because the next student's worst case no longer fit, not because work ran out
+    expect(visit.classes.PENDING).toBeGreaterThan(0);
+    expect(visit.classes.PENDING).toBeLessThan(30);
+    const row = await expectContiguous(org, seg.id);
+    expect(row.passPending).toBe(visit.classes.PENDING); // every student passed was recorded
+    expect(await obligationsFor(org.id)).toHaveLength(0);
+  }, 60_000);
+
+  it("rejects limits under which the per-transaction bound would not hold", async () => {
+    await expect(runMonthlyGeneration(deps({ limits: { statementTimeoutMs: 3_000, shortTimeoutMs: 2_000 } }))).rejects.toThrow(RangeError);
+    await expect(runMonthlyGeneration(deps({ limits: { lockTimeoutMs: 2_000, statementTimeoutMs: 1_000 } }))).rejects.toThrow(RangeError);
+  });
+});
+
+describe("safe error details: only validated codes or fixed fallbacks leave a failure", () => {
+  const SECRET = "s3cr3t-Fabricated-7781";
+  function secretError(over: { name?: string; code?: unknown } = {}) {
+    const error = new Error(`message ${SECRET}`, { cause: { token: `cause ${SECRET}` } });
+    error.name = over.name ?? `Name${SECRET}`;
+    error.stack = `stack ${SECRET}\n    at somewhere (${SECRET}.ts:1:1)`;
+    Object.assign(error, { code: over.code ?? `code-${SECRET}`, meta: { query: `SELECT '${SECRET}'`, target: SECRET } });
+    return error;
+  }
+
+  it("a failure carrying secrets in name, code, message, stack, meta and cause yields only the fixed fallback, and nothing is logged", async () => {
+    const org = await makeOrg("secrets");
+    const [x, recognized, named] = await studentsInOrder(org, ["priced", "priced", "priced"]);
+    await addSegment(org.id);
+    const logged: string[] = [];
+    const spies = (["log", "info", "warn", "error", "debug"] as const).map((level) =>
+      vi.spyOn(console, level).mockImplementation((...args: unknown[]) => void logged.push(args.map((a) => (typeof a === "string" ? a : JSON.stringify(a, Object.getOwnPropertyNames(a ?? {})))).join(" "))),
+    );
+    let report: Awaited<ReturnType<typeof runMonthlyGeneration>>;
+    try {
+      report = await runMonthlyGeneration(
+        deps({
+          beforeRecordForTest: async (_tx, id) => {
+            if (id === x) throw secretError();
+            if (id === recognized) throw secretError({ code: "P2034" }); // a recognized Prisma code survives
+            if (id === named) throw secretError({ name: "PrismaClientUnknownRequestError", code: 42 }); // an allow-listed class name survives
+          },
+        }),
+      );
+    } finally {
+      spies.forEach((spy) => spy.mockRestore());
+    }
+    const [visit] = report.visits;
+    expect(visit.errorCodes).toEqual({ unrecognized_error: 1, P2034: 1, PrismaClientUnknownRequestError: 1 });
+    expect(visit.reasons).toEqual({ unexpected: 3 });
+    expect(JSON.stringify(report)).not.toContain(SECRET);
+    expect(logged.join("\n")).not.toContain(SECRET);
+  });
+
+  it("the runner's own returned detail is the safe code only", async () => {
+    const org = await makeOrg("secrets-runner");
+    const [x] = await studentsInOrder(org, ["priced"]);
+    const { generateMonthlyObligationForStudent } = await import("../../src/lib/dues/monthly-generation");
+    const outcome = await generateMonthlyObligationForStudent(staffContext(org), x, S, { activation: ACTIVE, now: SEPT_2030 }, {
+      beforeRecordForTest: async () => {
+        throw secretError();
+      },
+    });
+    expect(outcome).toEqual({ category: "failure", reason: "unexpected", detail: { code: "unrecognized_error" } });
+    expect(JSON.stringify(outcome)).not.toContain(SECRET);
+    expect(await obligationsFor(org.id, x)).toHaveLength(0); // the injected failure rolled the write back
+  });
+});
+
 // ---------------------------------------------------------------------------------------------------------------------------------
+
+/** A lock taken by another connection (the test client) and held until `release()`. */
+function holdLock(sql: string) {
+  let release!: () => void;
+  const gate = new Promise<void>((r) => (release = r));
+  let ready!: () => void;
+  const held = new Promise<void>((r) => (ready = r));
+  const tx = prisma.$transaction(
+    async (t) => {
+      await t.$executeRawUnsafe(sql);
+      ready();
+      await gate;
+    },
+    { timeout: 120_000 },
+  );
+  return {
+    held,
+    release: async () => {
+      release();
+      await tx;
+    },
+  };
+}
+
+/** Holds every connection of the application's pool (pg's default, 10) open until `release()`. */
+async function exhaustAppPool() {
+  const releases: Array<() => void> = [];
+  const holders: Promise<unknown>[] = [];
+  for (let i = 0; i < 10; i++) {
+    let started!: () => void;
+    const ready = new Promise<void>((r) => (started = r));
+    holders.push(
+      appPrisma.$transaction(
+        async (tx) => {
+          await tx.$executeRawUnsafe("SELECT 1");
+          started();
+          await new Promise<void>((r) => releases.push(r));
+        },
+        { maxWait: 10_000, timeout: 120_000 },
+      ),
+    );
+    await ready;
+  }
+  return {
+    release: async () => {
+      releases.forEach((r) => r());
+      await Promise.allSettled(holders);
+    },
+  };
+}
 
 function staffContext(org: Org) {
   return { kind: "tenant" as const, actorUserId: org.adminId, organizationId: org.id, organizationRole: "ADMIN" as const, academyIds: "ALL" as const, selfStudentId: null, linkedStudentId: null };

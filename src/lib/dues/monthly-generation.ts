@@ -6,6 +6,7 @@ import { createMonthlyObligationInTx, isValidCoverageMonth, type CreateMonthlyOb
 import { fromDbDate, inTenantScope, latestEffective, lockBranchShared, lockStudent, type Tx } from "@/lib/dues/ledger/common";
 import type { LedgerDeps } from "@/lib/dues/ledger/activation";
 import { prisma } from "@/lib/prisma";
+import { safeErrorCode, type SafeErrorCode } from "@/lib/auth/password-reset-log";
 
 /**
  * Monthly-generation brief (§5, §8): the one function that connects `eligibleAndAssigned` (the pure reader) and
@@ -45,14 +46,16 @@ import { prisma } from "@/lib/prisma";
  * partial data); the future month is checked here, under the branch lock, from the timezone read under it (the writer's own
  * check still follows, and its refusal is now a `failure`, not a configuration gap); an eligible student of an inactive
  * branch is a configuration gap (owner decision D4 — unresolved configuration work, never silently billed); and an
- * unexpected error's detail is its class name and code only, never its message.
+ * unexpected error's detail is `safeErrorCode`'s validated code or fixed fallback only — never its name, message, stack,
+ * meta or cause. The student lookup happens INSIDE the transaction (after `fence`), so a failing lookup is rolled back and
+ * reported like any other failure of that transaction instead of escaping the caller.
  */
 export type MonthlyGenerationOutcome =
   | { category: "created"; obligationId: string }
   | { category: "alreadyCovered"; reason: "existingObligation" | "packageCoverage"; obligationId?: string }
   | { category: "notEligible"; reason: "UNDECIDABLE" | "NOT_ELIGIBLE" | "NO_ASSIGNMENT" }
   | { category: "configurationGap"; reason: "noEffectiveVersion" | "inactiveBranch" | CreateMonthlyObligationError }
-  | { category: "failure"; reason: CreateMonthlyObligationError | "unexpected" | "historyTooLarge" | "configurationTooLarge"; detail?: { name: string; code?: string } }
+  | { category: "failure"; reason: CreateMonthlyObligationError | "unexpected" | "historyTooLarge" | "configurationTooLarge"; detail?: { code: SafeErrorCode } }
   | { category: "fenced" };
 
 /** Thrown by a `fence`/`record` callback when the caller no longer holds what it fenced on: rolls the transaction back. */
@@ -86,13 +89,6 @@ export interface MonthlyGenerationRunnerOptions {
 export const DEFAULT_HISTORY_CAP = 500;
 export const DEFAULT_CONFIGURATION_CAP = 500;
 
-/** Error class name and Prisma/Postgres code only — never the message, which can carry names, amounts or SQL (plan §10). */
-function sanitizedDetail(error: unknown): { name: string; code?: string } {
-  if (!(error instanceof Error)) return { name: typeof error };
-  const code = (error as { code?: unknown }).code;
-  return typeof code === "string" ? { name: error.name, code } : { name: error.name };
-}
-
 export async function generateMonthlyObligationForStudent(
   context: TenantContext | SystemJobContext,
   studentId: string,
@@ -105,12 +101,13 @@ export async function generateMonthlyObligationForStudent(
   const historyCap = options.historyCap ?? DEFAULT_HISTORY_CAP;
   const configurationCap = options.configurationCap ?? DEFAULT_CONFIGURATION_CAP;
 
-  // Re-read the student scoped to the organization; a forged or foreign id is a failure, never trusted — the same
-  // discipline createMonthlyObligation's own pre-transaction lookup already uses.
-  const student = await prisma.student.findFirst({ where: { id: studentId, organizationId }, select: { id: true, homeAcademyId: true } });
-  if (!student || (context.kind === "tenant" && !inTenantScope(context, student.homeAcademyId))) return { category: "failure", reason: "notFound" };
-
   const decide = async (tx: Tx): Promise<MonthlyGenerationOutcome> => {
+    // Re-read the student scoped to the organization; a forged or foreign id is a failure, never trusted — the same
+    // discipline createMonthlyObligation's own pre-transaction lookup already uses. Inside the transaction (G1): bounded by
+    // its timeouts, and a failure here is this transaction's failure, never an exception escaping the caller.
+    const student = await tx.student.findFirst({ where: { id: studentId, organizationId }, select: { id: true, homeAcademyId: true } });
+    if (!student || (context.kind === "tenant" && !inTenantScope(context, student.homeAcademyId))) return { category: "failure", reason: "notFound" };
+
     // Same order createMonthlyObligationInTx uses: branch FOR SHARE, then student FOR UPDATE.
     const branch = await lockBranchShared(tx, organizationId, student.homeAcademyId);
     if (!branch) return { category: "failure", reason: "notFound" };
@@ -211,6 +208,6 @@ export async function generateMonthlyObligationForStudent(
     );
   } catch (error) {
     if (error instanceof FenceLostError) return { category: "fenced" };
-    return { category: "failure", reason: "unexpected", detail: sanitizedDetail(error) };
+    return { category: "failure", reason: "unexpected", detail: { code: safeErrorCode(error) } };
   }
 }

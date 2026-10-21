@@ -94,6 +94,16 @@ describe("the monthly-generation runner and visit loop are not reachable from pr
     }
   });
 
+  it("every database call in the loop and the runner goes through a bounded $transaction (no unbounded query outside one)", () => {
+    for (const file of [RUNNER, LOOP]) {
+      const text = stripComments(readFileSync(file, "utf8"));
+      const direct = [...text.matchAll(/\bprisma\.(\$?\w+)/g)].map((m) => m[1]);
+      expect(direct.length, file).toBeGreaterThan(0);
+      expect(new Set(direct), `${file} must use only prisma.$transaction (with maxWait/timeout)`).toEqual(new Set(["$transaction"]));
+    }
+    expect(stripComments(readFileSync(LOOP, "utf8"))).toContain("resolveSystemJobContext(claim.organizationId, GENERATION_JOB_NAME, tx)");
+  });
+
   it("is registered as built ahead of its caller", () => {
     const registry = readFileSync("scripts/pending-callers.ts", "utf8");
     expect(registry).toContain("generateMonthlyObligationForStudent");

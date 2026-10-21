@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
+import { safeErrorCode, type SafeErrorCode } from "@/lib/auth/password-reset-log";
 import { resolveSystemJobContext } from "@/lib/tenant/context";
 import { listClaimableGenerationSegments } from "@/lib/tenant/platform-lookups";
+import type { SystemJobContext } from "@/lib/tenant/types";
 import { compareYearMonth, type YearMonth } from "@/lib/dues/calendar";
 import { currentMonthIn } from "@/lib/dues/config-input";
 import { inactiveLedgerActivation, type LedgerDeps } from "@/lib/dues/ledger/activation";
@@ -31,8 +33,17 @@ import {
  *    and the expected cursor; the cursor update re-verifies token and cursor and throws `FenceLostError` on anything but one row,
  *    rolling back the whole transaction. Every other progress write is a compare-and-set on (token, cursor). Lock order: progress
  *    row, then the ledger's own (branch FOR SHARE, student FOR UPDATE, terms/policy FOR SHARE).
- *  - BOUNDS. One deadline for the invocation; a unit starts only if its maximum duration fits. Every statement runs under
- *    `statement_timeout`/`lock_timeout`; every read has a LIMIT; month rows are created at most `rolloverRows` per visit.
+ *  - FAILURE ISOLATION. A recoverable database failure ends only what it belongs to: inside a student's transaction it is that
+ *    student's failure (rolled back, then recorded PENDING by the failure record); in the gate, page read, marker, failure
+ *    record or pass end it ends that segment's visit with a reported `error` and the committed cursor and counts untouched;
+ *    in a claim it skips that segment; in discovery it ends the run with a report. Later segments still progress. Test hooks
+ *    (`boundaryForTest`) are never inside these catches: a simulated process death still ends the whole invocation.
+ *  - BOUNDS. Every database operation runs inside a transaction with `maxWait` (waiting for a pool connection and BEGIN),
+ *    `timeout`, `statement_timeout` and `lock_timeout`. Measured on this stack: `maxWait` does bound pool acquisition, but
+ *    Prisma's `timeout` does NOT interrupt a statement already running — that statement ends at its own `statement_timeout`.
+ *    So one transaction's worst case is `maxWait + timeout + statement_timeout`, and a unit starts only if the elapsed time
+ *    plus the worst case of everything it may still need (including the lease release) fits before the deadline. See
+ *    `runMonthlyGeneration` for exactly what the deadline does and does not guarantee.
  *  - CRASHES. A per-visit marker counts consecutive visits that started at the same student; past `maxAttempts` that student is
  *    recorded PENDING (`repeatedFailure`) and passed. It stays pending, so the pass cannot be clean.
  *
@@ -46,10 +57,15 @@ import {
 export const GENERATION_JOB_NAME = "monthly-generation";
 
 export interface GenerationLimits {
+  /** Postgres `statement_timeout` for every statement; lock waits count inside it. Must not exceed either transaction timeout. */
   statementTimeoutMs: number;
   lockTimeoutMs: number;
-  maxWaitMs: number;
-  timeoutMs: number;
+  /** A short transaction (discovery, claim, gate, rollover, page, marker, failure record, pass end, release). */
+  shortMaxWaitMs: number;
+  shortTimeoutMs: number;
+  /** The student transaction (the runner). */
+  studentMaxWaitMs: number;
+  studentTimeoutMs: number;
   /** The invocation deadline `T`. */
   deadlineMs: number;
   /** The lease `L`; must exceed the host's maximum function duration (confirmed by a person under D5). */
@@ -68,8 +84,10 @@ export interface GenerationLimits {
 export const DEFAULT_GENERATION_LIMITS: GenerationLimits = {
   statementTimeoutMs: 1_000,
   lockTimeoutMs: 1_000,
-  maxWaitMs: 2_000,
-  timeoutMs: 5_000,
+  shortMaxWaitMs: 1_000,
+  shortTimeoutMs: 2_000,
+  studentMaxWaitMs: 2_000,
+  studentTimeoutMs: 5_000,
   deadlineMs: 45_000,
   leaseSeconds: 600,
   discoveryLimit: 20,
@@ -87,7 +105,11 @@ export type GenerationBoundary = "afterClaim" | "afterMarker" | "afterStudentCom
 export interface MonthlyGenerationRunDeps extends LedgerDeps {
   /** Owner decision D3 is pending. Required, and "none" (no automatic closure) is the only value G1 implements. */
   closurePolicy: "none";
-  /** The organization's start month S. Production default: none, so no segment is ever processed (plan §4). */
+  /**
+   * The organization's start month S. Production default: none, so no segment is ever processed (plan §4). Like
+   * `activation.isActive`, it is called outside any bounded transaction: the defaults do no I/O, and stage 9's implementations
+   * must bound their own reads (a stated limit of the deadline, see `runMonthlyGeneration`).
+   */
   generationStart?: (organizationId: string) => Promise<YearMonth | null>;
   limits?: Partial<GenerationLimits>;
   /** The budget clock in milliseconds since the invocation began. Tests fix it; production leaves it out. */
@@ -123,6 +145,8 @@ export function classifyOutcome(outcome: Exclude<MonthlyGenerationOutcome, { cat
   }
 }
 
+export type VisitStage = "gate" | "page" | "marker" | "failureRecord" | "passEnd";
+
 export interface SegmentVisitReport {
   segmentId: string;
   organizationId: string;
@@ -133,15 +157,20 @@ export interface SegmentVisitReport {
   classes: Record<GenerationClass, number>;
   /** Reason codes of UNPRICED and PENDING students (codes only, plan §10). */
   reasons: Record<string, number>;
-  rollover?: { inserted: number } | { skipped: "configurationTooLarge" | "error" };
+  /** `safeErrorCode` values of students whose transaction failed unexpectedly (validated codes or the fixed fallback only). */
+  errorCodes: Record<string, number>;
+  rollover?: { inserted: number } | { skipped: "configurationTooLarge" } | { skipped: "error"; code: SafeErrorCode };
   passFinished?: { ineligible: number; covered: number; unpriced: number; pending: number; clean: boolean };
-  ended: "slice" | "deadline" | "passEnd" | "fenced" | "recordFailed" | "refused";
+  /** The stage whose recoverable database failure ended this visit; the committed cursor and counts are untouched. */
+  error?: { stage: VisitStage; code: SafeErrorCode };
+  ended: "slice" | "deadline" | "passEnd" | "fenced" | "refused" | "error";
 }
 
 export interface MonthlyGenerationRunReport {
   visits: SegmentVisitReport[];
   claimErrors: number;
-  stoppedBy: "deadline" | "noClaimableSegment";
+  discoveryError?: SafeErrorCode;
+  stoppedBy: "deadline" | "noClaimableSegment" | "discoveryFailed";
 }
 
 interface Claim {
@@ -155,28 +184,57 @@ interface Claim {
 
 const NOW_UTC = Prisma.sql`(now() AT TIME ZONE 'UTC')`;
 
+/** Worst-case wall time of one transaction, as measured on this stack (see the module comment). */
+function budgetOf(limits: GenerationLimits) {
+  const short = limits.shortMaxWaitMs + limits.shortTimeoutMs + limits.statementTimeoutMs;
+  const student = limits.studentMaxWaitMs + limits.studentTimeoutMs + limits.statementTimeoutMs;
+  // A student: its transaction, then (if it threw) one failure record.
+  const studentUnit = student + short;
+  return {
+    short,
+    studentUnit,
+    // claim, gate, rollover, page read, marker, one student, release
+    visitEntry: short * 5 + studentUnit + short,
+  };
+}
+
+/**
+ * One invocation. THE DEADLINE GUARANTEE: no unit starts unless `elapsed + its worst case + the worst case of everything the
+ * visit may still need afterwards (at least the lease release) < deadlineMs`, where every database operation is one bounded
+ * transaction of worst case `maxWait + timeout + statement_timeout`. So, provided that (a) the database server enforces
+ * `statement_timeout` and answers (no network stall, which nothing here bounds — the pg client has no socket timeout), (b) the
+ * injected `activation.isActive` and `generationStart` return promptly (the production defaults do no I/O; stage 9's must bound
+ * themselves), (c) the process is not starved of CPU, and (d) `statement_timeout` does not exceed either transaction timeout
+ * (checked below), the invocation returns by `deadlineMs` plus JavaScript overhead. Test hooks are outside the guarantee.
+ */
 export async function runMonthlyGeneration(deps: MonthlyGenerationRunDeps): Promise<MonthlyGenerationRunReport> {
   const limits: GenerationLimits = { ...DEFAULT_GENERATION_LIMITS, ...deps.limits };
+  if (limits.statementTimeoutMs > limits.shortTimeoutMs || limits.statementTimeoutMs > limits.studentTimeoutMs || limits.lockTimeoutMs > limits.statementTimeoutMs) {
+    throw new RangeError("generation limits: lock_timeout <= statement_timeout <= each transaction timeout is required for the deadline bound");
+  }
+  const budget = budgetOf(limits);
   const started = performance.now();
   const elapsed = deps.elapsedMs ?? (() => performance.now() - started);
   const fits = (unitMs: number) => elapsed() + unitMs < limits.deadlineMs;
-  const s = limits.statementTimeoutMs;
-  const studentUnit = limits.maxWaitMs + limits.timeoutMs + s; // the student transaction, then at most one failure record
-  // claim + gate (3 reads) + rollover (3 statements) + page + marker + one student
-  const minimumVisit = s + 3 * s + 3 * s + s + s + studentUnit;
 
   const visits: SegmentVisitReport[] = [];
-  // A segment whose pass ended, or that was refused or lost, is not claimed again in this invocation: re-walking a finished
-  // pass in the same run would spend the budget on work already observed. A segment left mid-pass (slice) may be claimed again
-  // once least-recently-visited order reaches it.
+  // A segment whose pass ended, or that was refused, lost or failed, is not claimed again in this invocation: re-walking a
+  // finished pass or retrying a failing segment in the same run would spend the budget on it. A segment left mid-pass (slice,
+  // deadline) may be claimed again once least-recently-visited order reaches it.
   const settled = new Set<string>();
   let claimErrors = 0;
-  while (fits(s + minimumVisit)) {
-    const candidates = (await listClaimableGenerationSegments(limits.discoveryLimit, s)).filter((c) => !settled.has(c.id));
+  while (fits(budget.short + budget.visitEntry)) {
+    let found: { id: string; organizationId: string }[];
+    try {
+      found = await listClaimableGenerationSegments(limits.discoveryLimit, shortBounds(limits));
+    } catch (error) {
+      return { visits, claimErrors, discoveryError: safeErrorCode(error), stoppedBy: "discoveryFailed" };
+    }
+    const candidates = found.filter((c) => !settled.has(c.id));
     if (candidates.length === 0) return { visits, claimErrors, stoppedBy: "noClaimableSegment" };
     let claimedAny = false;
     for (const candidate of candidates) {
-      if (!fits(minimumVisit)) return { visits, claimErrors, stoppedBy: "deadline" };
+      if (!fits(budget.visitEntry)) return { visits, claimErrors, stoppedBy: "deadline" };
       let claim: Claim | null;
       try {
         claim = await claimSegment(candidate, limits);
@@ -196,7 +254,14 @@ export async function runMonthlyGeneration(deps: MonthlyGenerationRunDeps): Prom
   return { visits, claimErrors, stoppedBy: "deadline" };
 }
 
-/** One short transaction with the statement and lock timeouts set. */
+function shortBounds(limits: GenerationLimits): GenerationBounds {
+  return { statementTimeoutMs: limits.statementTimeoutMs, lockTimeoutMs: limits.lockTimeoutMs, maxWaitMs: limits.shortMaxWaitMs, timeoutMs: limits.shortTimeoutMs };
+}
+function studentBounds(limits: GenerationLimits): GenerationBounds {
+  return { statementTimeoutMs: limits.statementTimeoutMs, lockTimeoutMs: limits.lockTimeoutMs, maxWaitMs: limits.studentMaxWaitMs, timeoutMs: limits.studentTimeoutMs };
+}
+
+/** One short transaction with the statement and lock timeouts set, waiting at most `shortMaxWaitMs` for a connection. */
 function bounded<T>(limits: GenerationLimits, fn: (tx: Tx) => Promise<T>): Promise<T> {
   return prisma.$transaction(
     async (tx) => {
@@ -204,8 +269,18 @@ function bounded<T>(limits: GenerationLimits, fn: (tx: Tx) => Promise<T>): Promi
       await tx.$executeRawUnsafe(`SET LOCAL lock_timeout = ${Math.trunc(limits.lockTimeoutMs)}`);
       return fn(tx);
     },
-    { maxWait: limits.maxWaitMs, timeout: limits.timeoutMs },
+    { maxWait: limits.shortMaxWaitMs, timeout: limits.shortTimeoutMs },
   );
+}
+
+type Attempt<T> = { ok: true; value: T } | { ok: false; code: SafeErrorCode };
+/** A database step whose failure is recoverable at the segment boundary. Never wraps a test hook. */
+async function attempt<T>(fn: () => Promise<T>): Promise<Attempt<T>> {
+  try {
+    return { ok: true, value: await fn() };
+  } catch (error) {
+    return { ok: false, code: safeErrorCode(error) };
+  }
 }
 
 /** The claim (plan §6.3): the database clock decides whether the lease is free; a fresh random token fences every later write. */
@@ -237,6 +312,7 @@ function emptyVisit(claim: Claim): SegmentVisitReport {
     created: 0,
     classes: { INELIGIBLE: 0, COVERED: 0, UNPRICED: 0, PENDING: 0 },
     reasons: {},
+    errorCodes: {},
     ended: "slice",
   };
 }
@@ -244,23 +320,28 @@ function emptyVisit(claim: Claim): SegmentVisitReport {
 async function visitSegment(claim: Claim, deps: MonthlyGenerationRunDeps, limits: GenerationLimits, fits: (unitMs: number) => boolean): Promise<SegmentVisitReport> {
   const report = emptyVisit(claim);
   const month: YearMonth = { year: claim.year, month: claim.month };
-  const s = limits.statementTimeoutMs;
-  const studentUnit = limits.maxWaitMs + limits.timeoutMs + s;
+  const budget = budgetOf(limits);
   const hook = deps.boundaryForTest ?? (async () => {});
 
-  const refuse = async (reason: NonNullable<SegmentVisitReport["refused"]>) => {
-    report.refused = reason;
-    report.ended = "refused";
-    await release(claim, limits);
+  const finish = async (ended: SegmentVisitReport["ended"], extra: Partial<SegmentVisitReport> = {}) => {
+    Object.assign(report, extra, { ended });
+    if (ended !== "fenced") await release(claim, limits); // a fenced visit no longer owns the lease
     return report;
   };
+  const fail = (stage: VisitStage, code: SafeErrorCode) => finish("error", { error: { stage, code } });
 
-  // The organization gate (plan §4): a progress row grants nothing.
-  const context = await resolveSystemJobContext(claim.organizationId, GENERATION_JOB_NAME);
-  if (!context) return refuse("organizationNotActive");
-  if (!(await (deps.activation ?? inactiveLedgerActivation).isActive(claim.organizationId))) return refuse("ledgerNotActive");
-  const start = await (deps.generationStart ?? (async () => null))(claim.organizationId);
-  if (!start || compareYearMonth(month, start) < 0) return refuse("beforeStart");
+  // The organization gate (plan §4): a progress row grants nothing. The organization read is one bounded transaction.
+  const gate = await attempt(async () => {
+    const context = await bounded(limits, (tx) => resolveSystemJobContext(claim.organizationId, GENERATION_JOB_NAME, tx));
+    if (!context) return { refused: "organizationNotActive" as const };
+    if (!(await (deps.activation ?? inactiveLedgerActivation).isActive(claim.organizationId))) return { refused: "ledgerNotActive" as const };
+    const start = await (deps.generationStart ?? (async () => null))(claim.organizationId);
+    if (!start || compareYearMonth(month, start) < 0) return { refused: "beforeStart" as const };
+    return { context };
+  });
+  if (!gate.ok) return fail("gate", gate.code);
+  if ("refused" in gate.value) return finish("refused", { refused: gate.value.refused });
+  const context: SystemJobContext = gate.value.context;
 
   report.rollover = await rollover(claim, deps, limits);
 
@@ -272,62 +353,48 @@ async function visitSegment(claim: Claim, deps: MonthlyGenerationRunDeps, limits
     if (reason) report.reasons[reason] = (report.reasons[reason] ?? 0) + 1;
   };
 
-  visit: while (true) {
-    if (processed >= limits.studentsPerVisit) {
-      report.ended = "slice";
-      break;
-    }
-    if (!fits(s + s + studentUnit)) {
-      report.ended = "deadline";
-      break;
-    }
+  while (true) {
+    if (processed >= limits.studentsPerVisit) return finish("slice");
+    // A page read, then either a pass end or (a marker and) one student, then the release.
+    if (!fits(budget.short + (markerWritten ? 0 : budget.short) + budget.studentUnit + budget.short)) return finish("deadline");
     const pageCursor = cursor;
-    const page = await bounded(limits, (tx) =>
-      tx.student.findMany({
-        where: { organizationId: claim.organizationId, ...(pageCursor ? { id: { gt: pageCursor } } : {}) },
-        orderBy: { id: "asc" },
-        select: { id: true },
-        take: limits.pageSize,
-      }),
+    const page = await attempt(() =>
+      bounded(limits, (tx) =>
+        tx.student.findMany({
+          where: { organizationId: claim.organizationId, ...(pageCursor ? { id: { gt: pageCursor } } : {}) },
+          orderBy: { id: "asc" },
+          select: { id: true },
+          take: limits.pageSize,
+        }),
+      ),
     );
+    if (!page.ok) return fail("page", page.code);
 
-    if (page.length === 0) {
+    if (page.value.length === 0) {
       await hook("beforePassEnd", { segmentId: claim.id });
-      const finished = await passEnd(claim, cursor, limits);
-      if (!finished) {
-        report.ended = "fenced";
-        break;
-      }
-      report.passFinished = finished;
+      const finished = await attempt(() => passEnd(claim, cursor, limits));
+      if (!finished.ok) return fail("passEnd", finished.code);
+      if (!finished.value) return finish("fenced");
+      report.passFinished = finished.value;
       await hook("afterPassEnd", { segmentId: claim.id });
-      report.ended = "passEnd";
-      break;
+      return finish("passEnd");
     }
 
-    for (const { id: studentId } of page) {
-      if (processed >= limits.studentsPerVisit) {
-        report.ended = "slice";
-        break visit;
-      }
-      if (!fits(studentUnit + (markerWritten ? 0 : s))) {
-        report.ended = "deadline";
-        break visit;
-      }
+    for (const { id: studentId } of page.value) {
+      if (processed >= limits.studentsPerVisit) return finish("slice");
+      if (!fits((markerWritten ? 0 : budget.short) + budget.studentUnit + budget.short)) return finish("deadline");
 
       if (!markerWritten) {
         // Plan §6.4: before the visit's first student, count this visit as an attempt at it.
         markerWritten = true;
-        const attempts = await markInFlight(claim, cursor, studentId, limits);
-        if (attempts === null) {
-          report.ended = "fenced";
-          break visit;
-        }
+        const marked = await attempt(() => markInFlight(claim, cursor, studentId, limits));
+        if (!marked.ok) return fail("marker", marked.code);
+        if (marked.value === null) return finish("fenced");
         await hook("afterMarker", { segmentId: claim.id, studentId });
-        if (attempts > limits.maxAttempts) {
-          if (!(await recordFailure(claim, cursor, studentId, limits, { clearMarker: true }))) {
-            report.ended = "fenced";
-            break visit;
-          }
+        if (marked.value > limits.maxAttempts) {
+          const skipped = await attempt(() => recordFailure(claim, cursor, studentId, limits, { clearMarker: true }));
+          if (!skipped.ok) return fail("failureRecord", skipped.code);
+          if (!skipped.value) return finish("fenced");
           tally("PENDING", "repeatedFailure");
           cursor = studentId;
           processed++;
@@ -337,8 +404,9 @@ async function visitSegment(claim: Claim, deps: MonthlyGenerationRunDeps, limits
 
       const expected = cursor;
       let recordedInTx = false;
+      // Never throws: every failure of the student's transaction (its lookup included) is returned as an outcome.
       const outcome = await generateMonthlyObligationForStudent(context, studentId, month, deps, {
-        bounds: boundsOf(limits),
+        bounds: studentBounds(limits),
         historyCap: limits.historyCap,
         configurationCap: limits.configurationCap,
         fence: (tx) => fenceRow(tx, claim, expected),
@@ -351,10 +419,7 @@ async function visitSegment(claim: Claim, deps: MonthlyGenerationRunDeps, limits
         afterRecordForTest: deps.afterRecordForTest ? (tx) => deps.afterRecordForTest!(tx, studentId) : undefined,
       });
 
-      if (outcome.category === "fenced") {
-        report.ended = "fenced";
-        break visit;
-      }
+      if (outcome.category === "fenced") return finish("fenced");
       // `unexpected` is the only outcome of a transaction that did not commit, even if `record` ran inside it first.
       const committed = recordedInTx && !(outcome.category === "failure" && outcome.reason === "unexpected");
       if (committed) {
@@ -364,18 +429,13 @@ async function visitSegment(claim: Claim, deps: MonthlyGenerationRunDeps, limits
         cursor = studentId;
         await hook("afterStudentCommit", { segmentId: claim.id, studentId });
       } else {
+        if (outcome.category === "failure" && outcome.detail) report.errorCodes[outcome.detail.code] = (report.errorCodes[outcome.detail.code] ?? 0) + 1;
         await hook("afterStudentFailure", { segmentId: claim.id, studentId });
-        let recorded: boolean;
-        try {
-          recorded = await recordFailure(claim, expected, studentId, limits, { clearMarker: false });
-        } catch {
-          report.ended = "recordFailed"; // the next visit retries this student, and the marker counts it (plan §6.4)
-          break visit;
-        }
-        if (!recorded) {
-          report.ended = "fenced";
-          break visit;
-        }
+        // The student is never passed without its outcome: if this record fails, the visit ends with the cursor before it,
+        // and the next visit retries it (the marker counts that visit).
+        const recorded = await attempt(() => recordFailure(claim, expected, studentId, limits, { clearMarker: false }));
+        if (!recorded.ok) return fail("failureRecord", recorded.code);
+        if (!recorded.value) return finish("fenced");
         tally("PENDING", reasonOf(outcome));
         cursor = studentId;
         await hook("afterFailureRecord", { segmentId: claim.id, studentId });
@@ -383,17 +443,10 @@ async function visitSegment(claim: Claim, deps: MonthlyGenerationRunDeps, limits
       processed++;
     }
   }
-
-  if (report.ended !== "fenced") await release(claim, limits);
-  return report;
 }
 
 function reasonOf(outcome: MonthlyGenerationOutcome): string {
   return "reason" in outcome ? outcome.reason : outcome.category;
-}
-
-function boundsOf(limits: GenerationLimits): GenerationBounds {
-  return { statementTimeoutMs: limits.statementTimeoutMs, lockTimeoutMs: limits.lockTimeoutMs, maxWaitMs: limits.maxWaitMs, timeoutMs: limits.timeoutMs };
 }
 
 /** Step 1 of plan §6.2: lock the progress row first, verifying token, expiry and the expected cursor. */
@@ -415,7 +468,7 @@ async function advanceInTx(tx: Tx, claim: Claim, cursor: string | null, studentI
   if (count !== 1) throw new FenceLostError(); // rolls back the obligation, coverage and audit rows with it
 }
 
-/** A student whose transaction did not commit: recorded PENDING by one compare-and-set, contiguously. */
+/** A student whose transaction did not commit: recorded PENDING by one compare-and-set, contiguously. False on fence loss. */
 async function recordFailure(claim: Claim, cursor: string | null, studentId: string, limits: GenerationLimits, options: { clearMarker: boolean }): Promise<boolean> {
   const marker = options.clearMarker ? Prisma.sql`, "inFlightStudentId" = NULL, "inFlightAttempts" = 0` : Prisma.empty;
   const count = await bounded(
@@ -480,7 +533,8 @@ async function release(claim: Claim, limits: GenerationLimits): Promise<void> {
 /**
  * Plan §5, rollover: when the claimed row is the organization's newest, insert the missing months up to `current_min` — the
  * earliest branch-local current month, so a month exists only once every branch has reached it — at most `rolloverRows` per
- * visit. Idempotent (`ON CONFLICT DO NOTHING`), and never modifies an existing row. A branch-list overflow skips it.
+ * visit. Idempotent (`ON CONFLICT DO NOTHING`), and never modifies an existing row. A branch-list overflow skips it; a database
+ * failure skips it with its safe code (the claimed row is still processed).
  */
 async function rollover(claim: Claim, deps: MonthlyGenerationRunDeps, limits: GenerationLimits): Promise<SegmentVisitReport["rollover"]> {
   try {
@@ -508,8 +562,8 @@ async function rollover(claim: Claim, deps: MonthlyGenerationRunDeps, limits: Ge
       });
       return { inserted: inserted.count };
     });
-  } catch {
-    return { skipped: "error" };
+  } catch (error) {
+    return { skipped: "error", code: safeErrorCode(error) };
   }
 }
 
