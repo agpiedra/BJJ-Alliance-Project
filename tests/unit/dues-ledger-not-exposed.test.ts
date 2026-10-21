@@ -82,6 +82,10 @@ const LEDGER_DIR = "src/lib/dues/ledger/";
 const IMPORTS_LEDGER = /(?:from\s+|import\s*\(\s*|require\s*\(\s*)["'][^"']*dues\/ledger(?:\/[^"']*)?["']/;
 const AUTHORIZED_CALLERS = [
   "src/lib/dues/monthly-generation.ts",
+  // Monthly-generation G1: the visit loop over DuesGenerationProgress imports the closed-default `inactiveLedgerActivation`,
+  // `LedgerDeps` and the `Tx` type — never a writer; its only ledger writes go through monthly-generation.ts's runner. It has
+  // no production importer itself (tests/unit/dues-monthly-generation-not-exposed.test.ts).
+  "src/lib/dues/monthly-generation-progress.ts",
   "src/lib/dues/late-fee-assessment.ts",
   "src/app/[locale]/(staff)/students/[id]/actions.ts",
   "src/app/[locale]/(staff)/students/[id]/approve-student-core.ts",

@@ -1,8 +1,7 @@
 # Stage 8 PR 8d — implementation plan (the owner readiness screen)
 
-**Status:** the owner decided U1–U3 (recorded in §11). **8d-1 (the read-only screen): PR #150, merged as `2bfd794`; complete in code only.** Stage 8d is incomplete until 8d-2
-lands; its plan is `docs/dues/STAGE-8D2-IMPLEMENTATION-PLAN.md`. Evidence and deviations: `design/matroom/verification/dues-stage8d-screen/README.md`. 8d-2 (the interactive forms) is
-not started.
+**Status:** the owner decided U1–U3 (recorded in §11). **8d-1 (the read-only screen): PR #150, merged as `2bfd794`; complete in code only.** **8d-2 (the interactive forms): PR #151, merged as `ca66d3e`; complete in code only** (plan:
+`docs/dues/STAGE-8D2-IMPLEMENTATION-PLAN.md`). Stage 8d, and with it the Stage 8 readiness workflow, is complete in code only. This does not make the ledger ready to activate: checks 10–12 remain unavailable, O4 remains undecided and `ready` stays false. Evidence and deviations: `design/matroom/verification/dues-stage8d-screen/README.md` (8d-1) and `design/matroom/verification/dues-stage8d2-forms/README.md` (8d-2).
 **Base:** `main` @ `157d594e88df8d863dd79a54c87467e3e0d6f50c`. 8a, 8b and 8c are merged, as is the MONTHLY-total fix. 8b's
 migrations are applied only to isolated test databases.
 **Contract:**

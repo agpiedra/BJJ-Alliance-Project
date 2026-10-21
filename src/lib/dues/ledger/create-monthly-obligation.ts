@@ -1,6 +1,6 @@
 import { Prisma, type DuesObligationOrigin } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
-import type { TenantContext } from "@/lib/tenant/types";
+import type { SystemJobContext, TenantContext } from "@/lib/tenant/types";
 import { assertYearMonth, compareDates, compareYearMonth, dueDateFor, graceDeadlineFor, type CalendarDate, type YearMonth } from "@/lib/dues/calendar";
 import { currentMonthIn } from "@/lib/dues/config-input";
 import { inactiveLedgerActivation, type LedgerDeps } from "@/lib/dues/ledger/activation";
@@ -48,7 +48,12 @@ export function isValidCoverageMonth(coverage: YearMonth): boolean {
 export async function writeMonthlyObligationInTx(
   tx: Tx,
   args: {
-    context: TenantContext;
+    /**
+     * A staff `TenantContext`, or (owner decision D1, monthly-generation G1) the generation job's `SystemJobContext`, which has no
+     * acting user: its rows are `SCHEDULED_JOB` with a null `createdById` and audit `actorId` — the existing "null for an automated
+     * system action" convention. The pairing is enforced below: `SCHEDULED_JOB` if and only if the context is a system job.
+     */
+    context: TenantContext | SystemJobContext;
     student: { id: string; homeAcademyId: string };
     coverage: YearMonth;
     planTermsId: string;
@@ -84,7 +89,9 @@ export async function writeMonthlyObligationInTx(
     if (!minimumDueOn || !isRealDate(minimumDueOn)) return refuse("invalid");
     if (minimumDueOn.year !== coverage.year || minimumDueOn.month !== coverage.month) return refuse("invalid");
   }
-  if (!inTenantScope(context, student.homeAcademyId)) return refuse("notFound");
+  if ((context.kind === "system-job") !== (origin === "SCHEDULED_JOB")) return refuse("invalid");
+  if (context.kind === "tenant" && !inTenantScope(context, student.homeAcademyId)) return refuse("notFound");
+  const actorId = context.kind === "tenant" ? context.actorUserId : null;
 
   // A duplicate returns the existing obligation and changes nothing: no snapshot edit, no coverage row, no audit row.
   const existing = await tx.duesObligation.findFirst({
@@ -139,13 +146,13 @@ export async function writeMonthlyObligationInTx(
       graceDeadline: toDbDate(grace),
       planTermsId: terms.id,
       policyVersionId: policy.id,
-      createdById: context.actorUserId,
+      createdById: actorId,
     },
   });
   await tx.duesCoverage.create({ data: { organizationId, studentId: student.id, obligationId: obligation.id, year: coverage.year, month: coverage.month } });
   await tx.auditLog.create({
     data: {
-      actorId: context.actorUserId,
+      actorId,
       organizationId,
       academyId: student.homeAcademyId,
       action: "duesObligation.create",
@@ -175,12 +182,13 @@ export async function writeMonthlyObligationInTx(
  *
  * Monthly-prepayment brief §2: EXACT signature, behavior and error set unchanged by that phase's extraction below — this function
  * still takes the branch/student locks itself, still refuses `futureMonth` exactly as before, then delegates to
- * `writeMonthlyObligationInTx` with `origin: "STAFF"`. No bypass exists here for a future month: the refusal stays entirely and
+ * `writeMonthlyObligationInTx` with `origin: "STAFF"` (or, for the generation job's system-job context only — owner decision D1,
+ * monthly-generation G1 — `SCHEDULED_JOB` with a null actor). No bypass exists here for a future month: the refusal stays entirely and
  * only in this function, unmodified.
  */
 export async function createMonthlyObligationInTx(
   tx: Tx,
-  args: { context: TenantContext; student: { id: string; homeAcademyId: string }; coverage: YearMonth; planTermsId: string; policyVersionId: string },
+  args: { context: TenantContext | SystemJobContext; student: { id: string; homeAcademyId: string }; coverage: YearMonth; planTermsId: string; policyVersionId: string },
   deps: LedgerDeps = {},
 ): Promise<CreateMonthlyObligationResult> {
   const { context, student, coverage, planTermsId, policyVersionId } = args;
@@ -188,7 +196,7 @@ export async function createMonthlyObligationInTx(
   const activation = deps.activation ?? inactiveLedgerActivation;
   if (!(await activation.isActive(organizationId))) return refuse("notActive");
   if (!isValidCoverageMonth(coverage)) return refuse("invalid");
-  if (!inTenantScope(context, student.homeAcademyId)) return refuse("notFound");
+  if (context.kind === "tenant" && !inTenantScope(context, student.homeAcademyId)) return refuse("notFound");
 
   // 1. branch FOR SHARE (waits for an in-flight configuration save), 2. student FOR UPDATE
   const branch = await lockBranchShared(tx, organizationId, student.homeAcademyId);
@@ -199,7 +207,9 @@ export async function createMonthlyObligationInTx(
   const now = (deps.now ?? (() => new Date()))();
   if (compareYearMonth(coverage, currentMonthIn(branch.timezone, now)) > 0) return refuse("futureMonth");
 
-  return writeMonthlyObligationInTx(tx, { context, student, coverage, planTermsId, policyVersionId, origin: "STAFF" }, deps);
+  // D1: a staff context stays STAFF exactly as before; only the generation job's system-job context is SCHEDULED_JOB.
+  const origin = context.kind === "system-job" ? "SCHEDULED_JOB" : "STAFF";
+  return writeMonthlyObligationInTx(tx, { context, student, coverage, planTermsId, policyVersionId, origin }, deps);
 }
 
 /**

@@ -48,6 +48,8 @@ export const TENANT_SCOPED_MODELS = new Set([
   // Stage 8b opening-debt drafts and readiness confirmations: tenant-scoped from day one, before any writer exists.
   "DuesOpeningItem",
   "DuesReadinessConfirmation",
+  // Monthly-generation progress (G1): tenant-scoped from day one, before any production caller exists.
+  "DuesGenerationProgress",
   "KioskAttempt",
   "QueuedCheckIn",
   "StaffAssignment",

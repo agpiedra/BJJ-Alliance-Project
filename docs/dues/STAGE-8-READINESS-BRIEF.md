@@ -371,7 +371,7 @@ D7, D15, O1 and O3 are recorded (§0) and are no longer checks. O3's exclusion i
 | **8a** | Read-only fingerprints + preview + readiness over current tables (plan: `STAGE-8A-IMPLEMENTATION-PLAN.md`) | none |
 | 8b | `DuesOpeningItem`, `DuesReadinessConfirmation`, tenant guard, constraints, schema tests | additive |
 | 8c | Owner actions: stage/edit/withdraw items; confirm `OPENING_REVIEWED`/`PRICING_ACKNOWLEDGED` (fingerprint must match); checks 6–9 become computable | none |
-| 8d | Owner readiness screen; baseline review and the existing baseline action's UI. Split in two (plan: `STAGE-8D-IMPLEMENTATION-PLAN.md`): **8d-1**, the read-only screen (PR #150, merged as `2bfd794`; complete in code only); 8d-2, the interactive forms (plan: `STAGE-8D2-IMPLEMENTATION-PLAN.md` rev 2; PR #151 open, held unmerged for review). Stage 8d is incomplete until 8d-2 lands | none |
+| 8d | Owner readiness screen; baseline review and the existing baseline action's UI. Split in two (plan: `STAGE-8D-IMPLEMENTATION-PLAN.md`): **8d-1**, the read-only screen (PR #150, merged as `2bfd794`; complete in code only); **8d-2**, the interactive forms (plan: `STAGE-8D2-IMPLEMENTATION-PLAN.md` rev 2; PR #151, merged as `ca66d3e`; complete in code only). The Stage 8 readiness workflow is complete in code only; it is not ready to activate (checks 10–12 unavailable, O4 undecided, `ready` false) | none |
 | (optional) 8e | Bulk assignment, only if needed | none |
 
 **Then:** monthly-generation trigger (dark) → stage 9:

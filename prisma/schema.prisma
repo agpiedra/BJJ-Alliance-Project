@@ -292,6 +292,7 @@ model Organization {
   awaitingRateReceipts   AwaitingRateReceipt[]
   duesOpeningItems       DuesOpeningItem[]
   duesReadinessConfirmations DuesReadinessConfirmation[]
+  duesGenerationProgress     DuesGenerationProgress[]
   kioskAttempts       KioskAttempt[]
   queuedCheckIns      QueuedCheckIn[]
   staffAssignments    StaffAssignment[]
@@ -2025,4 +2026,51 @@ model JobRun {
   heartbeatStatus        String?
 
   @@index([jobName, startedAt])
+}
+
+/// Monthly-generation progress (docs/dues/MONTHLY-GENERATION-TRIGGER-PLAN.md revision 4, §5): one row per (organization,
+/// month) the generation job owes work for. Operational bookkeeping only: no amounts and no ledger meaning, and a row grants
+/// nothing (a visit still checks organization status, LedgerActivation and the start month). Stage 9 inserts an
+/// organization's first row (for S) in its activation transaction; the job inserts later months at rollover. Until then the
+/// table is empty in production.
+///
+/// Protocol (src/lib/dues/monthly-generation-progress.ts): every write except the claim is a compare-and-set on
+/// (leaseToken, cursorStudentId). The four pass counts always equal the classes of exactly the students at or before the
+/// cursor in the current pass. CHECK constraints are hand-written in the migration (Prisma cannot express them) and proved
+/// by tests/integration/monthly-generation-progress-schema.test.ts.
+///
+/// No closedAt column: month closure is owner decision D3, still pending, and G1 implements no closure.
+model DuesGenerationProgress {
+  id                  String    @id @default(cuid())
+  organizationId      String
+  year                Int
+  month               Int
+  /// The last student (by id) whose visit and count are committed in the current pass. Null = none yet. A position, not a
+  /// reference: no foreign key.
+  cursorStudentId     String?
+  passStartedAt       DateTime?
+  leaseToken          String?
+  leaseUntil          DateTime?
+  /// Selection order, least recently visited first; set at claim. Inserted rows use the epoch so they are selected first.
+  lastVisitedAt       DateTime
+  inFlightStudentId   String?
+  inFlightAttempts    Int       @default(0)
+  passIneligible      Int       @default(0)
+  passCovered         Int       @default(0)
+  passUnpriced        Int       @default(0)
+  passPending         Int       @default(0)
+  lastPassCompletedAt DateTime?
+  lastPassIneligible  Int?
+  lastPassCovered     Int?
+  lastPassUnpriced    Int?
+  lastPassPending     Int?
+  /// True when the last finished pass observed no unpriced and no pending student at each student's own visit. NOT current
+  /// completeness: a multi-run pass is not a snapshot.
+  lastPassClean       Boolean?
+  createdAt           DateTime  @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@unique([organizationId, year, month])
+  @@index([lastVisitedAt, id])
 }
