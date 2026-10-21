@@ -1,4 +1,5 @@
 import { unscopedPrisma } from "@/lib/prisma/unscoped";
+import { assertTransactionTimeouts } from "@/lib/db/transaction-timeouts";
 import { deriveInitials, resolvePrimaryTheme, resolveSidebarTheme, type ResolvedPrimaryTheme, type ResolvedSidebarTheme } from "@/lib/theme";
 import { MATROOM_DEFAULT_BRANDING } from "@/lib/branding/default-palette";
 import { resolveDefaultBrandingVariant } from "@/lib/branding/resolve-default-variant";
@@ -137,13 +138,17 @@ export async function listActiveAcademyIdsForDigest(): Promise<string[]> {
  */
 export async function listClaimableGenerationSegments(
   limit: number,
-  bounds: { statementTimeoutMs: number; lockTimeoutMs: number; maxWaitMs: number; timeoutMs: number },
+  bounds: { statementTimeoutMs: number; lockTimeoutMs: number; idleInTransactionTimeoutMs?: number; maxWaitMs: number; timeoutMs: number },
 ): Promise<{ id: string; organizationId: string }[]> {
+  assertTransactionTimeouts(bounds, "discovery bounds");
   // maxWait bounds waiting for a pool connection; timeout plus statement_timeout bound the transaction itself.
   return unscopedPrisma.$transaction(
     async (tx) => {
       await tx.$executeRawUnsafe(`SET LOCAL statement_timeout = ${Math.trunc(bounds.statementTimeoutMs)}`);
       await tx.$executeRawUnsafe(`SET LOCAL lock_timeout = ${Math.trunc(bounds.lockTimeoutMs)}`);
+      if (bounds.idleInTransactionTimeoutMs !== undefined) {
+        await tx.$executeRawUnsafe(`SET LOCAL idle_in_transaction_session_timeout = ${Math.trunc(bounds.idleInTransactionTimeoutMs)}`);
+      }
       return tx.$queryRaw<{ id: string; organizationId: string }[]>`
       SELECT "id", "organizationId" FROM "DuesGenerationProgress"
       WHERE "leaseUntil" IS NULL OR "leaseUntil" < (now() AT TIME ZONE 'UTC')

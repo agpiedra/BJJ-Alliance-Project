@@ -14,6 +14,7 @@ import { productionSourceFiles, stripComments } from "../helpers/source-files";
  */
 const RUNNER = "src/lib/dues/monthly-generation.ts";
 const LOOP = "src/lib/dues/monthly-generation-progress.ts";
+const BUDGET = "src/lib/dues/monthly-generation-route-budget.ts";
 const IMPORTS_RUNNER = /(?:from\s+|import\s*\(\s*|require\s*\(\s*)["'][^"']*dues\/monthly-generation["']/;
 const IMPORTS_LOOP = /(?:from\s+|import\s*\(\s*|require\s*\(\s*)["'][^"']*dues\/monthly-generation-progress["']/;
 const norm = (file: string) => file.replaceAll("\\", "/");
@@ -45,9 +46,15 @@ describe("the monthly-generation runner and visit loop are not reachable from pr
     expect(importers, "generateMonthlyObligationForStudent must have no production caller until the activation/scheduler rollout stage").toEqual([LOOP]);
   });
 
-  it("nothing imports the visit loop", () => {
+  it("only the pure route-budget helper imports the visit loop, and nothing imports the helper", () => {
     const importers = files.filter((f) => IMPORTS_LOOP.test(stripComments(f.text))).map((f) => norm(f.file));
-    expect(importers, "runMonthlyGeneration must have no production caller until G2 (D3 and D5 pending)").toEqual([]);
+    expect(importers, "runMonthlyGeneration must have no production caller until G2b (D5 pending)").toEqual([BUDGET]);
+    const IMPORTS_BUDGET = /(?:from\s+|import\s*\(\s*|require\s*\(\s*)["'][^"']*dues\/monthly-generation-route-budget["']/;
+    const budgetImporters = files.filter((f) => IMPORTS_BUDGET.test(stripComments(f.text))).map((f) => norm(f.file));
+    expect(budgetImporters, "planRouteBudget has no production caller until G2b").toEqual([]);
+    // The helper is pure: no database client, no clock.
+    const helper = stripComments(readFileSync(BUDGET, "utf8"));
+    expect(helper).not.toMatch(/@\/lib\/prisma|Date\.now|performance\.now|new Date/);
   });
 
   it("are plain library functions: no \"use server\", no route", () => {

@@ -616,7 +616,7 @@ describe("overlapping runs", () => {
     const holding = new Promise<void>((r) => (inside = r));
     const runA = runMonthlyGeneration(
       deps({
-        limits: { leaseSeconds: 1, studentTimeoutMs: 30_000, deadlineMs: 10_000_000 }, // the transaction outlives the 1 s lease while the test holds it
+        limits: { leaseSeconds: 1, shortTimeoutMs: 30_000, studentTimeoutMs: 30_000, idleInTransactionTimeoutMs: 30_000, deadlineMs: 10_000_000 }, // the transaction sits idle, outliving the 1 s lease, while the test holds it
         beforeRecordForTest: async (_tx, studentId) => {
           if (studentId !== a1) return;
           inside();
@@ -821,7 +821,7 @@ describe("deadline accounting with real waits", () => {
     // FOR SHARE lock until its statement_timeout, fails, and is recorded PENDING.
     const lock = holdLock(`SELECT 1 FROM "Academy" WHERE "id" = '${org.main.academyId}' FOR UPDATE`);
     await lock.held;
-    const limits = { statementTimeoutMs: 300, lockTimeoutMs: 300, shortMaxWaitMs: 200, shortTimeoutMs: 400, studentMaxWaitMs: 200, studentTimeoutMs: 1_000, deadlineMs: 9_000 };
+    const limits = { statementTimeoutMs: 300, lockTimeoutMs: 300, idleInTransactionTimeoutMs: 300, shortMaxWaitMs: 200, shortTimeoutMs: 400, studentMaxWaitMs: 200, studentTimeoutMs: 1_000, deadlineMs: 9_000 };
     const t0 = Date.now();
     let report: Awaited<ReturnType<typeof runMonthlyGeneration>>;
     try {
@@ -898,6 +898,59 @@ describe("safe error details: only validated codes or fixed fallbacks leave a fa
     expect(JSON.stringify(outcome)).not.toContain(SECRET);
     expect(await obligationsFor(org.id, x)).toHaveLength(0); // the injected failure rolled the write back
   });
+});
+
+describe("G2a: idle_in_transaction_session_timeout releases a paused transaction's locks, and the pool recovers", () => {
+  it("a transaction left idle past the timeout is terminated (its row lock freed for another connection), and later transactions on the same pool succeed", async () => {
+    const org = await makeOrg("idle-direct");
+    let failure: unknown;
+    const idle = appPrisma
+      .$transaction(
+        async (tx) => {
+          await tx.$executeRawUnsafe(`SET LOCAL idle_in_transaction_session_timeout = 300`);
+          await tx.$queryRaw`SELECT "id" FROM "Academy" WHERE "id" = ${org.main.academyId} FOR UPDATE`;
+          await new Promise((r) => setTimeout(r, 1_200)); // idle: no statement running
+          await tx.$queryRaw`SELECT 1`; // the session is gone by now
+        },
+        { timeout: 10_000 },
+      )
+      .catch((error: unknown) => (failure = error));
+
+    // Another connection gets the same row lock without waiting, once the idle session has been ended.
+    await new Promise((r) => setTimeout(r, 700));
+    const free = await prisma.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe(`SET LOCAL lock_timeout = 100`);
+      return tx.$queryRaw<{ id: string }[]>`SELECT "id" FROM "Academy" WHERE "id" = ${org.main.academyId} FOR UPDATE NOWAIT`;
+    });
+    expect(free).toHaveLength(1);
+    await idle;
+    expect(failure, "the idle transaction must have failed").toBeDefined();
+
+    // Pool recovery: more sequential transactions than the pool has connections (10), each must succeed.
+    for (let i = 0; i < 12; i++) {
+      expect(await appPrisma.$transaction(async (tx) => tx.$queryRaw<{ one: number }[]>`SELECT 1 AS one`)).toEqual([{ one: 1 }]);
+    }
+  }, 30_000);
+
+  it("in the loop: a student transaction paused idle is ended and recorded PENDING; the next student, on the same pool, commits", async () => {
+    const org = await makeOrg("idle-loop");
+    const [paused, next] = await studentsInOrder(org, ["priced", "priced"]);
+    const seg = await addSegment(org.id);
+    const report = await runMonthlyGeneration(
+      deps({
+        limits: { idleInTransactionTimeoutMs: 300 },
+        beforeRecordForTest: async (_tx, studentId) => {
+          if (studentId === paused) await new Promise((r) => setTimeout(r, 1_200)); // idle inside the transaction
+        },
+      }),
+    );
+    const [visit] = report.visits;
+    expect(visit.reasons).toEqual({ unexpected: 1 });
+    expect(visit.created).toBe(1);
+    expect(await obligationsFor(org.id, paused)).toHaveLength(0); // its write rolled back with the ended session
+    expect(await obligationsFor(org.id, next)).toHaveLength(1);
+    expect((await segment(seg.id)).lastPassPending).toBe(1);
+  }, 30_000);
 });
 
 // ---------------------------------------------------------------------------------------------------------------------------------
