@@ -6,7 +6,8 @@ import { getOrganizationBranding } from "@/lib/branding/get-branding";
 import { EmptyState } from "@/components/ui/empty-state";
 import { getReadinessScreenForOwner } from "@/lib/dues/readiness/screen";
 import { defaultCandidateMonth, parseCandidateParam } from "@/lib/dues/readiness/candidate";
-import { MonthPicker, StatusAndChecks, Students, Totals } from "./readiness-view";
+import { BeforeStart, MonthPicker, StatusAndChecks, Students, Totals } from "./readiness-view";
+import { ReadinessClientRoot } from "./use-readiness-action";
 
 // A live report: never statically frozen.
 export const dynamic = "force-dynamic";
@@ -69,11 +70,13 @@ export default async function DuesReadinessPage({ searchParams }: { searchParams
       {screen.branches.length === 0 && screen.students.length === 0 ? (
         <EmptyState message={t("empty")} />
       ) : (
-        <>
+        // `asOf` changes on every snapshot: the client forms use it to know a refresh has arrived (stage 8d-2).
+        <ReadinessClientRoot asOf={screen.asOf.toISOString()}>
           <StatusAndChecks screen={screen} candidate={candidate} locale={locale} />
           <Totals screen={screen} candidate={candidate} locale={locale} />
-          <Students screen={screen} locale={locale} />
-        </>
+          <BeforeStart screen={screen} candidate={candidate} locale={locale} organizationId={context.organizationId} />
+          <Students screen={screen} candidate={candidate} locale={locale} organizationId={context.organizationId} />
+        </ReadinessClientRoot>
       )}
     </main>
   );

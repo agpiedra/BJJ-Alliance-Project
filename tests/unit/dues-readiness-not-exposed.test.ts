@@ -25,22 +25,36 @@ const IMPORTS_READINESS = /(?:from\s+|import\s*\(\s*)["'][^"']*dues\/readiness(?
  * rules (`candidate`) and report types (`evaluate`) — never the 8c actions, which are the interactive PR's (8d-2).
  */
 const SCREEN_FILES = ["src/app/[locale]/(staff)/payments/readiness/page.tsx", "src/app/[locale]/(staff)/payments/readiness/readiness-view.tsx"];
+/**
+ * Stage 8d-2 (docs/dues/STAGE-8D2-IMPLEMENTATION-PLAN.md §6): the only client files that reach the readiness folder. They import
+ * the five 8c server actions and nothing else from it — never the cores, the loader, the fingerprints or the read model.
+ */
+const CLIENT_FORM_FILES = ["src/app/[locale]/(staff)/payments/readiness/confirmation-forms.tsx", "src/app/[locale]/(staff)/payments/readiness/draft-forms.tsx"];
 
 describe("the readiness report is not reachable from a browser", () => {
   it.each(FILES)("%s is a plain server module: no \"use server\" / \"use client\"", (file) => {
     expect(readFileSync(file, "utf8")).not.toMatch(/^\s*["']use (server|client)["']/m);
   });
 
-  it("outside the readiness folder, only the 8d-1 screen imports it", () => {
+  it("outside the readiness folder, only the 8d screen and its two client form files import it", () => {
     const importers = productionSourceFiles()
       .filter((f) => !f.file.replaceAll("\\", "/").startsWith("src/lib/dues/readiness/"))
       .filter((f) => IMPORTS_READINESS.test(stripComments(f.text)))
       .map((f) => f.file.replaceAll("\\", "/"))
       .sort();
-    expect(importers).toEqual([...SCREEN_FILES].sort());
+    expect(importers).toEqual([...SCREEN_FILES, ...CLIENT_FORM_FILES].sort());
   });
 
-  it.each(SCREEN_FILES)("%s is a server component that imports only the read model, the month rules and report types, and has no write form", (file) => {
+  it.each(CLIENT_FORM_FILES)("%s is a client file that imports only the 8c server actions from the readiness folder", (file) => {
+    const text = stripComments(readFileSync(file, "utf8"));
+    expect(text).toMatch(/^"use client";/);
+    const modules = [...text.matchAll(/from\s+["'][^"']*dues\/readiness(?:\/([a-z-]+))?["']/g)].map((m) => m[1] ?? "index");
+    expect(modules.length).toBeGreaterThan(0);
+    expect(modules.every((m) => m === "opening-actions"), modules.join(",")).toBe(true);
+  });
+
+  // 8d-2: the writes live in the client form files (which the view mounts); these two server files still import no action.
+  it.each(SCREEN_FILES)("%s is a server component that imports only the read model, the month rules and report types, and no action", (file) => {
     const text = stripComments(readFileSync(file, "utf8"));
     expect(text).not.toMatch(/^\s*["']use (server|client)["']/m);
     const modules = [...text.matchAll(/from\s+["'][^"']*dues\/readiness(?:\/([a-z-]+))?["']/g)].map((m) => m[1] ?? "index");
@@ -96,10 +110,13 @@ describe("the 8c owner actions expose exactly five server actions and nothing el
     expect(text).toMatch(/loadReviewContentInTx\(tx,/);
   });
 
-  it("the five actions are registered as built ahead of their caller (8d)", () => {
+  // 8d-2: the screen is now their caller, so they leave the built-ahead registry, and each has a real call site in a form file.
+  it("the five actions have a caller in the 8d-2 form files and are no longer registered as built ahead", () => {
     const registry = readFileSync("scripts/pending-callers.ts", "utf8");
+    const callers = CLIENT_FORM_FILES.map((f) => stripComments(readFileSync(f, "utf8"))).join("\n");
     for (const name of ["createOpeningDraft", "replaceOpeningDraft", "withdrawOpeningDraft", "recordOpeningReview", "acknowledgePricing"]) {
-      expect(registry).toContain(name);
+      expect(registry, name).not.toContain(`"${name}"`);
+      expect(callers, name).toMatch(new RegExp(`${name}\\(organizationId, \\{\\}, `));
     }
   });
 });

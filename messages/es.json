@@ -1831,7 +1831,151 @@
         "legacy": "{student}, {month} ({status})",
         "openingItem": "{student}, deuda inicial de {month}"
       },
-      "empty": "Aún no hay sedes ni estudiantes. La preparación se calcula para sus estudiantes."
+      "empty": "Aún no hay sedes ni estudiantes. La preparación se calcula para sus estudiantes.",
+      "forms": {
+        "cancel": "Cancelar",
+        "beforeStart": {
+          "heading": "Antes de {month}: historial de estado y planes",
+          "orderHint": "Haga esto antes de revisar la deuda inicial: cualquier cambio aquí deja desactualizada la revisión o el reconocimiento existente de un estudiante, y hay que volver a hacerlo."
+        },
+        "baseline": {
+          "heading": "Línea base del historial de estado",
+          "count": "Estudiantes sin historial de estado: {total} ({active} activos).",
+          "branchHelps": "{branch}: {count} sin historial. Una línea base tomada hoy queda con fecha anterior a {month}, así que puede cumplir la verificación 1.",
+          "branchCannotHelp": "{branch}: {count} sin historial. Allí ya es el 1 de {month} o después, así que una línea base tomada hoy no puede cumplir la verificación 1 para {month}.",
+          "open": "Tomar línea base de estado",
+          "dialogTitle": "¿Tomar la línea base del historial de estado?",
+          "cannotHelpAll": "Esto no puede corregir la verificación 1 para {month} en ninguna de estas sedes. Elija un mes de inicio posterior.",
+          "cannotHelpSome": "Esto no puede corregir la verificación 1 para {month} en estas sedes; elija un mes de inicio posterior para ellas:",
+          "body": "Para cada estudiante de la organización sin historial de estado (cualquier estado, todas las sedes), registra una fila: su estado actual, con la fecha de hoy en la zona horaria de su sede. Nada más cambia. Ejecutarlo de nuevo es seguro: los estudiantes que ya tienen historial no se tocan.",
+          "staleNote": "Cada estudiante registrado recibe historial nuevo, así que su revisión o reconocimiento existente queda desactualizado.",
+          "submit": "Registrar línea base"
+        },
+        "assignment": {
+          "heading": "Asignación de planes",
+          "intro": "Estudiantes activos sin un plan, o sin un \"sin plan\" explícito, vigente para {month}.",
+          "noneListed": "Todos los estudiantes activos tienen un plan o un \"sin plan\" explícito para {month}.",
+          "showAll": "Mostrar los demás estudiantes activos ({count})",
+          "forS": "Para {month}: {plan}",
+          "forSNoPlan": "Para {month}: sin plan (elegido)",
+          "forSNone": "Para {month}: sin plan asignado",
+          "futureLabel": "{month}: {plan}",
+          "correct": "Cambiar {month}",
+          "correctSubmit": "Guardar cambio",
+          "assign": "Asignar un plan",
+          "assignSubmit": "Asignar",
+          "monthLegend": "Vigente desde (no antes de {month})",
+          "plan": "Plan",
+          "noPlan": "Sin plan (desasignado explícitamente)",
+          "noPlans": "Esta sede no tiene un plan mensual activo.",
+          "planInvalid": "Elija uno de los planes mensuales de esta sede, o \"Sin plan\".",
+          "priceFor": "{plan} — {price} para {month}",
+          "noPriceFor": "{plan} — sin precio para {month}",
+          "noPlanTitle": "¿Registrar \"sin plan\"?",
+          "noPlanBody": "Desde el mes elegido, {name} no tendrá plan mensual.",
+          "noPlanCurrent": "Si ese mes es el mes actual, esto no se podrá cambiar después.",
+          "noPlanSubmit": "Registrar sin plan"
+        },
+        "drafts": {
+          "add": "Agregar deuda inicial",
+          "addSubmit": "Agregar borrador",
+          "replace": "Reemplazar",
+          "replaceHint": "Reemplazar conserva este borrador en el historial como reemplazado y agrega uno nuevo.",
+          "replaceSubmit": "Reemplazar borrador",
+          "withdraw": "Retirar",
+          "withdrawTitle": "¿Retirar este borrador?",
+          "withdrawBody": "{draft}. El borrador queda en el historial como retirado.",
+          "reason": "Motivo (obligatorio)",
+          "reasonInvalid": "Escriba un motivo de 1 a 500 caracteres.",
+          "withdrawSubmit": "Retirar borrador",
+          "monthLegend": "Mes adeudado (hasta {current}; la verificación 8 lo requiere antes de {month})"
+        },
+        "review": {
+          "confirmNone": "Confirmar: sin deuda inicial antes de {month}",
+          "confirmItems": "Confirmar: la deuda inicial antes de {month} es exactamente {count, plural, one {este ítem} other {estos # ítems}}",
+          "dialogTitle": "Revisión de deuda inicial: {name}",
+          "attestNone": "Usted confirma que este estudiante no tiene deuda inicial antes de {month}.",
+          "attestItems": "Usted confirma que la deuda inicial de este estudiante antes de {month} es exactamente {count, plural, one {este ítem} other {estos # ítems}}:",
+          "scope": "Esta revisión se registra solo para {month}. Cualquier cambio posterior en este estudiante la deja desactualizada.",
+          "submit": "Registrar revisión"
+        },
+        "pricing": {
+          "acknowledge": "Reconocer precios desde {month}",
+          "dialogTitle": "Reconocimiento de precios: {name}",
+          "legacyRow": "{month}: {status} ({promo}), {amount}",
+          "wouldCharge": "{month} cobraría {amount}",
+          "wouldNotCharge": "{month} no cobraría: {reason}",
+          "reason": {
+            "UNDECIDABLE": "estado desconocido para ese mes",
+            "NOT_ELIGIBLE": "no es elegible",
+            "NO_ASSIGNMENT": "sin plan asignado",
+            "noEffectiveVersion": "sin precio ni política para ese mes",
+            "inapplicable": "el precio no aplica",
+            "currencyMismatch": "moneda distinta",
+            "existingObligation": "ya cobrado",
+            "packageCoverage": "cubierto por un paquete",
+            "unknown": "desconocido"
+          },
+          "scope": "Se registra solo para {month}. Un cambio en este estudiante, o en los planes, precios o política de la sede, lo deja desactualizado.",
+          "submit": "Registrar reconocimiento"
+        },
+        "fields": {
+          "month": "Mes",
+          "year": "Año",
+          "choose": "Elegir…",
+          "amount": "Monto",
+          "amountHint": "Dígitos con punto decimal opcional, por ejemplo 1234.50 (sin separadores de miles).",
+          "currency": "Moneda",
+          "note": "Nota (obligatoria)",
+          "textHint": "De 1 a 500 caracteres.",
+          "legacyLink": "Vincular a un pago anterior (opcional)",
+          "legacyNone": "Sin vínculo",
+          "legacyHint": "Solo se puede vincular el pago de este estudiante para el mismo mes."
+        },
+        "field": {
+          "coverageMonth": "Ingrese un mes y un año reales.",
+          "futureMonth": "La deuda inicial no puede ser de un mes posterior al actual.",
+          "amount": "Ingrese un monto mayor que cero, por ejemplo 1234.50.",
+          "currency": "Elija una moneda.",
+          "note": "Escriba una nota de 1 a 500 caracteres.",
+          "reason": "Escriba un motivo de 1 a 500 caracteres.",
+          "legacyPaymentPeriodId": "Ese pago no está disponible.",
+          "linkMismatch": "Ese pago es de otro estudiante o de otro mes.",
+          "effectiveMonth": "Ingrese un mes y un año reales.",
+          "planId": "Elija uno de los planes mensuales de esta sede, o \"Sin plan\".",
+          "expectedRevision": "Recargue la página e intente de nuevo.",
+          "binding": "Recargue la página e intente de nuevo.",
+          "candidateMonth": "Recargue la página e intente de nuevo.",
+          "declaration": "Recargue la página e intente de nuevo."
+        },
+        "outcome": {
+          "saved": "Guardado.",
+          "savedBaseline": "Historial de estado registrado para {count, plural, one {# estudiante} other {# estudiantes}}.",
+          "savedBaselineNone": "Nada que registrar: todos los estudiantes ya tienen historial de estado.",
+          "updating": "Actualizando la página…",
+          "unknownTitle": "Resultado desconocido.",
+          "unknownBody": "La conexión falló antes de que el servidor respondiera. Esta solicitud pudo haberse guardado o no, y aún podría guardarse más tarde. Recargue los datos actuales y revíselos antes de hacer cualquier otra cosa.",
+          "stillUnknownTitle": "El resultado sigue siendo desconocido.",
+          "stillUnknownBody": "La página muestra ahora lo que está registrado, al {time}. Puede incluir esta solicitud o no. Revíselo antes de hacer cualquier otra cosa.",
+          "targetClosed": "Este elemento ya no está activo, así que su formulario se cerró.",
+          "refreshFailed": "No pudimos cargar los datos actuales.",
+          "reload": "Recargar datos actuales",
+          "reloadAgain": "Recargar de nuevo",
+          "checked": "Ya revisé los datos actuales",
+          "reloadPage": "Recargar página",
+          "rejected": {
+            "notFound": "Esto ya no está disponible. No se guardó nada. La página se actualizó.",
+            "invalid": "Revise los campos marcados. No se guardó nada.",
+            "stale": "Esto cambió después de cargar la página. No se guardó nada. La página se actualizó: revise el contenido actual antes de confirmar de nuevo.",
+            "declarationMismatch": "La deuda inicial cambió después de cargar la página. No se guardó nada. La página se actualizó: revísela de nuevo antes de confirmar.",
+            "monthHasDraft": "Ya hay un ítem inicial para ese mes. No se guardó nada. Reemplace ese en su lugar.",
+            "monthAssigned": "Ese mes ya tiene una asignación. No se guardó nada. La página se actualizó.",
+            "pastMonth": "Ese mes ya pasó. No se guardó nada.",
+            "notFuture": "Este mes ya comenzó y no se puede cambiar. No se guardó nada.",
+            "unexpected": "El servidor rechazó esto. No se guardó nada."
+          }
+        }
+      }
     }
   },
   "portal": {

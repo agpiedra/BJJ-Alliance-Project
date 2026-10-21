@@ -173,15 +173,8 @@ const PENDING_CALLERS: PendingCaller[] = [
     reason:
       "Read-only, owner-only readiness report over one REPEATABLE READ, READ ONLY snapshot: content fingerprints, a dry-run preview with per-currency totals, checks 1-9 computed (6-9 since stage 8c) and checks 10-13 reported as notImplemented/decisionPending. Its caller is the owner screen, which is a later PR.",
   },
-  // Stage 8 PR 8c (docs/dues/STAGE-8C-IMPLEMENTATION-PLAN.md): the owner's opening-draft and confirmation server actions, built
-  // ahead of the owner readiness screen (PR 8d). No page imports them yet, so no browser can reach them.
-  ...(["createOpeningDraft", "replaceOpeningDraft", "withdrawOpeningDraft", "recordOpeningReview", "acknowledgePricing"] as const).map((symbol) => ({
-    symbol,
-    file: "src/lib/dues/readiness/opening-actions.ts",
-    dueBy: "stage 8 PR 8d (owner readiness screen)",
-    reason:
-      "Owner-only stage 8c action over opening-debt drafts or readiness confirmations: one READ COMMITTED transaction in the ledger's lock order, its AuditLog row atomic with it; creates no ledger charge. Its caller is the owner screen, which is a later PR.",
-  })),
+  // Stage 8 PR 8c's five opening-draft and confirmation actions were registered here until stage 8d-2 gave them their caller
+  // (the readiness screen's form files); tests/unit/dues-readiness-not-exposed.test.ts asserts both.
   {
     symbol: "generateMonthlyObligationForStudent",
     file: "src/lib/dues/monthly-generation.ts",

@@ -1831,7 +1831,151 @@
         "legacy": "{student}, {month} ({status})",
         "openingItem": "{student}, opening debt for {month}"
       },
-      "empty": "No branches or students yet. Readiness is computed for your students."
+      "empty": "No branches or students yet. Readiness is computed for your students.",
+      "forms": {
+        "cancel": "Cancel",
+        "beforeStart": {
+          "heading": "Before {month}: status history and plans",
+          "orderHint": "Do this before reviewing opening debt: any change here makes a student's existing review or acknowledgement stale, and it must be done again."
+        },
+        "baseline": {
+          "heading": "Status history baseline",
+          "count": "Students with no status history: {total} ({active} active).",
+          "branchHelps": "{branch}: {count} without history. A baseline taken today is dated before {month}, so it can satisfy check 1.",
+          "branchCannotHelp": "{branch}: {count} without history. Today is already on or after the 1st of {month} there, so a baseline taken today cannot satisfy check 1 for {month}.",
+          "open": "Take status baseline",
+          "dialogTitle": "Take the status history baseline?",
+          "cannotHelpAll": "This cannot fix check 1 for {month} in any of these branches. Choose a later start month.",
+          "cannotHelpSome": "This cannot fix check 1 for {month} in these branches; choose a later start month for them:",
+          "body": "For every student in the organization with no status history (any status, every branch), this records one row: their current status, dated today in their branch's time zone. Nothing else changes. Running it again is safe: students who already have history are left alone.",
+          "staleNote": "Each student it records gets new history, so their existing review or acknowledgement becomes stale.",
+          "submit": "Record baseline"
+        },
+        "assignment": {
+          "heading": "Plan assignments",
+          "intro": "Active students without a plan, or an explicit \"no plan\", effective for {month}.",
+          "noneListed": "Every active student has a plan or an explicit \"no plan\" for {month}.",
+          "showAll": "Show the other active students ({count})",
+          "forS": "For {month}: {plan}",
+          "forSNoPlan": "For {month}: no plan (chosen)",
+          "forSNone": "For {month}: no plan assigned",
+          "futureLabel": "{month}: {plan}",
+          "correct": "Change {month}",
+          "correctSubmit": "Save change",
+          "assign": "Assign a plan",
+          "assignSubmit": "Assign",
+          "monthLegend": "Effective from (not before {month})",
+          "plan": "Plan",
+          "noPlan": "No plan (explicitly unassigned)",
+          "noPlans": "This branch has no active monthly plan.",
+          "planInvalid": "Choose one of this branch's monthly plans, or \"No plan\".",
+          "priceFor": "{plan} — {price} for {month}",
+          "noPriceFor": "{plan} — no price for {month}",
+          "noPlanTitle": "Record \"no plan\"?",
+          "noPlanBody": "From the chosen month, {name} will have no monthly plan.",
+          "noPlanCurrent": "If that month is the current month, this cannot be changed later.",
+          "noPlanSubmit": "Record no plan"
+        },
+        "drafts": {
+          "add": "Add opening debt",
+          "addSubmit": "Add draft",
+          "replace": "Replace",
+          "replaceHint": "Replacing keeps this draft in history as replaced and adds a new one.",
+          "replaceSubmit": "Replace draft",
+          "withdraw": "Withdraw",
+          "withdrawTitle": "Withdraw this draft?",
+          "withdrawBody": "{draft}. The draft stays in history as withdrawn.",
+          "reason": "Reason (required)",
+          "reasonInvalid": "Give a reason of 1 to 500 characters.",
+          "withdrawSubmit": "Withdraw draft",
+          "monthLegend": "Month owed (up to {current}; check 8 needs it before {month})"
+        },
+        "review": {
+          "confirmNone": "Confirm: no opening debt before {month}",
+          "confirmItems": "Confirm: the opening debt before {month} is exactly {count, plural, one {this item} other {these # items}}",
+          "dialogTitle": "Opening-debt review: {name}",
+          "attestNone": "You confirm this student has no opening debt before {month}.",
+          "attestItems": "You confirm this student's opening debt before {month} is exactly {count, plural, one {this item} other {these # items}}:",
+          "scope": "This review is recorded for {month} only. Any later change to this student makes it stale.",
+          "submit": "Record review"
+        },
+        "pricing": {
+          "acknowledge": "Acknowledge pricing from {month}",
+          "dialogTitle": "Pricing acknowledgement: {name}",
+          "legacyRow": "{month}: {status} ({promo}), {amount}",
+          "wouldCharge": "{month} would charge {amount}",
+          "wouldNotCharge": "{month} would not charge: {reason}",
+          "reason": {
+            "UNDECIDABLE": "status unknown for that month",
+            "NOT_ELIGIBLE": "not eligible",
+            "NO_ASSIGNMENT": "no plan assigned",
+            "noEffectiveVersion": "no price or policy for that month",
+            "inapplicable": "the price does not apply",
+            "currencyMismatch": "currency mismatch",
+            "existingObligation": "already charged",
+            "packageCoverage": "covered by a package",
+            "unknown": "unknown"
+          },
+          "scope": "Recorded for {month} only. A change to this student, or to the branch's plans, prices or policy, makes it stale.",
+          "submit": "Record acknowledgement"
+        },
+        "fields": {
+          "month": "Month",
+          "year": "Year",
+          "choose": "Choose…",
+          "amount": "Amount",
+          "amountHint": "Digits with an optional decimal point, for example 1234.50 (no thousands separators).",
+          "currency": "Currency",
+          "note": "Note (required)",
+          "textHint": "1 to 500 characters.",
+          "legacyLink": "Link to a legacy payment (optional)",
+          "legacyNone": "No link",
+          "legacyHint": "Only this student's payment for the same month can be linked."
+        },
+        "field": {
+          "coverageMonth": "Enter a real month and year.",
+          "futureMonth": "Opening debt cannot be for a month after the current one.",
+          "amount": "Enter an amount above zero, for example 1234.50.",
+          "currency": "Choose a currency.",
+          "note": "Write a note of 1 to 500 characters.",
+          "reason": "Give a reason of 1 to 500 characters.",
+          "legacyPaymentPeriodId": "That payment is not available.",
+          "linkMismatch": "That payment is for another student or month.",
+          "effectiveMonth": "Enter a real month and year.",
+          "planId": "Choose one of this branch's monthly plans, or \"No plan\".",
+          "expectedRevision": "Reload the page and try again.",
+          "binding": "Reload the page and try again.",
+          "candidateMonth": "Reload the page and try again.",
+          "declaration": "Reload the page and try again."
+        },
+        "outcome": {
+          "saved": "Saved.",
+          "savedBaseline": "Status history recorded for {count, plural, one {# student} other {# students}}.",
+          "savedBaselineNone": "Nothing to record: every student already has status history.",
+          "updating": "Updating the page…",
+          "unknownTitle": "Outcome unknown.",
+          "unknownBody": "The connection failed before the server answered. This request may or may not have been saved, and it could still be saved later. Reload the current data and inspect it before doing anything else.",
+          "stillUnknownTitle": "Outcome still unknown.",
+          "stillUnknownBody": "The page now shows what is currently recorded, as of {time}. It may or may not include this request. Check it before doing anything else.",
+          "targetClosed": "This item is no longer active, so its form was closed.",
+          "refreshFailed": "We could not load the current data.",
+          "reload": "Reload current data",
+          "reloadAgain": "Reload again",
+          "checked": "I have checked the current data",
+          "reloadPage": "Reload page",
+          "rejected": {
+            "notFound": "This is no longer available. Nothing was saved. The page has been refreshed.",
+            "invalid": "Check the marked fields. Nothing was saved.",
+            "stale": "This changed after the page was loaded. Nothing was saved. The page has been refreshed: review the current content before confirming again.",
+            "declarationMismatch": "The opening debt changed after the page was loaded. Nothing was saved. The page has been refreshed: review it again before confirming.",
+            "monthHasDraft": "There is already an opening item for that month. Nothing was saved. Replace that one instead.",
+            "monthAssigned": "That month already has an assignment. Nothing was saved. The page has been refreshed.",
+            "pastMonth": "That month has already passed. Nothing was saved.",
+            "notFuture": "This month has started and can no longer be changed. Nothing was saved.",
+            "unexpected": "The server refused this. Nothing was saved."
+          }
+        }
+      }
     }
   },
   "portal": {
