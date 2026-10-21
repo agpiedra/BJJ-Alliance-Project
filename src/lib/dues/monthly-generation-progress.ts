@@ -60,6 +60,12 @@ export interface GenerationLimits {
   /** Postgres `statement_timeout` for every statement; lock waits count inside it. Must not exceed either transaction timeout. */
   statementTimeoutMs: number;
   lockTimeoutMs: number;
+  /**
+   * Postgres `idle_in_transaction_session_timeout` (G2a): ends a session whose transaction sits idle — no statement running —
+   * longer than this, releasing its locks (a paused or stalled client). It does not govern a running statement
+   * (`statement_timeout` does). Must not exceed either transaction timeout.
+   */
+  idleInTransactionTimeoutMs: number;
   /** A short transaction (discovery, claim, gate, rollover, page, marker, failure record, pass end, release). */
   shortMaxWaitMs: number;
   shortTimeoutMs: number;
@@ -84,6 +90,7 @@ export interface GenerationLimits {
 export const DEFAULT_GENERATION_LIMITS: GenerationLimits = {
   statementTimeoutMs: 1_000,
   lockTimeoutMs: 1_000,
+  idleInTransactionTimeoutMs: 1_000,
   shortMaxWaitMs: 1_000,
   shortTimeoutMs: 2_000,
   studentMaxWaitMs: 2_000,
@@ -184,6 +191,15 @@ interface Claim {
 
 const NOW_UTC = Prisma.sql`(now() AT TIME ZONE 'UTC')`;
 
+/**
+ * G2a: the elapsed-time margin `runMonthlyGeneration` needs before it admits its first discovery and visit — discovery plus one
+ * whole visit's entry, at their worst cases. A route-budget helper uses it; nothing here changes.
+ */
+export function admissionBudgetMs(limits: GenerationLimits): number {
+  const budget = budgetOf(limits);
+  return budget.short + budget.visitEntry;
+}
+
 /** Worst-case wall time of one transaction, as measured on this stack (see the module comment). */
 function budgetOf(limits: GenerationLimits) {
   const short = limits.shortMaxWaitMs + limits.shortTimeoutMs + limits.statementTimeoutMs;
@@ -211,6 +227,9 @@ export async function runMonthlyGeneration(deps: MonthlyGenerationRunDeps): Prom
   const limits: GenerationLimits = { ...DEFAULT_GENERATION_LIMITS, ...deps.limits };
   if (limits.statementTimeoutMs > limits.shortTimeoutMs || limits.statementTimeoutMs > limits.studentTimeoutMs || limits.lockTimeoutMs > limits.statementTimeoutMs) {
     throw new RangeError("generation limits: lock_timeout <= statement_timeout <= each transaction timeout is required for the deadline bound");
+  }
+  if (!(limits.idleInTransactionTimeoutMs > 0) || limits.idleInTransactionTimeoutMs > limits.shortTimeoutMs || limits.idleInTransactionTimeoutMs > limits.studentTimeoutMs) {
+    throw new RangeError("generation limits: 0 < idle_in_transaction_session_timeout <= each transaction timeout is required");
   }
   const budget = budgetOf(limits);
   const started = performance.now();
@@ -255,10 +274,10 @@ export async function runMonthlyGeneration(deps: MonthlyGenerationRunDeps): Prom
 }
 
 function shortBounds(limits: GenerationLimits): GenerationBounds {
-  return { statementTimeoutMs: limits.statementTimeoutMs, lockTimeoutMs: limits.lockTimeoutMs, maxWaitMs: limits.shortMaxWaitMs, timeoutMs: limits.shortTimeoutMs };
+  return { statementTimeoutMs: limits.statementTimeoutMs, lockTimeoutMs: limits.lockTimeoutMs, idleInTransactionTimeoutMs: limits.idleInTransactionTimeoutMs, maxWaitMs: limits.shortMaxWaitMs, timeoutMs: limits.shortTimeoutMs };
 }
 function studentBounds(limits: GenerationLimits): GenerationBounds {
-  return { statementTimeoutMs: limits.statementTimeoutMs, lockTimeoutMs: limits.lockTimeoutMs, maxWaitMs: limits.studentMaxWaitMs, timeoutMs: limits.studentTimeoutMs };
+  return { statementTimeoutMs: limits.statementTimeoutMs, lockTimeoutMs: limits.lockTimeoutMs, idleInTransactionTimeoutMs: limits.idleInTransactionTimeoutMs, maxWaitMs: limits.studentMaxWaitMs, timeoutMs: limits.studentTimeoutMs };
 }
 
 /** One short transaction with the statement and lock timeouts set, waiting at most `shortMaxWaitMs` for a connection. */
@@ -267,6 +286,7 @@ function bounded<T>(limits: GenerationLimits, fn: (tx: Tx) => Promise<T>): Promi
     async (tx) => {
       await tx.$executeRawUnsafe(`SET LOCAL statement_timeout = ${Math.trunc(limits.statementTimeoutMs)}`);
       await tx.$executeRawUnsafe(`SET LOCAL lock_timeout = ${Math.trunc(limits.lockTimeoutMs)}`);
+      await tx.$executeRawUnsafe(`SET LOCAL idle_in_transaction_session_timeout = ${Math.trunc(limits.idleInTransactionTimeoutMs)}`);
       return fn(tx);
     },
     { maxWait: limits.shortMaxWaitMs, timeout: limits.shortTimeoutMs },

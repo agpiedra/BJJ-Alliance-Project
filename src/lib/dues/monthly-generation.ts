@@ -69,6 +69,8 @@ export class FenceLostError extends Error {
 export interface GenerationBounds {
   statementTimeoutMs: number;
   lockTimeoutMs: number;
+  /** G2a: `idle_in_transaction_session_timeout` for this transaction; omitted, the session's own setting applies. */
+  idleInTransactionTimeoutMs?: number;
   maxWaitMs: number;
   timeoutMs: number;
 }
@@ -196,6 +198,9 @@ export async function generateMonthlyObligationForStudent(
           // SET LOCAL: these last only until this transaction ends. Postgres counts lock waiting inside statement_timeout.
           await tx.$executeRawUnsafe(`SET LOCAL statement_timeout = ${Math.trunc(bounds.statementTimeoutMs)}`);
           await tx.$executeRawUnsafe(`SET LOCAL lock_timeout = ${Math.trunc(bounds.lockTimeoutMs)}`);
+          if (bounds.idleInTransactionTimeoutMs !== undefined) {
+            await tx.$executeRawUnsafe(`SET LOCAL idle_in_transaction_session_timeout = ${Math.trunc(bounds.idleInTransactionTimeoutMs)}`);
+          }
         }
         await options.fence?.(tx);
         const outcome = await decide(tx);

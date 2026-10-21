@@ -192,6 +192,15 @@ const PENDING_CALLERS: PendingCaller[] = [
     reason:
       "Discovers claimable (organization, month) progress rows least recently visited first, claims each with a fenced lease, and walks its students by id, one transaction per student, committing the student's class count and the cursor move together (compare-and-set from the previous committed cursor). Closed by default: generationStart defaults to no start month and LedgerActivation to inactive, so production defaults refuse every segment; and the table is empty until stage 9 inserts an organization's first row. closurePolicy is a required input whose only value is 'none' — no production value exists until D3 is decided.",
   },
+  // G2a (docs/dues/G2-ROUTE-BUDGET-PLAN.md revision 2): the pure whole-route budget for the monthly-generation cron route.
+  // Its caller is the route itself, which is G2b and waits on D5 (schedule and host limits).
+  {
+    symbol: "planRouteBudget",
+    file: "src/lib/dues/monthly-generation-route-budget.ts",
+    dueBy: "G2b (the monthly-generation route), after D5",
+    reason:
+      "Pure calculation (no I/O, no clock) of the runner's deadline from the host's maximum duration F, a cold-start reserve C and a margin M, which are all parameters: nothing assumes a production value. It counts the JobRun create, finalize, heartbeat request and heartbeat-status write once each, around the runner's own reserves, and refuses (budgetInfeasible / leaseTooShort) rather than run with a budget that cannot hold. Feasible means the runner can admit one visit under worst-case bounds, not a throughput figure.",
+  },
   // Late-fee-assessment brief: the proactive runner that finally makes an overdue fee assessable before anyone tries to pay.
   // No production caller exists on purpose — not a route, not a server action, no scheduler entry (vercel.json's crons array is
   // untouched). tests/unit/dues-ledger-not-exposed.test.ts names this file, alongside monthly-generation.ts, as an authorized

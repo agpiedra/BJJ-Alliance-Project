@@ -1,4 +1,5 @@
 import { JOB_NAMES, type JobName } from "@/lib/jobs/job-names";
+import { safeErrorCode } from "@/lib/auth/password-reset-log";
 
 /**
  * Healthchecks.io's own convention: GET the plain URL for a successful run, GET
@@ -17,7 +18,9 @@ const HEALTHCHECK_ENV: Record<JobName, string> = {
  * on /api/health/jobs. */
 export type HeartbeatOutcome = "ok" | "failed" | "not_configured";
 
-const TIMEOUT_MS = 5_000;
+/** The heartbeat request is aborted on the client after this long (G2a: exported for the route budget). */
+export const HEARTBEAT_TIMEOUT_MS = 5_000;
+const TIMEOUT_MS = HEARTBEAT_TIMEOUT_MS;
 
 /**
  * Pings the given job's own configured Healthchecks.io URL — never the app's own database or
@@ -39,7 +42,8 @@ export async function pingHeartbeat(jobName: JobName, success: boolean, fetchImp
     const response = await fetchImpl(url, { method: "GET", signal: controller.signal });
     return response.ok ? "ok" : "failed";
   } catch (error) {
-    console.error("[pingHeartbeat] failed to reach Healthchecks.io", { jobName, success, error });
+    // Safe code only (G2a): a fetch error can carry the ping URL (which embeds the check's secret UUID) or provider text.
+    console.error("[pingHeartbeat] failed to reach Healthchecks.io", { jobName, success, error: safeErrorCode(error) });
     return "failed";
   } finally {
     clearTimeout(timeout);

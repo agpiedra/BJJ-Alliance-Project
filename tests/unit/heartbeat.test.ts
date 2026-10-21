@@ -81,6 +81,31 @@ describe("pingHeartbeat", () => {
     vi.unstubAllEnvs();
   });
 
+  it("G2a: a throwing fetch is logged with a safe code only: no secret from its name, code, message, stack, meta or cause in any console argument", async () => {
+    const SECRET = "hc-s3cr3t-Fabricated-4410";
+    vi.stubEnv("HEALTHCHECK_DIGEST_URL", `https://hc-ping.com/${SECRET}`);
+    const error = new Error(`message ${SECRET}`, { cause: { url: `https://hc-ping.com/${SECRET}` } });
+    error.name = `Name${SECRET}`;
+    error.stack = `stack ${SECRET}`;
+    Object.assign(error, { code: `code-${SECRET}`, meta: { target: SECRET } });
+    const throws = vi.fn<typeof fetch>(async () => {
+      throw error;
+    });
+    const logged: string[] = [];
+    const spies = (["log", "info", "warn", "error", "debug"] as const).map((level) =>
+      vi.spyOn(console, level).mockImplementation((...args: unknown[]) => void logged.push(args.map((a) => (typeof a === "string" ? a : JSON.stringify(a, Object.getOwnPropertyNames(a ?? {})))).join(" "))),
+    );
+    try {
+      expect(await pingHeartbeat("weekly-digest", true, throws)).toBe("failed");
+    } finally {
+      spies.forEach((spy) => spy.mockRestore());
+      vi.unstubAllEnvs();
+    }
+    expect(logged.length).toBeGreaterThan(0);
+    expect(logged.join("\n")).not.toContain(SECRET);
+    expect(logged.join("\n")).toContain("unrecognized_error");
+  });
+
   describe("positive control: an unknown job name never resolves an env var by accident", () => {
     it("is not_configured even if an unrelated env var happens to be set", async () => {
       vi.stubEnv("HEALTHCHECK_DIGEST_URL", digestUrl);
