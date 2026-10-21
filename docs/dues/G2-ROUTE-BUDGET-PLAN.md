@@ -362,7 +362,13 @@ database:
 - the `vercel.json` entry;
 - check 10;
 - `closurePolicy` set to its Reopen value;
-- the runbook.
+- the runbook;
+- **the route's HTTP contract** (a requirement recorded during the G2a review):
+  - **Status per branch:** an explicit status code and body for each branch, in particular whether an infeasible budget,
+    or a run with failures, returns 500 (by throwing through the wrapper) or keeps G2a's 200 with `ok: false`.
+  - **Cron consumer:** how the cron caller is expected to read the response.
+  - **Liveness signal:** the JobRun row and the heartbeat remain the liveness signal, and no HTTP status certifies billing
+    completeness.
 
 **Provider and hosted work** (a person, after D5):
 - the production `CRON_SECRET`, and a Healthchecks check with an alert-delivery test (E7);

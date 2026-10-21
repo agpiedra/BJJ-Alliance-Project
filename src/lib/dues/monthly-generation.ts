@@ -7,6 +7,7 @@ import { fromDbDate, inTenantScope, latestEffective, lockBranchShared, lockStude
 import type { LedgerDeps } from "@/lib/dues/ledger/activation";
 import { prisma } from "@/lib/prisma";
 import { safeErrorCode, type SafeErrorCode } from "@/lib/auth/password-reset-log";
+import { assertTransactionTimeouts } from "@/lib/db/transaction-timeouts";
 
 /**
  * Monthly-generation brief (§5, §8): the one function that connects `eligibleAndAssigned` (the pure reader) and
@@ -99,6 +100,9 @@ export async function generateMonthlyObligationForStudent(
   options: MonthlyGenerationRunnerOptions = {},
 ): Promise<MonthlyGenerationOutcome> {
   if (!isValidCoverageMonth(month)) return { category: "failure", reason: "invalid" };
+  // Bounds are validated as executed (no zero or truncated timeout may disable a bound). Invalid bounds are a programming
+  // error, refused before any transaction — the generation loop validates its own limits first, so it never reaches this.
+  if (options.bounds) assertTransactionTimeouts(options.bounds, "runner bounds");
   const organizationId = context.organizationId;
   const historyCap = options.historyCap ?? DEFAULT_HISTORY_CAP;
   const configurationCap = options.configurationCap ?? DEFAULT_CONFIGURATION_CAP;

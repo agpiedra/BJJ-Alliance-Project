@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireEnv } from "@/lib/env";
 import { safeErrorCode, type SafeErrorCode } from "@/lib/auth/password-reset-log";
+import { assertTransactionTimeouts } from "@/lib/db/transaction-timeouts";
 import { pingHeartbeat, type HeartbeatOutcome } from "@/lib/jobs/heartbeat";
 import type { JobName } from "@/lib/jobs/job-names";
 import { Prisma, type JobStatus } from "@/generated/prisma/client";
@@ -118,6 +119,9 @@ export async function runScheduledJob(
   fn: () => Promise<{ outcome: JobOutcome; body: Record<string, unknown> }>,
   options: ScheduledJobOptions = {},
 ): Promise<NextResponse> {
+  // Validated as executed, before anything else: an invalid configuration (a zero or truncated timeout would disable a bound)
+  // is a programming error and is refused before any JobRun write or heartbeat.
+  if (options.bookkeeping) assertTransactionTimeouts(options.bookkeeping, "bookkeeping", { requireIdle: true });
   const authHeader = request.headers.get("authorization");
   if (authHeader !== `Bearer ${requireEnv("CRON_SECRET")}`) {
     return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });

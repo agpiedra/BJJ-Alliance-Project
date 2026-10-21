@@ -20,7 +20,6 @@ export type HeartbeatOutcome = "ok" | "failed" | "not_configured";
 
 /** The heartbeat request is aborted on the client after this long (G2a: exported for the route budget). */
 export const HEARTBEAT_TIMEOUT_MS = 5_000;
-const TIMEOUT_MS = HEARTBEAT_TIMEOUT_MS;
 
 /**
  * Pings the given job's own configured Healthchecks.io URL — never the app's own database or
@@ -37,7 +36,7 @@ export async function pingHeartbeat(jobName: JobName, success: boolean, fetchImp
 
   const url = success ? baseUrl : `${baseUrl}/fail`;
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  const timeout = setTimeout(() => controller.abort(), HEARTBEAT_TIMEOUT_MS);
   try {
     const response = await fetchImpl(url, { method: "GET", signal: controller.signal });
     return response.ok ? "ok" : "failed";

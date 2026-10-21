@@ -9,6 +9,7 @@ import { compareYearMonth, type YearMonth } from "@/lib/dues/calendar";
 import { currentMonthIn } from "@/lib/dues/config-input";
 import { inactiveLedgerActivation, type LedgerDeps } from "@/lib/dues/ledger/activation";
 import type { Tx } from "@/lib/dues/ledger/common";
+import { isPositiveIntegerMs, transactionTimeoutsProblem } from "@/lib/db/transaction-timeouts";
 import {
   DEFAULT_CONFIGURATION_CAP,
   DEFAULT_HISTORY_CAP,
@@ -192,6 +193,25 @@ interface Claim {
 const NOW_UTC = Prisma.sql`(now() AT TIME ZONE 'UTC')`;
 
 /**
+ * G2a: every limit the runner executes with, validated as executed. Both transaction kinds go through the shared
+ * `transactionTimeoutsProblem` (finite positive integer milliseconds; lock <= statement <= transaction timeout; idle <=
+ * transaction timeout), so no zero or truncated value can disable a timeout. The deadline, the lease and every count must be
+ * finite positive integers too. `runMonthlyGeneration` and the route-budget helper both use this one check.
+ */
+export function generationLimitsProblem(limits: GenerationLimits): string | null {
+  const common = { statementTimeoutMs: limits.statementTimeoutMs, lockTimeoutMs: limits.lockTimeoutMs, idleInTransactionTimeoutMs: limits.idleInTransactionTimeoutMs };
+  const short = transactionTimeoutsProblem({ ...common, maxWaitMs: limits.shortMaxWaitMs, timeoutMs: limits.shortTimeoutMs }, "generation.short", { requireIdle: true });
+  if (short) return short;
+  const student = transactionTimeoutsProblem({ ...common, maxWaitMs: limits.studentMaxWaitMs, timeoutMs: limits.studentTimeoutMs }, "generation.student", { requireIdle: true });
+  if (student) return student;
+  const counts = ["deadlineMs", "leaseSeconds", "discoveryLimit", "pageSize", "studentsPerVisit", "rolloverRows", "historyCap", "configurationCap", "branchCap", "maxAttempts"] as const;
+  for (const name of counts) {
+    if (!isPositiveIntegerMs(limits[name])) return `generation.${name} must be a finite positive integer`;
+  }
+  return null;
+}
+
+/**
  * G2a: the elapsed-time margin `runMonthlyGeneration` needs before it admits its first discovery and visit — discovery plus one
  * whole visit's entry, at their worst cases. A route-budget helper uses it; nothing here changes.
  */
@@ -225,12 +245,8 @@ function budgetOf(limits: GenerationLimits) {
  */
 export async function runMonthlyGeneration(deps: MonthlyGenerationRunDeps): Promise<MonthlyGenerationRunReport> {
   const limits: GenerationLimits = { ...DEFAULT_GENERATION_LIMITS, ...deps.limits };
-  if (limits.statementTimeoutMs > limits.shortTimeoutMs || limits.statementTimeoutMs > limits.studentTimeoutMs || limits.lockTimeoutMs > limits.statementTimeoutMs) {
-    throw new RangeError("generation limits: lock_timeout <= statement_timeout <= each transaction timeout is required for the deadline bound");
-  }
-  if (!(limits.idleInTransactionTimeoutMs > 0) || limits.idleInTransactionTimeoutMs > limits.shortTimeoutMs || limits.idleInTransactionTimeoutMs > limits.studentTimeoutMs) {
-    throw new RangeError("generation limits: 0 < idle_in_transaction_session_timeout <= each transaction timeout is required");
-  }
+  const problem = generationLimitsProblem(limits);
+  if (problem) throw new RangeError(problem);
   const budget = budgetOf(limits);
   const started = performance.now();
   const elapsed = deps.elapsedMs ?? (() => performance.now() - started);

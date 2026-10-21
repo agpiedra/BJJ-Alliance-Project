@@ -81,6 +81,29 @@ describe("pingHeartbeat", () => {
     vi.unstubAllEnvs();
   });
 
+  it("G2a: execution aborts at exactly HEARTBEAT_TIMEOUT_MS, the constant the route budget reserves (no separate value)", async () => {
+    const { HEARTBEAT_TIMEOUT_MS } = await import("../../src/lib/jobs/heartbeat");
+    vi.stubEnv("HEALTHCHECK_DIGEST_URL", digestUrl);
+    vi.useFakeTimers();
+    let aborted = false;
+    const hangs = vi.fn((_url: string, options?: { signal?: AbortSignal }) => {
+      return new Promise<Response>((_resolve, reject) => {
+        options?.signal?.addEventListener("abort", () => {
+          aborted = true;
+          reject(new DOMException("aborted", "AbortError"));
+        });
+      });
+    });
+    const pending = pingHeartbeat("weekly-digest", true, hangs as unknown as typeof fetch);
+    await vi.advanceTimersByTimeAsync(HEARTBEAT_TIMEOUT_MS - 1);
+    expect(aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(aborted).toBe(true);
+    expect(await pending).toBe("failed");
+    vi.useRealTimers();
+    vi.unstubAllEnvs();
+  });
+
   it("G2a: a throwing fetch is logged with a safe code only: no secret from its name, code, message, stack, meta or cause in any console argument", async () => {
     const SECRET = "hc-s3cr3t-Fabricated-4410";
     vi.stubEnv("HEALTHCHECK_DIGEST_URL", `https://hc-ping.com/${SECRET}`);

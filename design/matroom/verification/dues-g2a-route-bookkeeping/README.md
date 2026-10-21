@@ -53,6 +53,54 @@ itself. The digest's known caller-owned raw messages remain, and are tracked sep
 
 **No full digest logging audit is claimed.**
 
+## Review correction (PR #153, round 1): validated as executed, and one heartbeat constant
+
+**Timeouts are validated exactly as they are executed:**
+- **The problem:** `SET LOCAL statement_timeout = 0` disables that timeout in PostgreSQL. Before this correction:
+  - the helper accepted a zero statement timeout;
+  - fractional values could truncate to 0 under `Math.trunc`.
+
+  Either way, the claimed bound would not hold.
+- **The fix:** one small shared check, `src/lib/db/transaction-timeouts.ts` (`transactionTimeoutsProblem` /
+  `assertTransactionTimeouts`). Every timeout must be a **finite positive integer number of milliseconds**, in the order
+  lock ≤ statement ≤ transaction timeout, with idle ≤ transaction timeout.
+- **Generation limits:** `generationLimitsProblem` applies that check to both transaction kinds, and requires the deadline,
+  the lease and every count to be finite positive integers.
+
+**The same checks guard every entry point, before any I/O:**
+
+| Entry point | Behavior on an invalid value |
+|---|---|
+| `planRouteBudget` | `invalidInput`; **never certified feasible** |
+| `runMonthlyGeneration` | `RangeError` |
+| The runner, when given bounds | `RangeError` |
+| Discovery (`listClaimableGenerationSegments`) | `RangeError` |
+| `runScheduledJob` with `options.bookkeeping` | `RangeError` before any `JobRun` write or ping |
+
+**Regression tests** (`tests/unit/monthly-generation-route-budget.test.ts`):
+- zero statement timeouts;
+- sub-millisecond values that would truncate to 0, including the idle timeout;
+- non-finite and NaN generation timeouts;
+- generation statement above the short-transaction timeout, and lock above statement;
+- a fractional lease; a non-finite deadline;
+- each bounded entry point rejecting zero and truncating values;
+- **the valid defaults unchanged** (same values, still certified with the same numbers).
+
+**One heartbeat constant:**
+- The helper's `heartbeatTimeoutMs` override is removed. Both the budget's reserve and `pingHeartbeat`'s abort use
+  `HEARTBEAT_TIMEOUT_MS`.
+- **Regressions:**
+  - the reserve equals that constant in `postMs`, `createFailedMs` and `finalizeUnconfirmedMs`;
+  - an attempted override is a type error, and has no effect at runtime;
+  - with fake timers, the ping is still pending 1 ms before `HEARTBEAT_TIMEOUT_MS` and aborted exactly at it.
+
+**Unchanged:**
+- heartbeat ordering, uncertain-write handling, financial behavior, G1 fencing and the digest's behavior;
+- the G2a convention for an infeasible budget, **HTTP 200 with `ok: false`**.
+
+**The monthly route's own HTTP contract,** including whether an infeasible budget becomes a 500, is recorded as a **G2b
+requirement** in the plan.
+
 ## Behavior in option mode (as tested)
 
 | Branch | Heartbeat requests, exactly and in order | Response | Runner/job |

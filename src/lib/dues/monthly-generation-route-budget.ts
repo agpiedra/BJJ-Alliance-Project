@@ -1,6 +1,7 @@
 import { HEARTBEAT_TIMEOUT_MS } from "@/lib/jobs/heartbeat";
 import type { BookkeepingBounds } from "@/lib/jobs/run-scheduled-job";
-import { admissionBudgetMs, type GenerationLimits } from "@/lib/dues/monthly-generation-progress";
+import { transactionTimeoutsProblem } from "@/lib/db/transaction-timeouts";
+import { admissionBudgetMs, generationLimitsProblem, type GenerationLimits } from "@/lib/dues/monthly-generation-progress";
 
 /**
  * G2a (docs/dues/G2-ROUTE-BUDGET-PLAN.md revision 2, §2): the whole-route budget of the monthly-generation cron route, as one
@@ -26,8 +27,8 @@ export interface RouteBudgetInput {
   marginMs: number;
   bookkeeping: BookkeepingBounds;
   generation: GenerationLimits;
-  /** Defaults to the heartbeat client's own abort. */
-  heartbeatTimeoutMs?: number;
+  // No heartbeat override: the reserve is HEARTBEAT_TIMEOUT_MS, the same constant pingHeartbeat aborts at, so the budget can
+  // never reserve less than execution actually waits.
 }
 
 export interface RouteReserves {
@@ -64,14 +65,15 @@ export type RouteBudget =
 
 export function planRouteBudget(input: RouteBudgetInput): RouteBudget {
   const { functionMaxMs: F, coldStartReserveMs: C, marginMs: M, bookkeeping: b, generation } = input;
-  const heartbeat = input.heartbeatTimeoutMs ?? HEARTBEAT_TIMEOUT_MS;
-  const values = { F, C, M, heartbeat, ...b };
-  for (const [name, value] of Object.entries(values)) {
-    if (!Number.isFinite(value) || value < 0) return { ok: false, reason: "invalidInput", detail: `${name} must be a finite non-negative number` };
+  const heartbeat = HEARTBEAT_TIMEOUT_MS;
+  if (!(Number.isFinite(F) && F > 0)) return { ok: false, reason: "invalidInput", detail: "functionMaxMs must be a finite positive number" };
+  for (const [name, value] of [["coldStartReserveMs", C], ["marginMs", M]] as const) {
+    if (!(Number.isFinite(value) && value >= 0)) return { ok: false, reason: "invalidInput", detail: `${name} must be a finite non-negative number` };
   }
-  if (b.lockTimeoutMs > b.statementTimeoutMs || b.statementTimeoutMs > b.timeoutMs || b.idleInTransactionTimeoutMs <= 0 || b.idleInTransactionTimeoutMs > b.timeoutMs) {
-    return { ok: false, reason: "invalidInput", detail: "bookkeeping: lock <= statement <= transaction timeout, and 0 < idle <= transaction timeout" };
-  }
+  // The same checks the execution entry points apply (runScheduledJob's bookkeeping, runMonthlyGeneration): never certify a
+  // configuration under which a timeout would be disabled or out of order.
+  const problem = transactionTimeoutsProblem(b, "bookkeeping", { requireIdle: true }) ?? generationLimitsProblem(generation);
+  if (problem) return { ok: false, reason: "invalidInput", detail: problem };
 
   const leaseMs = generation.leaseSeconds * 1000;
   if (!(leaseMs > F)) return { ok: false, reason: "leaseTooShort", leaseMs, functionMaxMs: F };
