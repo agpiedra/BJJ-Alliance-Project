@@ -51,6 +51,17 @@ describe("QueuedCheckInForm", () => {
     expect(select.value).toBe("cls-mon-b");
   });
 
+  it("a claimed class that is no longer offered (deleted, inactive or unknown) is never swapped for another: the class starts EMPTY and must be chosen", () => {
+    renderForm({ defaultClassId: "cls-deleted" });
+    const select = screen.getByLabelText("Class") as HTMLSelectElement;
+    expect(select.value).toBe("");
+    expect(select.required).toBe(true);
+    expect(select.checkValidity()).toBe(false); // the browser refuses to submit until a class is chosen
+    expect([...select.options].map((o) => o.textContent)).toEqual(["Choose the class", "18:00 · Fundamentals", "19:00 · Advanced"]);
+    fireEvent.change(select, { target: { value: "cls-mon-a" } });
+    expect(select.checkValidity()).toBe(true);
+  });
+
   it("an unreadable claim leaves the day EMPTY (a person must choose it) and offers no class until then", () => {
     renderForm({ defaultDate: "", defaultClassId: null });
     expect((screen.getByLabelText("Day of the class") as HTMLInputElement).value).toBe("");

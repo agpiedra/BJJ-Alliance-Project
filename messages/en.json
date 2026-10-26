@@ -2171,7 +2171,8 @@
       "noValidTime": "No valid time",
       "sentAs": "Sent as: {raw}",
       "noClassChosen": "None chosen",
-      "unknownClass": "A class that is not in this academy",
+      "unknownClass": "A class that no longer exists or is not in this academy. Choose the real class when recording.",
+      "chooseClass": "Choose the class",
       "reasons": {
         "TIMESTAMP_NOT_VERIFIED": "The tablet's time could not be trusted",
         "NO_CLASS_OPEN": "No class was open at that time",

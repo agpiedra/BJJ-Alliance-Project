@@ -2171,7 +2171,8 @@
       "noValidTime": "Sin hora válida",
       "sentAs": "Enviada como: {raw}",
       "noClassChosen": "Ninguna elegida",
-      "unknownClass": "Una clase que no está en esta academia",
+      "unknownClass": "Una clase que ya no existe o no es de esta academia. Elegí la clase real al registrar.",
+      "chooseClass": "Elegí la clase",
       "reasons": {
         "TIMESTAMP_NOT_VERIFIED": "No se pudo confiar en la hora de la tableta",
         "NO_CLASS_OPEN": "No había ninguna clase abierta a esa hora",

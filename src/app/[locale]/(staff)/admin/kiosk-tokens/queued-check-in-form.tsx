@@ -55,7 +55,10 @@ export function QueuedCheckInForm({
 
   const day = DateTime.fromFormat(date, "yyyy-MM-dd");
   const options = day.isValid ? classes.filter((option) => WEEKDAY_OF[option.dayOfWeek] === day.weekday) : [];
-  const preferred = options.find((option) => option.id === defaultClassId)?.id ?? options[0]?.id ?? "";
+  // A claimed class that is not offered at all (deleted, inactive or unknown) is never swapped for another class: the
+  // list starts EMPTY and the coach must choose. The claim itself stays exactly as the tablet sent it.
+  const claimUnavailable = defaultClassId !== null && !classes.some((option) => option.id === defaultClassId);
+  const preferred = claimUnavailable ? "" : (options.find((option) => option.id === defaultClassId)?.id ?? options[0]?.id ?? "");
 
   return (
     <div className="flex min-w-[15rem] flex-col gap-3">
@@ -73,6 +76,11 @@ export function QueuedCheckInForm({
         ) : (
           // Re-keyed by the day so the default follows the chosen weekday.
           <select key={`${date}-${preferred}`} id={classId} name="classSessionId" required defaultValue={preferred} className={FIELD_CLASS}>
+            {claimUnavailable && (
+              <option value="" disabled>
+                {t("chooseClass")}
+              </option>
+            )}
             {options.map((option) => (
               <option key={option.id} value={option.id}>
                 {option.startTime} · {option.name}

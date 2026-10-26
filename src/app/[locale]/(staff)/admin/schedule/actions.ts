@@ -8,9 +8,9 @@ import { resolveActionContext } from "@/lib/tenant/context";
 import { getScopedDb } from "@/lib/tenant/scoped-client";
 import { DayOfWeek, ClassType, Prisma } from "@/generated/prisma/client";
 import type { ActionState } from "@/lib/action-state";
-import { isUniqueConstraintError } from "@/lib/prisma-errors";
+import { isNotFoundError, isUniqueConstraintError } from "@/lib/prisma-errors";
 
-// "HH:mm", 24h â€” the exact wall-clock shape `getCheckInWindow`
+// "HH:mm", 24h — the exact wall-clock shape `getCheckInWindow`
 // (src/lib/scheduling/check-in-window.ts) already parses via
 // `startTime.split(":").map(Number)`. A browser <input type="time"> submits
 // exactly this shape with no seconds component.
@@ -24,7 +24,7 @@ const baseFields = {
   type: z.nativeEnum(ClassType),
   // A native checkbox's FormData entry is absent entirely when unchecked, so
   // this is deliberately a required <select> of "true"/"false" strings
-  // (never a checkbox) â€” an absent field would otherwise be indistinguishable
+  // (never a checkbox) — an absent field would otherwise be indistinguishable
   // from "not submitted at all" and fail `required`-less validation silently.
   countsTowardPromotion: z.enum(["true", "false"]).transform((v) => v === "true"),
 };
@@ -42,12 +42,12 @@ const updateClassSessionSchema = z.object({
 const classSessionIdSchema = z.object({ classSessionId: z.string().min(1) });
 
 /**
- * ADMIN-only (spec Â§5: class-schedule structure is academy policy, not a
- * DIRECTOR power â€” DIRECTOR's grants per spec Â§3's role table cover
+ * ADMIN-only (spec §5: class-schedule structure is academy policy, not a
+ * DIRECTOR power — DIRECTOR's grants per spec §3's role table cover
  * payments/promotions, not the schedule itself). Same global-academy-resource
  * shape as `admin/kiosk-tokens/actions.ts`'s `regenerateKioskToken`: this
  * manages a shared resource ADMIN can reach for either academy, not something
- * scoped to one DIRECTOR's own assignment â€” so there is no `isAcademyInTenantScope`
+ * scoped to one DIRECTOR's own assignment — so there is no `isAcademyInTenantScope`
  * check here, only a fresh `findUniqueOrThrow` re-validating the
  * client-submitted `academyId` names a real row before anything is written.
  *
@@ -72,7 +72,7 @@ export async function createClassSession(
 
   const data = parsed.data;
 
-  // Never trust a client-submitted academy id, even from ADMIN â€” this
+  // Never trust a client-submitted academy id, even from ADMIN — this
   // manages a shared resource ADMIN can reach for any academy IN THEIR OWN
   // ORGANIZATION, never another tenant's, just by knowing/guessing its id.
   // `getScopedDb` enforces that structurally: a cross-organization id throws
@@ -130,7 +130,7 @@ export async function createClassSession(
 
 /**
  * ADMIN-only, same reasoning as `createClassSession`. `academyId` is
- * deliberately NOT part of the editable payload â€” moving a session to a
+ * deliberately NOT part of the editable payload — moving a session to a
  * different academy isn't a feature this task builds, so the row's real,
  * freshly-read `academyId` (never a client-submitted one) is what both the
  * `AuditLog` row and the unique-constraint check below actually use.
@@ -151,7 +151,7 @@ export async function updateClassSession(
 
   const data = parsed.data;
 
-  // Never trust a client-submitted classSessionId, even from ADMIN â€” an
+  // Never trust a client-submitted classSessionId, even from ADMIN — an
   // ADMIN of one organization must not be able to edit another tenant's
   // schedule just by knowing/guessing an id. `getScopedDb` enforces that
   // structurally: a cross-organization id throws (caught below).
@@ -214,6 +214,10 @@ export async function updateClassSession(
     if (isUniqueConstraintError(error)) {
       return { error: "duplicateSlot" };
     }
+    // Deleted (`deleteClassSession`) between the read above and this write: nothing was changed.
+    if (isNotFoundError(error)) {
+      return { error: "notFound" };
+    }
     throw error;
   }
 
@@ -221,7 +225,7 @@ export async function updateClassSession(
 }
 
 /**
- * ADMIN-only. Flips `active` to false â€” never a `delete()` call, matching
+ * ADMIN-only. Flips `active` to false — never a `delete()` call, matching
  * every other "remove" action in this codebase (`archiveStudent`, etc.).
  * Existing `AttendanceRecord` rows keep their `classSessionId` foreign key
  * untouched, so a deactivated session's attendance history is unaffected.
@@ -240,7 +244,7 @@ export async function deactivateClassSession(
     return { error: "notFound" };
   }
 
-  // Never trust a client-submitted classSessionId, even from ADMIN â€” an
+  // Never trust a client-submitted classSessionId, even from ADMIN — an
   // ADMIN of one organization must not be able to deactivate another
   // tenant's schedule just by knowing/guessing an id. `getScopedDb` enforces
   // that structurally: a cross-organization id throws (caught below).
@@ -254,25 +258,31 @@ export async function deactivateClassSession(
     return { error: "notFound" };
   }
 
-  await prisma.$transaction(async (tx) => {
-    await tx.classSession.update({
-      where: { id: existing.id, organizationId: existing.organizationId },
-      data: { active: false },
-    });
+  try {
+    await prisma.$transaction(async (tx) => {
+      await tx.classSession.update({
+        where: { id: existing.id, organizationId: existing.organizationId },
+        data: { active: false },
+      });
 
-    await tx.auditLog.create({
-      data: {
-        actorId: context.actorUserId,
-        organizationId: context.organizationId,
-        academyId: existing.academyId,
-        action: "classSession.deactivate",
-        entityType: "ClassSession",
-        entityId: existing.id,
-        before: { active: existing.active },
-        after: { active: false },
-      },
+      await tx.auditLog.create({
+        data: {
+          actorId: context.actorUserId,
+          organizationId: context.organizationId,
+          academyId: existing.academyId,
+          action: "classSession.deactivate",
+          entityType: "ClassSession",
+          entityId: existing.id,
+          before: { active: existing.active },
+          after: { active: false },
+        },
+      });
     });
-  });
+  } catch (error) {
+    // Deleted (`deleteClassSession`) between the read above and this write: nothing was changed.
+    if (isNotFoundError(error)) return { error: "notFound" };
+    throw error;
+  }
 
   return { ok: true };
 }

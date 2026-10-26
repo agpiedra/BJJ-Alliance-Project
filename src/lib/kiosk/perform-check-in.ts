@@ -89,11 +89,11 @@ export type CheckInResult =
       thresholdReached: boolean;
       progressOutcome: ProgressOutcome;
       isVisitor: boolean;
-      /** The checking-in student's home academy name â€” populated unconditionally
+      /** The checking-in student's home academy name — populated unconditionally
        * (not just for visitors), so the kiosk UI can render a visitor badge
        * ("Visitante de [homeAcademyName]") without a second round-trip. */
       homeAcademyName: string;
-      /** The row just written â€” the kiosk's "Â¿No es esta clase?" link reassigns
+      /** The row just written — the kiosk's "¿No es esta clase?" link reassigns
        * exactly this record, so it must come back with the confirmation. */
       attendanceRecordId: string;
       /** null for an UNMATCHED save (no class to name on the confirmation). */
@@ -131,7 +131,7 @@ interface CommonInput {
    * from its verified device token; the portal's self-check-in action
    * passes its own already-resolved `TenantContext` (a student acting on
    * their own row). Kept separate from `academyId` rather than derived from
-   * it â€” a `TenantContext` has no single concrete academy id of its own
+   * it — a `TenantContext` has no single concrete academy id of its own
    * (`academyIds` is a list-or-"ALL"), so the two can't collapse into one
    * field. Both real callers construct `academyId` and `context` from the
    * SAME already-verified source (the kiosk's own `academy` row; the
@@ -176,7 +176,7 @@ export type PerformCheckInInput =
 export async function performCheckIn(input: PerformCheckInInput): Promise<CheckInResult> {
   const now = input.now ?? new Date();
   // Presence check, not truthiness: a client-submitted `code: ""` is a valid
-  // (if useless) member of the `code` variant of the discriminated union â€”
+  // (if useless) member of the `code` variant of the discriminated union —
   // `input.code ? ... : ...` would misroute it into the `studentId` branch,
   // where `input.studentId` is `undefined`, and
   // `findUnique({ where: { id: undefined } })` throws instead of returning
@@ -237,7 +237,7 @@ export async function performCheckIn(input: PerformCheckInInput): Promise<CheckI
       });
 
   // Organization scope is enforced structurally by `getScopedDb` above for
-  // BOTH paths â€” including the studentId path (picker-answer / offline
+  // BOTH paths — including the studentId path (picker-answer / offline
   // replay), which used to have no organization filter of its own and
   // relied on a manual compare here instead.
   if (!student || student.status !== StudentStatus.ACTIVE) {
@@ -436,7 +436,7 @@ export async function performCheckIn(input: PerformCheckInInput): Promise<CheckI
       currentStripes: student.currentStripes,
     },
     summary: summaryAfter,
-    // "This specific check-in was the one that crossed the threshold" â€” works
+    // "This specific check-in was the one that crossed the threshold" — works
     // for both the stripe case and the belt-exam case, since getAtBeltSummary
     // folds exam-threshold progress into remainingAttendance once a student is
     // at max stripes. It means ELIGIBLE FOR REVIEW: a check-in never awards

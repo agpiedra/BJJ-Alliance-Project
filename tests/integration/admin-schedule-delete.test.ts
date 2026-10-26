@@ -9,7 +9,7 @@ import type { Prisma } from "../../src/generated/prisma/client";
 let currentSession: { user: { id: string; role: string } | null; activeOrganizationId?: string } | null = null;
 vi.mock("@/auth", () => ({ auth: () => Promise.resolve(currentSession) }));
 
-const { createClassSession, deactivateClassSession, deleteClassSession } = await import(
+const { createClassSession, updateClassSession, deactivateClassSession, deleteClassSession } = await import(
   "../../src/app/[locale]/(staff)/admin/schedule/actions"
 );
 const { listDeletableClassSessionIds } = await import("../../src/app/[locale]/(staff)/admin/schedule/queries");
@@ -173,6 +173,28 @@ describe("deleteClassSession — permanent removal of an unused, inactive class 
     expect(recreated.ok).toBe(true);
   });
 
+  it("a successful delete leaves every attendance row and the promotion days of the academy's other classes unchanged", async () => {
+    const { academy, sessions } = await makeClassAcademy([
+      { dayOfWeek: "MONDAY", startTime: "18:00", name: `Kept ${Date.now()}` },
+      { dayOfWeek: "TUESDAY", startTime: "18:00", name: `Unused ${Date.now()}`, active: false },
+    ]);
+    fixtureAcademyIds.push(academy.id);
+    const [kept, unused] = sessions;
+    const { student } = await makeClassStudent(academy.id, orgId);
+    await prisma.attendanceRecord.create({ data: attendanceData(kept, student.id, "2026-03-09") });
+    await prisma.attendanceRecord.create({ data: attendanceData(kept, student.id, "2026-03-16", { voidedAt: new Date(), voidedById: admin.id, voidReason: "t" }) });
+    const from = new Date("2020-01-01");
+    const rowsBefore = await prisma.attendanceRecord.findMany({ where: { studentId: student.id }, orderBy: { id: "asc" } });
+    const daysBefore = await listContributingDays(prisma, { studentId: student.id, organizationId: orgId, from });
+    expect(daysBefore).toHaveLength(1);
+
+    expect(await deleteClassSession(orgId, {}, formData({ classSessionId: unused.id }))).toEqual({ ok: true });
+
+    expect(await prisma.attendanceRecord.findMany({ where: { studentId: student.id }, orderBy: { id: "asc" } })).toEqual(rowsBefore);
+    expect(await listContributingDays(prisma, { studentId: student.id, organizationId: orgId, from })).toEqual(daysBefore);
+    expect(await prisma.classSession.findUnique({ where: { id: kept.id } })).not.toBeNull();
+  });
+
   it("refuses an ACTIVE class (mustDeactivateFirst) and keeps it", async () => {
     const { cls } = await makeClass(true);
     expect(await deleteClassSession(orgId, {}, formData({ classSessionId: cls.id }))).toEqual({ error: "mustDeactivateFirst" });
@@ -324,6 +346,44 @@ describe("deleteClassSession — permanent removal of an unused, inactive class 
 
       expect(await deleting).toEqual({ error: "inUse" });
       expect(await prisma.classSession.findUnique({ where: { id: cls.id } })).not.toBeNull();
+    });
+
+    it("two concurrent deletes of one class: the second waits, then finds no row (notFound); exactly one delete audit", async () => {
+      const { cls } = await makeClass(false);
+      const [a, b] = await Promise.all([
+        deleteClassSession(orgId, {}, formData({ classSessionId: cls.id })),
+        deleteClassSession(orgId, {}, formData({ classSessionId: cls.id })),
+      ]);
+      expect([a, b]).toEqual(expect.arrayContaining([{ ok: true }, { error: "notFound" }]));
+      expect(await prisma.classSession.findUnique({ where: { id: cls.id } })).toBeNull();
+      expect(await prisma.auditLog.count({ where: { entityId: cls.id, action: "classSession.delete" } })).toBe(1);
+    });
+
+    it("an edit or a deactivation that loses the race to a delete returns notFound (no 500) and writes no audit", async () => {
+      for (const attempt of ["update", "deactivate"] as const) {
+        const { cls } = await makeClass(false);
+        // A delete in progress holds the row FOR UPDATE and then removes it.
+        const deleting = holdOpen(
+          async (tx) => {
+            await tx.$queryRaw`SELECT "id" FROM "ClassSession" WHERE "id" = ${cls.id} FOR UPDATE`;
+          },
+          async (tx) => {
+            await tx.classSession.delete({ where: { id: cls.id } });
+          },
+        );
+        await deleting.ready;
+        const writing =
+          attempt === "update"
+            ? updateClassSession(orgId, {}, formData({
+                classSessionId: cls.id, dayOfWeek: "MONDAY", startTime: "19:00", durationMinutes: "60", name: cls.name, type: "GI", countsTowardPromotion: "true",
+              }))
+            : deactivateClassSession(orgId, {}, formData({ classSessionId: cls.id }));
+        await waitUntilBlocked(`UPDATE "public"."ClassSession"`);
+        deleting.release();
+        await deleting.done;
+        expect(await writing).toEqual({ error: "notFound" });
+        expect(await prisma.auditLog.count({ where: { entityId: cls.id, action: { in: ["classSession.update", "classSession.deactivate"] } } })).toBe(0);
+      }
     });
 
     it("the REAL performCheckIn enqueue waits on a delete holding the class row, then keeps its claim verbatim once the class is gone", async () => {
