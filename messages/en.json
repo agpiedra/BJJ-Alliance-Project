@@ -2211,6 +2211,11 @@
     "academySelector": "Academy",
     "selectorSubmit": "View schedule",
     "empty": "This academy has no class sessions yet.",
+    "emptyActive": "This academy has no active sessions. Show inactive ones to see them.",
+    "inactiveToggle": {
+      "show": "Show inactive ({count})",
+      "hide": "Hide inactive"
+    },
     "calendar": {
       "viewLabel": "View",
       "week": "Week",
@@ -2268,6 +2273,13 @@
       "confirm": "Deactivate this session? It will no longer be available for check-in, but its history is kept.",
       "success": "Session deactivated.",
       "notFound": "Could not deactivate this session."
+    },
+    "delete": {
+      "button": "Delete",
+      "confirm": "Delete this session permanently? It has no attendance and no pending check-ins. This cannot be undone.",
+      "notFound": "Could not delete this session.",
+      "mustDeactivateFirst": "Deactivate the session before deleting it.",
+      "inUse": "This session already has attendance or pending check-ins, so it is kept. It can stay inactive."
     }
   },
   "error": {

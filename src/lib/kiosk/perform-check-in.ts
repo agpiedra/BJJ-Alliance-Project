@@ -89,11 +89,11 @@ export type CheckInResult =
       thresholdReached: boolean;
       progressOutcome: ProgressOutcome;
       isVisitor: boolean;
-      /** The checking-in student's home academy name — populated unconditionally
+      /** The checking-in student's home academy name â€” populated unconditionally
        * (not just for visitors), so the kiosk UI can render a visitor badge
        * ("Visitante de [homeAcademyName]") without a second round-trip. */
       homeAcademyName: string;
-      /** The row just written — the kiosk's "¿No es esta clase?" link reassigns
+      /** The row just written â€” the kiosk's "Â¿No es esta clase?" link reassigns
        * exactly this record, so it must come back with the confirmation. */
       attendanceRecordId: string;
       /** null for an UNMATCHED save (no class to name on the confirmation). */
@@ -131,7 +131,7 @@ interface CommonInput {
    * from its verified device token; the portal's self-check-in action
    * passes its own already-resolved `TenantContext` (a student acting on
    * their own row). Kept separate from `academyId` rather than derived from
-   * it — a `TenantContext` has no single concrete academy id of its own
+   * it â€” a `TenantContext` has no single concrete academy id of its own
    * (`academyIds` is a list-or-"ALL"), so the two can't collapse into one
    * field. Both real callers construct `academyId` and `context` from the
    * SAME already-verified source (the kiosk's own `academy` row; the
@@ -176,7 +176,7 @@ export type PerformCheckInInput =
 export async function performCheckIn(input: PerformCheckInInput): Promise<CheckInResult> {
   const now = input.now ?? new Date();
   // Presence check, not truthiness: a client-submitted `code: ""` is a valid
-  // (if useless) member of the `code` variant of the discriminated union —
+  // (if useless) member of the `code` variant of the discriminated union â€”
   // `input.code ? ... : ...` would misroute it into the `studentId` branch,
   // where `input.studentId` is `undefined`, and
   // `findUnique({ where: { id: undefined } })` throws instead of returning
@@ -237,7 +237,7 @@ export async function performCheckIn(input: PerformCheckInInput): Promise<CheckI
       });
 
   // Organization scope is enforced structurally by `getScopedDb` above for
-  // BOTH paths — including the studentId path (picker-answer / offline
+  // BOTH paths â€” including the studentId path (picker-answer / offline
   // replay), which used to have no organization filter of its own and
   // relied on a manual compare here instead.
   if (!student || student.status !== StudentStatus.ACTIVE) {
@@ -306,21 +306,34 @@ export async function performCheckIn(input: PerformCheckInInput): Promise<CheckI
           : open.length === 0
             ? QueuedCheckInReason.NO_CLASS_OPEN
             : QueuedCheckInReason.SEVERAL_CLASSES_OPEN;
+      const claimedClassSessionId = input.pickedClassSessionId ?? null;
       try {
-        const kept = await db.queuedCheckIn.create({
-          data: {
-            organizationId: input.context.organizationId,
-            academyId: input.academyId,
-            studentId: student.id,
-            eventKey: replay.event.key,
-            claimedAtRaw: replay.event.claimedAtRaw,
-            claimedAt: replay.event.claimedAt,
-            claimedAtVerified: replay.timestampVerified,
-            claimedClassSessionId: input.pickedClassSessionId ?? null,
-            reason,
-            receivedAt: new Date(),
-          },
-          select: { id: true },
+        // The claim has no foreign key, so it takes the claimed class row FOR SHARE in the same transaction as the write:
+        // `deleteClassSession` locks that row FOR UPDATE before counting pending claims, so a claim written concurrently
+        // is either counted there (the delete is refused) or written after the row is gone (an unknown class, as for any
+        // late replay). No row to lock (unknown or other-organization id) changes nothing: the claim is kept verbatim.
+        const kept = await prisma.$transaction(async (tx) => {
+          if (claimedClassSessionId !== null) {
+            await tx.$queryRaw`
+              SELECT 1 FROM "ClassSession"
+              WHERE "id" = ${claimedClassSessionId} AND "organizationId" = ${input.context.organizationId}
+              FOR SHARE`;
+          }
+          return tx.queuedCheckIn.create({
+            data: {
+              organizationId: input.context.organizationId,
+              academyId: input.academyId,
+              studentId: student.id,
+              eventKey: replay.event.key,
+              claimedAtRaw: replay.event.claimedAtRaw,
+              claimedAt: replay.event.claimedAt,
+              claimedAtVerified: replay.timestampVerified,
+              claimedClassSessionId,
+              reason,
+              receivedAt: new Date(),
+            },
+            select: { id: true },
+          });
         });
         return { ok: false, error: "queued_for_review", reviewId: kept.id, duplicate: false };
       } catch (error) {
@@ -423,7 +436,7 @@ export async function performCheckIn(input: PerformCheckInInput): Promise<CheckI
       currentStripes: student.currentStripes,
     },
     summary: summaryAfter,
-    // "This specific check-in was the one that crossed the threshold" — works
+    // "This specific check-in was the one that crossed the threshold" â€” works
     // for both the stripe case and the belt-exam case, since getAtBeltSummary
     // folds exam-threshold progress into remainingAttendance once a student is
     // at max stripes. It means ELIGIBLE FOR REVIEW: a check-in never awards

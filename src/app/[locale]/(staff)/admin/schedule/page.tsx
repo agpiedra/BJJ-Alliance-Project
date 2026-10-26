@@ -19,10 +19,11 @@ import {
 } from "@/components/ui/data-table";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, SheetTrigger } from "@/components/ui/sheet";
 import type { WeekCalendarDay, WeekCalendarLegendItem } from "@/components/ui/week-calendar";
-import { listClassSessions } from "./queries";
+import { listClassSessions, listDeletableClassSessionIds } from "./queries";
 import { CreateClassSessionForm } from "./create-class-session-form";
 import { EditClassSessionForm } from "./edit-class-session-form";
 import { DeactivateClassSessionButton } from "./deactivate-class-session-button";
+import { DeleteClassSessionButton } from "./delete-class-session-button";
 import { ScheduleCalendarView } from "./schedule-calendar-view";
 import {
   SUNDAY_FIRST_DAYS,
@@ -46,6 +47,8 @@ type ScheduleSearchParams = {
   academyId?: string;
   view?: string;
   date?: string;
+  /** "1" shows inactive classes (dimmed); anything else hides them. */
+  inactive?: string;
 };
 
 function parseView(value: string | undefined): ScheduleView {
@@ -89,8 +92,16 @@ export default async function AdminSchedulePage({
       : academies[0]?.id;
   const selectedAcademy = academies.find((academy) => academy.id === selectedAcademyId);
 
-  const sessions = selectedAcademyId
+  const allSessions = selectedAcademyId
     ? await listClassSessions(context.organizationId, selectedAcademyId)
+    : [];
+  // Inactive classes are hidden unless asked for. Everything below - the calendar's "off" days included - works from
+  // the classes actually shown.
+  const showInactive = params.inactive === "1";
+  const sessions = showInactive ? allSessions : allSessions.filter((session) => session.active);
+  const hiddenCount = allSessions.length - sessions.length;
+  const deletableIds = showInactive
+    ? [...(await listDeletableClassSessionIds(context.organizationId, sessions.filter((s) => !s.active).map((s) => s.id)))]
     : [];
 
   const t = await getTranslations("adminSchedule");
@@ -105,11 +116,12 @@ export default async function AdminSchedulePage({
   const parsedAnchor = params.date ? DateTime.fromISO(params.date, { zone: ZONE }) : null;
   const anchor = parsedAnchor && parsedAnchor.isValid ? parsedAnchor.startOf("day") : now.startOf("day");
 
-  function buildHref(nextView: ScheduleView, date: DateTime): string {
+  function buildHref(nextView: ScheduleView, date: DateTime, inactive = showInactive): string {
     const qs = new URLSearchParams();
     if (selectedAcademyId) qs.set("academyId", selectedAcademyId);
     qs.set("view", nextView);
     qs.set("date", date.toISODate() ?? "");
+    if (inactive) qs.set("inactive", "1");
     return `?${qs.toString()}`;
   }
 
@@ -164,6 +176,15 @@ export default async function AdminSchedulePage({
               ))}
             </div>
 
+            <Button
+              variant="outline"
+              size="sm"
+              nativeButton={false}
+              render={<a href={buildHref(view, anchor, !showInactive)} />}
+            >
+              {showInactive ? t("inactiveToggle.hide") : t("inactiveToggle.show", { count: hiddenCount })}
+            </Button>
+
             {selectedAcademyId && (
               <Sheet>
                 <SheetTrigger render={<Button type="button" variant="primary" size="sm" />}>
@@ -194,6 +215,7 @@ export default async function AdminSchedulePage({
         <form method="get" className="flex flex-wrap items-end gap-2">
           <input type="hidden" name="view" value={view} />
           <input type="hidden" name="date" value={anchor.toISODate() ?? ""} />
+          {showInactive && <input type="hidden" name="inactive" value="1" />}
           <label htmlFor="schedule-academy" className="sr-only">
             {t("academySelector")}
           </label>
@@ -255,6 +277,7 @@ export default async function AdminSchedulePage({
               locale={locale}
               legend={legend}
               sundayNote={tCal("sundayNote")}
+              deletableIds={deletableIds}
             />
           ) : (
             <DayView
@@ -264,6 +287,7 @@ export default async function AdminSchedulePage({
               now={now}
               locale={locale}
               legend={legend}
+              deletableIds={deletableIds}
             />
           )}
         </Card>
@@ -273,7 +297,7 @@ export default async function AdminSchedulePage({
         <Card size="sm">
           <CardContent className="pt-4">
             {sessions.length === 0 ? (
-              <EmptyState message={t("empty")} />
+              <EmptyState message={hiddenCount > 0 ? t("emptyActive") : t("empty")} />
             ) : (
               <DataTable>
                 <DataTableHead>
@@ -292,7 +316,9 @@ export default async function AdminSchedulePage({
                 </DataTableHead>
                 <DataTableBody>
                   {sessions.map((session) => (
-                    <DataTableRow key={session.id} className={session.active ? undefined : "opacity-60"}>
+                    // An inactive row's DATA is dimmed; its actions cell is not, so the Delete control and its error
+                    // keep full contrast.
+                    <DataTableRow key={session.id} className={session.active ? undefined : "[&>td:not(:last-child)]:opacity-60"}>
                       <DataTableCell>{tDay(session.dayOfWeek)}</DataTableCell>
                       <DataTableCell className="font-mono tabular-nums">{session.startTime}</DataTableCell>
                       <DataTableCell className="tabular-nums">{session.durationMinutes}</DataTableCell>
@@ -309,6 +335,12 @@ export default async function AdminSchedulePage({
                           <EditClassSessionForm organizationId={context.organizationId} session={session} />
                           {session.active && (
                             <DeactivateClassSessionButton
+                              organizationId={context.organizationId}
+                              classSessionId={session.id}
+                            />
+                          )}
+                          {!session.active && deletableIds.includes(session.id) && (
+                            <DeleteClassSessionButton
                               organizationId={context.organizationId}
                               classSessionId={session.id}
                             />
@@ -337,6 +369,7 @@ function WeekView({
   locale,
   legend,
   sundayNote,
+  deletableIds,
 }: {
   organizationId: string;
   sessions: SessionRow[];
@@ -345,6 +378,7 @@ function WeekView({
   locale: string;
   legend: WeekCalendarLegendItem[];
   sundayNote: string;
+  deletableIds: string[];
 }) {
   const weekStart = startOfSundayWeek(anchor);
   const weekDates = Array.from({ length: 7 }, (_, i) => weekStart.plus({ days: i }));
@@ -377,6 +411,7 @@ function WeekView({
       sessions={sessions}
       legend={legend}
       legendNote={sundayHasClasses ? undefined : sundayNote}
+      deletableIds={deletableIds}
     />
   );
 }
@@ -388,6 +423,7 @@ function DayView({
   now,
   locale,
   legend,
+  deletableIds,
 }: {
   organizationId: string;
   sessions: SessionRow[];
@@ -395,6 +431,7 @@ function DayView({
   now: DateTime;
   locale: string;
   legend: WeekCalendarLegendItem[];
+  deletableIds: string[];
 }) {
   const dayOfWeek = DAY_OF_WEEK_BY_LUXON_WEEKDAY[anchor.weekday];
   const daySessions = sessions.filter((session) => session.dayOfWeek === dayOfWeek);
@@ -406,7 +443,7 @@ function DayView({
       isToday: anchor.hasSame(now, "day"),
       // Same data-derived "off" treatment as WeekView, not hardcoded to
       // SUNDAY — checked against the day's own sessions (already computed
-      // just above), active or inactive either way.
+      // just above) - the classes shown, so inactive ones only when the page shows them.
       isOff: daySessions.length === 0,
     },
   ];
@@ -417,6 +454,7 @@ function DayView({
       days={days}
       sessions={daySessions}
       legend={legend}
+      deletableIds={deletableIds}
     />
   );
 }

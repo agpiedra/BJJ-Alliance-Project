@@ -40,10 +40,10 @@ const DAY_ORDER: Record<DayOfWeek, number> = {
  * splitting `students/actions.ts` (plain) from
  * `students/create-student-action.ts` ("use server").
  *
- * Returns every session for the academy, active and inactive alike — the
- * admin table intentionally shows both (visually distinguished), so
- * deactivated sessions stay reviewable/reactivatable-by-edit rather than
- * disappearing.
+ * Returns every session for the academy, active and inactive alike. The page
+ * hides inactive ones unless `?inactive=1` asks for them (shown dimmed), so a
+ * deactivated session stays reviewable rather than disappearing. Editing does
+ * not change `active`: there is no reactivation today.
  */
 export async function listClassSessions(organizationId: string, academyId: string) {
   const sessions = await prisma.classSession.findMany({ where: { organizationId, academyId } });
@@ -53,4 +53,25 @@ export async function listClassSessions(organizationId: string, academyId: strin
     if (dayDiff !== 0) return dayDiff;
     return a.startTime.localeCompare(b.startTime);
   });
+}
+
+/**
+ * Which of the given INACTIVE classes `deleteClassSession` would accept right now: no attendance row at all (voided
+ * included) and no PENDING queued claim. Only decides whether the Delete control is shown - the action re-checks all of
+ * it under a row lock, so a stale page can never delete a class that is in use.
+ */
+export async function listDeletableClassSessionIds(organizationId: string, inactiveIds: string[]): Promise<Set<string>> {
+  if (inactiveIds.length === 0) return new Set();
+  const [attended, claimed] = await Promise.all([
+    prisma.attendanceRecord.groupBy({
+      by: ["classSessionId"],
+      where: { organizationId, classSessionId: { in: inactiveIds } },
+    }),
+    prisma.queuedCheckIn.groupBy({
+      by: ["claimedClassSessionId"],
+      where: { organizationId, status: "PENDING", claimedClassSessionId: { in: inactiveIds } },
+    }),
+  ]);
+  const inUse = new Set([...attended.map((r) => r.classSessionId), ...claimed.map((r) => r.claimedClassSessionId)]);
+  return new Set(inactiveIds.filter((id) => !inUse.has(id)));
 }
