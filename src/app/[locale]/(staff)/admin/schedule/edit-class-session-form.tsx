@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useId } from "react";
+import { startTransition, useActionState, useId } from "react";
 import { useTranslations } from "next-intl";
 import { cn } from "cn";
 import { Button } from "@/components/ui/button";
@@ -55,7 +55,17 @@ export function EditClassSessionForm({
     <>
       {state.ok && <p className={cn(renderAsDetails ? "mt-3" : "mt-0", "text-sm text-ok")}>{t("success")}</p>}
 
-      <form action={formAction} className="mt-3 flex w-full max-w-sm flex-col gap-3">
+      {/* Submitted through a transition, not the `action` prop: React resets a form after every `action` submission,
+          which would throw away the edits of a refused save (e.g. duplicateSlot). After a success the fields already
+          hold the saved values. */}
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          const formData = new FormData(event.currentTarget);
+          startTransition(() => formAction(formData));
+        }}
+        className="mt-3 flex w-full max-w-sm flex-col gap-3"
+      >
         <input type="hidden" name="classSessionId" value={session.id} />
 
         <label htmlFor={`${idPrefix}-day`} className="flex flex-col gap-1 text-sm">
@@ -133,8 +143,8 @@ export function EditClassSessionForm({
           </select>
         </label>
         {state.error && <p className="text-sm text-bad">{t(state.error)}</p>}
-        <Button type="submit" variant="primary" size="sm" disabled={isPending}>
-          {t("submit")}
+        <Button type="submit" variant="primary" size="sm" disabled={isPending} aria-busy={isPending}>
+          {isPending ? t("pending") : t("submit")}
         </Button>
       </form>
     </>

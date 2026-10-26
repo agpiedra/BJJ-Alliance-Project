@@ -2256,6 +2256,7 @@
       "yes": "Yes",
       "no": "No",
       "submit": "Create session",
+      "pending": "Creating…",
       "success": "Session created.",
       "invalid": "Please review the form.",
       "duplicateSlot": "A session already exists at this day, time, and name for this academy.",
@@ -2264,6 +2265,7 @@
     "edit": {
       "toggle": "Edit",
       "submit": "Save changes",
+      "pending": "Saving…",
       "success": "Changes saved.",
       "invalid": "Please review the form.",
       "duplicateSlot": "A session already exists at this day, time, and name for this academy.",
@@ -2271,12 +2273,14 @@
     },
     "deactivate": {
       "button": "Deactivate",
+      "pending": "Deactivating…",
       "confirm": "Deactivate this session? It will no longer be available for check-in, but its history is kept.",
       "success": "Session deactivated.",
       "notFound": "Could not deactivate this session."
     },
     "delete": {
       "button": "Delete",
+      "pending": "Deleting…",
       "confirm": "Delete this session permanently? It has no attendance and no pending check-ins. This cannot be undone.",
       "notFound": "Could not delete this session.",
       "mustDeactivateFirst": "Deactivate the session before deleting it.",

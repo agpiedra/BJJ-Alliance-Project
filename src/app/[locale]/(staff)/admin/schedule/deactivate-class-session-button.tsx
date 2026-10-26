@@ -37,8 +37,8 @@ export function DeactivateClassSessionButton({
       <input type="hidden" name="classSessionId" value={classSessionId} />
       {state.ok && <p className="text-sm text-ok">{t("success")}</p>}
       {state.error && <p className="text-sm text-bad">{t(state.error)}</p>}
-      <Button type="submit" variant="destructive" size="sm" disabled={isPending}>
-        {t("button")}
+      <Button type="submit" variant="destructive" size="sm" disabled={isPending} aria-busy={isPending}>
+        {isPending ? t("pending") : t("button")}
       </Button>
     </form>
   );

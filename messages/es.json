@@ -2256,6 +2256,7 @@
       "yes": "Sí",
       "no": "No",
       "submit": "Crear sesión",
+      "pending": "Creando…",
       "success": "Sesión creada.",
       "invalid": "Por favor revisa el formulario.",
       "duplicateSlot": "Ya existe una sesión con este día, hora y nombre en esta academia.",
@@ -2264,6 +2265,7 @@
     "edit": {
       "toggle": "Editar",
       "submit": "Guardar cambios",
+      "pending": "Guardando…",
       "success": "Cambios guardados.",
       "invalid": "Por favor revisa el formulario.",
       "duplicateSlot": "Ya existe una sesión con este día, hora y nombre en esta academia.",
@@ -2271,12 +2273,14 @@
     },
     "deactivate": {
       "button": "Desactivar",
+      "pending": "Desactivando…",
       "confirm": "¿Desactivar esta sesión? Ya no estará disponible para marcar asistencia, pero su historial se conserva.",
       "success": "Sesión desactivada.",
       "notFound": "No se pudo desactivar esta sesión."
     },
     "delete": {
       "button": "Eliminar",
+      "pending": "Eliminando…",
       "confirm": "¿Eliminar esta sesión definitivamente? No tiene asistencias ni marcajes pendientes. Esta acción no se puede deshacer.",
       "notFound": "No se pudo eliminar esta sesión.",
       "mustDeactivateFirst": "Desactivá la sesión antes de eliminarla.",
