@@ -306,21 +306,34 @@ export async function performCheckIn(input: PerformCheckInInput): Promise<CheckI
           : open.length === 0
             ? QueuedCheckInReason.NO_CLASS_OPEN
             : QueuedCheckInReason.SEVERAL_CLASSES_OPEN;
+      const claimedClassSessionId = input.pickedClassSessionId ?? null;
       try {
-        const kept = await db.queuedCheckIn.create({
-          data: {
-            organizationId: input.context.organizationId,
-            academyId: input.academyId,
-            studentId: student.id,
-            eventKey: replay.event.key,
-            claimedAtRaw: replay.event.claimedAtRaw,
-            claimedAt: replay.event.claimedAt,
-            claimedAtVerified: replay.timestampVerified,
-            claimedClassSessionId: input.pickedClassSessionId ?? null,
-            reason,
-            receivedAt: new Date(),
-          },
-          select: { id: true },
+        // The claim has no foreign key, so it takes the claimed class row FOR SHARE in the same transaction as the write:
+        // `deleteClassSession` locks that row FOR UPDATE before counting pending claims, so a claim written concurrently
+        // is either counted there (the delete is refused) or written after the row is gone (an unknown class, as for any
+        // late replay). No row to lock (unknown or other-organization id) changes nothing: the claim is kept verbatim.
+        const kept = await prisma.$transaction(async (tx) => {
+          if (claimedClassSessionId !== null) {
+            await tx.$queryRaw`
+              SELECT 1 FROM "ClassSession"
+              WHERE "id" = ${claimedClassSessionId} AND "organizationId" = ${input.context.organizationId}
+              FOR SHARE`;
+          }
+          return tx.queuedCheckIn.create({
+            data: {
+              organizationId: input.context.organizationId,
+              academyId: input.academyId,
+              studentId: student.id,
+              eventKey: replay.event.key,
+              claimedAtRaw: replay.event.claimedAtRaw,
+              claimedAt: replay.event.claimedAt,
+              claimedAtVerified: replay.timestampVerified,
+              claimedClassSessionId,
+              reason,
+              receivedAt: new Date(),
+            },
+            select: { id: true },
+          });
         });
         return { ok: false, error: "queued_for_review", reviewId: kept.id, duplicate: false };
       } catch (error) {

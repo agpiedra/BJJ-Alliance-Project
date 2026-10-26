@@ -2171,7 +2171,8 @@
       "noValidTime": "Sin hora válida",
       "sentAs": "Enviada como: {raw}",
       "noClassChosen": "Ninguna elegida",
-      "unknownClass": "Una clase que no está en esta academia",
+      "unknownClass": "Una clase que ya no existe o no es de esta academia. Elegí la clase real al registrar.",
+      "chooseClass": "Elegí la clase",
       "reasons": {
         "TIMESTAMP_NOT_VERIFIED": "No se pudo confiar en la hora de la tableta",
         "NO_CLASS_OPEN": "No había ninguna clase abierta a esa hora",
@@ -2211,6 +2212,11 @@
     "academySelector": "Academia",
     "selectorSubmit": "Ver horario",
     "empty": "Esta academia no tiene sesiones de clase todavía.",
+    "emptyActive": "Esta academia no tiene sesiones activas. Mostrá las inactivas para verlas.",
+    "inactiveToggle": {
+      "show": "Mostrar inactivas ({count})",
+      "hide": "Ocultar inactivas"
+    },
     "calendar": {
       "viewLabel": "Vista",
       "week": "Semana",
@@ -2268,6 +2274,13 @@
       "confirm": "¿Desactivar esta sesión? Ya no estará disponible para marcar asistencia, pero su historial se conserva.",
       "success": "Sesión desactivada.",
       "notFound": "No se pudo desactivar esta sesión."
+    },
+    "delete": {
+      "button": "Eliminar",
+      "confirm": "¿Eliminar esta sesión definitivamente? No tiene asistencias ni marcajes pendientes. Esta acción no se puede deshacer.",
+      "notFound": "No se pudo eliminar esta sesión.",
+      "mustDeactivateFirst": "Desactivá la sesión antes de eliminarla.",
+      "inUse": "Esta sesión ya tiene asistencias o marcajes pendientes, así que se conserva. Puede quedar inactiva."
     }
   },
   "error": {

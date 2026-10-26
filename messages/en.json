@@ -2171,7 +2171,8 @@
       "noValidTime": "No valid time",
       "sentAs": "Sent as: {raw}",
       "noClassChosen": "None chosen",
-      "unknownClass": "A class that is not in this academy",
+      "unknownClass": "A class that no longer exists or is not in this academy. Choose the real class when recording.",
+      "chooseClass": "Choose the class",
       "reasons": {
         "TIMESTAMP_NOT_VERIFIED": "The tablet's time could not be trusted",
         "NO_CLASS_OPEN": "No class was open at that time",
@@ -2211,6 +2212,11 @@
     "academySelector": "Academy",
     "selectorSubmit": "View schedule",
     "empty": "This academy has no class sessions yet.",
+    "emptyActive": "This academy has no active sessions. Show inactive ones to see them.",
+    "inactiveToggle": {
+      "show": "Show inactive ({count})",
+      "hide": "Hide inactive"
+    },
     "calendar": {
       "viewLabel": "View",
       "week": "Week",
@@ -2268,6 +2274,13 @@
       "confirm": "Deactivate this session? It will no longer be available for check-in, but its history is kept.",
       "success": "Session deactivated.",
       "notFound": "Could not deactivate this session."
+    },
+    "delete": {
+      "button": "Delete",
+      "confirm": "Delete this session permanently? It has no attendance and no pending check-ins. This cannot be undone.",
+      "notFound": "Could not delete this session.",
+      "mustDeactivateFirst": "Deactivate the session before deleting it.",
+      "inUse": "This session already has attendance or pending check-ins, so it is kept. It can stay inactive."
     }
   },
   "error": {

@@ -13,6 +13,7 @@ import {
 import { rowFor } from "@/components/ui/week-calendar-grid";
 import { EditClassSessionForm } from "./edit-class-session-form";
 import { DeactivateClassSessionButton } from "./deactivate-class-session-button";
+import { DeleteClassSessionButton } from "./delete-class-session-button";
 import { addMinutesToClockTime, CLASS_TYPE_COLOR_CLASS } from "./calendar-helpers";
 import type { ClassType, DayOfWeek } from "@/generated/prisma/browser";
 
@@ -41,12 +42,15 @@ export function ScheduleCalendarView({
   sessions,
   legend,
   legendNote,
+  deletableIds,
 }: {
   organizationId: string;
   days: WeekCalendarDay[];
   sessions: CalendarSession[];
   legend: WeekCalendarLegendItem[];
   legendNote?: string;
+  /** Inactive classes with no attendance and no pending queued claim (`listDeletableClassSessionIds`). */
+  deletableIds: string[];
 }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const t = useTranslations("adminSchedule");
@@ -117,6 +121,9 @@ export function ScheduleCalendarView({
                 <EditClassSessionForm organizationId={organizationId} session={selected} renderAsDetails={false} />
                 {selected.active && (
                   <DeactivateClassSessionButton organizationId={organizationId} classSessionId={selected.id} />
+                )}
+                {!selected.active && deletableIds.includes(selected.id) && (
+                  <DeleteClassSessionButton organizationId={organizationId} classSessionId={selected.id} />
                 )}
               </div>
             </>

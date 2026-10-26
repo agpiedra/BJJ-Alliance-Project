@@ -1,12 +1,14 @@
 "use server";
 
 import { z } from "zod";
+import { revalidatePath } from "next/cache";
+import { getLocale } from "next-intl/server";
 import { prisma } from "@/lib/prisma";
 import { resolveActionContext } from "@/lib/tenant/context";
 import { getScopedDb } from "@/lib/tenant/scoped-client";
 import { DayOfWeek, ClassType, Prisma } from "@/generated/prisma/client";
 import type { ActionState } from "@/lib/action-state";
-import { isUniqueConstraintError } from "@/lib/prisma-errors";
+import { isNotFoundError, isUniqueConstraintError } from "@/lib/prisma-errors";
 
 // "HH:mm", 24h — the exact wall-clock shape `getCheckInWindow`
 // (src/lib/scheduling/check-in-window.ts) already parses via
@@ -212,6 +214,10 @@ export async function updateClassSession(
     if (isUniqueConstraintError(error)) {
       return { error: "duplicateSlot" };
     }
+    // Deleted (`deleteClassSession`) between the read above and this write: nothing was changed.
+    if (isNotFoundError(error)) {
+      return { error: "notFound" };
+    }
     throw error;
   }
 
@@ -252,25 +258,124 @@ export async function deactivateClassSession(
     return { error: "notFound" };
   }
 
-  await prisma.$transaction(async (tx) => {
-    await tx.classSession.update({
+  try {
+    await prisma.$transaction(async (tx) => {
+      await tx.classSession.update({
+        where: { id: existing.id, organizationId: existing.organizationId },
+        data: { active: false },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          actorId: context.actorUserId,
+          organizationId: context.organizationId,
+          academyId: existing.academyId,
+          action: "classSession.deactivate",
+          entityType: "ClassSession",
+          entityId: existing.id,
+          before: { active: existing.active },
+          after: { active: false },
+        },
+      });
+    });
+  } catch (error) {
+    // Deleted (`deleteClassSession`) between the read above and this write: nothing was changed.
+    if (isNotFoundError(error)) return { error: "notFound" };
+    throw error;
+  }
+
+  return { ok: true };
+}
+
+/**
+ * ADMIN-only. The ONE permanent removal of a class, and only of a class nothing refers to: it must already be inactive
+ * (so no new check-in can pick it), have NO `AttendanceRecord` - voided rows included, they are still history - and no
+ * PENDING `QueuedCheckIn` claiming it. Anything else keeps its row, so attendance history, promotion counts (which read
+ * the class's `countsTowardPromotion` through a live join) and the audit trail are never touched.
+ *
+ * Race-safety: the class row is locked `FOR UPDATE` FIRST, and only then are the references counted.
+ *  - An attendance insert holds a key-share lock on this row through its foreign key, so one in flight finishes before the
+ *    lock is granted and is then counted; one that starts later waits and fails its foreign key once the row is gone.
+ *  - A queued claim has no foreign key, so `performCheckIn` takes the same row `FOR SHARE` in the transaction that writes
+ *    the claim: one in flight is counted here; one that starts after the delete finds no row and is kept verbatim as a
+ *    claim of an unknown class - the same as any replay that arrives after its class was removed.
+ */
+export async function deleteClassSession(
+  organizationId: string,
+  _prevState: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const auth = await resolveActionContext(organizationId, ["ADMIN"]);
+  if (!auth.ok) return { error: "notFound" };
+  const context = auth.context;
+
+  const parsed = classSessionIdSchema.safeParse(Object.fromEntries(formData.entries()));
+  if (!parsed.success) {
+    return { error: "notFound" };
+  }
+
+  // Same tenant re-validation as `deactivateClassSession`: a cross-organization id throws, never resolves.
+  let existing: { id: string; organizationId: string };
+  try {
+    existing = await getScopedDb(context).classSession.findUniqueOrThrow({
+      where: { id: parsed.data.classSessionId },
+      select: { id: true, organizationId: true },
+    });
+  } catch {
+    return { error: "notFound" };
+  }
+
+  const error = await prisma.$transaction(async (tx) => {
+    const [locked] = await tx.$queryRaw<{ active: boolean }[]>`
+      SELECT "active" FROM "ClassSession"
+      WHERE "id" = ${existing.id} AND "organizationId" = ${existing.organizationId}
+      FOR UPDATE`;
+    if (!locked) return "notFound";
+    if (locked.active) return "mustDeactivateFirst";
+
+    const attendance = await tx.attendanceRecord.count({
+      where: { organizationId: existing.organizationId, classSessionId: existing.id },
+    });
+    const pendingQueued = await tx.queuedCheckIn.count({
+      where: { organizationId: existing.organizationId, claimedClassSessionId: existing.id, status: "PENDING" },
+    });
+    if (attendance > 0 || pendingQueued > 0) return "inUse";
+
+    const deleted = await tx.classSession.delete({
       where: { id: existing.id, organizationId: existing.organizationId },
-      data: { active: false },
     });
 
     await tx.auditLog.create({
       data: {
         actorId: context.actorUserId,
         organizationId: context.organizationId,
-        academyId: existing.academyId,
-        action: "classSession.deactivate",
+        academyId: deleted.academyId,
+        action: "classSession.delete",
         entityType: "ClassSession",
-        entityId: existing.id,
-        before: { active: existing.active },
-        after: { active: false },
+        entityId: deleted.id,
+        before: {
+          dayOfWeek: deleted.dayOfWeek,
+          startTime: deleted.startTime,
+          durationMinutes: deleted.durationMinutes,
+          name: deleted.name,
+          type: deleted.type,
+          countsTowardPromotion: deleted.countsTowardPromotion,
+          active: deleted.active,
+          createdAt: deleted.createdAt.toISOString(),
+        },
+        after: Prisma.DbNull,
       },
     });
+    return null;
   });
+  if (error) return { error };
 
+  // Best-effort: `revalidatePath` needs a real Next.js request scope, absent when a test calls the action directly. The
+  // delete has already committed.
+  try {
+    revalidatePath(`/${await getLocale()}/admin/schedule`);
+  } catch {
+    console.error("[schedule] failed to revalidate after delete");
+  }
   return { ok: true };
 }
