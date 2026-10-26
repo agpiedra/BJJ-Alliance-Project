@@ -34,7 +34,7 @@ export function RegenerateCodeButton({
     >
       <input type="hidden" name="studentId" value={studentId} />
       {state.ok && state.code && (
-        <div className="flex flex-col gap-2 rounded border border-green-600 bg-green-50 p-3">
+        <div className="flex flex-col gap-2 rounded border border-ok-line bg-ok-soft p-3 text-foreground">
           <p>{t("successCodeWarning")}</p>
           <p className="text-3xl font-mono font-bold tracking-widest">{state.code}</p>
         </div>

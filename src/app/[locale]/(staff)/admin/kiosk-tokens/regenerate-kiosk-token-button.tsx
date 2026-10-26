@@ -46,7 +46,7 @@ export function RegenerateKioskTokenButton({
     >
       <input type="hidden" name="academyId" value={academyId} />
       {kioskUrl && (
-        <div className="flex flex-col gap-2 rounded border border-green-600 bg-green-50 p-3">
+        <div className="flex flex-col gap-2 rounded border border-ok-line bg-ok-soft p-3 text-foreground">
           <p>{t("successTokenWarning")}</p>
           <p className="break-all font-mono text-sm font-bold">{kioskUrl}</p>
         </div>

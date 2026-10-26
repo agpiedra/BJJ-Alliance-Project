@@ -95,7 +95,7 @@ export function CreateStudentForm({
       <summary className="cursor-pointer font-medium">{t("toggle")}</summary>
 
       {state.ok && state.code && (
-        <div className="mt-4 flex flex-col gap-2 rounded border border-green-600 bg-green-50 p-3">
+        <div className="mt-4 flex flex-col gap-2 rounded border border-ok-line bg-ok-soft p-3 text-foreground">
           <p>{t("successCodeWarning")}</p>
           <p className="text-3xl font-mono font-bold tracking-widest">{state.code}</p>
         </div>
@@ -103,7 +103,7 @@ export function CreateStudentForm({
       {/* §7.7: a recognized retry of an already-created student. The original check-in code is a one-way hash — it
           cannot be re-shown here, so this is an honest "already done" message, not a fabricated or re-derived code. */}
       {state.ok && state.alreadyCreated && (
-        <div className="mt-4 flex flex-col gap-2 rounded border border-green-600 bg-green-50 p-3">
+        <div className="mt-4 flex flex-col gap-2 rounded border border-ok-line bg-ok-soft p-3 text-foreground">
           <p>{t("alreadyCreated")}</p>
         </div>
       )}
