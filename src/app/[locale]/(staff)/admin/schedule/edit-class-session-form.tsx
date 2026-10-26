@@ -55,10 +55,12 @@ export function EditClassSessionForm({
     <>
       {state.ok && <p className={cn(renderAsDetails ? "mt-3" : "mt-0", "text-sm text-ok")}>{t("success")}</p>}
 
-      {/* Submitted through a transition, not the `action` prop: React resets a form after every `action` submission,
-          which would throw away the edits of a refused save (e.g. duplicateSlot). After a success the fields already
-          hold the saved values. */}
+      {/* With JavaScript, `onSubmit` cancels the native submit and dispatches through a transition: React then runs no
+          action of its own and so does not reset the form, which would throw away the edits of a refused save (e.g.
+          duplicateSlot). After a success the fields already hold the saved values. `action` stays as the no-JavaScript
+          fallback (a server-action post). */}
       <form
+        action={formAction}
         onSubmit={(event) => {
           event.preventDefault();
           const formData = new FormData(event.currentTarget);

@@ -36,8 +36,9 @@ export function CreateClassSessionForm({
   const idPrefix = useId();
   const formRef = useRef<HTMLFormElement>(null);
 
-  // Submitted through a transition, not the `action` prop: React resets a form after every `action` submission, which
-  // would wipe the input of a refused one (e.g. duplicateSlot). Only a success clears it, ready for the next class.
+  // With JavaScript, `onSubmit` cancels the native submit and dispatches through a transition: React then runs no action
+  // of its own and so does not reset the form, which would wipe the input of a refused save (e.g. duplicateSlot). Only a
+  // success clears it, ready for the next class. `action` stays as the no-JavaScript fallback (a server-action post).
   useEffect(() => {
     if (state.ok) formRef.current?.reset();
   }, [state]);
@@ -48,6 +49,7 @@ export function CreateClassSessionForm({
 
       <form
         ref={formRef}
+        action={formAction}
         onSubmit={(event) => {
           event.preventDefault();
           const formData = new FormData(event.currentTarget);
