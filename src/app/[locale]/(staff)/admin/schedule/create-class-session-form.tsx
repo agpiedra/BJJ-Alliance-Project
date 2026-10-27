@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useId } from "react";
+import { startTransition, useActionState, useEffect, useId, useRef } from "react";
 import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { createClassSession } from "./actions";
@@ -34,12 +34,29 @@ export function CreateClassSessionForm({
     INITIAL_STATE,
   );
   const idPrefix = useId();
+  const formRef = useRef<HTMLFormElement>(null);
+
+  // With JavaScript, `onSubmit` cancels the native submit and dispatches through a transition: React then runs no action
+  // of its own and so does not reset the form, which would wipe the input of a refused save (e.g. duplicateSlot). Only a
+  // success clears it, ready for the next class. `action` stays as the no-JavaScript fallback (a server-action post).
+  useEffect(() => {
+    if (state.ok) formRef.current?.reset();
+  }, [state]);
 
   return (
     <>
       {state.ok && <p className="text-sm text-ok">{t("success")}</p>}
 
-      <form action={formAction} className="flex w-full flex-col gap-3">
+      <form
+        ref={formRef}
+        action={formAction}
+        onSubmit={(event) => {
+          event.preventDefault();
+          const formData = new FormData(event.currentTarget);
+          startTransition(() => formAction(formData));
+        }}
+        className="flex w-full flex-col gap-3"
+      >
         <input type="hidden" name="academyId" value={academyId} />
 
         <label htmlFor={`${idPrefix}-day`} className="flex flex-col gap-1 text-sm">
@@ -91,8 +108,8 @@ export function CreateClassSessionForm({
           </select>
         </label>
         {state.error && <p className="text-sm text-bad">{t(state.error)}</p>}
-        <Button type="submit" variant="primary" disabled={isPending}>
-          {t("submit")}
+        <Button type="submit" variant="primary" disabled={isPending} aria-busy={isPending}>
+          {isPending ? t("pending") : t("submit")}
         </Button>
       </form>
     </>

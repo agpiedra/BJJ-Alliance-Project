@@ -125,6 +125,7 @@ export async function createClassSession(
     throw error;
   }
 
+  await refreshSchedulePage();
   return { ok: true };
 }
 
@@ -221,6 +222,7 @@ export async function updateClassSession(
     throw error;
   }
 
+  await refreshSchedulePage();
   return { ok: true };
 }
 
@@ -284,6 +286,7 @@ export async function deactivateClassSession(
     throw error;
   }
 
+  await refreshSchedulePage();
   return { ok: true };
 }
 
@@ -370,12 +373,21 @@ export async function deleteClassSession(
   });
   if (error) return { error };
 
-  // Best-effort: `revalidatePath` needs a real Next.js request scope, absent when a test calls the action directly. The
-  // delete has already committed.
+  await refreshSchedulePage();
+  return { ok: true };
+}
+
+/**
+ * Called after every SUCCESSFUL write here (never after a refusal), so the page the action was posted from re-renders
+ * with fresh classes, counts and calendar shading at its own URL (academy, view, date and `inactive` kept).
+ * Deliberately NOT exported: in a "use server" file every export is a callable action.
+ * Best-effort: `revalidatePath` needs a real Next.js request scope, absent when a test calls an action directly; the
+ * write has already committed.
+ */
+async function refreshSchedulePage() {
   try {
     revalidatePath(`/${await getLocale()}/admin/schedule`);
   } catch {
-    console.error("[schedule] failed to revalidate after delete");
+    console.error("[schedule] failed to revalidate");
   }
-  return { ok: true };
 }
