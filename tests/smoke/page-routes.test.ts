@@ -231,6 +231,31 @@ describe("every page route renders through a real running server (non-5xx)", () 
     await assertRefusedWithExactly404({ label: "dues readiness (INSTRUCTOR)", path: "/en/payments/readiness", cookie: instructorCookie });
   });
 
+  // Each role list is the page's own requireTenantContext gate. An allowed role must land on the page with exactly 200
+  // (assertNotServerError would accept a 404), so a mistyped path cannot pass as a "refusal".
+  it("role-gated pages: the allowed roles reach each page, the refused roles get exactly 404", async () => {
+    const pages = [
+      { path: "/en/admin/schedule", allowed: ["ADMIN"], refused: ["DIRECTOR", "INSTRUCTOR"] },
+      { path: "/en/payments/plans", allowed: ["ADMIN", "DIRECTOR"], refused: ["INSTRUCTOR"] },
+      { path: "/en/admin/branding", allowed: ["ADMIN", "DIRECTOR"], refused: ["INSTRUCTOR"] },
+      { path: "/en/admin/kiosk-tokens", allowed: ["ADMIN", "DIRECTOR"], refused: ["INSTRUCTOR"] },
+      { path: "/en/dashboard/analytics", allowed: ["ADMIN", "DIRECTOR"], refused: ["INSTRUCTOR"] },
+    ] as const;
+    const cookies = { ADMIN: adminCookie, DIRECTOR: directorCookie, INSTRUCTOR: instructorCookie };
+
+    for (const { path, allowed, refused } of pages) {
+      for (const role of allowed) {
+        await requestWithDiagnostics({ label: `${path} (${role})`, path, cookie: cookies[role] }, (response) => {
+          expect(response.status, `${role} must reach ${path}`).toBe(200);
+          expect(new URL(response.url).pathname, `${role} must not be redirected away from ${path}`).toBe(path);
+        });
+      }
+      for (const role of refused) {
+        await assertRefusedWithExactly404({ label: `${path} (${role})`, path, cookie: cookies[role] });
+      }
+    }
+  });
+
   it("platform admin pages (SUPER_ADMIN)", async () => {
     const routes: RouteCase[] = [
       { label: "platform overview", path: "/en/platform" },
