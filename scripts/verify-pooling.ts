@@ -164,7 +164,7 @@ async function main(): Promise<RunOutcome> {
         run.failed = true;
       }
     } else if (local) {
-      console.log("[1/5] TLS      INFO  plaintext to a local database (expected in dev; never a complete verification)");
+      console.log("[1/5] TLS      INFO  plaintext to a local database (expected in dev; RESULT is PARTIAL at best)");
     } else {
       console.log("[1/5] TLS      FAIL  the connection is NOT encrypted");
       run.failed = true;
@@ -230,12 +230,13 @@ async function main(): Promise<RunOutcome> {
     await control.$disconnect();
   }
 
-  // 5. The deployed app itself — many cold function instances, each with its own pool, which is
-  // the actual production connection-exhaustion shape. Optional to RUN (database checks alone are
-  // allowed), but without it the verdict is PARTIAL, never a complete verification.
+  // 5. HTTP check: 90 concurrent GETs to the supplied URL, each must return 200. It proves only
+  // that this URL answered 200 under that burst. It reaches the database only if the URL is a page
+  // that reads it on every request (e.g. an active academy's kiosk page); it is not a capacity or
+  // authentication test. Optional to RUN (database checks alone are allowed); without it, PARTIAL.
   const appUrl = process.argv.find((arg) => arg.startsWith("--app-url="))?.slice("--app-url=".length);
   if (!appUrl) {
-    console.log("[5/5] APP URL  SKIP  no --app-url given, so RESULT can be PARTIAL at best (pass a public page that reads the database, e.g. an academy's kiosk page)");
+    console.log("[5/5] APP URL  SKIP  no --app-url given, so RESULT can be PARTIAL at best (pass a public page that reads the database, e.g. an active academy's kiosk page)");
   } else {
     const statuses = new Map<string, number>();
     await Promise.all(
@@ -255,19 +256,21 @@ async function main(): Promise<RunOutcome> {
       console.log(`[5/5] APP URL  PASS  ${APP_REQUESTS}/${APP_REQUESTS} concurrent requests returned 200`);
     } else {
       run.http = "failed";
-      console.log(`[5/5] APP URL  FAIL  ${histogram} (expected all 200 — a 404 means the URL is wrong, a 5xx means the deployment cannot reach the database)`);
+      console.log(`[5/5] APP URL  FAIL  ${histogram} (expected all 200 — a 404 usually means a wrong URL or academy slug; a 5xx means the deployment failed to serve it, and database connectivity is one possible cause: read the function logs)`);
     }
   }
 
   return run;
 }
 
-// Exit 0: complete deployment verification. 1: something failed. 2: PARTIAL (see finalVerdict).
-// process.exitCode, never process.exit(): after [5/5]'s fetches, process.exit() on Node 24 for
+// Verdict codes: 0 every check passed, 1 FAIL, 2 PARTIAL (finalVerdict). Set through
+// process.exitCode, not process.exit(): after [5/5]'s fetches, process.exit() on Node 24 for
 // Windows aborts on a libuv assertion (src\win\async.c) and exits 127 whatever the verdict.
-// Every pool and client is closed above, so the process ends by itself once fetch's
-// keep-alive sockets close (a few seconds). The unref'd timer only fires if something unexpected
-// keeps the process alive, so a run can never hang after printing RESULT.
+// Every pool and client is closed above, so the process normally ends by itself.
+// KNOWN LIMITATION: the unref'd 30 s timer fires only if something unexpected keeps the process
+// alive after RESULT; it then calls process.exit(), which can hit that same abort and exit 127.
+// So not every termination path yields 0/1/2 (also: Ctrl+C, a Node crash). Anything other than
+// 0, 1 or 2 means "not verified" — read the RESULT line, and rerun.
 main()
   .then((run) => {
     const verdict = finalVerdict(run);

@@ -77,22 +77,22 @@ describe("stressReport: only start timeouts stay information", () => {
   });
 });
 
-describe("finalVerdict: exit 0 only for a complete deployment verification", () => {
+describe("finalVerdict: exit 0 only when every check ran and passed", () => {
   const complete: RunOutcome = { failed: false, local: false, tls: "verified", http: "pass" };
   const verdict = (overrides: Partial<RunOutcome>) => finalVerdict({ ...complete, ...overrides });
 
-  it("full success: remote, verified TLS, database checks, deployed app → PASS, exit 0", () => {
+  it("full success: remote, verified TLS, database checks, HTTP check → PASS, exit 0", () => {
     expect(verdict({})).toEqual({
       exitCode: 0,
-      line: "RESULT: PASS — complete deployment verification (verified TLS, database load, deployed app)",
+      line: "RESULT: PASS — every check ran and passed: verified TLS to a remote database, database load, 90/90 HTTP 200 from the supplied --app-url",
     });
   });
 
-  it("HTTP omitted (database checks alone) → PARTIAL, exit 2, never labelled complete", () => {
+  it("HTTP omitted (database checks alone) → PARTIAL, exit 2", () => {
     const result = verdict({ http: "skipped" });
     expect(result.exitCode).toBe(2);
     expect(result.line).toBe(
-      "RESULT: PARTIAL — the database checks passed, but this is NOT a complete deployment verification: the deployed app was not checked (no --app-url)",
+      "RESULT: PARTIAL — the database checks passed, but not every check ran or was verified: the HTTP check did not run (no --app-url)",
     );
   });
 
@@ -125,7 +125,7 @@ describe("finalVerdict: exit 0 only for a complete deployment verification", () 
 
   it("lists every gap at once", () => {
     expect(verdict({ local: true, tls: "plaintext", http: "skipped" }).line).toMatch(
-      /LOCAL database.*plaintext.*not checked \(no --app-url\)$/,
+      /LOCAL database.*plaintext.*HTTP check did not run \(no --app-url\)$/,
     );
   });
 
@@ -137,5 +137,22 @@ describe("finalVerdict: exit 0 only for a complete deployment verification", () 
             const isComplete = !failed && !local && tls === "verified" && http === "pass";
             expect(finalVerdict({ failed, local, tls, http }).exitCode === 0).toBe(isComplete);
           }
+  });
+});
+
+describe("finalVerdict wording claims only what was checked", () => {
+  it("no verdict line claims a complete deployment, capacity, or authentication", () => {
+    for (const failed of [false, true])
+      for (const local of [false, true])
+        for (const tls of ["verified", "fallback", "plaintext"] as const)
+          for (const http of ["pass", "skipped", "failed"] as const) {
+            expect(finalVerdict({ failed, local, tls, http }).line).not.toMatch(/complete deployment|capacity|authentication/i);
+          }
+  });
+
+  it("the PASS line scopes the HTTP check to the supplied URL", () => {
+    expect(finalVerdict({ failed: false, local: false, tls: "verified", http: "pass" }).line).toContain(
+      "90/90 HTTP 200 from the supplied --app-url",
+    );
   });
 });

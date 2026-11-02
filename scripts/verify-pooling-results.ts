@@ -66,9 +66,10 @@ export type RunOutcome = {
   http: "pass" | "skipped" | "failed";
 };
 
-// Exit 0 is reserved for a COMPLETE deployment verification: a remote database over verified TLS,
-// the database checks, and the deployed app's own requests ([5/5]). Database checks that passed
-// with any of those missing are PARTIAL, exit 2 — runnable alone, never labelled complete.
+// Exit 0 is reserved for a run where every check ran and passed: a remote database over verified
+// TLS, the database checks, and 90/90 HTTP 200 from the supplied --app-url ([5/5]). That last
+// check proves only what the URL proves (runbook step 11) — not capacity or authentication.
+// Database checks that passed with any of those missing are PARTIAL, exit 2 — runnable alone.
 export function finalVerdict(run: RunOutcome): { exitCode: 0 | 1 | 2; line: string } {
   if (run.failed || run.http === "failed") {
     return { exitCode: 1, line: "RESULT: FAIL — see the FAIL line(s) above" };
@@ -79,12 +80,15 @@ export function finalVerdict(run: RunOutcome): { exitCode: 0 | 1 | 2; line: stri
   if (run.tls === "fallback") {
     gaps.push("TLS is on the temporary no-verify fallback, so the server is not authenticated (runbook: SSL fallback)");
   }
-  if (run.http === "skipped") gaps.push("the deployed app was not checked (no --app-url)");
+  if (run.http === "skipped") gaps.push("the HTTP check did not run (no --app-url)");
   if (gaps.length > 0) {
     return {
       exitCode: 2,
-      line: `RESULT: PARTIAL — the database checks passed, but this is NOT a complete deployment verification: ${gaps.join("; ")}`,
+      line: `RESULT: PARTIAL — the database checks passed, but not every check ran or was verified: ${gaps.join("; ")}`,
     };
   }
-  return { exitCode: 0, line: "RESULT: PASS — complete deployment verification (verified TLS, database load, deployed app)" };
+  return {
+    exitCode: 0,
+    line: "RESULT: PASS — every check ran and passed: verified TLS to a remote database, database load, 90/90 HTTP 200 from the supplied --app-url",
+  };
 }

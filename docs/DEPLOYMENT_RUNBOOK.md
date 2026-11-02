@@ -181,10 +181,14 @@ together.
     the same 360 operations all started at once, as a stress step where only Prisma's
     transaction-start timeout is information and any other failure fails `RESULT`; a control
     that opts in to named prepared
-    statements (the one thing that breaks transaction pooling); and — the real production
-    shape, many cold function instances each with their own pool — 90 concurrent requests
-    to the deployed page. **Pass `--app-url` a public page that reads the database**, e.g. an
-    academy's kiosk page. If `DATABASE_URL` is not on the command line, `dotenv` loads your
+    statements (the one thing that breaks transaction pooling); and an HTTP check — 90
+    concurrent GET requests to the URL you pass as `--app-url`, each of which must return 200.
+    **Pass `--app-url` a public page that reads the database on every request**, e.g. an
+    active academy's kiosk page (`/es/kiosk/<slug>` is rendered per request and looks the
+    academy up in the database). What the HTTP check proves depends on that choice: it proves
+    only that *this URL* answered 200 to that burst. It reaches the database only if the page
+    reads it; it is not a capacity or load test, and it says nothing about authentication or
+    any other page. If `DATABASE_URL` is not on the command line, `dotenv` loads your
     dev `.env` and the script says `NOTE: the target is a LOCAL database` — that run proves
     nothing about production.
 
@@ -199,17 +203,36 @@ together.
     [4/5] CONTROL  INFO  named prepared statements DO break this pooler (…) — so [2/5] passing is meaningful.
     [5/5] APP URL  PASS  90/90 concurrent requests returned 200
 
-    RESULT: PASS — complete deployment verification (verified TLS, database load, deployed app)
+    RESULT: PASS — every check ran and passed: verified TLS to a remote database, database load, 90/90 HTTP 200 from the supplied --app-url
     ```
-    **Exit code 0 is the only go.** The script has three outcomes:
+    **Exit code 0 is the only go.** The script has three verdicts:
 
     | Exit | Last line | Means |
     |---|---|---|
-    | 0 | `RESULT: PASS — complete deployment verification …` | Remote database, `[1/5]` PASS (certificate verified), `[2/5]` PASS, `[3/5]` PASS or INFO, `[5/5]` PASS. The only result that completes this step. |
-    | 2 | `RESULT: PARTIAL — the database checks passed, but this is NOT a complete deployment verification: …` | Nothing failed, but the line names what was not established: no `--app-url` (`[5/5] SKIP`), the TLS no-verify fallback (`[1/5] WARN`), or a local database (plaintext `[1/5] INFO`, or `localhost`/`127.0.0.1`/`::1` at all). Running without `--app-url` is allowed — e.g. to check the database before the app is deployed — but it does not complete this step. |
+    | 0 | `RESULT: PASS — every check ran and passed: …` | Remote database, `[1/5]` PASS (certificate verified), `[2/5]` PASS, `[3/5]` PASS or INFO, `[5/5]` PASS for the URL you gave. The only result that completes this step — and it covers only what these checks test (above). |
+    | 2 | `RESULT: PARTIAL — the database checks passed, but not every check ran or was verified: …` | Nothing failed; the line lists each gap: no `--app-url` (`[5/5] SKIP`), the TLS no-verify fallback (`[1/5] WARN`), or a local database (plaintext `[1/5] INFO`, or `localhost`/`127.0.0.1`/`::1` at all). Running without `--app-url` is allowed — e.g. to check the database before the app is deployed — but it does not complete this step. |
     | 1 | `RESULT: FAIL …` | A step printed `FAIL`, or the run could not start (no `DATABASE_URL`, refused TLS configuration, no connection, unreadable schema). |
 
     `[4/5]` never affects the exit code. Exit 0 needs no particular `[4/5]` result.
+
+    - **PARTIAL shows a "command failed" banner — expected.** Because PARTIAL exits 2,
+      `pnpm` prints `[ELIFECYCLE] Command failed with exit code 2.` after it. That banner is
+      not a failure verdict: read the `RESULT:` line and the gaps it lists. (A real failure is
+      `RESULT: FAIL`, exit 1.)
+    - **Any other exit code means "not verified".** The verdict is set without
+      `process.exit()`, but not every way the process can end yields 0/1/2: an interrupted run
+      (Ctrl+C), a Node crash, or the script's 30-second safety exit. That safety exit fires only
+      if something unexpectedly keeps the process alive after `RESULT`. On Node 24 for Windows it
+      can then abort on a libuv assertion (`Assertion failed … src\win\async.c`) and exit
+      **127** whatever `RESULT` said. Keep the output and rerun.
+    - **Older verifier versions exited 0 in more cases.** Before 2026-11 (PR #158), the script
+      ended `RESULT: PASS` with exit 0 when `--app-url` was omitted (`[5/5] SKIP`), when the
+      target was a local or plaintext database, and — as `RESULT: PASS, ON THE TEMPORARY
+      no-verify FALLBACK` — on the TLS fallback. (That covers both the four-step `[1/4]…[4/4]`
+      version and the unmerged bounded version `7b1f9fb`; the latter also reported every `[3/5]`
+      stress failure as information.) On Windows, its runs with `--app-url` could also exit 127 whatever `RESULT` said (the abort
+      above). **Interpret a historical `RESULT: PASS` by that version's rules:** check its
+      `[1/5]` and `[5/5]` lines and its target before treating it as a pass under the current rules.
 
     **`[2/5]` is not the original test.** Until 2026-10, this step started all 360 operations
     at once. That shape fails from any machine more than ~60 ms from the database, with
@@ -265,10 +288,11 @@ together.
       `crossed result` means the pooler returned another session's answer — do not launch;
       `57P01`/`08006` mean connections were dropped mid-run. Keep the output. `[2/5]` passing
       does not cancel this failure.
-    - `[5/5] … 404×90` — the `--app-url` is wrong (unknown academy slug). `500×…` — the
-      deployment can't reach the database: read the Vercel function logs; the usual causes are
-      `DATABASE_SSL_CA_B64` or `DATABASE_URL` missing in the *Production* environment scope, or
-      a certificate error the script's own connection didn't hit.
+    - `[5/5] … 404×90` — usually a wrong `--app-url` (e.g. an unknown or inactive academy
+      slug). `500×…` (any 5xx) — the deployment failed to serve the page. Database connectivity
+      is one possible cause, not the only one: read the Vercel function logs. Database-related
+      causes include `DATABASE_SSL_CA_B64` or `DATABASE_URL` missing in the *Production*
+      environment scope, or a certificate error the script's own connection didn't hit.
 12. **Sign in, confirm `/platform` is reachable** — open your user menu (top right) and choose
     **Plataforma**, or go to `/platform` directly — then work through
     `docs/MULTI_ACADEMY_OPERATIONS.md` for anything else.
@@ -521,8 +545,8 @@ If step 11 fails on TLS and the cause is not something you can fix quickly (typi
   command in step 11), then make the verified configuration work — the right CA file, or a
   connection string whose hostname the certificate covers. Then remove
   `DATABASE_SSL_MODE`, set `DATABASE_SSL_CA_B64`, redeploy, and rerun step 11 until
-  `[1/5] TLS PASS  encrypted, server certificate verified` and `RESULT: PASS — complete
-  deployment verification` with exit code 0.
+  `[1/5] TLS PASS  encrypted, server certificate verified` and `RESULT: PASS — every check ran
+  and passed` with exit code 0.
   Until then the launch checklist should treat it as an open item, not a configuration.
 
 ### 1a. Set up the Healthchecks.io dead-man's switch (C1) before relying on the crons
