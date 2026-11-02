@@ -135,10 +135,22 @@ export async function listActiveAcademyIdsForDigest(): Promise<string[]> {
  * it owes work to, so this read cannot be scoped by one. Bounded before reading (an indexed ORDER BY with LIMIT, under a
  * statement timeout). A candidate list only: the claim re-checks the lease against the database clock and may still lose.
  * Rows exist only for organizations stage 9 activates, so in production this returns nothing until then.
+ *
+ * `exclude`: progress-row ids (one row per organization-month) that the CALLING INVOCATION has already settled. Without it, 20+
+ * settled rows heading the least-recently-visited order filled the LIMIT and hid an unfinished row behind them, so the run stopped
+ * early with budget left. It is per invocation: nothing is persisted, so the next invocation sees every row again (Reopen).
+ *
+ * Cost: LIMIT bounds the rows RETURNED, not the rows scanned. The index walk passes leased and excluded rows before it finds
+ * `limit` others — at worst the whole table (all organization-months since activation); the planner may instead scan and sort the
+ * table. The `= ANY` test is hashed in the one-shot (custom) plans this client uses — unnamed statements; database-pool.ts never
+ * sets `statementNameGenerator` — so the cost is linear in rows scanned (locally, 20,000 rows with 19,980 excluded: ~4 ms). Under a
+ * generic plan it is not hashed (rows scanned × rows excluded: ~3.3 s at 20,000 × 19,980, past the 1 s statement timeout, which
+ * would end the run as `discoveryFailed`, visibly). The year-one estimate is tens of rows.
  */
 export async function listClaimableGenerationSegments(
   limit: number,
   bounds: { statementTimeoutMs: number; lockTimeoutMs: number; idleInTransactionTimeoutMs?: number; maxWaitMs: number; timeoutMs: number },
+  exclude: readonly string[] = [],
 ): Promise<{ id: string; organizationId: string }[]> {
   assertTransactionTimeouts(bounds, "discovery bounds");
   // maxWait bounds waiting for a pool connection; timeout plus statement_timeout bound the transaction itself.
@@ -151,7 +163,8 @@ export async function listClaimableGenerationSegments(
       }
       return tx.$queryRaw<{ id: string; organizationId: string }[]>`
       SELECT "id", "organizationId" FROM "DuesGenerationProgress"
-      WHERE "leaseUntil" IS NULL OR "leaseUntil" < (now() AT TIME ZONE 'UTC')
+      WHERE ("leaseUntil" IS NULL OR "leaseUntil" < (now() AT TIME ZONE 'UTC'))
+        AND NOT ("id" = ANY(${[...exclude]}::text[]))
       ORDER BY "lastVisitedAt", "id"
       LIMIT ${Math.trunc(limit)}`;
     },

@@ -11,6 +11,7 @@ vi.mock("@/auth", () => ({ auth: () => Promise.resolve(null), signIn: vi.fn() })
 const { runMonthlyGeneration } = await import("../../src/lib/dues/monthly-generation-progress");
 const { createMonthlyObligationInTx, writeMonthlyObligationInTx } = await import("../../src/lib/dues/ledger/create-monthly-obligation");
 const { prisma: appPrisma } = await import("../../src/lib/prisma");
+const { listClaimableGenerationSegments } = await import("../../src/lib/tenant/platform-lookups");
 
 /**
  * Monthly-generation G1 (docs/dues/MONTHLY-GENERATION-TRIGGER-PLAN.md revision 4), proved against the real, isolated test
@@ -624,6 +625,114 @@ describe("fair selection across more segments than one invocation can visit", ()
     expect(visited.slice(0, 5)).toEqual(segs.map((s) => s.id)); // the initial least-recently-visited order
     for (let i = 0; i + 5 <= visited.length; i++) expect(new Set(visited.slice(i, i + 5)).size).toBe(5);
     for (const { org } of segs) expect(await obligationsFor(org.id)).toHaveLength(3);
+  });
+});
+
+/**
+ * Discovery returns the `discoveryLimit` (20) least-recently-visited claimable rows. Rows this run already finished (settled) keep
+ * their claim time, so once 20 or more of them head that order, a discovery that does not exclude them returns only settled rows
+ * and the run stopped with `noClaimableSegment` while an unfinished row (a re-queued slice) waited behind them, with most of the
+ * budget unused. Found in the D5 Stage 1 local rehearsal (PHASE2-MEASUREMENT-PROPOSAL.md §10l.3).
+ * World: one organization with 21 single-visit months (one student each) visited least recently; then one row needing two visits
+ * (3 students, studentsPerVisit 2). Real discovery, claim, rollover and runner; the default 45 s deadline is never approached.
+ */
+describe("discovery cannot be hidden by rows this run already settled", () => {
+  const SMALL_START: YearMonth = { year: 2029, month: 1 }; // 21 months: 2029-01 .. 2030-09 (S, the current month: no rollover)
+  const monthsFrom = (start: YearMonth, n: number): YearMonth[] =>
+    Array.from({ length: n }, (_, i) => {
+      const t = start.year * 12 + start.month - 1 + i;
+      return { year: Math.floor(t / 12), month: (t % 12) + 1 };
+    });
+  const TWO_VISITS = { limits: { studentsPerVisit: 2 } };
+
+  async function settledHead() {
+    const small = await makeOrg("hide-small", SMALL_START);
+    await studentsInOrder(small, ["priced"]);
+    for (const [i, m] of monthsFrom(SMALL_START, 21).entries()) await addSegment(small.id, m, new Date(1_000 * (i + 1)));
+    return small;
+  }
+  const unfinished = () => prisma.duesGenerationProgress.count({ where: { OR: [{ cursorStudentId: { not: null } }, { lastPassCompletedAt: null }] } });
+
+  it("regression: an unfinished row behind 20+ settled rows is still found and finished in the same run", async () => {
+    await settledHead();
+    const big = await makeOrg("hide-big"); // start S
+    await studentsInOrder(big, ["priced", "priced", "priced"]);
+    const bigRow = await addSegment(big.id, S, new Date(22_000));
+
+    const t0 = Date.now();
+    const report = await runMonthlyGeneration(deps(TWO_VISITS));
+    expect(Date.now() - t0).toBeLessThan(20_000); // far inside the 45 s deadline: the stop is not a deadline stop
+    expect(report.stoppedBy).toBe("noClaimableSegment");
+    expect(report.visits.filter((v) => v.segmentId === bigRow.id).map((v) => v.ended)).toEqual(["slice", "passEnd"]);
+    expect(await obligationsFor(big.id)).toHaveLength(3);
+    expect(await unfinished()).toBe(0); // genuine exhaustion: every row finished a pass in this run
+
+    // Reopen: the exclusion is per invocation. The next invocation re-walks every organization-month and bills nothing twice.
+    const again = await runMonthlyGeneration(deps(TWO_VISITS));
+    expect(again.stoppedBy).toBe("noClaimableSegment");
+    expect(new Set(again.visits.filter((v) => v.ended === "passEnd").map((v) => v.segmentId)).size).toBe(22);
+    expect(again.visits.reduce((n, v) => n + v.created, 0)).toBe(0);
+    expect(await obligationsFor(big.id)).toHaveLength(3);
+  });
+
+  it("new-month progress: a month created by rollover mid-run, sliced, then hidden, is still billed in the same run", async () => {
+    await settledHead();
+    const AUG: YearMonth = { year: 2030, month: 8 };
+    const org = await makeOrg("hide-newmonth", AUG); // students assigned from S (September)
+    await studentsInOrder(org, ["priced", "priced", "priced"]);
+    await addSegment(org.id, AUG, new Date(22_000)); // the organization's newest row: its visit rolls September over
+
+    const report = await runMonthlyGeneration(deps(TWO_VISITS));
+    expect(report.stoppedBy).toBe("noClaimableSegment");
+    expect(report.visits.some((v) => v.rollover && "inserted" in v.rollover && v.rollover.inserted === 1)).toBe(true);
+    expect(await obligationsFor(org.id, undefined, S)).toHaveLength(3); // September fully billed
+    expect(await unfinished()).toBe(0);
+  });
+
+  it("the deadline is still enforced: the run stops at its budget with work left, nothing more", async () => {
+    await settledHead();
+    let passes = 0;
+    const report = await runMonthlyGeneration(
+      deps({
+        ...TWO_VISITS,
+        elapsedMs: () => (passes >= 5 ? 1e9 : 0),
+        boundaryForTest: async (b) => {
+          if (b === "afterPassEnd") passes++;
+        },
+      }),
+    );
+    expect(report.stoppedBy).toBe("deadline");
+    expect(report.visits.filter((v) => v.ended === "passEnd")).toHaveLength(5);
+    expect(await unfinished()).toBe(16);
+  });
+
+  it("discovery stays bounded: at most `limit` rows, least recently visited first, never an excluded or leased row", async () => {
+    await settledHead();
+    const ids = (await prisma.duesGenerationProgress.findMany({ orderBy: [{ lastVisitedAt: "asc" }, { id: "asc" }], select: { id: true } })).map((r) => r.id);
+    await prisma.$executeRaw`
+      UPDATE "DuesGenerationProgress" SET "leaseToken" = 'another-run', "leaseUntil" = (now() AT TIME ZONE 'UTC') + interval '1 hour'
+      WHERE "id" = ${ids[3]}`;
+    const bounds = { statementTimeoutMs: 1_000, lockTimeoutMs: 1_000, idleInTransactionTimeoutMs: 1_000, maxWaitMs: 1_000, timeoutMs: 2_000 };
+    const found = (await listClaimableGenerationSegments(5, bounds, [ids[0], ids[2]])).map((r) => r.id);
+    expect(found).toEqual([ids[1], ids[4], ids[5], ids[6], ids[7]]);
+    expect(await listClaimableGenerationSegments(5, bounds, ids)).toEqual([]); // everything excluded: genuine exhaustion
+  });
+
+  it("overlapping runs on the same world bill every student exactly once and finish every row", async () => {
+    await settledHead();
+    const big = await makeOrg("hide-overlap"); // start S
+    await studentsInOrder(big, ["priced", "priced", "priced"]);
+    await addSegment(big.id, S, new Date(22_000));
+    const reports = await Promise.all([runMonthlyGeneration(deps(TWO_VISITS)), runMonthlyGeneration(deps(TWO_VISITS))]);
+    for (const r of reports) expect(r.stoppedBy).toBe("noClaimableSegment");
+    // Whatever one run left (a row the other held), a pass of either finishes it; nothing is billed twice.
+    if ((await unfinished()) > 0) await runMonthlyGeneration(deps(TWO_VISITS));
+    expect(await unfinished()).toBe(0);
+    expect(await obligationsFor(big.id)).toHaveLength(3);
+    const dup = await prisma.$queryRaw<{ n: bigint }[]>`
+      SELECT count(*)::bigint AS n FROM (
+        SELECT 1 FROM "DuesObligation" GROUP BY "studentId", "type", "coverageYear", "coverageMonth" HAVING count(*) > 1) d`;
+    expect(Number(dup[0].n)).toBe(0);
   });
 });
 
