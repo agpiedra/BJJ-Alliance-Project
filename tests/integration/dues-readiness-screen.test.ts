@@ -195,7 +195,7 @@ describe("the read model", () => {
     if (!screen.ok || !report.ok) throw new Error("expected both");
     expect(screen.screen.report).toEqual(report.report);
     expect(screen.screen.report.ready).toBe(false);
-    expect(screen.screen.report.checks.filter((c) => c.status === "notImplemented").map((c) => c.id)).toEqual([10, 11, 12]);
+    expect(screen.screen.report.checks.filter((c) => c.status === "notImplemented").map((c) => c.id)).toEqual([11, 12]); // check 10 is computed (G2b): it fails until scheduled
     expect(screen.screen.report.checks.find((c) => c.id === 13)!.status).toBe("decisionPending");
   });
 
@@ -391,5 +391,24 @@ describe("a stale opening review is worded historically: it never claims the cur
       expect(declaration).not.toMatch(/55|Added/);
       for (const old of OLD_WORDING) expect(card, `${locale}: ${old}`).not.toContain(old);
     }
+  });
+});
+
+describe("G2b: check 10 (trigger health) renders its reasons from the real screen, never 'Unknown item'", () => {
+  it.each([
+    ["en", "The monthly charge trigger is not healthy yet.", "Not scheduled: the schedule is waiting for an owner decision (D5).", "It has never recorded a run.", "Unknown item"],
+    ["es", "El disparador de cobros mensuales aún no está saludable.", "Sin programar: la programación espera una decisión del propietario (D5).", "Nunca ha registrado una ejecución.", "Ítem desconocido"],
+  ] as const)("%s", async (locale, failText, notScheduled, neverRan, unknown) => {
+    owner(a);
+    intl.locale = locale;
+    const result = await getReadinessScreenForOwner(a.org.id, S);
+    if (!result.ok) throw new Error("expected a screen");
+    expect(result.screen.report.checks.find((c) => c.id === 10)).toMatchObject({ status: "fail", items: ["trigger:notScheduled", "trigger:neverRan"] });
+    const { StatusAndChecks } = await import("../../src/app/[locale]/(staff)/payments/readiness/readiness-view");
+    const html = renderToStaticMarkup(await StatusAndChecks({ screen: result.screen, candidate: S, locale }));
+    expect(html).toContain(failText);
+    expect(html).toContain(notScheduled);
+    expect(html).toContain(neverRan);
+    expect(html).not.toContain(unknown);
   });
 });

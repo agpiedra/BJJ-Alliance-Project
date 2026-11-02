@@ -197,7 +197,8 @@ function PanelCard<T>({
 function JobStatus({ job, t, f }: { job: JobStatusView; t: Translate; f: Formatters }) {
   const { latestRun, latestSuccess } = job;
   const outcomeVariant = !latestRun ? "plain" : latestRun.status === "SUCCEEDED" ? "ok" : latestRun.status === "FAILED" ? "bad" : latestRun.status === "PARTIAL" ? "warn" : "plain";
-  const freshnessVariant = job.freshness === "on_schedule" ? "ok" : job.freshness === "overdue" ? "bad" : "warn";
+  const freshnessVariant =
+    job.freshness === "on_schedule" ? "ok" : job.freshness === "overdue" ? "bad" : job.freshness === "not_scheduled" ? "plain" : "warn";
   const notApplicable = "—";
 
   return (
@@ -233,7 +234,13 @@ function JobStatus({ job, t, f }: { job: JobStatusView; t: Translate; f: Formatt
           <Fact label={job.freshness === "overdue" ? t("jobs.overdueSince") : t("jobs.freshUntil")} value={f.dateTime(job.freshUntil)} />
         )}
       </dl>
-      <p className="text-xs text-muted-foreground">{job.freshness === "no_recorded_run" ? t("jobs.neverRan") : t("jobs.threshold", { hours: job.staleAfterHours })}</p>
+      <p className="text-xs text-muted-foreground">
+        {job.staleAfterHours === null
+          ? t("jobs.notScheduled")
+          : job.freshness === "no_recorded_run"
+            ? t("jobs.neverRan")
+            : t("jobs.threshold", { hours: job.staleAfterHours })}
+      </p>
     </div>
   );
 }

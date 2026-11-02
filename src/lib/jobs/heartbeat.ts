@@ -11,6 +11,8 @@ import { safeErrorCode } from "@/lib/auth/password-reset-log";
  */
 const HEALTHCHECK_ENV: Record<JobName, string> = {
   "weekly-digest": "HEALTHCHECK_DIGEST_URL",
+  // Unset until a person creates its Healthchecks check (runbook); until then every ping reports "not_configured".
+  "monthly-generation": "HEALTHCHECK_MONTHLY_GENERATION_URL",
 };
 
 /** "not_configured" is a real, expected state until the runbook's Healthchecks.io setup step is

@@ -380,6 +380,7 @@ export async function loadReviewContentInTx(tx: Tx, organizationId: string, stud
       .filter((d) => d.withdrawn)
       .map(({ id, studentId, withdrawalKind, supersededById }) => ({ id, studentId, withdrawalKind: withdrawalKind!, supersededById })),
     confirmations: [],
+    trigger: { scheduled: false, latestRun: null, stale: false, stuck: false }, // check 10's facts: not part of any fingerprint
   };
 }
 

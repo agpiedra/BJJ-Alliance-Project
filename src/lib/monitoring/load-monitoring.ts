@@ -39,12 +39,13 @@ export const PRIVILEGED_CHANGE_ACTIONS = [
 /** A panel either loaded or could not — "could not load" is never shown as zero or as "no history". */
 export type Panel<T> = { status: "ok"; data: T } | { status: "unavailable" };
 
-export type JobFreshness = "no_recorded_run" | "overdue" | "on_schedule";
+/** `not_scheduled`: the job has no stale threshold because it has no schedule yet (monthly-generation until D5). */
+export type JobFreshness = "no_recorded_run" | "overdue" | "on_schedule" | "not_scheduled";
 
 export interface JobStatusView {
   jobName: JobName;
   schedule: JobSchedule | null;
-  staleAfterHours: number;
+  staleAfterHours: number | null;
   latestRun: JobRunSummary["latestRun"];
   latestSuccess: JobRunSummary["latestSuccess"];
   /** Same rule as /api/health/jobs's `stale`, split so "never ran" is its own state. */
@@ -68,7 +69,14 @@ export interface MonitoringSnapshot {
 export function classifyJob(jobName: JobName, summary: JobRunSummary, now: number): JobStatusView {
   const { latestRun, latestSuccess } = summary;
   const staleAfterHours = STALE_AFTER_HOURS[jobName];
-  const freshness: JobFreshness = !latestRun ? "no_recorded_run" : isJobStale(jobName, latestRun.startedAt, now) ? "overdue" : "on_schedule";
+  const freshness: JobFreshness =
+    staleAfterHours === null
+      ? "not_scheduled"
+      : !latestRun
+        ? "no_recorded_run"
+        : isJobStale(jobName, latestRun.startedAt, now)
+          ? "overdue"
+          : "on_schedule";
   return {
     jobName,
     schedule: resolveJobSchedule(jobName),
@@ -76,7 +84,7 @@ export function classifyJob(jobName: JobName, summary: JobRunSummary, now: numbe
     latestRun,
     latestSuccess,
     freshness,
-    freshUntil: latestRun ? new Date(latestRun.startedAt.getTime() + staleAfterHours * 3_600_000) : null,
+    freshUntil: latestRun && staleAfterHours !== null ? new Date(latestRun.startedAt.getTime() + staleAfterHours * 3_600_000) : null,
     stuck: isJobStuck(latestRun?.status ?? null, latestRun?.startedAt ?? null, now),
   };
 }

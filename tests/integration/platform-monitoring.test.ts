@@ -15,6 +15,8 @@ vi.mock("@/auth", () => ({ auth: () => Promise.resolve(currentSession) }));
 
 const { loadMonitoringSnapshot, RECENT_EVENT_LIMIT } = await import("../../src/lib/monitoring/load-monitoring");
 const { STALE_AFTER_HOURS } = await import("../../src/lib/jobs/job-health");
+// The weekly digest is scheduled, so its threshold is a number (null is reserved for unscheduled jobs).
+const DIGEST_STALE_HOURS = STALE_AFTER_HOURS["weekly-digest"] as number;
 
 const prisma = getTestPrismaClient();
 
@@ -243,7 +245,7 @@ describe("/platform/monitoring — scheduled jobs over all history", () => {
   });
 
   it("REQUIRED: a run older than the configured threshold is overdue, even though it succeeded", async () => {
-    const startedAt = at(-(STALE_AFTER_HOURS["weekly-digest"] + 1) * HOUR);
+    const startedAt = at(-(DIGEST_STALE_HOURS + 1) * HOUR);
     await prisma.jobRun.create({ data: { jobName: "weekly-digest", status: "SUCCEEDED", startedAt, finishedAt: at(60_000, startedAt) } });
 
     const job = await weeklyDigest();

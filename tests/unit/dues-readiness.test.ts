@@ -55,6 +55,8 @@ function base(): ReadinessSnapshot {
     openingItems: [],
     withdrawnOpeningItems: [],
     confirmations: [],
+    // Check 10 (trigger health): the production state today — not scheduled, never ran.
+    trigger: { scheduled: false, latestRun: null, stale: false, stuck: false },
   };
 }
 const clone = (s: ReadinessSnapshot): ReadinessSnapshot => structuredClone(s);
@@ -250,7 +252,7 @@ describe("stage 8b: opening-debt drafts in the student fingerprint (format r2)",
     expect(after.preview).toEqual(before.preview);
     expect(after.checks).toEqual(before.checks);
     expect(after.ready).toBe(false);
-    expect(after.checks.filter((c) => c.status === "notImplemented").map((c) => c.id)).toEqual([10, 11, 12]);
+    expect(after.checks.filter((c) => c.status === "notImplemented").map((c) => c.id)).toEqual([11, 12]); // check 10 is computed (G2b): it fails until scheduled
     expect(after.checks.find((c) => c.id === 13)!.status).toBe("decisionPending");
   });
 });
@@ -334,12 +336,12 @@ describe("readiness: checks 1-5 are computed", () => {
 });
 
 describe("readiness: never falsely ready", () => {
-  it("stage 8c: checks 6-9 are computed, 10-12 stay notImplemented and 13 decisionPending; 9 fails with no reviews", () => {
+  it("stage 8c: checks 6-9 are computed, 10 fails (computed trigger health, not scheduled), 11-12 stay notImplemented and 13 decisionPending; 9 fails with no reviews", () => {
     const report = evaluateReadiness(base(), S);
     expect(report.checks.map((c) => [c.id, c.status])).toEqual([
       [1, "pass"], [2, "pass"], [3, "pass"], [4, "pass"], [5, "pass"],
       [6, "pass"], [7, "pass"], [8, "pass"], [9, "fail"],
-      [10, "notImplemented"], [11, "notImplemented"], [12, "notImplemented"], [13, "decisionPending"],
+      [10, "fail"], [11, "notImplemented"], [12, "notImplemented"], [13, "decisionPending"],
     ]);
     expect(report.ready).toBe(false);
   });
@@ -427,7 +429,7 @@ describe("stage 8c: confirmations, checks 6-9, warnings and opening totals", () 
   it("check 9 passes when every active student has a valid review; ready stays false with checks 1-9 passing", () => {
     const r = report(reviewAll(clone(base())));
     expect(r.checks.filter((c) => c.id <= 9).every((c) => c.status === "pass")).toBe(true);
-    expect(r.checks.filter((c) => c.status === "notImplemented").map((c) => c.id)).toEqual([10, 11, 12]);
+    expect(r.checks.filter((c) => c.status === "notImplemented").map((c) => c.id)).toEqual([11, 12]); // check 10 is computed (G2b): it fails until scheduled
     expect(r.checks.find((c) => c.id === 13)!.status).toBe("decisionPending");
     expect(r.ready).toBe(false);
   });
@@ -609,7 +611,43 @@ describe("regression: MONTHLY wouldCreate totals above one column's maximum (99,
       ["s2", "created", "0.05 USD"],
       ["s3", "created", "25000.00 CRC"],
     ]);
-    expect(report.checks.filter((c) => c.status === "notImplemented").map((c) => c.id)).toEqual([10, 11, 12]);
+    expect(report.checks.filter((c) => c.status === "notImplemented").map((c) => c.id)).toEqual([11, 12]); // check 10 is computed (G2b): it fails until scheduled
     expect(report.ready).toBe(false);
+  });
+});
+
+describe("G2b: check 10 is computed trigger health (MONTHLY-GENERATION-TRIGGER-PLAN.md §11), never billing completeness", () => {
+  const withTrigger = (trigger: ReadinessSnapshot["trigger"]): ReadinessSnapshot => ({ ...base(), trigger });
+  const healthy: ReadinessSnapshot["trigger"] = { scheduled: true, latestRun: { status: "SUCCEEDED", finalized: true, heartbeatStatus: "ok" }, stale: false, stuck: false };
+
+  it("REQUIRED: today's production state (no schedule, never ran) fails with exactly those two reasons, and ready stays false", () => {
+    const c = check(base(), 10);
+    expect(c).toMatchObject({ status: "fail", items: ["trigger:notScheduled", "trigger:neverRan"] });
+    expect(evaluateReadiness(base(), S).ready).toBe(false);
+  });
+
+  it("REQUIRED: a successful manual run does not pass while the job is unscheduled", () => {
+    expect(check(withTrigger({ ...healthy, scheduled: false }), 10)).toMatchObject({ status: "fail", items: ["trigger:notScheduled"] });
+  });
+
+  it.each([
+    ["an unfinished run", { ...healthy, latestRun: { status: "RUNNING", finalized: false, heartbeatStatus: null } }, ["trigger:notFinalized", "trigger:heartbeatNotOk"]],
+    ["a PARTIAL run", { ...healthy, latestRun: { status: "PARTIAL", finalized: true, heartbeatStatus: "failed" } }, ["trigger:notSucceeded", "trigger:heartbeatNotOk"]],
+    ["a stale run", { ...healthy, stale: true }, ["trigger:stale"]],
+    ["a stuck run", { ...healthy, stuck: true }, ["trigger:stuck"]],
+    ["an unconfigured heartbeat", { ...healthy, latestRun: { status: "SUCCEEDED", finalized: true, heartbeatStatus: "not_configured" } }, ["trigger:heartbeatNotOk"]],
+  ] as const)("%s fails with its reasons", (_label, trigger, items) => {
+    expect(check(withTrigger(trigger as ReadinessSnapshot["trigger"]), 10)).toMatchObject({ status: "fail", items: [...items] });
+  });
+
+  it("passes only when scheduled, finalized SUCCEEDED, fresh, not stuck and heartbeat ok — and even then ready stays false (11-13)", () => {
+    const report = evaluateReadiness(withTrigger(healthy), S);
+    expect(report.checks.find((c) => c.id === 10)).toMatchObject({ status: "pass", items: [] });
+    expect(report.checks.find((c) => c.id === 10)!.detail).toContain("not billing completeness");
+    expect(report.ready).toBe(false);
+  });
+
+  it("check 10's facts are never part of a fingerprint", () => {
+    expect(evaluateReadiness(withTrigger(healthy), S).fingerprints).toEqual(evaluateReadiness(base(), S).fingerprints);
   });
 });

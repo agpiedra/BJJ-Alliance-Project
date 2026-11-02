@@ -132,6 +132,41 @@ export function promoStudentIds(snapshot: ReadinessSnapshot): string[] {
   return sortedIds(snapshot.legacyPayments.filter((p) => p.status === "PROMO" || p.status === "EXEMPT" || p.promoRecurring).map((p) => p.studentId));
 }
 
+/** Check 10's failure reasons, each rendered as a `trigger:<reason>` item. */
+export type TriggerReason = "notScheduled" | "neverRan" | "notFinalized" | "notSucceeded" | "stale" | "stuck" | "heartbeatNotOk";
+
+/**
+ * Check 10 — TRIGGER HEALTH ONLY (MONTHLY-GENERATION-TRIGGER-PLAN.md §11). Passes only if the job is scheduled in
+ * `vercel.json` (E2), its latest JobRun is finalized SUCCEEDED and neither stale nor stuck (E4), and that run's heartbeat
+ * status is "ok" (E6). Limits: never billing completeness (pass results live on the progress rows, which this never reads),
+ * never proof of who invoked the run (E3/E5 are a person's checks), never alert delivery (E7). With no `vercel.json` entry
+ * (the schedule, D5, is not approved) it can only fail.
+ */
+function triggerHealthCheck(trigger: ReadinessSnapshot["trigger"]): ReadinessCheck {
+  const reasons: TriggerReason[] = [];
+  if (!trigger.scheduled) reasons.push("notScheduled");
+  const run = trigger.latestRun;
+  if (!run) {
+    reasons.push("neverRan");
+  } else {
+    if (!run.finalized) reasons.push("notFinalized");
+    else if (run.status !== "SUCCEEDED") reasons.push("notSucceeded");
+    if (trigger.stale) reasons.push("stale");
+    if (trigger.stuck) reasons.push("stuck");
+    if (run.heartbeatStatus !== "ok") reasons.push("heartbeatNotOk");
+  }
+  return {
+    id: 10,
+    key: "monthlyGenerationScheduled",
+    status: reasons.length === 0 ? "pass" : "fail",
+    detail:
+      reasons.length === 0
+        ? "The monthly-generation trigger is scheduled and its latest run finished SUCCEEDED with a confirmed heartbeat. This is trigger health only — not billing completeness, not scheduler proof, not alert delivery."
+        : "The monthly-generation trigger is not healthy (see the reasons). This checks trigger health only — never billing completeness.",
+    items: reasons.map((r) => `trigger:${r}`),
+  };
+}
+
 export function evaluateReadiness(snapshot: ReadinessSnapshot, candidate: YearMonth): ReadinessReport {
   const s = candidate;
   const gOfS: CalendarDate = { year: s.year, month: s.month, day: 1 };
@@ -287,7 +322,7 @@ export function evaluateReadiness(snapshot: ReadinessSnapshot, candidate: YearMo
       "Every active student, and every student with an opening item, has a current opening-debt review for S.",
       "Students (active, or with an opening item) without a current opening-debt review for S (missing, or stale since a change).",
     ),
-    { id: 10, key: "monthlyGenerationScheduled", status: "notImplemented", detail: "The monthly-generation trigger is not built or scheduled.", items: [] },
+    triggerHealthCheck(snapshot.trigger),
     { id: 11, key: "openingCancellationAvailable", status: "notImplemented", detail: "The approved owner cancellation of erroneous opening obligations (O2) is not implemented.", items: [] },
     {
       id: 12,

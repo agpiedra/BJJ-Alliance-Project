@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireEnv } from "@/lib/env";
+import { bearerMatches } from "@/lib/auth/secrets-match";
 import { JOB_NAMES, type JobName } from "@/lib/jobs/job-names";
-import { isJobStale, isJobStuck } from "@/lib/jobs/job-health";
+import { isJobStale, isJobStuck, resolveJobSchedule } from "@/lib/jobs/job-health";
 
 interface JobHealth {
   lastRun: {
@@ -14,6 +15,8 @@ interface JobHealth {
     skipped: number;
     heartbeatStatus: string | null;
   } | null;
+  /** Whether `vercel.json` schedules this job. An unscheduled job (monthly-generation until D5) is never stale. */
+  scheduled: boolean;
   stale: boolean;
   stuck: boolean;
 }
@@ -24,8 +27,8 @@ interface JobHealth {
  * how many promotions awarded), so unlike `/api/health` it is never public.
  */
 export async function GET(request: Request): Promise<NextResponse> {
-  const authHeader = request.headers.get("authorization");
-  if (authHeader !== `Bearer ${requireEnv("CRON_SECRET")}`) {
+  // Constant-time (src/lib/auth/secrets-match.ts); accepts exactly the header value the former `!==` check accepted.
+  if (!bearerMatches(request.headers.get("authorization"), requireEnv("CRON_SECRET"))) {
     return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
   }
 
@@ -49,6 +52,7 @@ export async function GET(request: Request): Promise<NextResponse> {
             heartbeatStatus: run.heartbeatStatus,
           }
         : null,
+      scheduled: resolveJobSchedule(jobName) !== null,
       stale,
       stuck,
     };

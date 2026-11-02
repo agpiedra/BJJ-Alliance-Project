@@ -15,6 +15,10 @@ import { productionSourceFiles, stripComments } from "../helpers/source-files";
 const RUNNER = "src/lib/dues/monthly-generation.ts";
 const LOOP = "src/lib/dues/monthly-generation-progress.ts";
 const BUDGET = "src/lib/dues/monthly-generation-route-budget.ts";
+// G2b (owner approval 2026-11-02): exactly ONE production path reaches the loop — this route file, through this module.
+// Still unscheduled (no vercel.json entry until D5) and still closed by the production defaults below.
+const ROUTE_MODULE = "src/lib/dues/monthly-generation-route.ts";
+const ROUTE_FILE = "src/app/api/cron/monthly-generation/route.ts";
 const IMPORTS_RUNNER = /(?:from\s+|import\s*\(\s*|require\s*\(\s*)["'][^"']*dues\/monthly-generation["']/;
 const IMPORTS_LOOP = /(?:from\s+|import\s*\(\s*|require\s*\(\s*)["'][^"']*dues\/monthly-generation-progress["']/;
 const norm = (file: string) => file.replaceAll("\\", "/");
@@ -46,12 +50,15 @@ describe("the monthly-generation runner and visit loop are not reachable from pr
     expect(importers, "generateMonthlyObligationForStudent must have no production caller until the activation/scheduler rollout stage").toEqual([LOOP]);
   });
 
-  it("only the pure route-budget helper imports the visit loop, and nothing imports the helper", () => {
-    const importers = files.filter((f) => IMPORTS_LOOP.test(stripComments(f.text))).map((f) => norm(f.file));
-    expect(importers, "runMonthlyGeneration must have no production caller until G2b (D5 pending)").toEqual([BUDGET]);
+  it("the visit loop and the budget helper are reached only through the G2b route module, which only the route file imports", () => {
+    const importers = files.filter((f) => IMPORTS_LOOP.test(stripComments(f.text))).map((f) => norm(f.file)).sort();
+    expect(importers, "runMonthlyGeneration's only production caller is the G2b route module").toEqual([BUDGET, ROUTE_MODULE].sort());
     const IMPORTS_BUDGET = /(?:from\s+|import\s*\(\s*|require\s*\(\s*)["'][^"']*dues\/monthly-generation-route-budget["']/;
     const budgetImporters = files.filter((f) => IMPORTS_BUDGET.test(stripComments(f.text))).map((f) => norm(f.file));
-    expect(budgetImporters, "planRouteBudget has no production caller until G2b").toEqual([]);
+    expect(budgetImporters, "planRouteBudget's only production caller is the G2b route module").toEqual([ROUTE_MODULE]);
+    const IMPORTS_ROUTE_MODULE = /(?:from\s+|import\s*\(\s*|require\s*\(\s*)["'][^"']*dues\/monthly-generation-route["']/;
+    const moduleImporters = files.filter((f) => IMPORTS_ROUTE_MODULE.test(stripComments(f.text))).map((f) => norm(f.file));
+    expect(moduleImporters, "only the cron route file calls the route module").toEqual([ROUTE_FILE]);
     // The helper is pure: no database client, no clock.
     const helper = stripComments(readFileSync(BUDGET, "utf8"));
     expect(helper).not.toMatch(/@\/lib\/prisma|Date\.now|performance\.now|new Date/);
@@ -66,9 +73,12 @@ describe("the monthly-generation runner and visit loop are not reachable from pr
     }
   });
 
-  it("is not registered in vercel.json's scheduler or the job registry", () => {
-    expect(readFileSync("vercel.json", "utf8")).not.toContain("monthly-generation");
-    expect(readFileSync("src/lib/jobs/job-names.ts", "utf8")).not.toContain("monthly-generation");
+  it("is registered in the job registry but NOT scheduled: no vercel.json entry and no stale threshold until D5", async () => {
+    expect(readFileSync("vercel.json", "utf8"), "the schedule is D5's decision").not.toContain("monthly-generation");
+    expect(readFileSync("src/lib/jobs/job-names.ts", "utf8")).toContain('"monthly-generation"');
+    const { STALE_AFTER_HOURS, resolveJobSchedule } = await import("../../src/lib/jobs/job-health");
+    expect(STALE_AFTER_HOURS["monthly-generation"]).toBeNull();
+    expect(resolveJobSchedule("monthly-generation")).toBeNull();
   });
 
   it("keeps its closed defaults: no start month, inactive ledger, and closure policy a required input with no production value", () => {
@@ -76,8 +86,13 @@ describe("the monthly-generation runner and visit loop are not reachable from pr
     expect(loop).toContain("deps.generationStart ?? (async () => null)");
     expect(loop).toContain("deps.activation ?? inactiveLedgerActivation");
     expect(loop).toMatch(/closurePolicy: "none";/); // required (no `?`), one literal value
-    const mentionsClosurePolicy = files.filter((f) => /closurePolicy\s*:/.test(stripComments(f.text))).map((f) => norm(f.file));
-    expect(mentionsClosurePolicy, "only the loop's own type may mention closurePolicy until D3 is decided").toEqual([LOOP]);
+    const mentionsClosurePolicy = files.filter((f) => /closurePolicy\s*:/.test(stripComments(f.text))).map((f) => norm(f.file)).sort();
+    expect(mentionsClosurePolicy, "besides the loop's type, only the G2b route module passes closurePolicy, until D3 is decided").toEqual([LOOP, ROUTE_MODULE].sort());
+    // The route passes G1's only value ("none", no automatic closure): it decides nothing about D3. And it passes no
+    // activation, no start month and no test hook, so the production defaults stay closed.
+    const route = stripComments(readFileSync(ROUTE_MODULE, "utf8"));
+    expect(route).toContain('closurePolicy: "none"');
+    expect(route).not.toMatch(/\bactivation\s*:|generationStart\s*:|ForTest\s*:/);
   });
 
   it("no production file other than the loop's rollover writes DuesGenerationProgress rows through the model API", () => {
@@ -111,11 +126,11 @@ describe("the monthly-generation runner and visit loop are not reachable from pr
     expect(stripComments(readFileSync(LOOP, "utf8"))).toContain("resolveSystemJobContext(claim.organizationId, GENERATION_JOB_NAME, tx)");
   });
 
-  it("is registered as built ahead of its caller", () => {
+  it("the pending-callers registry matches: the per-student runner is still ahead of its direct caller; the loop and budget now have one", () => {
     const registry = readFileSync("scripts/pending-callers.ts", "utf8");
     expect(registry).toContain("generateMonthlyObligationForStudent");
     expect(registry).toContain(RUNNER);
-    expect(registry).toContain("runMonthlyGeneration");
-    expect(registry).toContain(LOOP);
+    expect(registry).not.toContain('symbol: "runMonthlyGeneration"');
+    expect(registry).not.toContain('symbol: "planRouteBudget"');
   });
 });

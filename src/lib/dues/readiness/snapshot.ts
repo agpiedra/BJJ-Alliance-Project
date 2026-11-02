@@ -1,4 +1,5 @@
 import type { Tx } from "@/lib/students/lock";
+import { isJobStale, isJobStuck, resolveJobSchedule } from "@/lib/jobs/job-health";
 
 /**
  * Everything the stage-8 readiness report reads, as plain data (amounts as canonical `toFixed(2)` strings, dates as
@@ -66,6 +67,17 @@ export interface ReadinessSnapshot {
     declaredNoOpeningDebt: boolean | null;
     confirmedAt: string;
   }[];
+  /**
+   * G2b, check 10 (MONTHLY-GENERATION-TRIGGER-PLAN.md §11): platform-level facts about the monthly-generation TRIGGER, read in
+   * the same snapshot. Never a billing fact and never part of any fingerprint. `stale`/`stuck` use the job-health rules the
+   * health endpoint uses (an unscheduled job is never stale).
+   */
+  trigger: {
+    scheduled: boolean;
+    latestRun: { status: string; finalized: boolean; heartbeatStatus: string | null } | null;
+    stale: boolean;
+    stuck: boolean;
+  };
 }
 
 const isoDate = (d: Date) => d.toISOString().slice(0, 10);
@@ -124,6 +136,13 @@ export async function loadReadinessSnapshot(
       declaredNoOpeningDebt: true, confirmedAt: true,
     },
   });
+  // Check 10 (trigger health): the latest monthly-generation JobRun — a platform job, not this organization's data.
+  const latestTriggerRun = await tx.jobRun.findFirst({
+    where: { jobName: "monthly-generation" },
+    orderBy: { startedAt: "desc" },
+    select: { status: true, startedAt: true, finishedAt: true, heartbeatStatus: true },
+  });
+  const now = Date.now();
 
   return {
     organization: { id: organization.id, currency: organization.currency },
@@ -146,5 +165,13 @@ export async function loadReadinessSnapshot(
       .filter((d) => d.withdrawnAt !== null)
       .map(({ id, studentId, withdrawalKind, supersededById }) => ({ id, studentId, withdrawalKind: withdrawalKind!, supersededById })),
     confirmations: confirmations.map((c) => ({ ...c, confirmedAt: c.confirmedAt.toISOString() })),
+    trigger: {
+      scheduled: resolveJobSchedule("monthly-generation") !== null,
+      latestRun: latestTriggerRun
+        ? { status: latestTriggerRun.status, finalized: latestTriggerRun.finishedAt !== null, heartbeatStatus: latestTriggerRun.heartbeatStatus }
+        : null,
+      stale: isJobStale("monthly-generation", latestTriggerRun?.startedAt ?? null, now),
+      stuck: isJobStuck(latestTriggerRun?.status ?? null, latestTriggerRun?.startedAt ?? null, now),
+    },
   };
 }

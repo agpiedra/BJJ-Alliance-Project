@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireEnv } from "@/lib/env";
+import { bearerMatches } from "@/lib/auth/secrets-match";
 import { safeErrorCode, type SafeErrorCode } from "@/lib/auth/password-reset-log";
 import { assertTransactionTimeouts } from "@/lib/db/transaction-timeouts";
 import { pingHeartbeat, type HeartbeatOutcome } from "@/lib/jobs/heartbeat";
@@ -122,8 +123,8 @@ export async function runScheduledJob(
   // Validated as executed, before anything else: an invalid configuration (a zero or truncated timeout would disable a bound)
   // is a programming error and is refused before any JobRun write or heartbeat.
   if (options.bookkeeping) assertTransactionTimeouts(options.bookkeeping, "bookkeeping", { requireIdle: true });
-  const authHeader = request.headers.get("authorization");
-  if (authHeader !== `Bearer ${requireEnv("CRON_SECRET")}`) {
+  // Constant-time (src/lib/auth/secrets-match.ts); accepts exactly the header value the former `!==` check accepted.
+  if (!bearerMatches(request.headers.get("authorization"), requireEnv("CRON_SECRET"))) {
     return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
   }
   const bounds = options.bookkeeping;

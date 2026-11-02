@@ -1762,7 +1762,7 @@
         },
         "monthlyGenerationScheduled": {
           "title": "Cobros mensuales programados",
-          "unavailable": "El proceso de cobros mensuales aún no existe, así que esto no puede aprobarse."
+          "fail": "El disparador de cobros mensuales aún no está saludable. Esto solo verifica que el disparador se ejecute según su programación — nunca que la facturación de algún mes esté completa."
         },
         "openingCancellationAvailable": {
           "title": "Anular un cobro inicial",
@@ -1829,7 +1829,16 @@
       "items": {
         "unknown": "Ítem desconocido",
         "legacy": "{student}, {month} ({status})",
-        "openingItem": "{student}, deuda inicial de {month}"
+        "openingItem": "{student}, deuda inicial de {month}",
+        "trigger": {
+          "notScheduled": "Sin programar: la programación espera una decisión del propietario (D5).",
+          "neverRan": "Nunca ha registrado una ejecución.",
+          "notFinalized": "Su última ejecución nunca terminó de registrarse.",
+          "notSucceeded": "Su última ejecución no fue exitosa.",
+          "stale": "Su última ejecución es más antigua de lo que permite la programación.",
+          "stuck": "Su última ejecución parece atascada.",
+          "heartbeatNotOk": "No se confirmó el aviso de monitoreo de la última ejecución."
+        }
       },
       "empty": "Aún no hay sedes ni estudiantes. La preparación se calcula para sus estudiantes.",
       "forms": {
@@ -2573,7 +2582,8 @@
         "freshnessState": {
           "on_schedule": "A tiempo",
           "overdue": "Atrasada",
-          "no_recorded_run": "Sin ejecuciones registradas"
+          "no_recorded_run": "Sin ejecuciones registradas",
+          "not_scheduled": "Sin programar"
         },
         "latestRun": "Última ejecución",
         "latestSuccess": "Última ejecución exitosa",
@@ -2591,6 +2601,7 @@
         "overdueSince": "Atrasada desde",
         "threshold": "Una ejecución se considera vigente durante {hours} horas desde que inicia.",
         "neverRan": "Esta tarea nunca ha registrado una ejecución. Considérala no saludable hasta que lo haga.",
+        "notScheduled": "Esta tarea aún no tiene programación (su programación es una decisión pendiente del propietario), así que nunca se cuenta como atrasada. Solo se ejecuta si alguien la invoca.",
         "yes": "Sí",
         "no": "No"
       },

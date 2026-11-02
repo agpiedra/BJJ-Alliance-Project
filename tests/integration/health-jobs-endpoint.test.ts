@@ -81,7 +81,39 @@ describe("GET /api/health/jobs", () => {
   it("REQUIRED: the removed promotion auto-award job is not reported at all (a stale ghost job would keep health red forever)", async () => {
     vi.stubEnv("CRON_SECRET", "test-cron-secret");
     const body = await (await GET(request("test-cron-secret"))).json();
-    expect(Object.keys(body.jobs)).toEqual(["weekly-digest"]);
+    expect(Object.keys(body.jobs)).toEqual(["weekly-digest", "monthly-generation"]);
+  });
+
+  it("REQUIRED (G2b): the registered but UNSCHEDULED monthly-generation job is reported, never stale, and cannot turn health red by itself", async () => {
+    vi.stubEnv("CRON_SECRET", "test-cron-secret");
+    // A fresh digest run, so the digest alone is healthy; monthly-generation has never run and has no schedule.
+    await createRun({ jobName: "weekly-digest", startedAt: new Date() });
+    const body = await (await GET(request("test-cron-secret"))).json();
+    expect(body.jobs["monthly-generation"]).toEqual({ lastRun: null, scheduled: false, stale: false, stuck: false });
+    expect(body.jobs["weekly-digest"].scheduled).toBe(true);
+    expect(body.ok).toBe(true);
+  });
+
+  it("REQUIRED (G2b): a stuck monthly-generation run still turns health red, scheduled or not", async () => {
+    vi.stubEnv("CRON_SECRET", "test-cron-secret");
+    await createRun({ jobName: "weekly-digest", startedAt: new Date() });
+    await createRun({ jobName: "monthly-generation", status: "RUNNING", startedAt: new Date(Date.now() - 31 * 60_000), finishedAt: null });
+    const body = await (await GET(request("test-cron-secret"))).json();
+    expect(body.jobs["monthly-generation"].stuck).toBe(true);
+    expect(body.ok).toBe(false);
+  });
+
+  it.each([
+    ["no header", null],
+    ["a wrong secret", "Bearer wrong-secret"],
+    ["the right secret, lowercase scheme", "bearer test-cron-secret"],
+    ["a prefix of the right secret", "Bearer test-cron-secre"],
+    ["the right secret plus one character", "Bearer test-cron-secretx"],
+    ["the bare secret without the scheme", "test-cron-secret"],
+  ])("REQUIRED (constant-time check keeps the old accept set): %s -> 401", async (_label, header) => {
+    vi.stubEnv("CRON_SECRET", "test-cron-secret");
+    const response = await GET(new Request("http://localhost/api/health/jobs", { headers: header === null ? {} : { authorization: header } }));
+    expect(response.status).toBe(401);
   });
 
   it("REQUIRED: a fresh SUCCEEDED run is reported as neither stale nor stuck, with its real counts", async () => {

@@ -583,6 +583,36 @@ nothing is blocked on Healthchecks.io existing — but `heartbeatStatus` reads
 `"not_configured"` instead of `"ok"`/`"failed"`, visible on the same `/api/health/jobs`
 endpoint, so the gap is a fact you can see, not a silent assumption.
 
+**The monthly-generation job (G2b) — built, NOT scheduled.** `GET /api/cron/monthly-generation` exists,
+and `monthly-generation` is a registered job, but `vercel.json` has **no** entry for it until the schedule
+(owner decision D5) is approved. Until then:
+- **Nothing calls it.** Vercel never invokes it; only a request carrying `CRON_SECRET` would. Do **not** add its
+  `vercel.json` entry, create its Healthchecks.io check or call it on a hosted environment as part of a deploy.
+  Scheduling, hosted execution and activation (stage 9) are separate, unapproved steps.
+- **Health shows it as unscheduled.** `/api/health/jobs` reports it with `scheduled: false` and `stale: false`, so an
+  unscheduled job never turns health red; a stuck run still does. `/platform/monitoring` shows **Not scheduled**.
+- **The readiness screen keeps check 10 failing.** Check 10 ("Monthly charges scheduled") lists **Not scheduled** and
+  **never ran**, so `ready` stays false.
+
+**When D5 is approved** (a later, separate change), do these together:
+1. Add the `vercel.json` entry and its `STALE_AFTER_HOURS` value in the same change. A unit test fails if one lands without
+   the other.
+2. Create its Healthchecks.io check, with the same cron expression, and set **`HEALTHCHECK_MONTHLY_GENERATION_URL`** for
+   Production only. Unset, every run records `heartbeatStatus: "not_configured"`, and check 10 cannot pass.
+3. Verify the first scheduled run as described above.
+
+**Reading a run:**
+- **The `JobRun` row, the Healthchecks ping and `/api/health/jobs` are the liveness signal.** The HTTP status is only
+  logged.
+- **A 200 means the invocation ran;** `ok: false` means it recorded failures.
+- **No response ever means a month's billing is complete.** Every body says `billingCompletenessCertified: false`, and a run
+  that stops at its deadline with work left is a normal `SUCCEEDED` run. The next invocation resumes at the stored cursor;
+  Vercel does not retry.
+- **A 500 means no run happened,** or its bookkeeping is uncertain (`finalized: "unknown"`), or the route refused an
+  infeasible budget (`RouteBudgetInfeasibleError`).
+- **The function limit:** F = 300 s (`maxDuration`). The 30 s cold-start and 30 s margin reserves are approved reserves,
+  not measurements.
+
 `GET /api/health` (public, no secret, database-only — deliberately narrower than
 `/api/health/jobs`) is a second, independent thing worth pointing an uptime monitor
 (Healthchecks.io itself can do this too, as a plain "URL check," or any other service) at
