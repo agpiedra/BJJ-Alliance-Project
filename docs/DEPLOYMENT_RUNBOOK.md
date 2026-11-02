@@ -178,8 +178,9 @@ together.
     prints credentials. It checks, in order: the TLS session is encrypted and the certificate
     verified; 300 queries and 60 interactive transactions through the app's real client,
     at most 10 in flight (the pool's size), all succeed and each returns its *own* answer;
-    the same 360 operations all started at once, as a stress result that is reported but
-    never decides `RESULT`; a control that opts in to named prepared
+    the same 360 operations all started at once, as a stress step where only Prisma's
+    transaction-start timeout is information and any other failure fails `RESULT`; a control
+    that opts in to named prepared
     statements (the one thing that breaks transaction pooling); and — the real production
     shape, many cold function instances each with their own pool — 90 concurrent requests
     to the deployed page. **Pass `--app-url` a public page that reads the database**, e.g. an
@@ -193,13 +194,22 @@ together.
 
     [1/5] TLS      PASS  encrypted, server certificate verified
     [2/5] APP LOAD PASS  360/360 queries and transactions succeeded, 10 in flight (10 distinct backend connections seen)
-    [3/5] STRESS   INFO  unbounded: … (PASS or FAIL here depends on your machine's distance to the database)
+    [3/5] STRESS   PASS  unbounded: 360/360 started at once succeeded (10 distinct backend connections seen)
+          (or, from a distant machine: [3/5] STRESS   INFO  unbounded: 60/360 failed, every one the transaction-start timeout — …)
     [4/5] CONTROL  INFO  named prepared statements DO break this pooler (…) — so [2/5] passing is meaningful.
     [5/5] APP URL  PASS  90/90 concurrent requests returned 200
 
-    RESULT: PASS
+    RESULT: PASS — complete deployment verification (verified TLS, database load, deployed app)
     ```
-    Exit code 0 is the only go. Lines `[1/5]`, `[2/5]` and `[5/5]` must each be `PASS`.
+    **Exit code 0 is the only go.** The script has three outcomes:
+
+    | Exit | Last line | Means |
+    |---|---|---|
+    | 0 | `RESULT: PASS — complete deployment verification …` | Remote database, `[1/5]` PASS (certificate verified), `[2/5]` PASS, `[3/5]` PASS or INFO, `[5/5]` PASS. The only result that completes this step. |
+    | 2 | `RESULT: PARTIAL — the database checks passed, but this is NOT a complete deployment verification: …` | Nothing failed, but the line names what was not established: no `--app-url` (`[5/5] SKIP`), the TLS no-verify fallback (`[1/5] WARN`), or a local database (plaintext `[1/5] INFO`, or `localhost`/`127.0.0.1`/`::1` at all). Running without `--app-url` is allowed — e.g. to check the database before the app is deployed — but it does not complete this step. |
+    | 1 | `RESULT: FAIL …` | A step printed `FAIL`, or the run could not start (no `DATABASE_URL`, refused TLS configuration, no connection, unreadable schema). |
+
+    `[4/5]` never affects the exit code. Exit 0 needs no particular `[4/5]` result.
 
     **`[2/5]` is not the original test.** Until 2026-10, this step started all 360 operations
     at once. That shape fails from any machine more than ~60 ms from the database, with
@@ -211,18 +221,21 @@ together.
     operator's machine: 60/360 failed. `[2/5]` bounds the workload at 10 in flight: the pooler
     sees the same 10 concurrent connections, but nothing waits locally. Pool size and
     transaction timeouts are unchanged. **This changes the acceptance workload; it does not
-    make the original test pass.** `[3/5]` still runs the original shape and reports its
-    result as information. A failure there is a finding about the local queue, not a
-    launch blocker. A `[3/5]` failure that is **not** the start timeout (crossed results,
-    `42P05`, `53300`) still needs investigating before launch.
+    make the original test pass.** `[3/5]` still runs the original shape. Exactly one error
+    there is information: Prisma's `P2028` with `Unable to start a transaction in the given
+    time` — a finding about the local queue, reported as `INFO`, not a launch blocker. Every
+    other `[3/5]` failure fails `RESULT` (exit 1): crossed results, `42P05`, `26000`, `53300`,
+    dropped connections, other `P2028` errors (an expired or rolled-back transaction), or a
+    schema that stopped being readable. When both kinds occur, the line counts the failing
+    ones and adds the start timeouts in brackets as information.
 
     `[4/5]` is information, never a failure: if it says named statements did **not** fail,
     this pooler tolerates them (the PgBouncer 1.25.2 used to rehearse this did, at its
     defaults; it failed only with `max_prepared_statements=0`) — the app never uses them,
     so `[2/5]` holds either way; the control just couldn't demonstrate the failure.
-    `RESULT: PASS, ON THE TEMPORARY no-verify FALLBACK` is not done — see "SSL fallback".
+    A `RESULT: PARTIAL` naming the no-verify fallback is not done — see "SSL fallback".
 
-    **If it fails — do not launch; fix, then rerun until `RESULT: PASS`:**
+    **If it fails (exit 1) — do not launch; fix, then rerun until exit 0 and `RESULT: PASS`:**
     - `[1/5] … unable to verify the first certificate` — `DATABASE_SSL_CA_B64` isn't the CA
       that signed the database's certificate: re-download it, re-encode the *file*, retry.
     - `[1/5] … does not match certificate's altnames` — the CA is right but the certificate
@@ -247,6 +260,11 @@ together.
       flight, this means each operation takes far longer than one round trip. Check the
       pooler's queueing and this machine's connection, and keep the output. Do not raise
       `maxWait` to make it pass.
+    - `[3/5] STRESS FAIL … failed with errors other than the transaction-start timeout` — read
+      the codes on the line. `42P05`/`26000`/`53300` mean what they mean under `[2/5]`;
+      `crossed result` means the pooler returned another session's answer — do not launch;
+      `57P01`/`08006` mean connections were dropped mid-run. Keep the output. `[2/5]` passing
+      does not cancel this failure.
     - `[5/5] … 404×90` — the `--app-url` is wrong (unknown academy slug). `500×…` — the
       deployment can't reach the database: read the Vercel function logs; the usual causes are
       `DATABASE_SSL_CA_B64` or `DATABASE_URL` missing in the *Production* environment scope, or
@@ -495,14 +513,16 @@ If step 11 fails on TLS and the cause is not something you can fix quickly (typi
 `DIRECT_URL`). That encrypts the connection and authenticates nothing.
 
 - **It is temporary.** The app logs a warning on every start naming it as such, and
-  `pnpm verify:pooling` ends `RESULT: PASS, ON THE TEMPORARY no-verify FALLBACK` — never a
-  plain `PASS` — every time it is run, so it cannot go unnoticed.
+  `pnpm verify:pooling` ends `RESULT: PARTIAL … TLS is on the temporary no-verify fallback`
+  with exit code 2 — never `PASS`, never exit 0 — every time it is run, so it cannot go
+  unnoticed.
 - **Owner:** Alexis. Nothing else removes it.
 - **Exit condition:** find out what the certificate actually names (the `openssl s_client`
   command in step 11), then make the verified configuration work — the right CA file, or a
   connection string whose hostname the certificate covers. Then remove
   `DATABASE_SSL_MODE`, set `DATABASE_SSL_CA_B64`, redeploy, and rerun step 11 until
-  `[1/5] TLS PASS  encrypted, server certificate verified` and a plain `RESULT: PASS`.
+  `[1/5] TLS PASS  encrypted, server certificate verified` and `RESULT: PASS — complete
+  deployment verification` with exit code 0.
   Until then the launch checklist should treat it as an open item, not a configuration.
 
 ### 1a. Set up the Healthchecks.io dead-man's switch (C1) before relying on the crons

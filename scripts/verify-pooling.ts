@@ -23,6 +23,15 @@ import tls from "node:tls";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../src/generated/prisma/client";
 import { createDatabasePool, createPrismaClient } from "../src/lib/prisma/database-pool";
+import {
+  type Failure,
+  type LoadResult,
+  type RunOutcome,
+  failureOf,
+  finalVerdict,
+  stressReport,
+  summarize,
+} from "./verify-pooling-results";
 
 // Verify production semantics: with NODE_ENV unset, the app's TLS resolver
 // (correctly) leaves a remote host to node-postgres' plaintext default — which
@@ -42,25 +51,6 @@ const APP_REQUESTS = 90;
 // local database behind a delay proxy, no pooler involved. [3/5] still runs that original shape.
 const IN_FLIGHT = 10;
 
-type Failure = { code: string; message: string };
-
-// Set when TLS is running on the temporary no-verify fallback, so the final
-// line can never read the same as a fully verified run.
-let usingFallback = false;
-
-function failureOf(error: unknown): Failure {
-  const message = error instanceof Error ? error.message : String(error);
-  const code = message.match(/\b(42P05|26000|08P01|53300|57P01|08006|XX000)\b/)?.[1] ?? "other";
-  return { code, message: message.replace(/\s+/g, " ").slice(0, 200) };
-}
-
-function summarize(failures: Failure[]): string {
-  const byCode = new Map<string, number>();
-  for (const failure of failures) byCode.set(failure.code, (byCode.get(failure.code) ?? 0) + 1);
-  const counts = [...byCode].map(([code, n]) => `${code}×${n}`).join(", ");
-  return `${counts} — e.g. "${failures[0].message}"`;
-}
-
 // Runs every task; with `limit`, at most that many at once (workers pulling from a shared queue).
 async function runAll(tasks: Array<() => Promise<void>>, limit = tasks.length): Promise<void> {
   let next = 0;
@@ -76,7 +66,7 @@ async function runAll(tasks: Array<() => Promise<void>>, limit = tasks.length): 
 // sessions would return someone else's row. Unbounded: every operation starts at once, queries
 // first — the original shape. Bounded: at most `limit` in flight, one transaction after every
 // five queries so the two kinds still overlap.
-async function appLoad(limit?: number): Promise<{ failures: Failure[]; pids: Set<number> } | { unreadable: string }> {
+async function appLoad(limit?: number): Promise<LoadResult> {
   const prisma = createPrismaClient();
   try {
     try {
@@ -131,11 +121,11 @@ function hintForConnectError(message: string): string {
   return "See the message above and the runbook's failure list.";
 }
 
-async function main(): Promise<boolean> {
+async function main(): Promise<RunOutcome> {
   const url = process.env.DATABASE_URL;
   if (!url) {
     console.error("DATABASE_URL is not set. Point it at the POOLED production connection string.");
-    return false;
+    return { failed: true, local: false, tls: "plaintext", http: "skipped" };
   }
   const target = new URL(url);
   const host = target.hostname;
@@ -153,7 +143,8 @@ async function main(): Promise<boolean> {
   }
   console.log("");
 
-  let ok = true;
+  // Every step below updates this; finalVerdict turns it into RESULT and the exit code.
+  const run: RunOutcome = { failed: false, local, tls: "plaintext", http: "skipped" };
 
   // 1. Connect the way the app does, and inspect the TLS session.
   const probePool = createDatabasePool();
@@ -163,55 +154,51 @@ async function main(): Promise<boolean> {
     client.release();
     if (stream instanceof tls.TLSSocket && stream.encrypted) {
       if (stream.authorized) {
+        run.tls = "verified";
         console.log("[1/5] TLS      PASS  encrypted, server certificate verified");
       } else if (process.env.DATABASE_SSL_MODE === "no-verify") {
-        usingFallback = true;
+        run.tls = "fallback";
         console.log("[1/5] TLS      WARN  encrypted but the certificate is NOT verified (DATABASE_SSL_MODE=no-verify is a temporary fallback)");
       } else {
         console.log("[1/5] TLS      FAIL  encrypted but the certificate did not verify");
-        ok = false;
+        run.failed = true;
       }
     } else if (local) {
-      console.log("[1/5] TLS      INFO  plaintext to a local database (expected in dev)");
+      console.log("[1/5] TLS      INFO  plaintext to a local database (expected in dev; never a complete verification)");
     } else {
       console.log("[1/5] TLS      FAIL  the connection is NOT encrypted");
-      ok = false;
+      run.failed = true;
     }
   } catch (error) {
     const { message } = failureOf(error);
     console.log(`[1/5] TLS      FAIL  could not connect: ${message}\n      -> ${hintForConnectError(message)}`);
     await probePool.end().catch(() => {});
-    return false;
+    return { ...run, failed: true };
   }
   await probePool.end();
 
   // 2. ACCEPTANCE: the app's real client, IN_FLIGHT operations in flight. REQUIRED: zero
   // failures and no crossed results. This is a CHANGED workload, not the original one passing:
-  // the original (every operation started at once) is [3/5], reported but not gating.
+  // the original (every operation started at once) is [3/5], where only start timeouts are information.
   const total = APP_QUERIES + TRANSACTIONS;
   const acceptance = await appLoad(IN_FLIGHT);
   if ("unreadable" in acceptance) {
     console.log(`[2/5] APP LOAD FAIL  the schema is not readable (were migrations applied — runbook step 5?): ${acceptance.unreadable}`);
-    return false;
+    return { ...run, failed: true };
   }
   if (acceptance.failures.length === 0) {
     console.log(`[2/5] APP LOAD PASS  ${total}/${total} queries and transactions succeeded, ${IN_FLIGHT} in flight (${acceptance.pids.size} distinct backend connections seen)`);
   } else {
     console.log(`[2/5] APP LOAD FAIL  ${acceptance.failures.length}/${total} failed (${IN_FLIGHT} in flight): ${summarize(acceptance.failures)}`);
-    ok = false;
+    run.failed = true;
   }
 
-  // 3. STRESS (information): the ORIGINAL shape — all operations started at once. Its result
-  // depends on this machine's round-trip time to the database (see IN_FLIGHT), so it never
-  // decides RESULT; a failure here is a result about the local queue, recorded as such.
-  const stress = await appLoad();
-  if ("unreadable" in stress) {
-    console.log(`[3/5] STRESS   INFO  not run: ${stress.unreadable}`);
-  } else if (stress.failures.length === 0) {
-    console.log(`[3/5] STRESS   INFO  unbounded: ${total}/${total} started at once succeeded (${stress.pids.size} distinct backend connections seen)`);
-  } else {
-    console.log(`[3/5] STRESS   INFO  unbounded: ${stress.failures.length}/${total} failed: ${summarize(stress.failures)} — the original unbounded test FAILS here; it is reported, never gating (runbook step 11)`);
-  }
+  // 3. STRESS: the ORIGINAL shape — all operations started at once. Prisma's transaction-start
+  // timeout here depends on this machine's round-trip time to the database (see IN_FLIGHT), so
+  // that one error is information. Any other failure fails RESULT (stressReport).
+  const stress = stressReport(await appLoad(), total);
+  console.log(stress.line);
+  if (!stress.ok) run.failed = true;
 
   // 4. CONTROL: opt in to named prepared statements, the one thing that breaks
   // a transaction-mode pooler. Informational — it shows whether THIS pooler
@@ -243,11 +230,12 @@ async function main(): Promise<boolean> {
     await control.$disconnect();
   }
 
-  // 5. Optional: the deployed app itself — many cold function instances, each
-  // with its own pool, which is the actual production connection-exhaustion shape.
+  // 5. The deployed app itself — many cold function instances, each with its own pool, which is
+  // the actual production connection-exhaustion shape. Optional to RUN (database checks alone are
+  // allowed), but without it the verdict is PARTIAL, never a complete verification.
   const appUrl = process.argv.find((arg) => arg.startsWith("--app-url="))?.slice("--app-url=".length);
   if (!appUrl) {
-    console.log("[5/5] APP URL  SKIP  no --app-url given (pass a public page that reads the database, e.g. an academy's kiosk page)");
+    console.log("[5/5] APP URL  SKIP  no --app-url given, so RESULT can be PARTIAL at best (pass a public page that reads the database, e.g. an academy's kiosk page)");
   } else {
     const statuses = new Map<string, number>();
     await Promise.all(
@@ -263,27 +251,31 @@ async function main(): Promise<boolean> {
     );
     const histogram = [...statuses].map(([status, n]) => `${status}×${n}`).join(", ");
     if (statuses.size === 1 && statuses.has("200")) {
+      run.http = "pass";
       console.log(`[5/5] APP URL  PASS  ${APP_REQUESTS}/${APP_REQUESTS} concurrent requests returned 200`);
     } else {
+      run.http = "failed";
       console.log(`[5/5] APP URL  FAIL  ${histogram} (expected all 200 — a 404 means the URL is wrong, a 5xx means the deployment cannot reach the database)`);
-      ok = false;
     }
   }
 
-  return ok;
+  return run;
 }
 
+// Exit 0: complete deployment verification. 1: something failed. 2: PARTIAL (see finalVerdict).
+// process.exitCode, never process.exit(): after [5/5]'s fetches, process.exit() on Node 24 for
+// Windows aborts on a libuv assertion (src\win\async.c) and exits 127 whatever the verdict.
+// Every pool and client is closed above, so the process ends by itself once fetch's
+// keep-alive sockets close (a few seconds). The unref'd timer only fires if something unexpected
+// keeps the process alive, so a run can never hang after printing RESULT.
 main()
-  .then((ok) => {
-    const verdict = !ok
-      ? "FAIL"
-      : usingFallback
-        ? "PASS, ON THE TEMPORARY no-verify FALLBACK — the server is not authenticated; not done until DATABASE_SSL_CA_B64 replaces it (runbook: SSL fallback)"
-        : "PASS";
-    console.log(`\nRESULT: ${verdict}`);
-    process.exit(ok ? 0 : 1);
+  .then((run) => {
+    const verdict = finalVerdict(run);
+    console.log(`\n${verdict.line}`);
+    process.exitCode = verdict.exitCode;
   })
   .catch((error) => {
     console.error(`\nRESULT: FAIL — ${failureOf(error).message}`);
-    process.exit(1);
-  });
+    process.exitCode = 1;
+  })
+  .finally(() => setTimeout(() => process.exit(), 30_000).unref());
