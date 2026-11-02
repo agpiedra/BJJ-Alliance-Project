@@ -96,9 +96,13 @@ function itemLabeler(screen: ReadinessScreen, locale: string, t: Translate, paym
         href: `/${locale}/students/${d.studentId}`,
       };
     }
+    if (kind === "trigger" && TRIGGER_REASONS.has(id)) return { text: t(`items.trigger.${id}`) };
     return { text: t("items.unknown") };
   };
 }
+
+/** Check 10's reasons (evaluate.ts `TriggerReason`); anything else falls back to "unknown". */
+const TRIGGER_REASONS = new Set(["notScheduled", "neverRan", "notFinalized", "notSucceeded", "stale", "stuck", "heartbeatNotOk"]);
 
 function ItemList({ items, label }: { items: string[]; label: (item: string) => { text: string; href?: string } }) {
   if (items.length === 0) return null;

@@ -31,6 +31,8 @@ const { loadMonitoringSnapshot, classifyJob, ACCESS_DENIAL_ACTIONS, PRIVILEGED_C
   "../../src/lib/monitoring/load-monitoring"
 );
 const { resolveJobSchedule, STALE_AFTER_HOURS, STUCK_AFTER_MINUTES } = await import("../../src/lib/jobs/job-health");
+// The weekly digest is scheduled, so its threshold is a number (null is reserved for unscheduled jobs).
+const DIGEST_STALE_HOURS = STALE_AFTER_HOURS["weekly-digest"] as number;
 
 const NOW = new Date("2031-03-10T12:00:00.000Z");
 const HOUR = 3_600_000;
@@ -129,14 +131,14 @@ describe("classifyJob", () => {
   });
 
   it("REQUIRED: a run older than the configured threshold is overdue", () => {
-    const latest = run("SUCCEEDED", STALE_AFTER_HOURS["weekly-digest"] + 1);
+    const latest = run("SUCCEEDED", DIGEST_STALE_HOURS + 1);
     const job = classifyJob("weekly-digest", { latestRun: latest, latestSuccess: latest }, now);
     expect(job.freshness).toBe("overdue");
-    expect(job.freshUntil).toEqual(new Date(latest.startedAt.getTime() + STALE_AFTER_HOURS["weekly-digest"] * HOUR));
+    expect(job.freshUntil).toEqual(new Date(latest.startedAt.getTime() + DIGEST_STALE_HOURS * HOUR));
   });
 
   it("exactly at the threshold is still fresh (same `>` rule as /api/health/jobs)", () => {
-    const latest = run("SUCCEEDED", STALE_AFTER_HOURS["weekly-digest"]);
+    const latest = run("SUCCEEDED", DIGEST_STALE_HOURS);
     expect(classifyJob("weekly-digest", { latestRun: latest, latestSuccess: latest }, now).freshness).toBe("on_schedule");
   });
 
@@ -180,5 +182,20 @@ describe("monitored audit actions", () => {
     for (const action of [...ACCESS_DENIAL_ACTIONS, ...PRIVILEGED_CHANGE_ACTIONS, "duesPayment.record"]) {
       expect(writers, action).toContain(`action: "${action}"`);
     }
+  });
+});
+
+describe("G2b: the registered but unscheduled monthly-generation job", () => {
+  const now = Date.UTC(2031, 2, 10, 12);
+  it("REQUIRED: is 'not_scheduled' — never 'overdue' or 'no_recorded_run' — with no threshold and no fresh-until date", () => {
+    const job = classifyJob("monthly-generation", { latestRun: null, latestSuccess: null }, now);
+    expect(job).toMatchObject({ jobName: "monthly-generation", schedule: null, staleAfterHours: null, freshness: "not_scheduled", freshUntil: null, stuck: false });
+  });
+
+  it("REQUIRED: a manual run is still 'not_scheduled', and a stuck one is still reported stuck", () => {
+    const startedAt = new Date(now - 31 * 60_000);
+    const latest = { status: "RUNNING", startedAt, finishedAt: null, failed: 0, heartbeatStatus: null };
+    const job = classifyJob("monthly-generation", { latestRun: latest, latestSuccess: null } as never, now);
+    expect(job).toMatchObject({ freshness: "not_scheduled", freshUntil: null, stuck: true });
   });
 });

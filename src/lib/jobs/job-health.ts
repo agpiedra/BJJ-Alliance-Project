@@ -7,17 +7,25 @@ import type { JobName } from "@/lib/jobs/job-names";
  * itself: `/api/health/jobs` is a second, independent signal alongside the Healthchecks.io
  * heartbeat (`src/lib/jobs/heartbeat.ts`), not a replacement for it. Shared with
  * `/platform/monitoring` so the page and the endpoint can never disagree on "stale".
+ *
+ * `null` = the job has no `vercel.json` schedule yet, so freshness is not evaluated (a never-scheduled job is not "late").
+ * A unit test fails if any scheduled job lacks a threshold, so the schedule and its threshold must be added together.
  */
-export const STALE_AFTER_HOURS: Record<JobName, number> = {
+export const STALE_AFTER_HOURS: Record<JobName, number | null> = {
   "weekly-digest": 24 * 8, // weekly (Monday) + a day of slack
+  // D5 (the schedule) is not approved: set this together with the vercel.json entry, from the approved frequency.
+  "monthly-generation": null,
 };
 
 /** A RUNNING row older than this never finished — almost certainly a crashed or killed
  * invocation, not a job still legitimately working. */
 export const STUCK_AFTER_MINUTES = 30;
 
+/** Always false for an unscheduled job (threshold `null`): staleness is relative to a schedule it does not have. */
 export function isJobStale(jobName: JobName, startedAt: Date | null, now: number): boolean {
-  return startedAt === null || now - startedAt.getTime() > STALE_AFTER_HOURS[jobName] * 3_600_000;
+  const hours = STALE_AFTER_HOURS[jobName];
+  if (hours === null) return false;
+  return startedAt === null || now - startedAt.getTime() > hours * 3_600_000;
 }
 
 export function isJobStuck(status: string | null, startedAt: Date | null, now: number): boolean {

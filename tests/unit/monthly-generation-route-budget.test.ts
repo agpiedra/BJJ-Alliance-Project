@@ -90,7 +90,7 @@ describe("planRouteBudget", () => {
         await expect(
           generateMonthlyObligationForStudent({ kind: "system-job", organizationId: "o", jobName: "monthly-generation" }, "s", { year: 2030, month: 9 }, {}, { bounds }),
         ).rejects.toThrow(RangeError);
-        await expect(runMonthlyGeneration({ closurePolicy: "none", limits: { statementTimeoutMs: bounds.statementTimeoutMs, lockTimeoutMs: bounds.lockTimeoutMs } })).rejects.toThrow(RangeError);
+        await expect(runMonthlyGeneration({ closurePolicy: "reopen", limits: { statementTimeoutMs: bounds.statementTimeoutMs, lockTimeoutMs: bounds.lockTimeoutMs } })).rejects.toThrow(RangeError);
       }
     });
   });

@@ -113,3 +113,40 @@ describe("/platform/monitoring page rendering (harness: mocked loader)", () => {
     expect(html).toContain("Todas las horas en America/Costa_Rica");
   });
 });
+
+describe("G2b: an unscheduled job on the monitoring page", () => {
+  it("REQUIRED: renders 'Not scheduled' and its explanation, never a stale threshold or 'never ran' warning", async () => {
+    locale = "en";
+    const base = baseSnapshot();
+    if (base.jobs.status !== "ok") throw new Error("unreachable");
+    snapshot = {
+      ...base,
+      jobs: {
+        status: "ok",
+        data: [
+          ...base.jobs.data,
+          { jobName: "monthly-generation", schedule: null, staleAfterHours: null, latestRun: null, latestSuccess: null, freshness: "not_scheduled", freshUntil: null, stuck: false },
+        ],
+      },
+    };
+    const html = await renderPage();
+    expect(html).toContain("monthly-generation");
+    expect(html).toContain("Not scheduled");
+    expect(html).toContain("This job has no schedule yet (its schedule is an open owner decision), so it is never counted as late.");
+    expect(html).toContain("No schedule found in the deployment configuration.");
+    expect(html).not.toContain("null hours");
+  });
+
+  it("renders the Spanish copy", async () => {
+    locale = "es";
+    const base = baseSnapshot();
+    if (base.jobs.status !== "ok") throw new Error("unreachable");
+    snapshot = {
+      ...base,
+      jobs: { status: "ok", data: [{ jobName: "monthly-generation", schedule: null, staleAfterHours: null, latestRun: null, latestSuccess: null, freshness: "not_scheduled", freshUntil: null, stuck: false }] },
+    };
+    const html = await renderPage();
+    expect(html).toContain("Sin programar");
+    expect(html).toContain("Esta tarea aún no tiene programación");
+  });
+});

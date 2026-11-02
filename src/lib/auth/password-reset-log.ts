@@ -29,6 +29,8 @@ const ALLOWED_ERROR_NAMES = [
   "PrismaClientRustPanicError",
   "TypeError",
   "RangeError",
+  // G2b: the monthly-generation route's own refusal to start under an infeasible budget — a fixed name, no data.
+  "RouteBudgetInfeasibleError",
 ] as const;
 
 /** A Prisma error code (`P` + four digits), an allow-listed error class name, or the fixed fallback. */

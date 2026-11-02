@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
-import { timingSafeEqual } from "node:crypto";
 import { encode } from "next-auth/jwt";
 import { prisma } from "@/lib/prisma";
 import { requireEnv } from "@/lib/env";
+import { secretsMatch } from "@/lib/auth/secrets-match";
 import { signInJwtCallback, type JwtCallbackParams } from "@/lib/auth/sign-in-jwt-callback";
 
 /**
@@ -41,12 +41,6 @@ function enabledSecret(): string | undefined {
 function isLocalHost(request: Request): boolean {
   const hostname = (request.headers.get("host") ?? "").split(":")[0];
   return LOCAL_HOSTNAMES.has(hostname);
-}
-
-function secretsMatch(expected: string, provided: string): boolean {
-  const expectedBuf = Buffer.from(expected);
-  const providedBuf = Buffer.from(provided);
-  return expectedBuf.length === providedBuf.length && timingSafeEqual(expectedBuf, providedBuf);
 }
 
 function notFound(): NextResponse {

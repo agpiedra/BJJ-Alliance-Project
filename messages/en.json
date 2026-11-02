@@ -1762,7 +1762,7 @@
         },
         "monthlyGenerationScheduled": {
           "title": "Monthly charges scheduled",
-          "unavailable": "The monthly charge job is not built yet, so this cannot pass."
+          "fail": "The monthly charge trigger is not healthy yet. This checks only that the trigger runs on schedule — never that any month's billing is complete."
         },
         "openingCancellationAvailable": {
           "title": "Cancelling an opening charge",
@@ -1829,7 +1829,16 @@
       "items": {
         "unknown": "Unknown item",
         "legacy": "{student}, {month} ({status})",
-        "openingItem": "{student}, opening debt for {month}"
+        "openingItem": "{student}, opening debt for {month}",
+        "trigger": {
+          "notScheduled": "Not scheduled: the schedule is waiting for an owner decision (D5).",
+          "neverRan": "It has never recorded a run.",
+          "notFinalized": "Its latest run never finished recording.",
+          "notSucceeded": "Its latest run did not succeed.",
+          "stale": "Its latest run is older than the schedule allows.",
+          "stuck": "Its latest run looks stuck.",
+          "heartbeatNotOk": "The latest run's monitoring ping was not confirmed."
+        }
       },
       "empty": "No branches or students yet. Readiness is computed for your students.",
       "forms": {
@@ -2573,7 +2582,8 @@
         "freshnessState": {
           "on_schedule": "On schedule",
           "overdue": "Overdue",
-          "no_recorded_run": "No recorded run"
+          "no_recorded_run": "No recorded run",
+          "not_scheduled": "Not scheduled"
         },
         "latestRun": "Latest run",
         "latestSuccess": "Latest successful run",
@@ -2591,6 +2601,7 @@
         "overdueSince": "Overdue since",
         "threshold": "A run counts as fresh for {hours} hours after it starts.",
         "neverRan": "This job has never recorded a run. Treat it as unhealthy until it does.",
+        "notScheduled": "This job has no schedule yet (its schedule is an open owner decision), so it is never counted as late. It runs only if someone calls it.",
         "yes": "Yes",
         "no": "No"
       },

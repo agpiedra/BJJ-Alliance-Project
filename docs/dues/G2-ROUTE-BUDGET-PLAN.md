@@ -356,7 +356,10 @@ database:
 | Tests | `tests/integration/run-scheduled-job.test.ts` (extended); `tests/unit/heartbeat.test.ts` (extended); a new route-budget unit test; extensions to `tests/integration/monthly-generation-progress.test.ts` for the idle timeout and pool recovery |
 | Docs | This plan's status, and the G1 evidence README's limits |
 
-**G2b: after D5 approval** (repository):
+**G2b: after D5 approval** (repository). *[Narrowed by owner approval, 2026-11-02: G2b's **implementation and tests** may
+proceed before D5. **D5 still blocks the schedule** — the `vercel.json` entry and the stale threshold that goes with it.
+Deployment, hosted execution, cron activation and stage 9 remain unapproved. Implemented as G2b, described below the
+list.]*
 - the route `src/app/api/cron/monthly-generation/route.ts` with `maxDuration` from the confirmed F;
 - the `JOB_NAMES`, `STALE_AFTER_HOURS` and `HEALTHCHECK_ENV` entries;
 - the `vercel.json` entry;
@@ -369,6 +372,43 @@ database:
   - **Cron consumer:** how the cron caller is expected to read the response.
   - **Liveness signal:** the JobRun row and the heartbeat remain the liveness signal, and no HTTP status certifies billing
     completeness.
+
+**G2b as implemented before D5 (owner approval 2026-11-02)** — what is in the repository, and what is not:
+- **The route** `GET /api/cron/monthly-generation`, through `runScheduledJob` with the bounded bookkeeping above.
+  - **F = 300 s** (`maxDuration`, owner-approved).
+  - **C = 30 s and M = 30 s are RESERVES**, owner-approved. They are not measurements and not guaranteed bounds.
+  - `limits.deadlineMs` comes from `planRouteBudget(F, C, M, …)`, computed on every call (227 s with today's limits); it is never a
+    literal.
+  - Production defaults only: no activation, no start month.
+  - `closurePolicy: "reopen"` is the approved D3 policy (MONTHLY-GENERATION-DECISION-BRIEF.md §0, "Fixed inputs" above),
+    now its only value. G1 already behaved this way (pass end leaves the month claimable; discovery filters only on the lease;
+    tested by "a student inserted behind the cursor … is billed by the next" pass), so the change is a rename with no behavior
+    change.
+- **The HTTP contract:**
+  - 401 for any bearer other than the exact `Bearer <CRON_SECRET>`, before any write.
+  - 200 with `ok: true` for a run with no recorded failure, including a stop at the deadline with work left.
+  - 200 with `ok: false` for a run with failures (`PARTIAL`/`FAILED`, `/fail` ping).
+  - 500 for an uncertain `JobRun` create or finalize, an infeasible budget (`RouteBudgetInfeasibleError`), or an unexpected
+    throw. Each carries a safe code only.
+  - Every body carries `billingCompletenessCertified: false`: **successful execution is never completed billing.**
+  - The cron consumer is a log only. Vercel does not retry; the next invocation resumes at the stored cursor.
+- **Registry:**
+  - `monthly-generation` is in `JOB_NAMES`.
+  - `HEALTHCHECK_MONTHLY_GENERATION_URL` is in `HEALTHCHECK_ENV` (unset: `not_configured`).
+  - `STALE_AFTER_HOURS["monthly-generation"] = null`, meaning **not scheduled**: never stale, so health is not turned red by a job
+    nobody schedules. A unit test requires the threshold and the `vercel.json` entry to be added together.
+- **Check 10:** computed trigger health (MONTHLY-GENERATION-TRIGGER-PLAN.md §11). Without a `vercel.json` entry it can only fail
+  (`notScheduled`, plus `neverRan` …), so `ready` stays false.
+- **Secret check:** the shared bearer check is now constant time (`src/lib/auth/secrets-match.ts`), for every cron route and
+  `/api/health/jobs`, with the same accept set.
+- **NOT done, and still blocked:**
+  - **The `vercel.json` entry and its stale threshold (D5).**
+  - **A stage-9 blocker:** the trigger plan §8 "overdue month" failure, detected from persisted progress state. It needs a read
+    the route budget does not reserve; the progress table is empty until stage 9. It is registered in
+    `scripts/pending-callers.ts` `KNOWN_LIMITATIONS`. Readiness check 10 does not cover it.
+  - **Not a gap:** `remainingSegments` and any completeness field were removed in revision 2 (§1.4: "G2 adds neither"). A
+    deadline stop shows `stoppedBy`, each visit's `ended`, and its reason and error codes.
+  - **Deployment, hosted execution, cron activation, stage 9 and O4.**
 
 **Provider and hosted work** (a person, after D5):
 - the production `CRON_SECRET`, and a Healthchecks check with an alert-delivery test (E7);

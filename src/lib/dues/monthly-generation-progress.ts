@@ -48,11 +48,11 @@ import {
  *  - CRASHES. A per-visit marker counts consecutive visits that started at the same student; past `maxAttempts` that student is
  *    recorded PENDING (`repeatedFailure`) and passed. It stays pending, so the pass cannot be clean.
  *
- * What this does NOT do (owner decisions still pending): no month closure (D3 — `closurePolicy` is a required input whose only
- * value is "none", and no production value exists), no route, registry entry or scheduler (D5). No production caller: closed by
- * the same defaults as every ledger writer — `generationStart` defaults to "no start month" and `LedgerActivation` to inactive,
- * so a run with production defaults refuses every segment and writes no financial row; and the progress table itself is empty
- * until stage 9 inserts an organization's first row.
+ * What this does NOT do: no month closure — D3 = Reopen is the approved policy (MONTHLY-GENERATION-DECISION-BRIEF.md §0), and
+ * `closurePolicy: "reopen"` is its only value (see the type). No scheduler (D5). Its one production caller is the G2b route,
+ * which passes the production defaults — `generationStart` defaults to "no start month" and `LedgerActivation` to inactive, so a
+ * run refuses every segment and writes no financial row; and the progress table itself is empty until stage 9 inserts an
+ * organization's first row.
  */
 
 export const GENERATION_JOB_NAME = "monthly-generation";
@@ -111,8 +111,13 @@ export const DEFAULT_GENERATION_LIMITS: GenerationLimits = {
 export type GenerationBoundary = "afterClaim" | "afterMarker" | "afterStudentCommit" | "afterStudentFailure" | "afterFailureRecord" | "beforePassEnd" | "afterPassEnd";
 
 export interface MonthlyGenerationRunDeps extends LedgerDeps {
-  /** Owner decision D3 is pending. Required, and "none" (no automatic closure) is the only value G1 implements. */
-  closurePolicy: "none";
+  /**
+   * D3 = Reopen (approved, MONTHLY-GENERATION-DECISION-BRIEF.md §0): no month ever closes; every month since S is re-walked.
+   * That is what this loop does — pass end clears the cursor and leaves the row claimable, and discovery filters only on the
+   * lease — so this marker changes no behavior; it records the policy. "Close" would need G1-close (trigger plan §9, §13).
+   * Required, with this one value.
+   */
+  closurePolicy: "reopen";
   /**
    * The organization's start month S. Production default: none, so no segment is ever processed (plan §4). Like
    * `activation.isActive`, it is called outside any bounded transaction: the defaults do no I/O, and stage 9's implementations

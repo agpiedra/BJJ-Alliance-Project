@@ -129,7 +129,7 @@ async function financialCounts(orgId: string) {
 }
 
 function deps(over: Partial<MonthlyGenerationRunDeps> = {}): MonthlyGenerationRunDeps {
-  return { closurePolicy: "none", activation: ACTIVE, now: SEPT_2030, generationStart: async (orgId) => starts.get(orgId) ?? null, ...over };
+  return { closurePolicy: "reopen", activation: ACTIVE, now: SEPT_2030, generationStart: async (orgId) => starts.get(orgId) ?? null, ...over };
 }
 const crashAt =
   (boundary: GenerationBoundary, studentId?: string): MonthlyGenerationRunDeps["boundaryForTest"] =>
@@ -196,10 +196,10 @@ describe("production defaults produce no financial writes", () => {
     const seg = await addSegment(org.id);
     const before = await financialCounts(org.id);
 
-    const productionDefaults = await runMonthlyGeneration({ closurePolicy: "none", now: SEPT_2030 });
+    const productionDefaults = await runMonthlyGeneration({ closurePolicy: "reopen", now: SEPT_2030 });
     expect(productionDefaults.visits.map((v) => v.refused)).toEqual(["ledgerNotActive"]);
 
-    const activeButNoStart = await runMonthlyGeneration({ closurePolicy: "none", now: SEPT_2030, activation: ACTIVE });
+    const activeButNoStart = await runMonthlyGeneration({ closurePolicy: "reopen", now: SEPT_2030, activation: ACTIVE });
     expect(activeButNoStart.visits.map((v) => v.refused)).toEqual(["beforeStart"]);
 
     const beforeS = await runMonthlyGeneration(deps({ generationStart: async () => ({ year: 2030, month: 10 }) }));
@@ -210,6 +210,32 @@ describe("production defaults produce no financial writes", () => {
     expect(row.cursorStudentId).toBeNull();
     expect(row.passIneligible + row.passCovered + row.passUnpriced + row.passPending).toBe(0);
     expect(await prisma.duesGenerationProgress.count()).toBe(1); // no rollover on a refused visit
+  });
+
+  it("G2b: the REAL route (production defaults) refuses a claimable month of priced students and writes nothing — and the same data DOES generate with an active ledger (positive control, so the refusal is not vacuous)", async () => {
+    const org = await makeOrg("route-closed");
+    await studentsInOrder(org, ["priced", "priced"]);
+    const seg = await addSegment(org.id);
+    const before = await financialCounts(org.id);
+    vi.stubEnv("CRON_SECRET", "test-cron-secret");
+    try {
+      const { GET } = await import("../../src/app/api/cron/monthly-generation/route");
+      const response = await GET(new Request("http://localhost/api/cron/monthly-generation", { headers: { authorization: "Bearer test-cron-secret" } }));
+      const body = await response.json();
+      expect(response.status).toBe(200);
+      expect(body.visits.map((v: { refused?: string }) => v.refused)).toEqual(["ledgerNotActive"]);
+      expect(body).toMatchObject({ created: 0, billingCompletenessCertified: false });
+      expect(await financialCounts(org.id)).toEqual(before);
+      expect((await segment(seg.id)).cursorStudentId).toBeNull();
+
+      await expireLease(seg.id);
+      const control = await runMonthlyGeneration(deps());
+      expect(control.visits.map((v) => v.created)).toEqual([2]);
+      expect((await financialCounts(org.id)).obligations).toBe(before.obligations + 2);
+    } finally {
+      vi.unstubAllEnvs();
+      await prisma.jobRun.deleteMany({ where: { jobName: "monthly-generation" } });
+    }
   });
 
   it("an organization that is not ACTIVE is refused even with an active ledger and a start month", async () => {

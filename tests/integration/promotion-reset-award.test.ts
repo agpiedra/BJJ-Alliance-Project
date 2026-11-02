@@ -373,6 +373,8 @@ describe("manual awards only", () => {
     expect(existsSync(path.join(root, "src/lib/promotion/automation.ts"))).toBe(false);
     const vercel = JSON.parse(readFileSync(path.join(root, "vercel.json"), "utf8")) as { crons: Array<{ path: string }> };
     expect(vercel.crons.map((c) => c.path)).toEqual(["/api/cron/weekly-digest"]);
-    expect([...JOB_NAMES]).toEqual(["weekly-digest"]);
+    // G2b registered monthly-generation (unscheduled); no promotion job may ever be registered.
+    expect([...JOB_NAMES]).toEqual(["weekly-digest", "monthly-generation"]);
+    expect(JOB_NAMES.some((name) => /promotion/i.test(name))).toBe(false);
   });
 });
