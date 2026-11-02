@@ -379,7 +379,11 @@ list.]*
   - **C = 30 s and M = 30 s are RESERVES**, owner-approved. They are not measurements and not guaranteed bounds.
   - `limits.deadlineMs` comes from `planRouteBudget(F, C, M, …)`, computed on every call (227 s with today's limits); it is never a
     literal.
-  - Production defaults only: no activation, no start month, `closurePolicy: "none"` (G1's only value; no closure).
+  - Production defaults only: no activation, no start month.
+  - `closurePolicy: "reopen"` is the approved D3 policy (MONTHLY-GENERATION-DECISION-BRIEF.md §0, "Fixed inputs" above),
+    now its only value. G1 already behaved this way (pass end leaves the month claimable; discovery filters only on the lease;
+    tested by "a student inserted behind the cursor … is billed by the next" pass), so the change is a rename with no behavior
+    change.
 - **The HTTP contract:**
   - 401 for any bearer other than the exact `Bearer <CRON_SECRET>`, before any write.
   - 200 with `ok: true` for a run with no recorded failure, including a stop at the deadline with work left.
@@ -399,14 +403,11 @@ list.]*
   `/api/health/jobs`, with the same accept set.
 - **NOT done, and still blocked:**
   - **The `vercel.json` entry and its stale threshold (D5).**
-  - **`closurePolicy` = Reopen (D3).** D3 is recorded as undecided on `main`, so the route passes G1's `"none"`; a Reopen value
-    needs the D3 decision.
-  - **Two trigger plan §8 items, needed before stage 9:**
-    - the "overdue month" failure detection;
-    - the body's `remainingSegments` and cursors left.
-
-    Each needs a read the route budget does not reserve, and the progress table is empty until stage 9. Today a deadline stop
-    shows only `stoppedBy` and each visit's `ended`, with per-visit reason and error codes.
+  - **A stage-9 blocker:** the trigger plan §8 "overdue month" failure, detected from persisted progress state. It needs a read
+    the route budget does not reserve; the progress table is empty until stage 9. It is registered in
+    `scripts/pending-callers.ts` `KNOWN_LIMITATIONS`. Readiness check 10 does not cover it.
+  - **Not a gap:** `remainingSegments` and any completeness field were removed in revision 2 (§1.4: "G2 adds neither"). A
+    deadline stop shows `stoppedBy`, each visit's `ended`, and its reason and error codes.
   - **Deployment, hosted execution, cron activation, stage 9 and O4.**
 
 **Provider and hosted work** (a person, after D5):

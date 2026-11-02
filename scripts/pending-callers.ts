@@ -40,6 +40,14 @@ interface KnownLimitation {
 
 const KNOWN_LIMITATIONS: KnownLimitation[] = [
   {
+    description:
+      "STAGE-9 BLOCKER: the monthly-generation route does not report an \"overdue month\" (MONTHLY-GENERATION-TRIGGER-PLAN.md §8: a processed month earlier than current_min whose last finished pass is not clean, or which has no finished pass) as a failure.",
+    foundIn: "src/lib/dues/monthly-generation-route.ts (summarizeMonthlyGenerationRun)",
+    dueBy: "Before stage 9 (activation) — required before any organization's progress row exists",
+    reason:
+      "G2b reports what the runner's report contains (unclean pass ends, skipped rollovers, errors outside a student transaction). Overdue detection needs a read of persisted progress state that G2a's route budget does not reserve, so adding it means extending the budget (a reserved bounded read) or detecting it elsewhere. Harmless until stage 9: the progress table is empty, so nothing can be overdue. Readiness check 10 is trigger health only and does NOT cover it; `remainingSegments` is NOT part of this (G2-ROUTE-BUDGET-PLAN.md §1.4 removed it).",
+  },
+  {
     description: "The \"approaching\" threshold (5 remaining attendances) is a hardcoded literal that doesn't generalize.",
     foundIn: "src/lib/students/promotion-queue.ts (APPROACHING_THRESHOLD)",
     dueBy: "Phase 4 settings candidate",

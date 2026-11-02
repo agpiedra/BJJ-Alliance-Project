@@ -161,8 +161,8 @@ function triggerHealthCheck(trigger: ReadinessSnapshot["trigger"]): ReadinessChe
     status: reasons.length === 0 ? "pass" : "fail",
     detail:
       reasons.length === 0
-        ? "The monthly-generation trigger is scheduled and its latest run finished SUCCEEDED with a confirmed heartbeat. This is trigger health only — not billing completeness, not scheduler proof, not alert delivery."
-        : "The monthly-generation trigger is not healthy (see the reasons). This checks trigger health only — never billing completeness.",
+        ? "The monthly-generation trigger is scheduled and its latest run finished SUCCEEDED with a confirmed heartbeat. This is trigger health only — not billing completeness, not scheduler proof, not alert delivery, and not overdue-month detection (not built; a stage-9 blocker)."
+        : "The monthly-generation trigger is not healthy (see the reasons). This checks trigger health only — never billing completeness or overdue-month detection (not built; a stage-9 blocker).",
     items: reasons.map((r) => `trigger:${r}`),
   };
 }

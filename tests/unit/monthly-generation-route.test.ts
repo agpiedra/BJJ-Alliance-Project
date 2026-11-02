@@ -28,6 +28,30 @@ describe("secretsMatch / bearerMatches (constant time, same accept set as the fo
     for (const other of ["", "s3cre", "s3crett", "S3cret", " s3cret", "s3cret ", "s3crex"]) expect(secretsMatch("s3cret", other)).toBe(false);
   });
 
+  it("Unicode: an exact multi-byte secret matches; a canonically equivalent but differently encoded one does not (as with !==)", () => {
+    const secret = "sécret-ñ-✓-🥋";
+    expect(secretsMatch(secret, secret)).toBe(true);
+    expect(bearerMatches(`Bearer ${secret}`, secret)).toBe(true);
+    const nfd = secret.normalize("NFD"); // "é" and "ñ" decomposed: equal to a reader, different strings and bytes
+    expect(nfd).not.toBe(secret);
+    expect(secretsMatch(secret, nfd)).toBe(false);
+    expect(secret !== nfd).toBe(true); // the former check rejected it too
+  });
+
+  it("different byte lengths never throw (timingSafeEqual would) and never match, including same-length-in-characters values", () => {
+    expect(() => secretsMatch("abc", "abcd")).not.toThrow();
+    expect(secretsMatch("abc", "abcd")).toBe(false);
+    expect(secretsMatch("é", "e")).toBe(false); // 1 character each, 2 bytes vs 1
+    expect(secretsMatch("ab", "é")).toBe(false); // 2 bytes each, different content
+  });
+
+  it("empty values: equal empties match exactly as `\"\" === \"\"`; route callers never get here with an empty secret (requireEnv throws first)", () => {
+    expect(secretsMatch("", "")).toBe(true);
+    expect(secretsMatch("", "x")).toBe(false);
+    expect(bearerMatches(null, "x")).toBe(false);
+    expect(bearerMatches("", "x")).toBe(false);
+  });
+
   it("bearerMatches compares the whole header, untrimmed and case-sensitive", () => {
     expect(bearerMatches("Bearer s3cret", "s3cret")).toBe(true);
     for (const header of [null, "", "s3cret", "bearer s3cret", "Bearer  s3cret", "Bearer s3cret ", "Bearer s3cre", "Bearer s3crett", "Basic s3cret"]) {

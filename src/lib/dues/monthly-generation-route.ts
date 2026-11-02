@@ -62,9 +62,10 @@ export function monthlyGenerationRouteBudget(functionMaxMs = MONTHLY_GENERATION_
  * MONTHLY-GENERATION-TRIGGER-PLAN.md §8 outcome mapping: `sent` = created; `skipped` = INELIGIBLE + COVERED; `failed` = a
  * pass that finished with UNPRICED or PENDING students, a skipped rollover, and an error outside a student transaction
  * (a visit's stage error, a claim error, a discovery error). A run that stops at its deadline with work left is NOT a
- * failure. NOT implemented here (recorded gaps, needed before stage 9; each needs a read the route budget does not reserve,
- * and the progress table is empty until stage 9): the "overdue month" detection from persisted progress state, and the
- * body's `remainingSegments` and cursors left (§8) — today a deadline stop shows only `stoppedBy` and each visit's `ended`.
+ * failure. NOT implemented here — a STAGE-9 BLOCKER, registered in scripts/pending-callers.ts KNOWN_LIMITATIONS: the §8
+ * "overdue month" failure, detected from persisted progress state (a read the route budget does not reserve; the progress
+ * table is empty until stage 9). Deliberately NOT added (G2-ROUTE-BUDGET-PLAN.md §1.4, revision 2, which corrected §8): a
+ * `remainingSegments` or completeness field — a deadline stop shows `stoppedBy`, each visit's `ended`, and its codes.
  * Only ids, months, reason codes and counts leave this function (plan §10).
  */
 export function summarizeMonthlyGenerationRun(report: MonthlyGenerationRunReport): { outcome: JobOutcome; body: Record<string, unknown> } {
@@ -163,8 +164,8 @@ export function handleMonthlyGenerationRequest(
     async () => {
       const budget = monthlyGenerationRouteBudget(overrides.functionMaxMs);
       if (!budget.ok) throw new RouteBudgetInfeasibleError();
-      // Production defaults only: no activation, no start month, no closure (D3 pending; "none" is G1's only value).
-      const report = await run({ closurePolicy: "none", limits: { deadlineMs: budget.generationDeadlineMs }, elapsedMs });
+      // Production defaults only: no activation, no start month. D3 = Reopen (approved): no month closes.
+      const report = await run({ closurePolicy: "reopen", limits: { deadlineMs: budget.generationDeadlineMs }, elapsedMs });
       return summarizeMonthlyGenerationRun(report);
     },
     { bookkeeping: MONTHLY_GENERATION_BOOKKEEPING },

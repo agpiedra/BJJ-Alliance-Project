@@ -85,13 +85,13 @@ describe("the monthly-generation runner and visit loop are not reachable from pr
     const loop = stripComments(readFileSync(LOOP, "utf8"));
     expect(loop).toContain("deps.generationStart ?? (async () => null)");
     expect(loop).toContain("deps.activation ?? inactiveLedgerActivation");
-    expect(loop).toMatch(/closurePolicy: "none";/); // required (no `?`), one literal value
+    expect(loop).toMatch(/closurePolicy: "reopen";/); // required (no `?`), one literal value
     const mentionsClosurePolicy = files.filter((f) => /closurePolicy\s*:/.test(stripComments(f.text))).map((f) => norm(f.file)).sort();
-    expect(mentionsClosurePolicy, "besides the loop's type, only the G2b route module passes closurePolicy, until D3 is decided").toEqual([LOOP, ROUTE_MODULE].sort());
-    // The route passes G1's only value ("none", no automatic closure): it decides nothing about D3. And it passes no
+    expect(mentionsClosurePolicy, "besides the loop's type, only the G2b route module passes closurePolicy").toEqual([LOOP, ROUTE_MODULE].sort());
+    // The route passes the one value, "reopen" (D3 = Reopen, approved; no behavior of its own). And it passes no
     // activation, no start month and no test hook, so the production defaults stay closed.
     const route = stripComments(readFileSync(ROUTE_MODULE, "utf8"));
-    expect(route).toContain('closurePolicy: "none"');
+    expect(route).toContain('closurePolicy: "reopen"');
     expect(route).not.toMatch(/\bactivation\s*:|generationStart\s*:|ForTest\s*:/);
   });
 
@@ -132,5 +132,13 @@ describe("the monthly-generation runner and visit loop are not reachable from pr
     expect(registry).toContain(RUNNER);
     expect(registry).not.toContain('symbol: "runMonthlyGeneration"');
     expect(registry).not.toContain('symbol: "planRouteBudget"');
+  });
+
+  it("the overdue-month failure (trigger plan §8) is a registered STAGE-9 BLOCKER, and readiness check 10 says it does not cover it", async () => {
+    const registry = readFileSync("scripts/pending-callers.ts", "utf8");
+    expect(registry).toMatch(/STAGE-9 BLOCKER: the monthly-generation route does not report an \\"overdue month\\"/);
+    expect(registry).toContain("Before stage 9 (activation)");
+    const evaluate = readFileSync("src/lib/dues/readiness/evaluate.ts", "utf8");
+    expect(evaluate.match(/overdue-month detection \(not built; a stage-9 blocker\)/g)?.length).toBe(2); // pass and fail detail
   });
 });

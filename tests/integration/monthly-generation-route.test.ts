@@ -93,7 +93,33 @@ describe("GET /api/cron/monthly-generation (G2b)", () => {
     expect(await latestRun()).toBeNull();
   });
 
-  it("REQUIRED: the runner's deadline is planRouteBudget's generation deadline, elapsed time counts from the handler start, closure policy is G1's \"none\" and no activation or start month is passed", async () => {
+  it("REQUIRED (real runner, units and admission): 150 s already spent still admits discovery; 200 s spent stops at the deadline before claiming anything", async () => {
+    vi.stubEnv("CRON_SECRET", SECRET);
+    const plan = monthlyGenerationRouteBudget();
+    if (!plan.ok) throw new Error("expected a feasible plan");
+    // Admission needs elapsed + admissionMs < deadline: 227 000 - 44 000 = 183 000 ms of slack, in MILLISECONDS end to end.
+    expect(plan.generationDeadlineMs - plan.admissionMs).toBe(183_000);
+    const admitted = await (await handleMonthlyGenerationRequest(authed(), performance.now() - 150_000)).json();
+    expect(admitted).toMatchObject({ ok: true, stoppedBy: "noClaimableSegment" });
+    await prisma.jobRun.deleteMany({ where: { jobName: "monthly-generation" } });
+    const tooLate = await (await handleMonthlyGenerationRequest(authed(), performance.now() - 200_000)).json();
+    expect(tooLate).toMatchObject({ ok: true, stoppedBy: "deadline", visits: [], created: 0, billingCompletenessCertified: false });
+    // The wrapper still finalized the run after the runner returned: bookkeeping sits outside the generation deadline.
+    expect(await latestRun()).toMatchObject({ status: "SUCCEEDED" });
+  });
+
+  it.each([
+    ["missing", undefined],
+    ["empty", ""],
+  ])("REQUIRED: a %s CRON_SECRET throws before any write, exactly as before the constant-time change (no JobRun row, runner never called)", async (_label, value) => {
+    vi.stubEnv("CRON_SECRET", value as string);
+    const run = vi.fn();
+    await expect(handleMonthlyGenerationRequest(authed(), performance.now(), { run })).rejects.toThrow("Missing required environment variable: CRON_SECRET");
+    expect(run).not.toHaveBeenCalled();
+    expect(await latestRun()).toBeNull();
+  });
+
+  it("REQUIRED: the runner's deadline is planRouteBudget's generation deadline, elapsed time counts from the handler start, closure policy is \"reopen\" and no activation or start month is passed", async () => {
     vi.stubEnv("CRON_SECRET", SECRET);
     let seen: MonthlyGenerationRunDeps | undefined;
     let elapsedAtCall = -1;
@@ -109,7 +135,7 @@ describe("GET /api/cron/monthly-generation (G2b)", () => {
     const plan = monthlyGenerationRouteBudget();
     if (!plan.ok) throw new Error("expected a feasible plan");
     expect(seen!.limits).toEqual({ deadlineMs: plan.generationDeadlineMs });
-    expect(seen!.closurePolicy).toBe("none");
+    expect(seen!.closurePolicy).toBe("reopen");
     expect(seen).not.toHaveProperty("activation");
     expect(seen).not.toHaveProperty("generationStart");
     expect(elapsedAtCall).toBeGreaterThanOrEqual(1_500);
