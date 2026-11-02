@@ -260,13 +260,14 @@ export async function runMonthlyGeneration(deps: MonthlyGenerationRunDeps): Prom
   const visits: SegmentVisitReport[] = [];
   // A segment whose pass ended, or that was refused, lost or failed, is not claimed again in this invocation: re-walking a
   // finished pass or retrying a failing segment in the same run would spend the budget on it. A segment left mid-pass (slice,
-  // deadline) may be claimed again once least-recently-visited order reaches it.
+  // deadline) may be claimed again once least-recently-visited order reaches it. Discovery excludes the settled rows, so they can
+  // never fill its LIMIT and hide unfinished work: "no candidates" then means every claimable row was settled by this run.
   const settled = new Set<string>();
   let claimErrors = 0;
   while (fits(budget.short + budget.visitEntry)) {
     let found: { id: string; organizationId: string }[];
     try {
-      found = await listClaimableGenerationSegments(limits.discoveryLimit, shortBounds(limits));
+      found = await listClaimableGenerationSegments(limits.discoveryLimit, shortBounds(limits), [...settled]);
     } catch (error) {
       return { visits, claimErrors, discoveryError: safeErrorCode(error), stoppedBy: "discoveryFailed" };
     }

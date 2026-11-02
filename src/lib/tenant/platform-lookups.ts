@@ -135,10 +135,16 @@ export async function listActiveAcademyIdsForDigest(): Promise<string[]> {
  * it owes work to, so this read cannot be scoped by one. Bounded before reading (an indexed ORDER BY with LIMIT, under a
  * statement timeout). A candidate list only: the claim re-checks the lease against the database clock and may still lose.
  * Rows exist only for organizations stage 9 activates, so in production this returns nothing until then.
+ *
+ * `exclude`: ids the calling run has already settled. Without it, 20+ settled rows heading the least-recently-visited order filled
+ * the LIMIT and hid an unfinished row behind them, so the run stopped early with budget left. The scan stays bounded: it walks the
+ * ("lastVisitedAt", "id") index and, beyond the leased rows it already skipped, skips at most `exclude.length` more (each settled
+ * by this run, so bounded by its deadline) before returning `limit`.
  */
 export async function listClaimableGenerationSegments(
   limit: number,
   bounds: { statementTimeoutMs: number; lockTimeoutMs: number; idleInTransactionTimeoutMs?: number; maxWaitMs: number; timeoutMs: number },
+  exclude: readonly string[] = [],
 ): Promise<{ id: string; organizationId: string }[]> {
   assertTransactionTimeouts(bounds, "discovery bounds");
   // maxWait bounds waiting for a pool connection; timeout plus statement_timeout bound the transaction itself.
@@ -151,7 +157,8 @@ export async function listClaimableGenerationSegments(
       }
       return tx.$queryRaw<{ id: string; organizationId: string }[]>`
       SELECT "id", "organizationId" FROM "DuesGenerationProgress"
-      WHERE "leaseUntil" IS NULL OR "leaseUntil" < (now() AT TIME ZONE 'UTC')
+      WHERE ("leaseUntil" IS NULL OR "leaseUntil" < (now() AT TIME ZONE 'UTC'))
+        AND NOT ("id" = ANY(${[...exclude]}::text[]))
       ORDER BY "lastVisitedAt", "id"
       LIMIT ${Math.trunc(limit)}`;
     },
