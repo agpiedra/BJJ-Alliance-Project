@@ -666,6 +666,13 @@ describe("discovery cannot be hidden by rows this run already settled", () => {
     expect(report.visits.filter((v) => v.segmentId === bigRow.id).map((v) => v.ended)).toEqual(["slice", "passEnd"]);
     expect(await obligationsFor(big.id)).toHaveLength(3);
     expect(await unfinished()).toBe(0); // genuine exhaustion: every row finished a pass in this run
+
+    // Reopen: the exclusion is per invocation. The next invocation re-walks every organization-month and bills nothing twice.
+    const again = await runMonthlyGeneration(deps(TWO_VISITS));
+    expect(again.stoppedBy).toBe("noClaimableSegment");
+    expect(new Set(again.visits.filter((v) => v.ended === "passEnd").map((v) => v.segmentId)).size).toBe(22);
+    expect(again.visits.reduce((n, v) => n + v.created, 0)).toBe(0);
+    expect(await obligationsFor(big.id)).toHaveLength(3);
   });
 
   it("new-month progress: a month created by rollover mid-run, sliced, then hidden, is still billed in the same run", async () => {

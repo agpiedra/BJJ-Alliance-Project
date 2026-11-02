@@ -136,10 +136,16 @@ export async function listActiveAcademyIdsForDigest(): Promise<string[]> {
  * statement timeout). A candidate list only: the claim re-checks the lease against the database clock and may still lose.
  * Rows exist only for organizations stage 9 activates, so in production this returns nothing until then.
  *
- * `exclude`: ids the calling run has already settled. Without it, 20+ settled rows heading the least-recently-visited order filled
- * the LIMIT and hid an unfinished row behind them, so the run stopped early with budget left. The scan stays bounded: it walks the
- * ("lastVisitedAt", "id") index and, beyond the leased rows it already skipped, skips at most `exclude.length` more (each settled
- * by this run, so bounded by its deadline) before returning `limit`.
+ * `exclude`: progress-row ids (one row per organization-month) that the CALLING INVOCATION has already settled. Without it, 20+
+ * settled rows heading the least-recently-visited order filled the LIMIT and hid an unfinished row behind them, so the run stopped
+ * early with budget left. It is per invocation: nothing is persisted, so the next invocation sees every row again (Reopen).
+ *
+ * Cost: LIMIT bounds the rows RETURNED, not the rows scanned. The index walk passes leased and excluded rows before it finds
+ * `limit` others — at worst the whole table (all organization-months since activation); the planner may instead scan and sort the
+ * table. The `= ANY` test is hashed in the one-shot (custom) plans this client uses — unnamed statements; database-pool.ts never
+ * sets `statementNameGenerator` — so the cost is linear in rows scanned (locally, 20,000 rows with 19,980 excluded: ~4 ms). Under a
+ * generic plan it is not hashed (rows scanned × rows excluded: ~3.3 s at 20,000 × 19,980, past the 1 s statement timeout, which
+ * would end the run as `discoveryFailed`, visibly). The year-one estimate is tens of rows.
  */
 export async function listClaimableGenerationSegments(
   limit: number,

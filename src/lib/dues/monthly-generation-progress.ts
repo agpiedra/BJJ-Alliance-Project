@@ -261,7 +261,9 @@ export async function runMonthlyGeneration(deps: MonthlyGenerationRunDeps): Prom
   // A segment whose pass ended, or that was refused, lost or failed, is not claimed again in this invocation: re-walking a
   // finished pass or retrying a failing segment in the same run would spend the budget on it. A segment left mid-pass (slice,
   // deadline) may be claimed again once least-recently-visited order reaches it. Discovery excludes the settled rows, so they can
-  // never fill its LIMIT and hide unfinished work: "no candidates" then means every claimable row was settled by this run.
+  // never fill its LIMIT and hide unfinished work. "noClaimableSegment" therefore means no row is currently eligible for this
+  // invocation: each was settled here (finished, refused, failed or lost) or is leased by another run. It is NOT a statement
+  // that billing is complete. The set lives only for this invocation; the next one re-walks every row (D3 = Reopen).
   const settled = new Set<string>();
   let claimErrors = 0;
   while (fits(budget.short + budget.visitEntry)) {
