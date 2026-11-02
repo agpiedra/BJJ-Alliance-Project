@@ -176,12 +176,19 @@ together.
     `pnpm verify:pooling --app-url=...`.) It uses the app's own pool and client factories, so
     it tests the app's real configuration; it only reads (SELECTs and one count) and never
     prints credentials. It checks, in order: the TLS session is encrypted and the certificate
-    verified; 360 concurrent queries and transactions through the app's real client all
-    succeed and each returns its *own* answer; a control that opts in to named prepared
-    statements (the one thing that breaks transaction pooling); and — the real production
-    shape, many cold function instances each with their own pool — 90 concurrent requests
-    to the deployed page. **Pass `--app-url` a public page that reads the database**, e.g. an
-    academy's kiosk page. If `DATABASE_URL` is not on the command line, `dotenv` loads your
+    verified; 300 queries and 60 interactive transactions through the app's real client,
+    at most 10 in flight (the pool's size), all succeed and each returns its *own* answer;
+    the same 360 operations all started at once, as a stress step where only Prisma's
+    transaction-start timeout is information and any other failure fails `RESULT`; a control
+    that opts in to named prepared
+    statements (the one thing that breaks transaction pooling); and an HTTP check — 90
+    concurrent GET requests to the URL you pass as `--app-url`, each of which must return 200.
+    **Pass `--app-url` a public page that reads the database on every request**, e.g. an
+    active academy's kiosk page (`/es/kiosk/<slug>` is rendered per request and looks the
+    academy up in the database). What the HTTP check proves depends on that choice: it proves
+    only that *this URL* answered 200 to that burst. It reaches the database only if the page
+    reads it; it is not a capacity or load test, and it says nothing about authentication or
+    any other page. If `DATABASE_URL` is not on the command line, `dotenv` loads your
     dev `.env` and the script says `NOTE: the target is a LOCAL database` — that run proves
     nothing about production.
 
@@ -189,45 +196,103 @@ together.
     ```
     Target: aws-0-us-east-1.pooler.supabase.com:6543/postgres   TLS config: DATABASE_SSL_CA_B64 (full verification)
 
-    [1/4] TLS      PASS  encrypted, server certificate verified
-    [2/4] APP LOAD PASS  360/360 concurrent queries and transactions succeeded (4 distinct backend connections seen)
-    [3/4] CONTROL  INFO  named prepared statements DO break this pooler (…) — so [2/4] passing is meaningful.
-    [4/4] APP URL  PASS  90/90 concurrent requests returned 200
+    [1/5] TLS      PASS  encrypted, server certificate verified
+    [2/5] APP LOAD PASS  360/360 queries and transactions succeeded, 10 in flight (10 distinct backend connections seen)
+    [3/5] STRESS   PASS  unbounded: 360/360 started at once succeeded (10 distinct backend connections seen)
+          (or, from a distant machine: [3/5] STRESS   INFO  unbounded: 60/360 failed, every one the transaction-start timeout — …)
+    [4/5] CONTROL  INFO  named prepared statements DO break this pooler (…) — so [2/5] passing is meaningful.
+    [5/5] APP URL  PASS  90/90 concurrent requests returned 200
 
-    RESULT: PASS
+    RESULT: PASS — every check ran and passed: verified TLS to a remote database, database load, 90/90 HTTP 200 from the supplied --app-url
     ```
-    Exit code 0 is the only go. Lines `[1/4]`, `[2/4]` and `[4/4]` must each be `PASS`.
-    `[3/4]` is information, never a failure: if it says named statements did **not** fail,
+    **Exit code 0 is the only go.** The script has three verdicts:
+
+    | Exit | Last line | Means |
+    |---|---|---|
+    | 0 | `RESULT: PASS — every check ran and passed: …` | Remote database, `[1/5]` PASS (certificate verified), `[2/5]` PASS, `[3/5]` PASS or INFO, `[5/5]` PASS for the URL you gave. The only result that completes this step — and it covers only what these checks test (above). |
+    | 2 | `RESULT: PARTIAL — the database checks passed, but not every check ran or was verified: …` | Nothing failed; the line lists each gap: no `--app-url` (`[5/5] SKIP`), the TLS no-verify fallback (`[1/5] WARN`), or a local database (plaintext `[1/5] INFO`, or `localhost`/`127.0.0.1`/`::1` at all). Running without `--app-url` is allowed — e.g. to check the database before the app is deployed — but it does not complete this step. |
+    | 1 | `RESULT: FAIL …` | A step printed `FAIL`, or the run could not start (no `DATABASE_URL`, refused TLS configuration, no connection, unreadable schema). |
+
+    `[4/5]` never affects the exit code. Exit 0 needs no particular `[4/5]` result.
+
+    - **PARTIAL shows a "command failed" banner — expected.** Because PARTIAL exits 2,
+      `pnpm` prints `[ELIFECYCLE] Command failed with exit code 2.` after it. That banner is
+      not a failure verdict: read the `RESULT:` line and the gaps it lists. (A real failure is
+      `RESULT: FAIL`, exit 1.)
+    - **Any other exit code means "not verified".** The verdict is set without
+      `process.exit()`, but not every way the process can end yields 0/1/2: an interrupted run
+      (Ctrl+C), a Node crash, or the script's 30-second safety exit. That safety exit fires only
+      if something unexpectedly keeps the process alive after `RESULT`. On Node 24 for Windows it
+      can then abort on a libuv assertion (`Assertion failed … src\win\async.c`) and exit
+      **127** whatever `RESULT` said. Keep the output and rerun.
+    - **Older verifier versions exited 0 in more cases.** Before 2026-11 (PR #158), the script
+      ended `RESULT: PASS` with exit 0 when `--app-url` was omitted (`[5/5] SKIP`), when the
+      target was a local or plaintext database, and — as `RESULT: PASS, ON THE TEMPORARY
+      no-verify FALLBACK` — on the TLS fallback. (That covers both the four-step `[1/4]…[4/4]`
+      version and the unmerged bounded version `7b1f9fb`; the latter also reported every `[3/5]`
+      stress failure as information.) On Windows, its runs with `--app-url` could also exit 127 whatever `RESULT` said (the abort
+      above). **Interpret a historical `RESULT: PASS` by that version's rules:** check its
+      `[1/5]` and `[5/5]` lines and its target before treating it as a pass under the current rules.
+
+    **`[2/5]` is not the original test.** Until 2026-10, this step started all 360 operations
+    at once. That shape fails from any machine more than ~60 ms from the database, with
+    `Transaction API error: Unable to start a transaction in the given time` on every
+    transaction. The cause is the script's own queue: 300 queries occupy the pool's 10
+    connections for ~30 round trips, and Prisma's default `maxWait` (2000 ms, covering
+    `pool.connect` + `BEGIN`) expires first. This was reproduced against a local database
+    behind a delay proxy, with no pooler involved. It first appeared on staging from the
+    operator's machine: 60/360 failed. `[2/5]` bounds the workload at 10 in flight: the pooler
+    sees the same 10 concurrent connections, but nothing waits locally. Pool size and
+    transaction timeouts are unchanged. **This changes the acceptance workload; it does not
+    make the original test pass.** `[3/5]` still runs the original shape. Exactly one error
+    there is information: Prisma's `P2028` with `Unable to start a transaction in the given
+    time` — a finding about the local queue, reported as `INFO`, not a launch blocker. Every
+    other `[3/5]` failure fails `RESULT` (exit 1): crossed results, `42P05`, `26000`, `53300`,
+    dropped connections, other `P2028` errors (an expired or rolled-back transaction), or a
+    schema that stopped being readable. When both kinds occur, the line counts the failing
+    ones and adds the start timeouts in brackets as information.
+
+    `[4/5]` is information, never a failure: if it says named statements did **not** fail,
     this pooler tolerates them (the PgBouncer 1.25.2 used to rehearse this did, at its
     defaults; it failed only with `max_prepared_statements=0`) — the app never uses them,
-    so `[2/4]` holds either way; the control just couldn't demonstrate the failure.
-    `RESULT: PASS, ON THE TEMPORARY no-verify FALLBACK` is not done — see "SSL fallback".
+    so `[2/5]` holds either way; the control just couldn't demonstrate the failure.
+    A `RESULT: PARTIAL` naming the no-verify fallback is not done — see "SSL fallback".
 
-    **If it fails — do not launch; fix, then rerun until `RESULT: PASS`:**
-    - `[1/4] … unable to verify the first certificate` — `DATABASE_SSL_CA_B64` isn't the CA
+    **If it fails (exit 1) — do not launch; fix, then rerun until exit 0 and `RESULT: PASS`:**
+    - `[1/5] … unable to verify the first certificate` — `DATABASE_SSL_CA_B64` isn't the CA
       that signed the database's certificate: re-download it, re-encode the *file*, retry.
-    - `[1/4] … does not match certificate's altnames` — the CA is right but the certificate
+    - `[1/5] … does not match certificate's altnames` — the CA is right but the certificate
       doesn't name the pooler's host. See what it does name:
       `openssl s_client -starttls postgres -connect <pooler-host>:6543 </dev/null 2>/dev/null | openssl x509 -noout -ext subjectAltName`.
       This is the case "SSL fallback" exists for; don't work around it any other way.
-    - `[1/4] … Tenant or user not found` — the pooled string's user is `postgres.<project-ref>`,
+    - `[1/5] … Tenant or user not found` — the pooled string's user is `postgres.<project-ref>`,
       not plain `postgres`. `password authentication failed` — wrong password.
-    - `[1/4] … Refusing to connect … without TLS configuration` — `DATABASE_SSL_CA_B64` isn't
+    - `[1/5] … Refusing to connect … without TLS configuration` — `DATABASE_SSL_CA_B64` isn't
       set in the shell you ran this from.
-    - `[2/4] the schema is not readable` — step 5 didn't apply migrations to this database.
-    - `[2/4] APP LOAD FAIL … 42P05` or `26000` (prepared statements) — Supavisor is not
+    - `[2/5] the schema is not readable` — step 5 didn't apply migrations to this database.
+    - `[2/5] APP LOAD FAIL … 42P05` or `26000` (prepared statements) — Supavisor is not
       behaving like PgBouncer. First check nobody added a `statementNameGenerator`
       (`git grep statementNameGenerator src`; `tests/integration/no-named-prepared-statements.test.ts`
       pins it). If the app is clean, keep the output and don't launch: the alternative to
       transaction mode is Supabase's session-mode pooler (port 5432 on the pooler host, per
       Supabase's docs — not verified here), which gives each client its own backend at the
       cost of multiplexing.
-    - `[2/4] APP LOAD FAIL … 53300` (too many connections) — the pooler's pool size or client
+    - `[2/5] APP LOAD FAIL … 53300` (too many connections) — the pooler's pool size or client
       limit is below what the load needs: raise it in Supabase's database settings.
-    - `[4/4] … 404×90` — the `--app-url` is wrong (unknown academy slug). `500×…` — the
-      deployment can't reach the database: read the Vercel function logs; the usual causes are
-      `DATABASE_SSL_CA_B64` or `DATABASE_URL` missing in the *Production* environment scope, or
-      a certificate error the script's own connection didn't hit.
+    - `[2/5] APP LOAD FAIL … Unable to start a transaction in the given time` — with only 10 in
+      flight, this means each operation takes far longer than one round trip. Check the
+      pooler's queueing and this machine's connection, and keep the output. Do not raise
+      `maxWait` to make it pass.
+    - `[3/5] STRESS FAIL … failed with errors other than the transaction-start timeout` — read
+      the codes on the line. `42P05`/`26000`/`53300` mean what they mean under `[2/5]`;
+      `crossed result` means the pooler returned another session's answer — do not launch;
+      `57P01`/`08006` mean connections were dropped mid-run. Keep the output. `[2/5]` passing
+      does not cancel this failure.
+    - `[5/5] … 404×90` — usually a wrong `--app-url` (e.g. an unknown or inactive academy
+      slug). `500×…` (any 5xx) — the deployment failed to serve the page. Database connectivity
+      is one possible cause, not the only one: read the Vercel function logs. Database-related
+      causes include `DATABASE_SSL_CA_B64` or `DATABASE_URL` missing in the *Production*
+      environment scope, or a certificate error the script's own connection didn't hit.
 12. **Sign in, confirm `/platform` is reachable** — open your user menu (top right) and choose
     **Plataforma**, or go to `/platform` directly — then work through
     `docs/MULTI_ACADEMY_OPERATIONS.md` for anything else.
@@ -472,14 +537,16 @@ If step 11 fails on TLS and the cause is not something you can fix quickly (typi
 `DIRECT_URL`). That encrypts the connection and authenticates nothing.
 
 - **It is temporary.** The app logs a warning on every start naming it as such, and
-  `pnpm verify:pooling` ends `RESULT: PASS, ON THE TEMPORARY no-verify FALLBACK` — never a
-  plain `PASS` — every time it is run, so it cannot go unnoticed.
+  `pnpm verify:pooling` ends `RESULT: PARTIAL … TLS is on the temporary no-verify fallback`
+  with exit code 2 — never `PASS`, never exit 0 — every time it is run, so it cannot go
+  unnoticed.
 - **Owner:** Alexis. Nothing else removes it.
 - **Exit condition:** find out what the certificate actually names (the `openssl s_client`
   command in step 11), then make the verified configuration work — the right CA file, or a
   connection string whose hostname the certificate covers. Then remove
   `DATABASE_SSL_MODE`, set `DATABASE_SSL_CA_B64`, redeploy, and rerun step 11 until
-  `[1/4] TLS PASS  encrypted, server certificate verified` and a plain `RESULT: PASS`.
+  `[1/5] TLS PASS  encrypted, server certificate verified` and `RESULT: PASS — every check ran
+  and passed` with exit code 0.
   Until then the launch checklist should treat it as an open item, not a configuration.
 
 ### 1a. Set up the Healthchecks.io dead-man's switch (C1) before relying on the crons
