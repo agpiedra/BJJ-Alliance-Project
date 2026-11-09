@@ -1608,7 +1608,7 @@
     },
     "financialCorrections": {
       "heading": "Correct, reverse, or waive",
-      "body": "Void a wrongly-assessed late fee, reverse a recorded payment, or forgive an unpaid fee — against an already-recorded record you select below. None of this restores a waived fee, refunds a reversed payment, or re-releases coverage.",
+      "body": "Void a wrongly-assessed late fee, reverse a recorded payment, or forgive an unpaid fee — against an already-recorded record you select below. None of this restores a waived fee or refunds a reversed payment. Reversing a payment cancels only the future prepaid months it alone created; everything else it paid becomes owed again.",
       "loading": "Loading records...",
       "loadFailed": "Couldn't load this student's records.",
       "retry": "Retry",
@@ -1657,7 +1657,7 @@
       "payment": {
         "reverseAction": "Reverse",
         "reverseSubmit": "Reverse payment",
-        "reverseConfirmCopy": "Submitting reverses the WHOLE selected payment and all of its settlements. This is never a refund and never releases coverage back.",
+        "reverseConfirmCopy": "Submitting reverses the WHOLE selected payment and all of its settlements. Prepaid months that have not started are cancelled (shown below); everything else becomes owed again. This is never a refund.",
         "restriction": {
           "unsupportedObligationType": "This payment includes a package or signup-type item and cannot be reversed.",
           "voidedFee": "This payment is behind a voided late fee and cannot be reversed.",

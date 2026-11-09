@@ -1469,9 +1469,9 @@ model StudentStatusChange {
 //  - tenant- and student-safe composite foreign keys: a coverage row, a payment, a settlement and a fee can only point at rows of
 //    the same organization, and a settlement's payment and obligation must belong to the same student; foreign keys restrict and
 //    nothing cascades;
-//  - one monthly obligation per student per coverage month; ONE COVERAGE ROW PER STUDENT PER CALENDAR MONTH, UNCONDITIONALLY, with no
-//    release or cancellation column (a payment reversal never releases coverage; releasing it, and cancelling an obligation, are
-//    separate operations whose rules are not approved); one late fee per obligation;
+//  - one LIVE monthly obligation per student per coverage month and ONE UNRELEASED COVERAGE ROW PER STUDENT PER CALENDAR MONTH (O4,
+//    migration 20261110120000: the only release is a set-once marker written together with the cancellation of a prepaid future
+//    month by reversing the payment that created it; an ordinary payment reversal never releases coverage); one late fee per obligation;
 //  - AT MOST ONE ACTIVE SETTLEMENT per obligation (partial unique index on rows with no reversal marker); a reversed settlement
 //    stays as history and the obligation can be settled again by a new row;
 //  - history is never deleted: payments, settlements, coverage rows and obligations reject DELETE. A payment or settlement rejects any

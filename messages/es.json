@@ -1608,7 +1608,7 @@
     },
     "financialCorrections": {
       "heading": "Corregir, revertir o condonar",
-      "body": "Anule una multa por mora mal calculada, revierta un pago registrado, o condone una multa impaga — sobre un registro ya existente que seleccione abajo. Nada de esto restaura una multa condonada, reembolsa un pago revertido, ni libera cobertura.",
+      "body": "Anule una multa por mora mal calculada, revierta un pago registrado, o condone una multa impaga — sobre un registro ya existente que seleccione abajo. Nada de esto restaura una multa condonada ni reembolsa un pago revertido. Revertir un pago cancela solo los meses prepagados futuros que ese pago creó; todo lo demás que pagó vuelve a deberse.",
       "loading": "Cargando registros...",
       "loadFailed": "No se pudieron cargar los registros de este estudiante.",
       "retry": "Reintentar",
@@ -1657,7 +1657,7 @@
       "payment": {
         "reverseAction": "Revertir",
         "reverseSubmit": "Revertir pago",
-        "reverseConfirmCopy": "Al enviar se revierte TODO el pago seleccionado y todas sus liquidaciones. Esto nunca es un reembolso ni libera cobertura.",
+        "reverseConfirmCopy": "Al enviar se revierte TODO el pago seleccionado y todas sus liquidaciones. Los meses prepagados que no han empezado se cancelan (abajo); todo lo demás vuelve a deberse. Esto nunca es un reembolso.",
         "restriction": {
           "unsupportedObligationType": "Este pago incluye un paquete o una matricula y no puede revertirse.",
           "voidedFee": "Este pago esta detras de una multa anulada y no puede revertirse.",

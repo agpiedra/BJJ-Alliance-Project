@@ -111,6 +111,14 @@ const KNOWN_LIMITATIONS: KnownLimitation[] = [
   },
   {
     description:
+      "A test-only ledger activation seam exists for local browser verification: outside a production build, inactiveLedgerActivation reports an organization active when E2E_AUTH_BYPASS_SECRET is set AND E2E_LEDGER_ACTIVE_ORG_IDS lists it. Like the e2e session bypass, a test-only path that changes what the app does exists at all.",
+    foundIn: "src/lib/dues/ledger/activation.ts (testOnlyLedgerActiveOrganization)",
+    dueBy: "Re-read before launch, together with the e2e session bypass above",
+    reason:
+      "process.env.NODE_ENV === 'production' is inlined at build, so the branch is compiled out: scripts/verify-production-build.ts (run in CI) fails if E2E_LEDGER_ACTIVE_ORG_IDS appears anywhere in .next, with a positive control. tests/unit/ledger-activation-test-seam.test.ts proves it is closed by default, closed under NODE_ENV=production even with both variables set, and exact about which organizations it names. Before launch: confirm neither variable is set in any deployed environment, and consider deleting the seam once browser verification no longer needs it.",
+  },
+  {
+    description:
       "O4 launch restriction (owner decision B9, 2026-11-09): reversePayment refuses (notFound) a payment recorded in a branch the student has since left. An owner cannot reverse a pre-transfer payment, e.g. one that bounced after the student moved. (The former blanket refusal of any payment with a prepaid month, prepaymentBlocksReversal, is gone: O4 option 4 replaced it.)",
     foundIn: "src/lib/dues/ledger/reverse-payment.ts (locked.homeAcademyId !== payment.academyId); src/lib/dues/financial-corrections-queries.ts (restrictions.branchMoved)",
     dueBy: "Revisit only if owners report pre-transfer reversals are needed — not scheduled",
