@@ -232,9 +232,9 @@ describe("listReversiblePayments / getPaymentById (recovery read)", () => {
     const before = await listReversiblePayments(context(a), student.id);
     const row = before.rows.find((p) => p.id === recorded.paymentId);
     expect(row).toBeDefined();
-    expect(row!.restrictions).toEqual({ hasUnsupportedObligationType: false, hasPrepaymentOrigin: false, hasVoidedFee: false });
+    expect(row!.restrictions).toEqual({ hasUnsupportedObligationType: false, hasVoidedFee: false, branchMoved: false });
 
-    const reversed = await reversePayment({ context: context(a), paymentId: recorded.paymentId, reversalReason: "test reversal" }, deps());
+    const reversed = await reversePayment({ context: context(a), paymentId: recorded.paymentId, reasonCategory: "RECORDED_IN_ERROR", reversalReason: "test reversal" }, deps());
     expect(reversed.ok).toBe(true);
 
     const after = await listReversiblePayments(context(a), student.id);

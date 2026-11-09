@@ -19,10 +19,11 @@ export async function checkMonthCoverageInTx(
 ): Promise<{ covered: boolean; existingObligationId: string | null }> {
   const { organizationId, studentId, coverage } = args;
   const existingMonthly = await tx.duesObligation.findFirst({
-    where: { organizationId, studentId, type: "MONTHLY", coverageYear: coverage.year, coverageMonth: coverage.month },
+    // O4: cancelled obligations and released coverage do not count (same rule as writeMonthlyObligationInTx).
+    where: { organizationId, studentId, type: "MONTHLY", coverageYear: coverage.year, coverageMonth: coverage.month, cancelledAt: null },
     select: { id: true },
   });
-  const coverageTaken = existingMonthly ? null : await tx.duesCoverage.findFirst({ where: { organizationId, studentId, year: coverage.year, month: coverage.month }, select: { id: true } });
+  const coverageTaken = existingMonthly ? null : await tx.duesCoverage.findFirst({ where: { organizationId, studentId, year: coverage.year, month: coverage.month, releasedAt: null }, select: { id: true } });
   return { covered: existingMonthly !== null || coverageTaken !== null, existingObligationId: existingMonthly?.id ?? null };
 }
 

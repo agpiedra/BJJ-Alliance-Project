@@ -57,6 +57,9 @@ export interface PaymentHistorySettlementRow {
   lateFee: { id: string; amount: string; removalKind: "VOIDED" | "WAIVED" | null } | null;
   /** `principalAmount` + (`lateFee.amount` if present) — exact sum, never re-derived via `lateFeeToAssessMinor`. */
   totalAmount: string;
+  /** O4 (B10): the obligation is a prepaid month CANCELLED by this payment's reversal — staff history only; deliberately
+   * not copied into `PortalPaymentHistoryRow`. */
+  obligationCancelled: boolean;
 }
 
 export interface PaymentHistoryRow {
@@ -151,7 +154,7 @@ async function queryPaymentHistoryRows(organizationId: string, studentId: string
           id: true,
           reversedAt: true,
           lateFeeId: true,
-          obligation: { select: { id: true, type: true, coverageYear: true, coverageMonth: true, currency: true, amount: true, lateFeeAmount: true } },
+          obligation: { select: { id: true, type: true, coverageYear: true, coverageMonth: true, currency: true, amount: true, lateFeeAmount: true, cancelledAt: true } },
           lateFee: { select: { id: true, removalKind: true } },
         },
       },
@@ -197,6 +200,7 @@ async function queryPaymentHistoryRows(organizationId: string, studentId: string
         principalAmount,
         lateFee,
         totalAmount,
+        obligationCancelled: s.obligation.cancelledAt !== null,
       };
     }),
   }));

@@ -2,6 +2,8 @@ import { prisma } from "@/lib/prisma";
 import type { TenantContext } from "@/lib/tenant/types";
 import { versionRevision } from "@/lib/dues/config-input";
 import { inTenantScope } from "@/lib/dues/ledger/common";
+import { currentMonthIn } from "@/lib/dues/config-input";
+import { classifyReversedObligation } from "@/lib/dues/reversal-classification";
 
 /**
  * Owner financial-corrections UI brief §2.2: the three genuinely new reads this card needs — none of
@@ -127,8 +129,9 @@ export interface ReversiblePaymentRow {
     /** `unsupportedObligationType` would refuse — covers BOTH a package-origin and a signup-type obligation; the
      * refusal itself cannot distinguish which (brief §1), so neither can this flag's own name. */
     hasUnsupportedObligationType: boolean;
-    hasPrepaymentOrigin: boolean;
     hasVoidedFee: boolean;
+    /** O4 B9 (launch restriction): the student's home branch is no longer the payment's branch — `reversePayment` refuses. */
+    branchMoved: boolean;
   };
 }
 
@@ -161,13 +164,14 @@ export async function listReversiblePayments(
     ...(cursorId ? { cursor: { id: cursorId }, skip: 1 } : {}),
     select: {
       id: true,
+      academyId: true,
       receivedOn: true,
       tenderCurrency: true,
       tenderAmount: true,
       method: true,
       settlements: {
         where: { reversedAt: null },
-        select: { obligation: { select: { type: true, origin: true, lateFees: { select: { removalKind: true } } } } },
+        select: { obligation: { select: { type: true, lateFees: { select: { removalKind: true } } } } },
       },
     },
   });
@@ -185,13 +189,71 @@ export async function listReversiblePayments(
       method: p.method,
       restrictions: {
         hasUnsupportedObligationType: obligations.some((o) => o.type !== "MONTHLY"),
-        hasPrepaymentOrigin: obligations.some((o) => o.origin === "PREPAYMENT"),
         hasVoidedFee: obligations.some((o) => o.lateFees.some((f) => f.removalKind === "VOIDED")),
+        branchMoved: p.academyId !== student.homeAcademyId,
       },
     };
   });
 
   return { rows, nextCursor: hasMore ? page[page.length - 1].id : null };
+}
+
+export interface ReversalPreviewLine {
+  obligationId: string;
+  coverageYear: number;
+  coverageMonth: number;
+  amount: string;
+  currency: string;
+}
+
+/** O4: what reversing a payment would do, computed with the same pure classifier `reversePayment` uses, but WITHOUT its locks
+ * — advisory only. The owner confirms `cancel`'s ids; the writer recomputes under its locks and refuses `changedSinceReview`
+ * if they differ. */
+export interface ReversalPreview {
+  paymentId: string;
+  /** R1: prepaid future months this payment alone created — will be cancelled and billed normally when they open. */
+  cancel: ReversalPreviewLine[];
+  /** R2: prepaid months that have started — owed again. */
+  owedStarted: ReversalPreviewLine[];
+  /** R3: every other charge this payment settled — owed again. */
+  owedIndependent: ReversalPreviewLine[];
+}
+
+export async function previewPaymentReversal(context: TenantContext, paymentId: string, now: Date = new Date()): Promise<ReversalPreview | null> {
+  if (!isNonBlankString(paymentId)) return null;
+  const payment = await prisma.duesPayment.findFirst({
+    where: { id: paymentId, organizationId: context.organizationId, reversedAt: null },
+    select: {
+      id: true,
+      academyId: true,
+      academy: { select: { timezone: true } },
+      settlements: {
+        where: { reversedAt: null },
+        select: {
+          obligation: {
+            select: { id: true, origin: true, coverageYear: true, coverageMonth: true, amount: true, currency: true, settlements: { select: { paymentId: true } } },
+          },
+        },
+      },
+    },
+  });
+  if (!payment || !inTenantScope(context, payment.academyId)) return null;
+  const currentMonth = currentMonthIn(payment.academy.timezone, now);
+  const preview: ReversalPreview = { paymentId: payment.id, cancel: [], owedStarted: [], owedIndependent: [] };
+  for (const s of payment.settlements) {
+    const o = s.obligation;
+    const line: ReversalPreviewLine = { obligationId: o.id, coverageYear: o.coverageYear, coverageMonth: o.coverageMonth, amount: o.amount.toFixed(2), currency: o.currency };
+    const cls = classifyReversedObligation(
+      { origin: o.origin, coverageYear: o.coverageYear, coverageMonth: o.coverageMonth, settlementPaymentIds: o.settlements.map((x) => x.paymentId) },
+      payment.id,
+      currentMonth,
+    );
+    preview[cls].push(line);
+  }
+  for (const list of [preview.cancel, preview.owedStarted, preview.owedIndependent]) {
+    list.sort((a, b) => a.coverageYear - b.coverageYear || a.coverageMonth - b.coverageMonth);
+  }
+  return preview;
 }
 
 export interface LateFeeStatus {

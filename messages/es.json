@@ -918,7 +918,8 @@
         "removalKind": {
           "WAIVED": "exonerada",
           "VOIDED": "anulada"
-        }
+        },
+        "cancelledByReversal": "Cancelado: pago revertido"
       },
       "eligibilityNotice": {
         "notRecorded": "No hay cargo mensual registrado para este período.",
@@ -1623,7 +1624,9 @@
         "amount": "Monto recibido",
         "currency": "Moneda",
         "method": "Metodo",
-        "notes": "Notas"
+        "notes": "Notas",
+        "reasonCategory": "Categoría del motivo",
+        "reasonCategoryPlaceholder": "Elija una categoría de motivo"
       },
       "fees": {
         "heading": "Multas por mora",
@@ -1657,12 +1660,25 @@
         "reverseConfirmCopy": "Al enviar se revierte TODO el pago seleccionado y todas sus liquidaciones. Esto nunca es un reembolso ni libera cobertura.",
         "restriction": {
           "unsupportedObligationType": "Este pago incluye un paquete o una matricula y no puede revertirse.",
-          "prepaymentOrigin": "Este pago incluye un mes futuro prepagado. Nunca puede revertirse, incluyendo sus otros elementos.",
-          "voidedFee": "Este pago esta detras de una multa anulada y no puede revertirse."
+          "voidedFee": "Este pago esta detras de una multa anulada y no puede revertirse.",
+          "branchMoved": "Este pago se registró en una sede que el estudiante ya dejó. No se puede revertir (restricción de lanzamiento)."
         },
         "outcome": {
           "reversedDirect": "Este pago fue revertido.",
           "reversedObserved": "Este pago ahora aparece como revertido."
+        },
+        "reverseNotRefund": "Una reversión registra que este pago nunca se recibió válidamente o se registró por error. No es un reembolso ni una cancelación de membresía.",
+        "preview": {
+          "loading": "Revisando lo que haría esta reversión…",
+          "failed": "No se pudo cargar lo que haría esta reversión.",
+          "cancel": "Meses prepagados que se cancelarán (se cobrarán normalmente cuando empiecen)",
+          "owedStarted": "Meses prepagados ya iniciados (se deben de nuevo)",
+          "owedIndependent": "Otros cargos (se deben de nuevo)",
+          "none": "Ninguno"
+        },
+        "reasonCategory": {
+          "NOT_RECEIVED": "No recibido o rechazado",
+          "RECORDED_IN_ERROR": "Registrado por error"
         }
       },
       "recovery": {
@@ -1683,7 +1699,7 @@
         "alreadyReversed": "Este pago ya fue revertido.",
         "unsupportedObligationType": "Este pago incluye un elemento que no puede revertirse.",
         "voidedFeeBlocksReversal": "Este pago esta detras de una multa anulada y no puede revertirse.",
-        "prepaymentBlocksReversal": "Este pago incluye un mes futuro prepagado y nunca puede revertirse.",
+        "changedSinceReview": "Lo que haría esta reversión cambió desde que lo revisó (por ejemplo, empezó un mes). Revise el efecto actualizado y confirme de nuevo.",
         "notOldestFirst": "Existe deuda mas antigua sin pagar para este estudiante que debe liquidarse primero.",
         "rateUnavailable": "No hay tipo de cambio disponible actualmente. Esta correccion no se completo; no se guardo nada.",
         "alreadySettled": "Esta obligacion ya fue liquidada de otra forma. La lista se ha actualizado.",

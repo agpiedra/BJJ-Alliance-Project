@@ -50,6 +50,13 @@ export interface LedgerDeps {
    */
   afterReversalMarkersForTest?: () => Promise<void>;
   /**
+   * O4 test-only synchronization point, called by `reversePayment` immediately after its branch and student locks succeed and its
+   * deciding instant is captured — never referenced by production code, never given a value outside a test. Receives the open
+   * transaction so a test can capture its backend pid for a `pg_blocking_pids`-verified genuine-overlap proof against a
+   * concurrent payment, prepayment, generation, waiver, resolution, timezone save or second reversal.
+   */
+  afterReversalLocksForTest?: (tx: Tx) => Promise<void>;
+  /**
    * Test-only synchronization point, called by `waiveLateFee` (waive-late-fee.ts) right after the fee's removal marker and its
    * own audit row are written, but before the transaction commits — never referenced by production code, never given a value
    * outside a test. Lets a test force a failure at that point to prove the marker rolls back together with the audit row,

@@ -118,10 +118,11 @@ export async function loadReadinessSnapshot(
     select: { id: true, studentId: true, year: true, month: true, status: true, amount: true, currency: true, planId: true, promoName: true, promoRecurring: true },
   });
   const monthlyObligations = await tx.duesObligation.findMany({
-    where: { organizationId, type: "MONTHLY" },
+    // O4: a cancelled obligation was never billed; released coverage covers nothing.
+    where: { organizationId, type: "MONTHLY", cancelledAt: null },
     select: { id: true, studentId: true, coverageYear: true, coverageMonth: true },
   });
-  const coverage = await tx.duesCoverage.findMany({ where, select: { id: true, studentId: true, year: true, month: true } });
+  const coverage = await tx.duesCoverage.findMany({ where: { ...where, releasedAt: null }, select: { id: true, studentId: true, year: true, month: true } });
   // ALL drafts, active and withdrawn (rows are never deleted), in one read of the same snapshot.
   const drafts = await tx.duesOpeningItem.findMany({
     where,

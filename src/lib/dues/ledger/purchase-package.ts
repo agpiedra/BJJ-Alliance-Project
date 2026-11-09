@@ -200,10 +200,11 @@ export async function checkPackageCoverageAvailableInTx(
     // allow-list excludes it here so a package starting in a student's own enrollment month is never wrongly
     // refused as "already covered" by their SIGNUP charge alone.
     const existingObligation = await tx.duesObligation.findFirst({
-      where: { organizationId, studentId, coverageYear: month.year, coverageMonth: month.month, type: { in: ["MONTHLY", "PACKAGE"] } },
+      // O4: cancelled obligations and released coverage do not occupy a month.
+      where: { organizationId, studentId, coverageYear: month.year, coverageMonth: month.month, type: { in: ["MONTHLY", "PACKAGE"] }, cancelledAt: null },
       select: { id: true },
     });
-    const existingCoverage = await tx.duesCoverage.findFirst({ where: { organizationId, studentId, year: month.year, month: month.month }, select: { id: true } });
+    const existingCoverage = await tx.duesCoverage.findFirst({ where: { organizationId, studentId, year: month.year, month: month.month, releasedAt: null }, select: { id: true } });
     if (existingObligation || existingCoverage) return { ok: false };
   }
   return { ok: true };

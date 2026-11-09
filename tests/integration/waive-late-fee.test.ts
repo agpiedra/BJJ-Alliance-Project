@@ -95,7 +95,7 @@ const correct = (over: Partial<Parameters<typeof correctLateFeeAndSettle>[0]> = 
   );
 
 const reverse = (over: Partial<Parameters<typeof reversePayment>[0]> = {}, extraDeps: Record<string, unknown> = {}) =>
-  reversePayment({ context: context(), paymentId: "", reversalReason: "owner-confirmed reversal", ...over }, deps(extraDeps));
+  reversePayment({ context: context(), paymentId: "", reasonCategory: "RECORDED_IN_ERROR", reversalReason: "owner-confirmed reversal", ...over }, deps(extraDeps));
 
 async function ledgerCounts(organizationId: string) {
   return {

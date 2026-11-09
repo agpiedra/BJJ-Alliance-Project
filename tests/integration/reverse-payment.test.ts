@@ -88,7 +88,7 @@ async function pay(studentId: string, obligationIds: string[], amount: string, r
 }
 
 const reverse = (over: Partial<Parameters<typeof reversePayment>[0]> = {}, extraDeps: Record<string, unknown> = {}) =>
-  reversePayment({ context: context(), paymentId: "", reversalReason: "owner-confirmed reversal", ...over }, deps(extraDeps));
+  reversePayment({ context: context(), paymentId: "", reasonCategory: "RECORDED_IN_ERROR", reversalReason: "owner-confirmed reversal", ...over }, deps(extraDeps));
 
 async function currentPayment(id: string) {
   return prisma.duesPayment.findUniqueOrThrow({ where: { id } });

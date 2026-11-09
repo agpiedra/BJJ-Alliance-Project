@@ -188,7 +188,7 @@ async function voidWronglyAssessedFeesInTx(
   const organizationId = context.organizationId;
   for (const obligationId of obligationIds) {
     const obligation = await tx.duesObligation.findFirst({
-      where: { id: obligationId, organizationId, type: "MONTHLY" },
+      where: { id: obligationId, organizationId, type: "MONTHLY", cancelledAt: null }, // O4: a cancelled obligation has no fee to void
       select: { graceDeadline: true, lateFees: { select: { id: true, removedAt: true, removalKind: true } } },
     });
     if (!obligation || obligation.graceDeadline === null) continue; // resolveMonthlyDebtItemsInTx (next) is the real authority on validity
@@ -300,8 +300,9 @@ export async function resolveAwaitingRateReceipt(
           if (compareYearMonth(m.coverage, horizonEnd) > 0) throw new ResolutionRefusedError(refuseResolve("noLongerFuture"));
           // Forbidden drift: the month must still be genuinely uncovered — something else may have settled it while
           // this receipt sat PENDING.
-          const existingObligation = await tx.duesObligation.findFirst({ where: { organizationId, studentId: student.id, coverageYear: m.coverage.year, coverageMonth: m.coverage.month }, select: { id: true } });
-          const existingCoverage = await tx.duesCoverage.findFirst({ where: { organizationId, studentId: student.id, year: m.coverage.year, month: m.coverage.month }, select: { id: true } });
+          // O4: a cancelled obligation and its released coverage leave the month uncovered.
+          const existingObligation = await tx.duesObligation.findFirst({ where: { organizationId, studentId: student.id, coverageYear: m.coverage.year, coverageMonth: m.coverage.month, cancelledAt: null }, select: { id: true } });
+          const existingCoverage = await tx.duesCoverage.findFirst({ where: { organizationId, studentId: student.id, year: m.coverage.year, month: m.coverage.month, releasedAt: null }, select: { id: true } });
           if (existingObligation || existingCoverage) throw new ResolutionRefusedError(refuseResolve("staleSelection"));
           // Forbidden drift: the snapshotted assignment must still be the one effective for this month. The student lock
           // alone does not serialize against a concurrent `correctAssignment` call on this specific row (it never

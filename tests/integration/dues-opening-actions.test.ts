@@ -853,7 +853,7 @@ describe("no financial effect, and the report end to end", () => {
     expect(await prisma.paymentPeriod.findUniqueOrThrow({ where: { id: linked.id } })).toEqual(linked);
   }, 60_000);
 
-  it("the report: check 10 fails (not scheduled), 11-12 notImplemented, 13 decisionPending, ready false; a draft linked to a PAID row warns; opening totals appear", async () => {
+  it("the report: check 10 fails (not scheduled), 11-12 notImplemented, 13 pass (O4 decided), ready false; a draft linked to a PAID row warns; opening totals appear", async () => {
     const studentId = await newStudent(a, "report");
     const paid = await prisma.paymentPeriod.create({
       data: { organizationId: a.org.id, studentId, academyId: a.academy.id, year: 2025, month: 12, planId: usdPlan.id, status: "PAID", amount: "100.00", currency: "USD", recordedById: a.admin.id },
@@ -862,7 +862,7 @@ describe("no financial effect, and the report end to end", () => {
     await actions.createOpeningDraft(a.org.id, PRISTINE, draftForm(studentId, { coverageYear: "2025", coverageMonth: "12", legacyPaymentPeriodId: paid.id }));
     const { report } = await reportState(studentId);
     expect(report.checks.filter((c) => c.status === "notImplemented").map((c) => c.id)).toEqual([11, 12]); // check 10 is computed (G2b): it fails until scheduled
-    expect(report.checks.find((c) => c.id === 13)!.status).toBe("decisionPending");
+    expect(report.checks.find((c) => c.id === 13)!.status).toBe("pass"); // O4 decided and implemented (2026-11-09)
     expect(report.ready).toBe(false);
     const d = await latestDraft(studentId);
     expect(report.warnings.find((w) => w.key === "openingItemLinkedToPaidRow")!.items).toContain(`openingItem:${d.id}`);

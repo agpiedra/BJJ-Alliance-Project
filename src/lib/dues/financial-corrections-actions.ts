@@ -6,12 +6,15 @@ import { PaymentMethod, type Currency } from "@/generated/prisma/client";
 import { resolveActionContext } from "@/lib/tenant/context";
 import { correctLateFeeAndSettle, type CorrectLateFeeResult } from "@/lib/dues/ledger/correct-late-fee";
 import { reversePayment, type ReversePaymentResult } from "@/lib/dues/ledger/reverse-payment";
+import { isReversalReasonCategory } from "@/lib/dues/reversal-classification";
 import { waiveLateFee, type WaiveLateFeeResult } from "@/lib/dues/ledger/waive-late-fee";
 import {
   listCorrectableLateFees,
   listReversiblePayments,
   getLateFeeById,
   getPaymentById,
+  previewPaymentReversal,
+  type ReversalPreview,
   type ListPage,
   type CorrectableLateFeeRow,
   type ReversiblePaymentRow,
@@ -121,7 +124,9 @@ export async function correctLateFee(
 }
 
 /** ADMIN only, mirroring `correctLateFee`'s own two-layer precedent. No revision field — `reversePayment` has none
- * (brief §1: purely lock + fresh re-read, never optimistic). */
+ * (brief §1: purely lock + fresh re-read, never optimistic). O4: the owner must choose a reason category (B7) and confirm the
+ * exact months the preview said would be cancelled (`expectedCancelledObligationId`, repeated); the writer recomputes under
+ * its locks and refuses `changedSinceReview` on any difference. */
 export async function reversePaymentAction(
   organizationId: string,
   _prevState: ReversePaymentResult | { ok: false; error: "invalid" } | Record<string, never>,
@@ -132,12 +137,22 @@ export async function reversePaymentAction(
   const context = auth.context;
 
   const paymentId = text(formData, "paymentId");
+  const reasonCategory = text(formData, "reasonCategory");
   const reversalReason = text(formData, "reversalReason");
-  if (!isNonBlankString(paymentId) || !isNonBlankString(reversalReason)) return { ok: false, error: "invalid" };
+  const expected = formData.getAll("expectedCancelledObligationId");
+  if (!isNonBlankString(paymentId) || !isReversalReasonCategory(reasonCategory) || !isNonBlankString(reversalReason)) return { ok: false, error: "invalid" };
+  if (!expected.every((id): id is string => isNonBlankString(id))) return { ok: false, error: "invalid" };
 
-  const result = await reversePayment({ context, paymentId, reversalReason });
+  const result = await reversePayment({ context, paymentId, reasonCategory, reversalReason, expectedCancelledObligationIds: expected });
   if (wroteOrDiscoveredChange(result)) await refreshPaymentsPage();
   return result;
+}
+
+/** O4: the advisory reversal preview for one payment (cancel / owed-again lists). ADMIN only, like every read here. */
+export async function getReversalPreview(organizationId: string, paymentId: string): Promise<ReversalPreview | null> {
+  const auth = await resolveActionContext(organizationId, ["ADMIN"]);
+  if (!auth.ok) return null;
+  return previewPaymentReversal(auth.context, paymentId);
 }
 
 /** ADMIN only, mirroring the other two. No `receivedOn`/tender/method fields — `waiveLateFee` needs none of them

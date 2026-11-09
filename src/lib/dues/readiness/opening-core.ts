@@ -337,9 +337,9 @@ export async function loadReviewContentInTx(tx: Tx, organizationId: string, stud
         FROM "PaymentPeriod" p WHERE p."organizationId" = ${organizationId} AND p."studentId" = ${studentId}), '[]'::json),
       'monthlyObligations', COALESCE((SELECT json_agg(json_build_object('id', o."id", 'studentId', o."studentId",
           'coverageYear', o."coverageYear", 'coverageMonth', o."coverageMonth"))
-        FROM "DuesObligation" o WHERE o."organizationId" = ${organizationId} AND o."studentId" = ${studentId} AND o."type" = 'MONTHLY'), '[]'::json),
+        FROM "DuesObligation" o WHERE o."organizationId" = ${organizationId} AND o."studentId" = ${studentId} AND o."type" = 'MONTHLY' AND o."cancelledAt" IS NULL), '[]'::json),
       'coverage', COALESCE((SELECT json_agg(json_build_object('id', c."id", 'studentId', c."studentId", 'year', c."year", 'month', c."month"))
-        FROM "DuesCoverage" c WHERE c."organizationId" = ${organizationId} AND c."studentId" = ${studentId}), '[]'::json),
+        FROM "DuesCoverage" c WHERE c."organizationId" = ${organizationId} AND c."studentId" = ${studentId} AND c."releasedAt" IS NULL), '[]'::json),
       'drafts', COALESCE((SELECT json_agg(json_build_object('id', d."id", 'studentId', d."studentId", 'coverageYear', d."coverageYear",
           'coverageMonth', d."coverageMonth", 'amount', d."amount"::text, 'currency', d."currency"::text, 'note', d."note",
           'legacyPaymentPeriodId', d."legacyPaymentPeriodId", 'withdrawn', d."withdrawnAt" IS NOT NULL,

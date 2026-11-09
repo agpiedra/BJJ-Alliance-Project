@@ -97,7 +97,8 @@ afterAll(async () => {
   await prisma.$transaction(
     async (tx) => {
       await tx.$executeRawUnsafe("SET LOCAL session_replication_role = replica");
-      for (const table of ["DuesCoverage", "DuesObligation", "StudentStatusChange", "StudentPlanAssignment"]) {
+      // DuesSettlement/DuesPayment: the PREPAYMENT-origin fixture is settled in its creating transaction (O4 invariant I1).
+      for (const table of ["DuesSettlement", "DuesPayment", "DuesCoverage", "DuesObligation", "StudentStatusChange", "StudentPlanAssignment"]) {
         await tx.$executeRawUnsafe(`DELETE FROM "${table}" WHERE "organizationId" = $1`, a.org.id);
       }
     },
@@ -315,12 +316,23 @@ describe("coverage precedence (second review round): existing coverage is checke
     const s = await newStudent("INACTIVE", "prepaidnoterms");
     const noTermsPlan = await prisma.paymentPlan.create({ data: { organizationId: a.org.id, academyId: a.academy.id, name: `Resume noterms plan ${suffix}` } });
     await assign(s.id, noTermsPlan.id); // assigned, but this plan has NO terms rows at all — unresolvable if ever reached
-    const existing = await prisma.duesObligation.create({
-      data: {
-        organizationId: a.org.id, studentId: s.id, academyId: a.academy.id, type: "MONTHLY", origin: "PREPAYMENT",
-        coverageYear: 2031, coverageMonth: 3, monthsCovered: 1, amount: "100.00", currency: "USD", lateFeeAmount: "20.00",
-        dueOn: new Date(Date.UTC(2031, 2, 20)), graceDeadline: new Date(Date.UTC(2031, 3, 5)), planTermsId: termsA.id, policyVersionId: policyA.id, createdById: a.admin.id,
-      },
+    // O4 invariant I1 (database-enforced at commit): a PREPAYMENT obligation is settled in the transaction that creates it.
+    const existing = await prisma.$transaction(async (tx) => {
+      const obligation = await tx.duesObligation.create({
+        data: {
+          organizationId: a.org.id, studentId: s.id, academyId: a.academy.id, type: "MONTHLY", origin: "PREPAYMENT",
+          coverageYear: 2031, coverageMonth: 3, monthsCovered: 1, amount: "100.00", currency: "USD", lateFeeAmount: "20.00",
+          dueOn: new Date(Date.UTC(2031, 2, 20)), graceDeadline: new Date(Date.UTC(2031, 3, 5)), planTermsId: termsA.id, policyVersionId: policyA.id, createdById: a.admin.id,
+        },
+      });
+      const payment = await tx.duesPayment.create({
+        data: {
+          organizationId: a.org.id, studentId: s.id, academyId: a.academy.id, receivedOn: new Date(Date.UTC(2031, 0, 10)),
+          tenderCurrency: "USD", tenderAmount: "100.00", method: "EFECTIVO", recordedById: a.admin.id,
+        },
+      });
+      await tx.duesSettlement.create({ data: { organizationId: a.org.id, studentId: s.id, paymentId: payment.id, obligationId: obligation.id } });
+      return obligation;
     });
     const before = await ledgerCounts();
     const result = await appPrisma.$transaction((tx) =>

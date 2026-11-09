@@ -71,7 +71,7 @@ afterAll(async () => {
 }, 120_000);
 
 const CORRECT_FIELDS = { lateFeeId: "irrelevant", expectedRevision: "irrelevant", removalReason: "test", receivedOn: "2030-06-01", tenderCurrency: "USD", tenderAmount: "100.00", method: "EFECTIVO" };
-const REVERSE_FIELDS = { paymentId: "irrelevant", reversalReason: "test" };
+const REVERSE_FIELDS = { paymentId: "irrelevant", reasonCategory: "RECORDED_IN_ERROR", reversalReason: "test" }; // O4 B7: a reason category is required
 const WAIVE_FIELDS = { lateFeeId: "irrelevant", expectedRevision: "irrelevant", removalReason: "test" };
 
 describe("correctLateFee: authorization, under the real unmodified activation default", () => {

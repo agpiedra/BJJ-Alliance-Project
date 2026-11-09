@@ -1,50 +1,48 @@
 import { prisma } from "@/lib/prisma";
 import type { TenantContext } from "@/lib/tenant/types";
+import { currentMonthIn } from "@/lib/dues/config-input";
 import { inactiveLedgerActivation, type LedgerDeps } from "@/lib/dues/ledger/activation";
-import { inTenantScope, lockStudent } from "@/lib/dues/ledger/common";
+import { inTenantScope, lockBranchShared, lockStudent } from "@/lib/dues/ledger/common";
+import { lockExchangeRateNamespaceShared } from "@/lib/dues/ledger/exchange-rate";
+import {
+  classifyReversedObligation,
+  isReversalReasonCategory,
+  sameIdSet,
+  storedReversalReason,
+  type ReversalReasonCategory,
+} from "@/lib/dues/reversal-classification";
 
 /**
- * Payment-reversal brief: reverse a recorded payment and every one of its active settlements, atomically, in one transaction. A
- * plain library function: no server action, route, job or scheduler entry, closed by default (see `activation.ts`).
+ * Payment-reversal brief, extended by O4 (owner decisions B1–B10, approved 2026-11-09; docs/dues/O4-PREPAYMENT-REVERSAL-PLAN.md):
+ * reverse a recorded payment and every one of its active settlements, atomically, in one transaction. A plain library function
+ * (its one caller is the owner-only `reversePaymentAction`), closed by default (see `activation.ts`).
  *
- * Reversing a settlement is enough on its own to make its obligation unpaid again — verified, not new logic here:
- * `recordDuesPayment`/`recordDuesPaymentInTx` and `assessLateFeeInTx` already filter `settlements: { where: { reversedAt: null } }`
- * everywhere they decide what's outstanding. This writer never touches `DuesObligation` or `DuesCoverage` at all; it has no code
- * path that reaches either.
+ * A REVERSAL records that the money was never validly received (bounced, not received) or that the payment was recorded in
+ * error. It is NOT a refund (no money moves; refunds are not built) and NOT a membership cancellation (a status change never
+ * touches payments). The reason category (B7) is required and stored as a prefix of `reversalReason`.
  *
- * TWO POLICY DECISIONS, BOTH APPROVED (see PAYMENT-REVERSAL-BRIEF.md §2):
- *  - Decision A: reversing a settlement that included a valid, never-voided late fee makes BOTH the tuition and the fee owed
- *    again. This needs no special handling — the `DuesLateFee` row is never touched here, so it is already exactly where it
- *    should be; a later payment naturally re-includes it (`asTerms`/`feeOwed` in `record-payment.ts` depend only on `removedAt`).
- *  - Decision B, a TEMPORARY RESTRICTION, not a permanent policy: if any obligation behind the settlements being reversed has a
- *    `DuesLateFee` row with `removalKind: "VOIDED"`, this refuses the WHOLE reversal (`voidedFeeBlocksReversal`) and writes
- *    nothing. This is a conservative check keyed on the obligation's CURRENT fee state alone — it does not claim, and does not
- *    need to prove, that the specific payment being reversed is what caused that void. No provenance field links a settlement to
- *    "the void it caused," and none is added here; restoring, cancelling, or otherwise deciding what happens to a voided fee is
- *    explicitly out of scope until that policy is decided.
+ * What happens to each obligation the payment settled (`src/lib/dues/reversal-classification.ts`, decided under the locks below):
+ *  - R1 `cancel`: a prepaid (`origin: PREPAYMENT`) obligation whose ONLY settlement ever is this payment's, for a month after the
+ *    current month in the student's home-branch timezone → its settlement is reversed, the obligation is CANCELLED and its
+ *    coverage RELEASED (set-once markers). The monthly job bills that month normally when it opens, at the price then (B2).
+ *  - R2 `owedStarted`: the same, but the month has started → its settlement is reversed; it is owed again.
+ *  - R3 `owedIndependent`: everything else → its settlement is reversed; it is owed again, exactly as before O4.
+ *  - Decision A (unchanged): a valid late fee this payment settled becomes owed again — the `DuesLateFee` row is not touched.
+ * The database enforces the same rules independently (migration 20261110120000): a cancelled obligation must have had exactly
+ * one settlement, by the reversed cancelling payment, no fee, a month not yet started, and all its coverage released in the same
+ * transaction; a cancelled obligation can never be settled or charged a fee.
  *
- * MONTHLY-PREPAYMENT BRIEF §8, APPROVED, A READINESS-REVIEW ITEM: if any obligation behind the settlements being reversed has
- * `origin: "PREPAYMENT"`, this refuses the WHOLE reversal (`prepaymentBlocksReversal`), PERMANENTLY — `origin` never changes
- * back, so this restriction never lifts once the obligation's coverage month becomes current or past, even though it then looks,
- * in every other respect, like an ordinary settled obligation. A `MONTHLY` `type` alone cannot distinguish a prepayment purchase
- * from an ordinary obligation (prepayment would plausibly also use `type: MONTHLY`, just a not-yet-current `coverageMonth`), so
- * `origin` is what this check is keyed on instead. Because reversal is whole-payment, not partial, a payment that combined
- * ordinary current debt with even one prepaid future month becomes entirely unreversible through this writer — including the
- * ordinary-debt portion. This is deliberate and conservative, pending a real prepayment-reversal/cancellation policy this writer
- * does not design, and is tracked as a standing limitation for the readiness/activation review (`scripts/pending-callers.ts`).
+ * Refusals (each writes nothing): `notActive`, `notFound` (also: owner-only, out of scope, and — B9, a launch restriction — the
+ * student's home branch is no longer the payment's branch), `invalid`, `alreadyReversed`, `inconsistentState`,
+ * `unsupportedObligationType` (packages, signup), `voidedFeeBlocksReversal` (Decision B, unchanged), and `changedSinceReview`:
+ * the set of obligations that WOULD be cancelled, recomputed under the locks, differs from `expectedCancelledObligationIds` (what
+ * the owner confirmed). Omitting `expectedCancelledObligationIds` means "I expect nothing to be cancelled", so this writer never
+ * cancels anything the caller did not name.
  *
- * SUPPORTED SCOPE: `type: "MONTHLY"` obligations only, refused otherwise (`unsupportedObligationType`) — a defensive boundary
- * checked at runtime, not proof that nothing else can exist. `DuesSettlement`'s own foreign key carries no type restriction, and
- * `type: "MONTHLY"` does NOT distinguish an ordinary obligation from a future prepayment purchase (prepayment would plausibly
- * also use `type: MONTHLY`, just a not-yet-current `coverageMonth` — `createMonthlyObligation`'s unconditional `futureMonth`
- * refusal is the only reason no such row exists yet, not the type column). Supporting prepayment or package settlements later
- * means this writer must be revisited and re-verified BEFORE either of those writers is ever exposed to production use — this
- * check is what stops it from silently mishandling a case nobody has designed for yet, today with no live path to reach it.
- *
- * Trusts nothing from before the student lock: the payment, its settlements, and their obligations' fee state are all re-read
- * fresh under `lockStudent`, the same discipline `correctLateFeeAndSettle` already established. Also refuses
- * (`inconsistentState`) if the payment and its settlements ever disagree about being reversed — a state nothing today can
- * produce (this is the only reversal writer), checked explicitly rather than assumed impossible.
+ * LOCK ORDER (the ledger's standard sequence, `common.ts`): exchange-rate namespace SHARED, the payment's branch FOR SHARE, then
+ * the student FOR UPDATE. The deciding instant is captured once, AFTER the locks, and everything is re-read under them. This
+ * serializes a reversal with every other ledger writer for the same student; it does not by itself prove deadlock freedom
+ * against every possible future writer — the races that exist today are exercised in tests/integration/o4-reversal-races.test.ts.
  */
 export type ReversePaymentError =
   | "notActive"
@@ -54,27 +52,48 @@ export type ReversePaymentError =
   | "inconsistentState"
   | "unsupportedObligationType"
   | "voidedFeeBlocksReversal"
-  | "prepaymentBlocksReversal";
+  | "changedSinceReview";
 
-export type ReversePaymentResult = { ok: true; paymentId: string; settlementIds: string[] } | { ok: false; error: ReversePaymentError };
+export type ReversePaymentResult =
+  | { ok: true; paymentId: string; settlementIds: string[]; cancelledObligationIds: string[]; owedAgainObligationIds: string[] }
+  | { ok: false; error: ReversePaymentError };
 
 const refuse = (error: ReversePaymentError): ReversePaymentResult => ({ ok: false, error });
 
-type SettlementState = { id: string; reversedAt: Date | null; obligation: { type: string; origin: string; lateFees: { removalKind: string | null }[] } };
+/** The database's own month-started guard (migration 20261110120000 §5) can only disagree with this writer's decision across a
+ * month boundary under clock skew between servers; the whole transaction has already rolled back, so it is reported as a stale
+ * review, never as an unexpected failure. */
+const MONTH_STARTED_GUARD = "a month that has already started cannot be cancelled";
+
+/** The database's own message for an error, wherever the driver adapter put it (`meta.driverAdapterError.cause`), plus the
+ * error's own message. Used only to recognize the one guard above; never logged or returned. */
+function databaseErrorText(error: unknown): string {
+  const cause = (error as { meta?: { driverAdapterError?: { cause?: { originalMessage?: string; message?: string } } } } | undefined)?.meta?.driverAdapterError?.cause;
+  return [error instanceof Error ? error.message : "", cause?.originalMessage ?? "", cause?.message ?? ""].join(" | ");
+}
 
 export async function reversePayment(
-  args: { context: TenantContext; paymentId: string; reversalReason: string },
+  args: {
+    context: TenantContext;
+    paymentId: string;
+    reasonCategory: ReversalReasonCategory;
+    reversalReason: string;
+    /** The obligation ids the owner saw as "will be cancelled" (the preview). Omitted = none. */
+    expectedCancelledObligationIds?: readonly string[];
+  },
   deps: LedgerDeps = {},
 ): Promise<ReversePaymentResult> {
-  const { context, paymentId, reversalReason } = args;
+  const { context, paymentId, reasonCategory, reversalReason } = args;
+  const expectedCancelled = args.expectedCancelledObligationIds ?? [];
   const organizationId = context.organizationId;
   const activation = deps.activation ?? inactiveLedgerActivation;
   if (!(await activation.isActive(organizationId))) return refuse("notActive");
-  // Owner-only, checked here rather than trusted from whatever eventually calls this — the same discipline
-  // `correctLateFeeAndSettle` already applied to its own role requirement.
+  // B6: owner-only, checked here rather than trusted from whatever calls this.
   if (context.organizationRole !== "ADMIN") return refuse("notFound");
   if (typeof paymentId !== "string" || paymentId === "") return refuse("invalid");
-  if (typeof reversalReason !== "string" || reversalReason.trim() === "") return refuse("invalid"); // refuse cleanly; don't let a blank reason surface as a raw DB constraint violation
+  if (!isReversalReasonCategory(reasonCategory)) return refuse("invalid");
+  if (typeof reversalReason !== "string" || reversalReason.trim() === "") return refuse("invalid"); // refuse cleanly; never a raw DB constraint violation
+  if (!Array.isArray(expectedCancelled) || expectedCancelled.some((id) => typeof id !== "string" || id === "")) return refuse("invalid");
 
   const select = {
     id: true,
@@ -85,61 +104,111 @@ export async function reversePayment(
       select: {
         id: true,
         reversedAt: true,
-        obligation: { select: { type: true, origin: true, lateFees: { select: { removalKind: true } } } },
+        obligation: {
+          select: {
+            id: true,
+            type: true,
+            origin: true,
+            coverageYear: true,
+            coverageMonth: true,
+            cancelledAt: true,
+            lateFees: { select: { removalKind: true } },
+            // Every settlement this obligation has EVER had (reversed ones included) — rule R1's provenance.
+            settlements: { select: { paymentId: true } },
+          },
+        },
       },
     },
   } as const;
 
-  const payment = await prisma.duesPayment.findFirst({ where: { id: paymentId, organizationId }, select });
+  const payment = await prisma.duesPayment.findFirst({ where: { id: paymentId, organizationId }, select: { id: true, studentId: true, academyId: true } });
   if (!payment || !inTenantScope(context, payment.academyId)) return refuse("notFound");
 
-  return await prisma.$transaction(async (tx): Promise<ReversePaymentResult> => {
-    // The student row FOR UPDATE serializes this reversal against a concurrent payment, assessment run, or correction attempt
-    // for the same student — whichever acquires the lock first fully determines what the others see.
-    const locked = await lockStudent(tx, organizationId, payment.studentId);
-    if (!locked || locked.homeAcademyId !== payment.academyId) return refuse("notFound");
+  try {
+    return await prisma.$transaction(async (tx): Promise<ReversePaymentResult> => {
+      await lockExchangeRateNamespaceShared(tx, organizationId);
+      const branch = await lockBranchShared(tx, organizationId, payment.academyId);
+      if (!branch) return refuse("notFound");
+      const locked = await lockStudent(tx, organizationId, payment.studentId);
+      // B9 (launch restriction): a payment recorded in a branch the student has since left is not reversible.
+      if (!locked || locked.homeAcademyId !== payment.academyId) return refuse("notFound");
 
-    // Re-read everything fresh under the lock — the pre-lock read above could already be stale by the time the lock is held.
-    const current = await tx.duesPayment.findFirst({ where: { id: paymentId, organizationId }, select });
-    if (!current) return refuse("notFound");
-    if (current.reversedAt !== null) return refuse("alreadyReversed");
+      const now = (deps.now ?? (() => new Date()))();
+      const currentMonth = currentMonthIn(branch.timezone, now);
+      if (deps.afterReversalLocksForTest) await deps.afterReversalLocksForTest(tx);
 
-    // Defensive: nothing today can reverse a settlement independent of its payment, so this shouldn't be reachable — checked
-    // explicitly rather than assumed impossible, the same "trust nothing" discipline applied everywhere else in this ledger.
-    const settlements = current.settlements as SettlementState[];
-    if (settlements.some((s) => s.reversedAt !== null)) return refuse("inconsistentState");
+      const current = await tx.duesPayment.findFirst({ where: { id: paymentId, organizationId }, select });
+      if (!current) return refuse("notFound");
+      if (current.reversedAt !== null) return refuse("alreadyReversed");
 
-    if (settlements.some((s) => s.obligation.type !== "MONTHLY")) return refuse("unsupportedObligationType");
-    if (settlements.some((s) => s.obligation.lateFees.some((f) => f.removalKind === "VOIDED"))) return refuse("voidedFeeBlocksReversal");
-    if (settlements.some((s) => s.obligation.origin === "PREPAYMENT")) return refuse("prepaymentBlocksReversal");
+      const settlements = current.settlements;
+      // Defensive: nothing can reverse a settlement independently of its payment, or cancel an obligation that still has this
+      // payment's active settlement — checked explicitly rather than assumed impossible.
+      if (settlements.some((s) => s.reversedAt !== null || s.obligation.cancelledAt !== null)) return refuse("inconsistentState");
+      if (settlements.some((s) => s.obligation.type !== "MONTHLY")) return refuse("unsupportedObligationType");
+      if (settlements.some((s) => s.obligation.lateFees.some((f) => f.removalKind === "VOIDED"))) return refuse("voidedFeeBlocksReversal");
 
-    const reversedAt = (deps.now ?? (() => new Date()))();
-    const reason = reversalReason.trim();
-    await tx.duesPayment.update({
-      where: { id: current.id, organizationId },
-      data: { reversedAt, reversedById: context.actorUserId, reversalReason: reason },
-    });
-    if (settlements.length > 0) {
-      await tx.duesSettlement.updateMany({
-        where: { organizationId, paymentId: current.id, reversedAt: null },
-        data: { reversedAt, reversedById: context.actorUserId, reversalReason: reason },
+      const cancelled: string[] = [];
+      const owedAgain: string[] = [];
+      for (const s of settlements) {
+        const cls = classifyReversedObligation(
+          { origin: s.obligation.origin, coverageYear: s.obligation.coverageYear, coverageMonth: s.obligation.coverageMonth, settlementPaymentIds: s.obligation.settlements.map((x) => x.paymentId) },
+          current.id,
+          currentMonth,
+        );
+        (cls === "cancel" ? cancelled : owedAgain).push(s.obligation.id);
+      }
+      // The owner confirmed exactly what would be cancelled; anything else (a month boundary passed, another write landed) is
+      // refused so the owner re-reviews. Nothing has been written yet.
+      if (!sameIdSet(cancelled, expectedCancelled)) return refuse("changedSinceReview");
+
+      const reason = storedReversalReason(reasonCategory, reversalReason);
+      await tx.duesPayment.update({
+        where: { id: current.id, organizationId },
+        data: { reversedAt: now, reversedById: context.actorUserId, reversalReason: reason },
       });
-    }
-    await tx.auditLog.create({
-      data: {
-        actorId: context.actorUserId,
-        organizationId,
-        academyId: payment.academyId,
-        action: "duesPayment.reverse",
-        entityType: "DuesPayment",
-        entityId: current.id,
-        before: { reversedAt: null },
-        after: { reversedAt: reversedAt.toISOString(), reversedById: context.actorUserId, reversalReason: reason, settlementIds: settlements.map((s) => s.id) },
-      },
+      if (settlements.length > 0) {
+        await tx.duesSettlement.updateMany({
+          where: { organizationId, paymentId: current.id, reversedAt: null },
+          data: { reversedAt: now, reversedById: context.actorUserId, reversalReason: reason },
+        });
+      }
+      // Settlements first (the database refuses to cancel an obligation that still has an active one), then each cancelled
+      // obligation and its coverage. The deferred consistency triggers check the pair at COMMIT.
+      for (const obligationId of cancelled) {
+        await tx.duesObligation.update({
+          where: { id: obligationId, organizationId },
+          data: { cancelledAt: now, cancelledById: context.actorUserId, cancellationReason: reason, cancelledByReversalOfPaymentId: current.id },
+        });
+        await tx.duesCoverage.updateMany({ where: { organizationId, obligationId, releasedAt: null }, data: { releasedAt: now } });
+      }
+      // A record only — the state above lives on the rows themselves and is never read back from here.
+      await tx.auditLog.create({
+        data: {
+          actorId: context.actorUserId,
+          organizationId,
+          academyId: payment.academyId,
+          action: "duesPayment.reverse",
+          entityType: "DuesPayment",
+          entityId: current.id,
+          before: { reversedAt: null },
+          after: {
+            reversedAt: now.toISOString(),
+            reversedById: context.actorUserId,
+            reversalReason: reason,
+            settlementIds: settlements.map((s) => s.id),
+            cancelledObligationIds: cancelled,
+            owedAgainObligationIds: owedAgain,
+          },
+        },
+      });
+
+      if (deps.afterReversalMarkersForTest) await deps.afterReversalMarkersForTest();
+
+      return { ok: true, paymentId: current.id, settlementIds: settlements.map((s) => s.id), cancelledObligationIds: cancelled, owedAgainObligationIds: owedAgain };
     });
-
-    if (deps.afterReversalMarkersForTest) await deps.afterReversalMarkersForTest();
-
-    return { ok: true, paymentId: current.id, settlementIds: settlements.map((s) => s.id) };
-  });
+  } catch (error) {
+    if (databaseErrorText(error).includes(MONTH_STARTED_GUARD)) return refuse("changedSinceReview");
+    throw error;
+  }
 }

@@ -196,7 +196,7 @@ describe("the read model", () => {
     expect(screen.screen.report).toEqual(report.report);
     expect(screen.screen.report.ready).toBe(false);
     expect(screen.screen.report.checks.filter((c) => c.status === "notImplemented").map((c) => c.id)).toEqual([11, 12]); // check 10 is computed (G2b): it fails until scheduled
-    expect(screen.screen.report.checks.find((c) => c.id === 13)!.status).toBe("decisionPending");
+    expect(screen.screen.report.checks.find((c) => c.id === 13)!.status).toBe("pass"); // O4 decided and implemented (2026-11-09)
   });
 
   it("returns names and active drafts with exact amounts; totals above one column's limit stay exact; another organization never appears", async () => {

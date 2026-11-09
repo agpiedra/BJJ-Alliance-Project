@@ -44,7 +44,8 @@ export async function assessLateFeesForStudent(context: TenantContext, studentId
       if (!branch) return { ok: false, reason: "notFound" };
       const today = todayIn(branch.timezone, (deps.now ?? (() => new Date()))());
 
-      const obligations = await tx.duesObligation.findMany({ where: { organizationId, studentId: student.id, type: "MONTHLY" }, select: { id: true } });
+      // O4: a cancelled obligation is never owed, so never assessed.
+      const obligations = await tx.duesObligation.findMany({ where: { organizationId, studentId: student.id, type: "MONTHLY", cancelledAt: null }, select: { id: true } });
 
       const outcomes: LateFeeAssessmentOutcome[] = [];
       for (const o of obligations) {

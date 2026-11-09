@@ -342,7 +342,14 @@ export function evaluateReadiness(snapshot: ReadinessSnapshot, candidate: YearMo
       detail: "The stage 9 activation mechanism (approval, manual activation, legacy refusal, gate lock) is not implemented. This check is about the mechanism existing, not about the organization being active.",
       items: [],
     },
-    { id: 13, key: "prepaidReversalPolicy", status: "decisionPending", detail: "The prepaid-payment reversal policy (O4) is undecided and blocks activation.", items: [] },
+    {
+      id: 13,
+      key: "prepaidReversalPolicy",
+      status: "pass",
+      detail:
+        "The prepaid-payment reversal policy (O4) is decided (owner, 2026-11-09, B1–B10) and implemented: reversing a payment cancels the future prepaid months it alone created; started months and other charges become owed again.",
+      items: [],
+    },
   ];
 
   const branches: BranchPreview[] = sortedIds(snapshot.branches.map((b) => b.id)).map((academyId) => {
