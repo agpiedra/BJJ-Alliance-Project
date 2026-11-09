@@ -129,6 +129,76 @@ describe("pingHeartbeat", () => {
     expect(logged.join("\n")).toContain("unrecognized_error");
   });
 
+  describe("pingAlertCheck: monthly generation's three alert checks (MONTHLY-GENERATION-ALERTING-PLAN.md §2)", () => {
+    const VARS = {
+      urgent: "HEALTHCHECK_MONTHLY_GENERATION_URGENT_URL",
+      data: "HEALTHCHECK_MONTHLY_GENERATION_DATA_URL",
+      workload: "HEALTHCHECK_MONTHLY_GENERATION_WORKLOAD_URL",
+    } as const;
+
+    it.each(Object.entries(VARS))("REQUIRED: %s reads exactly %s, plain URL for success and /fail for failure", async (check, envName) => {
+      const { pingAlertCheck } = await import("../../src/lib/jobs/heartbeat");
+      vi.stubEnv(envName, `https://hc-ping.com/${check}-uuid`);
+      const fetchImpl = fakeFetch();
+      expect(await pingAlertCheck(check as keyof typeof VARS, true, fetchImpl)).toBe("ok");
+      expect(await pingAlertCheck(check as keyof typeof VARS, false, fetchImpl)).toBe("ok");
+      expect(fetchImpl.mock.calls.map((c) => c[0])).toEqual([`https://hc-ping.com/${check}-uuid`, `https://hc-ping.com/${check}-uuid/fail`]);
+      vi.unstubAllEnvs();
+    });
+
+    it("REQUIRED (test 12): each variable unset alone is not_configured for that check only; the scheduler URL is never reused", async () => {
+      const { pingAlertCheck } = await import("../../src/lib/jobs/heartbeat");
+      for (const missing of Object.keys(VARS) as (keyof typeof VARS)[]) {
+        vi.stubEnv("HEALTHCHECK_MONTHLY_GENERATION_URL", "https://hc-ping.com/scheduler-uuid");
+        for (const [check, envName] of Object.entries(VARS)) if (check !== missing) vi.stubEnv(envName, `https://hc-ping.com/${check}`);
+        const fetchImpl = fakeFetch();
+        expect(await pingAlertCheck(missing, true, fetchImpl)).toBe("not_configured");
+        expect(fetchImpl).not.toHaveBeenCalled();
+        for (const check of Object.keys(VARS) as (keyof typeof VARS)[]) {
+          if (check !== missing) expect(await pingAlertCheck(check, true, fetchImpl)).toBe("ok");
+        }
+        expect(fetchImpl.mock.calls.map((c) => c[0])).not.toContain("https://hc-ping.com/scheduler-uuid");
+        vi.unstubAllEnvs();
+      }
+    });
+
+    it("aborts at HEARTBEAT_TIMEOUT_MS like the scheduler ping, and never throws", async () => {
+      const { pingAlertCheck, HEARTBEAT_TIMEOUT_MS } = await import("../../src/lib/jobs/heartbeat");
+      vi.stubEnv(VARS.data, "https://hc-ping.com/data");
+      vi.useFakeTimers();
+      const hangs = vi.fn(
+        (_url: string, options?: { signal?: AbortSignal }) =>
+          new Promise<Response>((_r, reject) => options?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")))),
+      );
+      const pending = pingAlertCheck("data", true, hangs as unknown as typeof fetch);
+      await vi.advanceTimersByTimeAsync(HEARTBEAT_TIMEOUT_MS);
+      expect(await pending).toBe("failed");
+      vi.useRealTimers();
+      vi.unstubAllEnvs();
+    });
+
+    it("REQUIRED (test 14): a throwing fetch never puts the alert URL in any log", async () => {
+      const { pingAlertCheck } = await import("../../src/lib/jobs/heartbeat");
+      const SECRET = "hc-alert-s3cr3t-9917";
+      vi.stubEnv(VARS.workload, `https://hc-ping.com/${SECRET}`);
+      const logged: string[] = [];
+      const spies = (["log", "info", "warn", "error", "debug"] as const).map((level) =>
+        vi.spyOn(console, level).mockImplementation((...args: unknown[]) => void logged.push(args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" "))),
+      );
+      const throws = vi.fn<typeof fetch>(async () => {
+        throw new Error(`fetch failed https://hc-ping.com/${SECRET}/fail`);
+      });
+      try {
+        expect(await pingAlertCheck("workload", false, throws)).toBe("failed");
+      } finally {
+        spies.forEach((s) => s.mockRestore());
+        vi.unstubAllEnvs();
+      }
+      expect(logged.length).toBeGreaterThan(0);
+      expect(logged.join("\n")).not.toContain(SECRET);
+    });
+  });
+
   describe("positive control: an unknown job name never resolves an env var by accident", () => {
     it("is not_configured even if an unrelated env var happens to be set", async () => {
       vi.stubEnv("HEALTHCHECK_DIGEST_URL", digestUrl);

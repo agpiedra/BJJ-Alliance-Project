@@ -597,9 +597,22 @@ and `monthly-generation` is a registered job, but `vercel.json` has **no** entry
 **When D5 is approved** (a later, separate change), do these together:
 1. Add the `vercel.json` entry and its `STALE_AFTER_HOURS` value in the same change. A unit test fails if one lands without
    the other.
-2. Create its Healthchecks.io check, with the same cron expression, and set **`HEALTHCHECK_MONTHLY_GENERATION_URL`** for
-   Production only. Unset, every run records `heartbeatStatus: "not_configured"`, and check 10 cannot pass.
-3. Verify the first scheduled run as described above.
+2. Create its **four** Healthchecks.io checks and set their URLs for **Production only** (Sensitive). One existing variable
+   and three new ones (docs/dues/MONTHLY-GENERATION-ALERTING-PLAN.md §2):
+
+   | Check | Variable | Healthchecks schedule | Goes down when |
+   |---|---|---|---|
+   | **Scheduler** | `HEALTHCHECK_MONTHLY_GENERATION_URL` | cron `0 */3 * * *` UTC, grace 30 min | a run did not report (missed ping), or its `JobRun` could not be created or finalized. It is **liveness only**: a run with billing failures still pings success here |
+   | **Urgent billing** | `HEALTHCHECK_MONTHLY_GENERATION_URGENT_URL` | simple, period 7 days, grace 1 day | the new month is not observed fully billed 15 h after it opened (A), detection failed (D), or the run had run-level errors |
+   | **Older-month billing data** | `HEALTHCHECK_MONTHLY_GENERATION_DATA_URL` | simple, period 7 days, grace 1 day | an older month's last pass was not clean (B): usually missing pricing the academy must fix |
+   | **Workload review** | `HEALTHCHECK_MONTHLY_GENERATION_WORKLOAD_URL` | simple, period 7 days, grace 1 day | a workload-review threshold is reached (D5 brief §6). **Never a billing failure**: billing continues and the run stays `SUCCEEDED` |
+
+   Unset, a check records `not_configured` (scheduler: `heartbeatStatus`; the others: `JobRun.alertPings`), and check 10
+   cannot pass (`heartbeatNotOk` / `alertChecksNotConfigured`). Turn on the **daily** email reminder (Account Settings ›
+   Email Reports) for unresolved problems. Responder: the owner alone, checking urgent emails within one hour (an
+   expectation, not a guarantee); a separate backup inbox is planned but not yet created.
+3. Verify the first scheduled run as described above, and that its `JobRun` shows `heartbeatStatus: "ok"` and
+   `alertPings` all `"ok"` (the requests reached the four checks). That proves configuration, not alert delivery.
 
 **Reading a run:**
 - **The `JobRun` row, the Healthchecks ping and `/api/health/jobs` are the liveness signal.** The HTTP status is only
@@ -611,7 +624,12 @@ and `monthly-generation` is a registered job, but `vercel.json` has **no** entry
 - **A 500 means no run happened,** or its bookkeeping is uncertain (`finalized: "unknown"`), or the route refused an
   infeasible budget (`RouteBudgetInfeasibleError`).
 - **The function limit:** F = 300 s (`maxDuration`). The 30 s cold-start and 30 s margin reserves are approved reserves,
-  not measurements.
+  not measurements. With four sequential pings and the detection read reserved, the generation deadline is **212 s**
+  (admission 48 s). Stage 1's throughput was measured at 227 s; how it transfers to 212 s is an estimate, not a measurement.
+- **Reading an alert:** each check alerts once when it goes down and recovers on the next run without that problem, so
+  one lasting problem in a check hides a second one **in the same check** (the four checks keep different kinds apart).
+  Detection reports what the last finished pass observed, never that a month is complete. Condition C (an activated
+  organization without a progress row) is **not evaluable until stage 9** and is never reported as passed.
 
 `GET /api/health` (public, no secret, database-only — deliberately narrower than
 `/api/health/jobs`) is a second, independent thing worth pointing an uptime monitor

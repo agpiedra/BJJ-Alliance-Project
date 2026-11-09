@@ -618,7 +618,8 @@ describe("regression: MONTHLY wouldCreate totals above one column's maximum (99,
 
 describe("G2b: check 10 is computed trigger health (MONTHLY-GENERATION-TRIGGER-PLAN.md §11), never billing completeness", () => {
   const withTrigger = (trigger: ReadinessSnapshot["trigger"]): ReadinessSnapshot => ({ ...base(), trigger });
-  const healthy: ReadinessSnapshot["trigger"] = { scheduled: true, latestRun: { status: "SUCCEEDED", finalized: true, heartbeatStatus: "ok" }, stale: false, stuck: false };
+  const pingsOk = { urgent: "ok", data: "ok", workload: "ok" };
+  const healthy: ReadinessSnapshot["trigger"] = { scheduled: true, latestRun: { status: "SUCCEEDED", finalized: true, heartbeatStatus: "ok", alertPings: pingsOk }, stale: false, stuck: false };
 
   it("REQUIRED: today's production state (no schedule, never ran) fails with exactly those two reasons, and ready stays false", () => {
     const c = check(base(), 10);
@@ -631,11 +632,16 @@ describe("G2b: check 10 is computed trigger health (MONTHLY-GENERATION-TRIGGER-P
   });
 
   it.each([
-    ["an unfinished run", { ...healthy, latestRun: { status: "RUNNING", finalized: false, heartbeatStatus: null } }, ["trigger:notFinalized", "trigger:heartbeatNotOk"]],
-    ["a PARTIAL run", { ...healthy, latestRun: { status: "PARTIAL", finalized: true, heartbeatStatus: "failed" } }, ["trigger:notSucceeded", "trigger:heartbeatNotOk"]],
+    ["an unfinished run", { ...healthy, latestRun: { status: "RUNNING", finalized: false, heartbeatStatus: null, alertPings: null } }, ["trigger:notFinalized", "trigger:heartbeatNotOk"]],
+    ["a PARTIAL run", { ...healthy, latestRun: { status: "PARTIAL", finalized: true, heartbeatStatus: "failed", alertPings: pingsOk } }, ["trigger:notSucceeded", "trigger:heartbeatNotOk"]],
     ["a stale run", { ...healthy, stale: true }, ["trigger:stale"]],
     ["a stuck run", { ...healthy, stuck: true }, ["trigger:stuck"]],
-    ["an unconfigured heartbeat", { ...healthy, latestRun: { status: "SUCCEEDED", finalized: true, heartbeatStatus: "not_configured" } }, ["trigger:heartbeatNotOk"]],
+    ["an unconfigured heartbeat", { ...healthy, latestRun: { status: "SUCCEEDED", finalized: true, heartbeatStatus: "not_configured", alertPings: pingsOk } }, ["trigger:heartbeatNotOk"]],
+    // MONTHLY-GENERATION-ALERTING-PLAN.md S6: missing alert configuration.
+    ["a finalized run with no alert outcomes recorded", { ...healthy, latestRun: { status: "SUCCEEDED", finalized: true, heartbeatStatus: "ok", alertPings: null } }, ["trigger:alertChecksNotConfigured"]],
+    ["an unconfigured urgent check", { ...healthy, latestRun: { status: "SUCCEEDED", finalized: true, heartbeatStatus: "ok", alertPings: { ...pingsOk, urgent: "not_configured" } } }, ["trigger:alertChecksNotConfigured"]],
+    ["an unconfigured workload check", { ...healthy, latestRun: { status: "SUCCEEDED", finalized: true, heartbeatStatus: "ok", alertPings: { ...pingsOk, workload: "not_configured" } } }, ["trigger:alertChecksNotConfigured"]],
+    ["an alert record missing a check", { ...healthy, latestRun: { status: "SUCCEEDED", finalized: true, heartbeatStatus: "ok", alertPings: { urgent: "ok", data: "ok" } } }, ["trigger:alertChecksNotConfigured"]],
   ] as const)("%s fails with its reasons", (_label, trigger, items) => {
     expect(check(withTrigger(trigger as ReadinessSnapshot["trigger"]), 10)).toMatchObject({ status: "fail", items: [...items] });
   });
@@ -645,6 +651,12 @@ describe("G2b: check 10 is computed trigger health (MONTHLY-GENERATION-TRIGGER-P
     expect(report.checks.find((c) => c.id === 10)).toMatchObject({ status: "pass", items: [] });
     expect(report.checks.find((c) => c.id === 10)!.detail).toContain("not billing completeness");
     expect(report.ready).toBe(false);
+  });
+
+  it("configuration only: a failed or not-sent alert ping is NOT the missing-configuration reason", () => {
+    for (const alertPings of [{ ...pingsOk, data: "failed" }, { urgent: "failed", data: "not_sent", workload: "not_sent" }]) {
+      expect(check(withTrigger({ ...healthy, latestRun: { status: "SUCCEEDED", finalized: true, heartbeatStatus: "ok", alertPings } }), 10)).toMatchObject({ status: "pass", items: [] });
+    }
   });
 
   it("check 10's facts are never part of a fingerprint", () => {

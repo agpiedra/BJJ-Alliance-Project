@@ -14,11 +14,11 @@ import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
  */
 vi.mock("@/lib/jobs/heartbeat", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../src/lib/jobs/heartbeat")>();
-  return { ...actual, pingHeartbeat: vi.fn(actual.pingHeartbeat) };
+  return { ...actual, pingHeartbeat: vi.fn(actual.pingHeartbeat), pingAlertCheck: vi.fn(actual.pingAlertCheck) };
 });
 
 const { runScheduledJob } = await import("../../src/lib/jobs/run-scheduled-job");
-const { pingHeartbeat } = await import("../../src/lib/jobs/heartbeat");
+const { pingHeartbeat, pingAlertCheck } = await import("../../src/lib/jobs/heartbeat");
 
 const prisma = getTestPrismaClient();
 const createdRunIds: string[] = [];
@@ -435,4 +435,185 @@ describe("G2a: bounded bookkeeping (optional fourth argument): every branch, exa
     expect(pings).toEqual([{ url: HC, rowStatus: "SUCCEEDED", rowFinished: true }]); // exactly one request: the success ping
     expect(captured.logged.join("\n")).not.toMatch(/UPDATE|JobRun"|lock timeout/i); // safe code only, no SQL or driver text
   }, 30_000);
+});
+
+describe("four-check alerting (MONTHLY-GENERATION-ALERTING-PLAN.md §4): the scheduler ping, then three independent alert pings", () => {
+  const SCHED = "https://hc-ping.com/scheduler-check";
+  const URLS = { urgent: "https://hc-ping.com/urgent-check", data: "https://hc-ping.com/data-check", workload: "https://hc-ping.com/workload-check" } as const;
+  const ALL = [SCHED, URLS.urgent, URLS.data, URLS.workload];
+  const allOk = { urgent: true, data: true, workload: true };
+  const mg = () => new Request("http://localhost/api/cron/monthly-generation", { headers: { authorization: "Bearer test-cron-secret" } });
+
+  function stubAlerting() {
+    vi.stubEnv("CRON_SECRET", "test-cron-secret");
+    vi.stubEnv("HEALTHCHECK_MONTHLY_GENERATION_URL", SCHED);
+    vi.stubEnv("HEALTHCHECK_MONTHLY_GENERATION_URGENT_URL", URLS.urgent);
+    vi.stubEnv("HEALTHCHECK_MONTHLY_GENERATION_DATA_URL", URLS.data);
+    vi.stubEnv("HEALTHCHECK_MONTHLY_GENERATION_WORKLOAD_URL", URLS.workload);
+  }
+  /** Stubs global fetch; records every request URL in order. `answer` decides each response (default 200). */
+  function record(answer: (url: string, signal?: AbortSignal) => Promise<Response> = async () => new Response(null, { status: 200 })) {
+    const urls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: { signal?: AbortSignal }) => {
+        urls.push(url);
+        return answer(url, init?.signal);
+      }),
+    );
+    return urls;
+  }
+  const latestMg = () => latestRun("monthly-generation");
+
+  afterEach(async () => {
+    vi.mocked(pingAlertCheck).mockClear();
+    vi.unstubAllGlobals();
+    await prisma.jobRun.deleteMany({ where: { jobName: "monthly-generation" } });
+  });
+
+  it("REQUIRED: a clean run pings the scheduler, then urgent, data and workload, in that order; all four outcomes are stored", async () => {
+    stubAlerting();
+    const urls = record();
+    const response = await runScheduledJob("monthly-generation", mg(), async () => ({ outcome: okOutcome, body: { mine: 1 }, alerts: allOk }), { bookkeeping: BOUNDS, alerting: true });
+    expect(await response.json()).toMatchObject({ ok: true, heartbeat: { request: "accepted", resultPersisted: "confirmed", alerts: { urgent: "ok", data: "ok", workload: "ok" } } });
+    expect(urls).toEqual(ALL);
+    expect(await latestMg()).toMatchObject({ status: "SUCCEEDED", heartbeatStatus: "ok", alertPings: { urgent: "ok", data: "ok", workload: "ok" } });
+  });
+
+  it("REQUIRED (scheduler vs billing): a billing failure fails urgent, while the scheduler check still gets success; the run is PARTIAL", async () => {
+    stubAlerting();
+    const urls = record();
+    await runScheduledJob("monthly-generation", mg(), async () => ({ outcome: { sent: 2, failed: 1, skipped: 0, organizationsProcessed: 1 }, body: {}, alerts: { ...allOk, urgent: false } }), {
+      bookkeeping: BOUNDS,
+      alerting: true,
+    });
+    expect(urls).toEqual([SCHED, `${URLS.urgent}/fail`, URLS.data, URLS.workload]);
+    expect(await latestMg()).toMatchObject({ status: "PARTIAL", failed: 1, heartbeatStatus: "ok" });
+  });
+
+  it("REQUIRED (test 16): a workload threshold alone: SUCCEEDED, failed 0, ONLY the workload check gets /fail", async () => {
+    stubAlerting();
+    const urls = record();
+    await runScheduledJob("monthly-generation", mg(), async () => ({ outcome: okOutcome, body: {}, alerts: { ...allOk, workload: false } }), { bookkeeping: BOUNDS, alerting: true });
+    expect(urls).toEqual([SCHED, URLS.urgent, URLS.data, `${URLS.workload}/fail`]);
+    expect(await latestMg()).toMatchObject({ status: "SUCCEEDED", failed: 0, alertPings: { urgent: "ok", data: "ok", workload: "ok" } });
+  });
+
+  it("REQUIRED: a check the run did not evaluate gets NO request (never a default success) and is stored not_sent", async () => {
+    stubAlerting();
+    const urls = record();
+    await runScheduledJob("monthly-generation", mg(), async () => ({ outcome: okOutcome, body: {}, alerts: { urgent: false } }), { bookkeeping: BOUNDS, alerting: true });
+    expect(urls).toEqual([SCHED, `${URLS.urgent}/fail`]);
+    expect((await latestMg())!.alertPings).toEqual({ urgent: "ok", data: "not_sent", workload: "not_sent" });
+  });
+
+  it("REQUIRED: a thrown job is FAILED; scheduler success (finalized), urgent /fail, data and workload not sent", async () => {
+    stubAlerting();
+    const urls = record();
+    const response = await runScheduledJob(
+      "monthly-generation",
+      mg(),
+      async () => {
+        throw secretError();
+      },
+      { bookkeeping: BOUNDS, alerting: true },
+    );
+    expect(response.status).toBe(500);
+    expect(urls).toEqual([SCHED, `${URLS.urgent}/fail`]);
+    expect(await latestMg()).toMatchObject({ status: "FAILED", heartbeatStatus: "ok", alertPings: { urgent: "ok", data: "not_sent", workload: "not_sent" } });
+  });
+
+  it("REQUIRED: JobRun create failing: exactly one request, scheduler /fail; no alert check is touched", async () => {
+    stubAlerting();
+    const urls = record();
+    const job = vi.fn(async () => ({ outcome: okOutcome, body: {}, alerts: allOk }));
+    const pool = await exhaustAppPool();
+    try {
+      await runScheduledJob("monthly-generation", mg(), job, { bookkeeping: BOUNDS, alerting: true });
+    } finally {
+      await pool.release();
+    }
+    expect(job).not.toHaveBeenCalled();
+    expect(urls).toEqual([`${SCHED}/fail`]);
+  }, 30_000);
+
+  it("REQUIRED: finalize not confirmed: exactly one request, scheduler /fail; no alert check is touched", async () => {
+    stubAlerting();
+    const urls = record();
+    let lock: ReturnType<typeof holdLock> | undefined;
+    try {
+      await runScheduledJob(
+        "monthly-generation",
+        mg(),
+        async () => {
+          lock = holdLock(`LOCK TABLE "JobRun" IN SHARE MODE`);
+          await lock.held;
+          return { outcome: okOutcome, body: {}, alerts: allOk };
+        },
+        { bookkeeping: BOUNDS, alerting: true },
+      );
+    } finally {
+      await lock?.release();
+    }
+    expect(urls).toEqual([`${SCHED}/fail`]);
+  }, 30_000);
+
+  describe("REQUIRED (test 11): one ping's failure never prevents the attempts to send the other evaluated checks", () => {
+    const failures = {
+      "HTTP 500": async () => new Response(null, { status: 500 }),
+      "a network error": async () => {
+        throw new Error("ECONNREFUSED");
+      },
+    } as const;
+    for (const [mode, fail] of Object.entries(failures)) {
+      for (const target of ALL) {
+        it(`${mode} on ${target.split("/").pop()}: all four requests are still made; status and counts unchanged; that one is recorded failed`, async () => {
+          stubAlerting();
+          const urls = record((url) => (url === target ? fail() : Promise.resolve(new Response(null, { status: 200 }))));
+          await runScheduledJob("monthly-generation", mg(), async () => ({ outcome: okOutcome, body: {}, alerts: allOk }), { bookkeeping: BOUNDS, alerting: true });
+          expect(urls).toEqual(ALL);
+          const run = await latestMg();
+          expect(run).toMatchObject({ status: "SUCCEEDED", sent: 1, failed: 0 });
+          const expected = { urgent: "ok", data: "ok", workload: "ok" } as Record<string, string>;
+          const check = Object.entries(URLS).find(([, u]) => u === target)?.[0];
+          if (check) expected[check] = "failed";
+          expect(run!.alertPings).toEqual(expected);
+          expect(run!.heartbeatStatus).toBe(target === SCHED ? "failed" : "ok");
+        });
+      }
+    }
+
+    it("even an unexpected THROW from one alert-check client (not just a failed request) leaves the later checks attempted", async () => {
+      stubAlerting();
+      const urls = record();
+      vi.mocked(pingAlertCheck).mockImplementationOnce(() => {
+        throw new Error("unexpected");
+      });
+      await runScheduledJob("monthly-generation", mg(), async () => ({ outcome: okOutcome, body: {}, alerts: allOk }), { bookkeeping: BOUNDS, alerting: true });
+      expect(urls).toEqual([SCHED, URLS.data, URLS.workload]); // urgent's client threw before any request
+      expect((await latestMg())!.alertPings).toEqual({ urgent: "failed", data: "ok", workload: "ok" });
+    });
+  });
+
+  it("REQUIRED (test 13): four endpoints that never answer: each aborts at 5 s, all four are attempted, and the post-runner path stays inside its 28 s reserve", async () => {
+    stubAlerting();
+    const urls = record((_url, signal) => neverAnswers(signal));
+    const t0 = Date.now();
+    await runScheduledJob("monthly-generation", mg(), async () => ({ outcome: okOutcome, body: {}, alerts: allOk }), { bookkeeping: BOUNDS, alerting: true });
+    const wall = Date.now() - t0;
+    expect(urls).toEqual(ALL);
+    expect(await latestMg()).toMatchObject({ status: "SUCCEEDED", heartbeatStatus: "failed", alertPings: { urgent: "failed", data: "failed", workload: "failed" } });
+    expect(wall).toBeGreaterThanOrEqual(4 * 5_000);
+    expect(wall).toBeLessThan(28_000); // the route's post reserve: 2 bookkeeping writes + 4 pings
+  }, 60_000);
+
+  it("REQUIRED (test 17): the weekly digest is unchanged — even with every alert variable set, one ping, the old success rule, alertPings null", async () => {
+    stubAlerting();
+    vi.stubEnv("HEALTHCHECK_DIGEST_URL", HC);
+    const urls = record();
+    await runScheduledJob("weekly-digest", request("test-cron-secret"), async () => ({ outcome: { sent: 1, failed: 1, skipped: 0, organizationsProcessed: 1 }, body: {} }));
+    expect(urls).toEqual([`${HC}/fail`]);
+    expect(pingAlertCheck).not.toHaveBeenCalled();
+    expect(await latestRun("weekly-digest")).toMatchObject({ status: "PARTIAL", heartbeatStatus: "ok", alertPings: null });
+  });
 });

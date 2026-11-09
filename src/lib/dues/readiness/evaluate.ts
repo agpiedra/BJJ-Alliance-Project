@@ -133,7 +133,17 @@ export function promoStudentIds(snapshot: ReadinessSnapshot): string[] {
 }
 
 /** Check 10's failure reasons, each rendered as a `trigger:<reason>` item. */
-export type TriggerReason = "notScheduled" | "neverRan" | "notFinalized" | "notSucceeded" | "stale" | "stuck" | "heartbeatNotOk";
+export type TriggerReason = "notScheduled" | "neverRan" | "notFinalized" | "notSucceeded" | "stale" | "stuck" | "heartbeatNotOk" | "alertChecksNotConfigured";
+
+/**
+ * MONTHLY-GENERATION-ALERTING-PLAN.md S6: a finalized run that recorded no alert-check outcomes, or any of its three alert checks
+ * `not_configured`, means alerting is not set up. Configuration only: a `failed` or `not_sent` ping is not this reason.
+ */
+function alertChecksMissing(alertPings: unknown): boolean {
+  if (alertPings === null || typeof alertPings !== "object") return true;
+  const values = ["urgent", "data", "workload"].map((k) => (alertPings as Record<string, unknown>)[k]);
+  return values.some((v) => v === undefined || v === "not_configured");
+}
 
 /**
  * Check 10 — TRIGGER HEALTH ONLY (MONTHLY-GENERATION-TRIGGER-PLAN.md §11). Passes only if the job is scheduled in
@@ -154,6 +164,7 @@ function triggerHealthCheck(trigger: ReadinessSnapshot["trigger"]): ReadinessChe
     if (trigger.stale) reasons.push("stale");
     if (trigger.stuck) reasons.push("stuck");
     if (run.heartbeatStatus !== "ok") reasons.push("heartbeatNotOk");
+    if (run.finalized && alertChecksMissing(run.alertPings)) reasons.push("alertChecksNotConfigured");
   }
   return {
     id: 10,
@@ -161,8 +172,8 @@ function triggerHealthCheck(trigger: ReadinessSnapshot["trigger"]): ReadinessChe
     status: reasons.length === 0 ? "pass" : "fail",
     detail:
       reasons.length === 0
-        ? "The monthly-generation trigger is scheduled and its latest run finished SUCCEEDED with a confirmed heartbeat. This is trigger health only — not billing completeness, not scheduler proof, not alert delivery, and not overdue-month detection (not built; a stage-9 blocker)."
-        : "The monthly-generation trigger is not healthy (see the reasons). This checks trigger health only — never billing completeness or overdue-month detection (not built; a stage-9 blocker).",
+        ? "The monthly-generation trigger is scheduled and its latest run finished SUCCEEDED with a confirmed heartbeat. This is trigger health only — not billing completeness, not scheduler proof, not alert delivery, and not overdue-month alerting (reported on separate alert checks; condition C is not evaluable until stage 9)."
+        : "The monthly-generation trigger is not healthy (see the reasons). This checks trigger health only — never billing completeness or overdue-month alerting (reported on separate alert checks; condition C is not evaluable until stage 9).",
     items: reasons.map((r) => `trigger:${r}`),
   };
 }

@@ -134,11 +134,15 @@ describe("the monthly-generation runner and visit loop are not reachable from pr
     expect(registry).not.toContain('symbol: "planRouteBudget"');
   });
 
-  it("the overdue-month failure (trigger plan §8) is a registered STAGE-9 BLOCKER, and readiness check 10 says it does not cover it", async () => {
+  it("overdue-month condition C (not evaluable until stage 9) is a registered STAGE-9 BLOCKER, and readiness check 10 says it does not cover it", async () => {
     const registry = readFileSync("scripts/pending-callers.ts", "utf8");
-    expect(registry).toMatch(/STAGE-9 BLOCKER: the monthly-generation route does not report an \\"overdue month\\"/);
+    expect(registry).toMatch(/STAGE-9 BLOCKER: overdue-month condition C \(an ACTIVATED organization with no progress row\) is not evaluable/);
     expect(registry).toContain("Before stage 9 (activation)");
     const evaluate = readFileSync("src/lib/dues/readiness/evaluate.ts", "utf8");
-    expect(evaluate.match(/overdue-month detection \(not built; a stage-9 blocker\)/g)?.length).toBe(2); // pass and fail detail
+    expect(evaluate.match(/condition C is not evaluable until stage 9/g)?.length).toBe(2); // pass and fail detail
+    // The evaluator reports C as not evaluable on every path, never as passed.
+    const alerts = readFileSync("src/lib/dues/monthly-generation-alerts.ts", "utf8");
+    expect(alerts).toContain('conditionC: "notEvaluable"');
+    expect(alerts).not.toMatch(/conditionC:\s*"(ok|pass|passed|clear)"/);
   });
 });

@@ -2024,6 +2024,12 @@ model JobRun {
   /// a SEPARATE update AFTER the fields above are already committed — see
   /// run-scheduled-job.ts's own comment for why that ordering is deliberate.
   heartbeatStatus        String?
+  /// Monthly generation only (docs/dues/MONTHLY-GENERATION-ALERTING-PLAN.md §3): the request outcomes of its three ALERT
+  /// checks, { urgent, data, workload }, each "ok" | "failed" | "not_configured" | "not_sent" ("not_sent": the run did not
+  /// evaluate that check, so it sent nothing rather than a default success). Null for every other job and every earlier run.
+  /// `heartbeatStatus` above keeps its meaning: the job's own (scheduler) ping. Request outcomes only, never a URL or a body.
+  /// Written in the same update as `heartbeatStatus`.
+  alertPings             Json?
 
   @@index([jobName, startedAt])
 }

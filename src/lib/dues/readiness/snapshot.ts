@@ -74,7 +74,8 @@ export interface ReadinessSnapshot {
    */
   trigger: {
     scheduled: boolean;
-    latestRun: { status: string; finalized: boolean; heartbeatStatus: string | null } | null;
+    /** `alertPings`: JobRun.alertPings as stored (null for runs before four-check alerting). */
+    latestRun: { status: string; finalized: boolean; heartbeatStatus: string | null; alertPings: unknown } | null;
     stale: boolean;
     stuck: boolean;
   };
@@ -140,7 +141,7 @@ export async function loadReadinessSnapshot(
   const latestTriggerRun = await tx.jobRun.findFirst({
     where: { jobName: "monthly-generation" },
     orderBy: { startedAt: "desc" },
-    select: { status: true, startedAt: true, finishedAt: true, heartbeatStatus: true },
+    select: { status: true, startedAt: true, finishedAt: true, heartbeatStatus: true, alertPings: true },
   });
   const now = Date.now();
 
@@ -168,7 +169,12 @@ export async function loadReadinessSnapshot(
     trigger: {
       scheduled: resolveJobSchedule("monthly-generation") !== null,
       latestRun: latestTriggerRun
-        ? { status: latestTriggerRun.status, finalized: latestTriggerRun.finishedAt !== null, heartbeatStatus: latestTriggerRun.heartbeatStatus }
+        ? {
+            status: latestTriggerRun.status,
+            finalized: latestTriggerRun.finishedAt !== null,
+            heartbeatStatus: latestTriggerRun.heartbeatStatus,
+            alertPings: latestTriggerRun.alertPings,
+          }
         : null,
       stale: isJobStale("monthly-generation", latestTriggerRun?.startedAt ?? null, now),
       stuck: isJobStuck(latestTriggerRun?.status ?? null, latestTriggerRun?.startedAt ?? null, now),

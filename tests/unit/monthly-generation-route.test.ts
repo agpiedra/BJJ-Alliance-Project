@@ -86,13 +86,22 @@ describe("the route's constants and budget", () => {
     expect(MONTHLY_GENERATION_BOOKKEEPING).toEqual({ maxWaitMs: 1_000, timeoutMs: 2_000, statementTimeoutMs: 1_000, lockTimeoutMs: 1_000, idleInTransactionTimeoutMs: 1_000 });
   });
 
-  it("the deadline is whatever planRouteBudget computes from F, C and M (227 s with today's limits) — never a literal in the route", () => {
+  it("the deadline is whatever planRouteBudget computes from F, C, M, 4 sequential pings and the 4 s detection read (212 s, admission 48 s) — never a literal in the route", () => {
     const plan = monthlyGenerationRouteBudget();
-    const direct = planRouteBudget({ functionMaxMs: 300_000, coldStartReserveMs: 30_000, marginMs: 30_000, bookkeeping: MONTHLY_GENERATION_BOOKKEEPING, generation: DEFAULT_GENERATION_LIMITS });
+    const direct = planRouteBudget({
+      functionMaxMs: 300_000,
+      coldStartReserveMs: 30_000,
+      marginMs: 30_000,
+      bookkeeping: MONTHLY_GENERATION_BOOKKEEPING,
+      generation: DEFAULT_GENERATION_LIMITS,
+      heartbeatPings: 4,
+      preRunnerReadMs: 4_000,
+    });
     expect(plan).toEqual(direct);
-    expect(plan).toMatchObject({ ok: true, generationDeadlineMs: 227_000 });
+    // post = 2 x 4 s writes + 4 x 5 s pings = 28 s; 300 - 30 - 30 - 28 = 212 s. Admission = 4 s create + 4 s read + 40 s.
+    expect(plan).toMatchObject({ ok: true, generationDeadlineMs: 212_000, admissionMs: 48_000, reserves: { postMs: 28_000 } });
     const source = stripComments(readFileSync("src/lib/dues/monthly-generation-route.ts", "utf8"));
-    expect(source).not.toMatch(/227[_]?000|\b227\b/);
+    expect(source).not.toMatch(/2(12|27)[_]?000|\b2(12|27)\b/);
     expect(source).toContain("deadlineMs: budget.generationDeadlineMs");
   });
 
