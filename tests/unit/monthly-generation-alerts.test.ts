@@ -21,6 +21,7 @@ const state = (over: Partial<State> = {}): State => ({
   progress: [row(2031, 10), row(2031, 11, { lastPassCompletedAt: null, lastPassClean: null })],
   branches: [{ organizationId: ORG, timezone: CR }],
   students: [{ organizationId: ORG, count: 55 }],
+  organizations: [{ organizationId: ORG, status: "ACTIVE" }],
   overflow: false,
   ...over,
 });
@@ -77,6 +78,38 @@ describe("condition B: an older month not clean", () => {
   });
 });
 
+describe("non-ACTIVE organizations owe no billing: no A, B or D for them, but their rows still count as workload", () => {
+  const now = at("2031-11-02T00:00:00Z");
+  it.each(["SUSPENDED", "CANCELLED", "PENDING"] as const)("REQUIRED: a %s organization cannot hold the urgent or data check down", (s) => {
+    const report = evaluateGenerationAlerts(
+      state({ progress: [row(2031, 9, { lastPassClean: false }), row(2031, 10)], organizations: [{ organizationId: ORG, status: s }] }),
+      now,
+    );
+    expect(report).toMatchObject({ detection: "ok", newMonthAtRisk: [], olderMonthNotClean: [], notActiveOrganizations: [ORG] });
+    expect(report.workload!.counts.progressRows).toBe(2);
+    expect(alertSignalsFor(report, 0)).toEqual({ urgent: true, data: true, workload: true });
+  });
+
+  it("a non-ACTIVE organization with no branch or an unknown timezone is not a detection failure", () => {
+    const suspended = [{ organizationId: ORG, status: "SUSPENDED" as const }];
+    expect(evaluateGenerationAlerts(state({ branches: [], organizations: suspended }), now)).toMatchObject({ detection: "ok", notActiveOrganizations: [ORG] });
+    expect(evaluateGenerationAlerts(state({ branches: [{ organizationId: ORG, timezone: "Not/AZone" }], organizations: suspended }), now)).toMatchObject({ detection: "ok" });
+  });
+
+  it("one suspended organization does not hide an ACTIVE organization's at-risk month", () => {
+    const report = evaluateGenerationAlerts(
+      state({
+        progress: [row(2031, 10), row(2031, 10, { organizationId: "org-b" })],
+        branches: [{ organizationId: ORG, timezone: CR }, { organizationId: "org-b", timezone: CR }],
+        organizations: [{ organizationId: ORG, status: "SUSPENDED" }, { organizationId: "org-b", status: "ACTIVE" }],
+      }),
+      now,
+    );
+    expect(report.newMonthAtRisk).toEqual([{ organizationId: "org-b", year: 2031, month: 11 }]);
+    expect(report.notActiveOrganizations).toEqual([ORG]);
+  });
+});
+
 describe("condition C is not evaluable; D is any detection failure", () => {
   it("REQUIRED: C is reported notEvaluable on every path (ok, overflow, read failure) — never as passed", async () => {
     expect(evaluateGenerationAlerts(state(), at("2031-11-01T10:00:00Z")).conditionC).toBe("notEvaluable");
@@ -109,7 +142,7 @@ describe("condition C is not evaluable; D is any detection failure", () => {
   });
 
   it("an empty progress table (today's production state) reports nothing and every check succeeds", () => {
-    const report = evaluateGenerationAlerts({ progress: [], branches: [], students: [], overflow: false }, at("2031-11-02T00:00:00Z"));
+    const report = evaluateGenerationAlerts({ progress: [], branches: [], students: [], organizations: [], overflow: false }, at("2031-11-02T00:00:00Z"));
     expect(report).toMatchObject({ detection: "ok", newMonthAtRisk: [], olderMonthNotClean: [], workload: { reasons: [] } });
     expect(alertSignalsFor(report, 0)).toEqual({ urgent: true, data: true, workload: true });
   });

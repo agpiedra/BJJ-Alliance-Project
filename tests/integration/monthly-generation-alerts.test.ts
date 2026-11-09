@@ -53,7 +53,7 @@ afterAll(async () => {
 describe("the alert detection read (bounded, read-only)", () => {
   it("REQUIRED (test 5): today's production state — an empty progress table — reports nothing, and every check would succeed", async () => {
     const state = await readGenerationAlertState(500, DETECTION_BOUNDS);
-    expect(state).toEqual({ progress: [], branches: [], students: [], overflow: false });
+    expect(state).toEqual({ progress: [], branches: [], students: [], organizations: [], overflow: false });
     const report = await detectGenerationAlerts(new Date());
     expect(report).toMatchObject({ detection: "ok", newMonthAtRisk: [], olderMonthNotClean: [], conditionC: "notEvaluable", workload: { reasons: [] } });
   });
@@ -82,8 +82,17 @@ describe("the alert detection read (bounded, read-only)", () => {
     expect(state.progress).toHaveLength(2);
     expect(state.branches).toEqual([{ organizationId: fixture.org.id, timezone: fixture.academy.timezone }]);
     expect(state.students).toEqual([{ organizationId: fixture.org.id, count: 2 }]);
+    expect(state.organizations).toEqual([{ organizationId: fixture.org.id, status: "SUSPENDED" }]);
 
-    const report = evaluateGenerationAlerts(state, new Date("2031-11-02T00:00:00Z"));
+    // SUSPENDED: refused at the visit gate, so it owes no billing — no A or B — but its rows count as workload.
+    const when = new Date("2031-11-02T00:00:00Z");
+    const suspended = evaluateGenerationAlerts(state, when);
+    expect(suspended).toMatchObject({ newMonthAtRisk: [], olderMonthNotClean: [], notActiveOrganizations: [fixture.org.id] });
+    expect(suspended.workload!.counts).toMatchObject({ progressRows: 2, studentsTotal: 2 });
+
+    // The same rows for an ACTIVE organization: B for both older months, A for the missing November row.
+    await prisma.organization.update({ where: { id: fixture.org.id }, data: { status: "ACTIVE" } });
+    const report = evaluateGenerationAlerts(await readGenerationAlertState(500, DETECTION_BOUNDS), when);
     expect(report.olderMonthNotClean).toEqual([
       { organizationId: fixture.org.id, year: 2031, month: 9 },
       { organizationId: fixture.org.id, year: 2031, month: 10 },
@@ -93,7 +102,7 @@ describe("the alert detection read (bounded, read-only)", () => {
 
   it("REQUIRED (test 2): more rows than the cap is overflow (condition D) — never a partial evaluation", async () => {
     const state = await readGenerationAlertState(1, DETECTION_BOUNDS);
-    expect(state).toEqual({ progress: [], branches: [], students: [], overflow: true });
+    expect(state).toEqual({ progress: [], branches: [], students: [], organizations: [], overflow: true });
     expect(evaluateGenerationAlerts(state, new Date()).detection).toBe("overflow");
   });
 

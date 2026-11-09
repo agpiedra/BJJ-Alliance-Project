@@ -230,6 +230,13 @@ Clarifications made while implementing (no scope change):
   persisted it is reported by the next run's detection (B for an older month, A for the new month after 15 h).
 - **Condition D also covers** an organization with progress rows but no branch, and an unknown branch timezone.
 - **Unaligned timezone threshold**: a branch whose month opening is not on a 3-hour UTC boundary (`0 */3 * * *`).
+- **Final review fix (2026-11-09): A, B and D are evaluated for ACTIVE organizations only.** A suspended, cancelled or
+  pending organization is refused at the visit gate, so rollover never creates its new month and its passes never finish:
+  without this, one such organization would hold the urgent check down permanently and mask every later urgent problem.
+  It is listed as `notActiveOrganizations`; its rows still count toward the workload thresholds (discovery revisits them).
+- **Detection timing (behavior, see the review report):** detection reads persisted state at run START. A pass that ends
+  unclean during a run is alerted by the NEXT run (B, or A once the 15 h warning applies); a run that finishes the new
+  month clean after the 15 h mark still reports A once (state read before its work), cleared by the next run.
 
 Not done (unchanged): no hosted migration, deployment, environment variable, monitor, cron, ledger activation or merge.
 The backup inbox remains pending.

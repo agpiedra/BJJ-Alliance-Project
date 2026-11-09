@@ -271,10 +271,11 @@ describe("four-check alerting through the route (MONTHLY-GENERATION-ALERTING-PLA
     detection: "ok",
     newMonthAtRisk: [],
     olderMonthNotClean: [],
+    notActiveOrganizations: [],
     conditionC: "notEvaluable",
     workload: { reasons: [], counts: { progressRows: 0, organizations: 0, maxStudentsPerOrganization: 0, studentsTotal: 0, maxBranchesPerOrganization: 0 } },
   };
-  const failedDetection: Report = { detection: "P2024", newMonthAtRisk: [], olderMonthNotClean: [], conditionC: "notEvaluable", workload: null };
+  const failedDetection: Report = { detection: "P2024", newMonthAtRisk: [], olderMonthNotClean: [], notActiveOrganizations: [], conditionC: "notEvaluable", workload: null };
   function stubAll() {
     vi.stubEnv("CRON_SECRET", SECRET);
     vi.stubEnv("HEALTHCHECK_MONTHLY_GENERATION_URL", HC);

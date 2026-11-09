@@ -628,8 +628,10 @@ and `monthly-generation` is a registered job, but `vercel.json` has **no** entry
   (admission 48 s). Stage 1's throughput was measured at 227 s; how it transfers to 212 s is an estimate, not a measurement.
 - **Reading an alert:** each check alerts once when it goes down and recovers on the next run without that problem, so
   one lasting problem in a check hides a second one **in the same check** (the four checks keep different kinds apart).
-  Detection reports what the last finished pass observed, never that a month is complete. Condition C (an activated
-  organization without a progress row) is **not evaluable until stage 9** and is never reported as passed.
+  Detection reports what the last finished pass observed, never that a month is complete. Conditions A and B are checked
+  for **ACTIVE** organizations only (a suspended or cancelled one is refused at the visit gate and owes no billing; it is
+  listed as `notActiveOrganizations` and still counts toward workload). Condition C (an activated organization without a
+  progress row) is **not evaluable until stage 9** and is never reported as passed: a green urgent check does not cover it.
 
 `GET /api/health` (public, no secret, database-only — deliberately narrower than
 `/api/health/jobs`) is a second, independent thing worth pointing an uptime monitor

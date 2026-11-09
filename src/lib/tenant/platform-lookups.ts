@@ -180,6 +180,8 @@ export interface GenerationAlertState {
   branches: { organizationId: string; timezone: string }[];
   /** Student rows of any status per such organization: every one is visited by every pass. */
   students: { organizationId: string; count: number }[];
+  /** Status of each such organization: a non-ACTIVE one is refused at the visit gate, so it owes no billing. */
+  organizations: { organizationId: string; status: OrganizationStatus }[];
   /** More rows than `cap`: nothing is evaluated (condition D). */
   overflow: boolean;
 }
@@ -194,7 +196,7 @@ export async function readGenerationAlertState(
   bounds: { statementTimeoutMs: number; lockTimeoutMs: number; idleInTransactionTimeoutMs: number; maxWaitMs: number; timeoutMs: number },
 ): Promise<GenerationAlertState> {
   assertTransactionTimeouts(bounds, "alert detection bounds", { requireIdle: true });
-  const empty: GenerationAlertState = { progress: [], branches: [], students: [], overflow: false };
+  const empty: GenerationAlertState = { progress: [], branches: [], students: [], organizations: [], overflow: false };
   return unscopedPrisma.$transaction(
     async (tx) => {
       await tx.$executeRawUnsafe("SET TRANSACTION READ ONLY");
@@ -217,7 +219,14 @@ export async function readGenerationAlertState(
       });
       if (branches.length > cap) return { ...empty, overflow: true };
       const students = await tx.student.groupBy({ by: ["organizationId"], where: { organizationId: { in: organizationIds } }, _count: { _all: true } });
-      return { progress, branches, students: students.map((s) => ({ organizationId: s.organizationId, count: s._count._all })), overflow: false };
+      const organizations = await tx.organization.findMany({ where: { id: { in: organizationIds } }, select: { id: true, status: true } });
+      return {
+        progress,
+        branches,
+        students: students.map((s) => ({ organizationId: s.organizationId, count: s._count._all })),
+        organizations: organizations.map((o) => ({ organizationId: o.id, status: o.status })),
+        overflow: false,
+      };
     },
     { maxWait: bounds.maxWaitMs, timeout: bounds.timeoutMs },
   );
