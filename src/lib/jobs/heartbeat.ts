@@ -33,9 +33,32 @@ export const HEARTBEAT_TIMEOUT_MS = 5_000;
  */
 export async function pingHeartbeat(jobName: JobName, success: boolean, fetchImpl: typeof fetch = fetch): Promise<HeartbeatOutcome> {
   if (!JOB_NAMES.includes(jobName)) return "not_configured";
-  const baseUrl = process.env[HEALTHCHECK_ENV[jobName]];
-  if (!baseUrl) return "not_configured";
+  return pingConfiguredUrl(process.env[HEALTHCHECK_ENV[jobName]], success, fetchImpl, { jobName });
+}
 
+/**
+ * Monthly generation's three ALERT checks (docs/dues/MONTHLY-GENERATION-ALERTING-PLAN.md §2), separate from its own
+ * (scheduler) heartbeat above so that one persistent problem cannot hide another kind:
+ * - `urgent`: the new month at risk (A), detection not possible (D), run-level errors;
+ * - `data`: an older month whose last pass was not clean (B);
+ * - `workload`: a workload-review threshold reached. Never a billing failure.
+ */
+export type AlertCheck = "urgent" | "data" | "workload";
+export const ALERT_CHECKS: readonly AlertCheck[] = ["urgent", "data", "workload"];
+const ALERT_CHECK_ENV: Record<AlertCheck, string> = {
+  urgent: "HEALTHCHECK_MONTHLY_GENERATION_URGENT_URL",
+  data: "HEALTHCHECK_MONTHLY_GENERATION_DATA_URL",
+  workload: "HEALTHCHECK_MONTHLY_GENERATION_WORKLOAD_URL",
+};
+
+/** Same contract as `pingHeartbeat` (never throws, aborts at HEARTBEAT_TIMEOUT_MS, safe-code logging), for one alert check. */
+export async function pingAlertCheck(check: AlertCheck, success: boolean, fetchImpl: typeof fetch = fetch): Promise<HeartbeatOutcome> {
+  if (!ALERT_CHECKS.includes(check)) return "not_configured";
+  return pingConfiguredUrl(process.env[ALERT_CHECK_ENV[check]], success, fetchImpl, { alertCheck: check });
+}
+
+async function pingConfiguredUrl(baseUrl: string | undefined, success: boolean, fetchImpl: typeof fetch, label: Record<string, string>): Promise<HeartbeatOutcome> {
+  if (!baseUrl) return "not_configured";
   const url = success ? baseUrl : `${baseUrl}/fail`;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), HEARTBEAT_TIMEOUT_MS);
@@ -44,7 +67,7 @@ export async function pingHeartbeat(jobName: JobName, success: boolean, fetchImp
     return response.ok ? "ok" : "failed";
   } catch (error) {
     // Safe code only (G2a): a fetch error can carry the ping URL (which embeds the check's secret UUID) or provider text.
-    console.error("[pingHeartbeat] failed to reach Healthchecks.io", { jobName, success, error: safeErrorCode(error) });
+    console.error("[pingHeartbeat] failed to reach Healthchecks.io", { ...label, success, error: safeErrorCode(error) });
     return "failed";
   } finally {
     clearTimeout(timeout);

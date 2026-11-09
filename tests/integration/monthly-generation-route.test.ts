@@ -17,9 +17,15 @@ const { handleMonthlyGenerationRequest, monthlyGenerationRouteBudget, MONTHLY_GE
   "../../src/lib/dues/monthly-generation-route"
 );
 
+const { runMonthlyGeneration: runReal } = await import("../../src/lib/dues/monthly-generation-progress");
+const { currentMonthIn } = await import("../../src/lib/dues/config-input");
+
 const prisma = getTestPrismaClient();
 const SECRET = "test-cron-secret";
 const HC = "https://hc-ping.example/monthly-generation";
+const URGENT = "https://hc-ping.example/monthly-generation-urgent";
+const DATA = "https://hc-ping.example/monthly-generation-data";
+const WORKLOAD = "https://hc-ping.example/monthly-generation-workload";
 
 function request(authorization: string | null): Request {
   return new Request("http://localhost/api/cron/monthly-generation", { headers: authorization === null ? {} : { authorization } });
@@ -97,8 +103,10 @@ describe("GET /api/cron/monthly-generation (G2b)", () => {
     vi.stubEnv("CRON_SECRET", SECRET);
     const plan = monthlyGenerationRouteBudget();
     if (!plan.ok) throw new Error("expected a feasible plan");
-    // Admission needs elapsed + admissionMs < deadline: 227 000 - 44 000 = 183 000 ms of slack, in MILLISECONDS end to end.
-    expect(plan.generationDeadlineMs - plan.admissionMs).toBe(183_000);
+    // Admission needs elapsed + admissionMs < deadline: 212 000 - 48 000 = 164 000 ms of slack, in MILLISECONDS end to end
+    // (four sequential pings and the 4 s detection read reserved; MONTHLY-GENERATION-ALERTING-PLAN.md §5).
+    expect(plan.generationDeadlineMs).toBe(212_000);
+    expect(plan.generationDeadlineMs - plan.admissionMs).toBe(164_000);
     const admitted = await (await handleMonthlyGenerationRequest(authed(), performance.now() - 150_000)).json();
     expect(admitted).toMatchObject({ ok: true, stoppedBy: "noClaimableSegment" });
     await prisma.jobRun.deleteMany({ where: { jobName: "monthly-generation" } });
@@ -158,10 +166,18 @@ describe("GET /api/cron/monthly-generation (G2b)", () => {
       failed: 0,
       visits: [],
       finalized: "confirmed",
-      heartbeat: { request: "notConfigured", resultPersisted: "confirmed" },
+      heartbeat: { request: "notConfigured", resultPersisted: "confirmed", alerts: { urgent: "not_configured", data: "not_configured", workload: "not_configured" } },
+      // The real detection read ran against the empty table: nothing to report; condition C is never claimed as passed.
+      alerts: { detection: "ok", newMonthAtRisk: [], olderMonthNotClean: [], conditionC: "notEvaluable", workload: { reasons: [] } },
     });
     const run = await latestRun();
-    expect(run).toMatchObject({ status: "SUCCEEDED", sent: 0, failed: 0, heartbeatStatus: "not_configured" });
+    expect(run).toMatchObject({
+      status: "SUCCEEDED",
+      sent: 0,
+      failed: 0,
+      heartbeatStatus: "not_configured",
+      alertPings: { urgent: "not_configured", data: "not_configured", workload: "not_configured" },
+    });
     expect(run!.finishedAt).not.toBeNull();
     expect(await prisma.duesObligation.count()).toBe(obligationsBefore);
     expect(await prisma.duesGenerationProgress.count()).toBe(0);
@@ -187,7 +203,7 @@ describe("GET /api/cron/monthly-generation (G2b)", () => {
     }
   });
 
-  it("REQUIRED: a run with failures is 200 with ok:false, recorded PARTIAL or FAILED, with a /fail ping — and still never 'billing complete'", async () => {
+  it("REQUIRED: a run with failures is 200 with ok:false, recorded PARTIAL or FAILED — the scheduler check still gets success (it is liveness only), and still never 'billing complete'", async () => {
     vi.stubEnv("CRON_SECRET", SECRET);
     vi.stubEnv("HEALTHCHECK_MONTHLY_GENERATION_URL", HC);
     recordPings();
@@ -203,7 +219,8 @@ describe("GET /api/cron/monthly-generation (G2b)", () => {
     const run = await latestRun();
     expect(run).toMatchObject({ status: "PARTIAL", sent: 2, failed: 1, skipped: 3, organizationsProcessed: 1 });
     expect(run!.errorSummary).toContain("passEnded unpriced=0 pending=1");
-    expect(pings).toEqual([`${HC}/fail`]);
+    // An unclean pass end is not urgent: once persisted, the next run's detection reports it (B, or A after 15 h).
+    expect(pings).toEqual([HC]);
   });
 
   it("REQUIRED: a run that stops at its deadline with work left and no failure is SUCCEEDED — not a failure, and not 'billing complete'", async () => {
@@ -217,9 +234,10 @@ describe("GET /api/cron/monthly-generation (G2b)", () => {
     expect(pings).toEqual([HC]);
   });
 
-  it("REQUIRED: an infeasible budget is 500, recorded FAILED with the safe code RouteBudgetInfeasibleError, /fail ping, and the runner never starts", async () => {
+  it("REQUIRED: an infeasible budget is 500, recorded FAILED with the safe code RouteBudgetInfeasibleError, urgent /fail (scheduler success), and the runner never starts", async () => {
     vi.stubEnv("CRON_SECRET", SECRET);
     vi.stubEnv("HEALTHCHECK_MONTHLY_GENERATION_URL", HC);
+    vi.stubEnv("HEALTHCHECK_MONTHLY_GENERATION_URGENT_URL", URGENT);
     recordPings();
     const run = vi.fn();
     const response = await handleMonthlyGenerationRequest(authed(), performance.now(), { run, functionMaxMs: 60_000 });
@@ -228,7 +246,7 @@ describe("GET /api/cron/monthly-generation (G2b)", () => {
     expect(body).toMatchObject({ ok: false, error: "RouteBudgetInfeasibleError", finalized: "confirmed" });
     expect(run).not.toHaveBeenCalled();
     expect(await latestRun()).toMatchObject({ status: "FAILED", errorSummary: "RouteBudgetInfeasibleError" });
-    expect(pings).toEqual([`${HC}/fail`]);
+    expect(pings).toEqual([HC, `${URGENT}/fail`]);
   });
 
   it("REQUIRED: an unexpected throw from the runner is 500 with a safe code only (never its message), recorded FAILED", async () => {
@@ -245,4 +263,106 @@ describe("GET /api/cron/monthly-generation (G2b)", () => {
     const run = await latestRun();
     expect(run).toMatchObject({ status: "FAILED", errorSummary: "unrecognized_error" });
   });
+});
+
+describe("four-check alerting through the route (MONTHLY-GENERATION-ALERTING-PLAN.md §4, test 15)", () => {
+  type Report = import("../../src/lib/dues/monthly-generation-alerts").GenerationAlertReport;
+  const clean: Report = {
+    detection: "ok",
+    newMonthAtRisk: [],
+    olderMonthNotClean: [],
+    notActiveOrganizations: [],
+    conditionC: "notEvaluable",
+    workload: { reasons: [], counts: { progressRows: 0, organizations: 0, maxStudentsPerOrganization: 0, studentsTotal: 0, maxBranchesPerOrganization: 0 } },
+  };
+  const failedDetection: Report = { detection: "P2024", newMonthAtRisk: [], olderMonthNotClean: [], notActiveOrganizations: [], conditionC: "notEvaluable", workload: null };
+  function stubAll() {
+    vi.stubEnv("CRON_SECRET", SECRET);
+    vi.stubEnv("HEALTHCHECK_MONTHLY_GENERATION_URL", HC);
+    vi.stubEnv("HEALTHCHECK_MONTHLY_GENERATION_URGENT_URL", URGENT);
+    vi.stubEnv("HEALTHCHECK_MONTHLY_GENERATION_DATA_URL", DATA);
+    vi.stubEnv("HEALTHCHECK_MONTHLY_GENERATION_WORKLOAD_URL", WORKLOAD);
+    recordPings();
+  }
+  const go = (detect: Report, run = vi.fn(async () => emptyReport())) =>
+    handleMonthlyGenerationRequest(authed(), performance.now(), { detect: async () => detect, run }).then((r) => r.json());
+
+  it.each([
+    ["billing clean, below thresholds", clean, "SUCCEEDED", 0, [HC, URGENT, DATA, WORKLOAD]],
+    ["A: the new month at risk", { ...clean, newMonthAtRisk: [{ organizationId: "org-1", year: 2031, month: 11 }] }, "FAILED", 1, [HC, `${URGENT}/fail`, DATA, WORKLOAD]],
+    ["B: an older month not clean", { ...clean, olderMonthNotClean: [{ organizationId: "org-1", year: 2031, month: 9 }] }, "FAILED", 1, [HC, URGENT, `${DATA}/fail`, WORKLOAD]],
+    ["a workload threshold only", { ...clean, workload: { ...clean.workload!, reasons: ["progressRows"] } }, "SUCCEEDED", 0, [HC, URGENT, DATA, `${WORKLOAD}/fail`]],
+    ["D: detection failed", failedDetection, "FAILED", 1, [HC, `${URGENT}/fail`]],
+  ] as const)("%s → JobRun %s with failed=%i; requests %j", async (_label, detect, status, failed, expected) => {
+    stubAll();
+    const body = await go(detect as Report);
+    expect(pings).toEqual(expected);
+    const run = await latestRun();
+    expect(run).toMatchObject({ status, failed, heartbeatStatus: "ok" });
+    expect(body.alerts).toMatchObject({ conditionC: "notEvaluable" });
+  });
+
+  it("REQUIRED: a failed detection never stops billing — the runner still runs, and data/workload are not sent", async () => {
+    stubAll();
+    const run = vi.fn(async () => emptyReport());
+    await go(failedDetection, run);
+    expect(run).toHaveBeenCalledTimes(1);
+    expect((await latestRun())!.alertPings).toEqual({ urgent: "ok", data: "not_sent", workload: "not_sent" });
+  });
+
+  it("REQUIRED: run-level errors (claim, discovery, visit stage, skipped rollover) fail the urgent check", async () => {
+    stubAll();
+    await go(clean, vi.fn(async () => emptyReport({ claimErrors: 1 })));
+    expect(pings).toEqual([HC, `${URGENT}/fail`, DATA, WORKLOAD]);
+  });
+
+  it("REQUIRED: the real detection read sees real progress rows: an older unclean month fails the data check, not the urgent one", async () => {
+    stubAll();
+    const org = await prisma.organization.findFirstOrThrow({ select: { id: true, academies: { select: { timezone: true } } } });
+    const now = new Date();
+    const current = org.academies.map((a) => currentMonthIn(a.timezone, now)).reduce((min, m) => (m.year * 12 + m.month < min.year * 12 + min.month ? m : min));
+    const rows = await Promise.all([
+      // Finished passes are recorded whole (DuesGenerationProgress_last_pass_complete): unclean = 1 pending student.
+      prisma.duesGenerationProgress.create({
+        data: { organizationId: org.id, year: 2020, month: 1, lastVisitedAt: now, lastPassCompletedAt: now, lastPassIneligible: 0, lastPassCovered: 0, lastPassUnpriced: 0, lastPassPending: 1, lastPassClean: false },
+      }),
+      // The new month already has a clean pass, so condition A cannot fire and only B is under test.
+      prisma.duesGenerationProgress.create({
+        data: { organizationId: org.id, ...current, lastVisitedAt: now, lastPassCompletedAt: now, lastPassIneligible: 0, lastPassCovered: 0, lastPassUnpriced: 0, lastPassPending: 0, lastPassClean: true },
+      }),
+    ]);
+    try {
+      // Generation itself is not under test here; the real detection read is.
+      const body = await (await handleMonthlyGenerationRequest(authed(), performance.now(), { run: async () => emptyReport() })).json();
+      expect(body.alerts).toMatchObject({ detection: "ok", newMonthAtRisk: [] });
+      expect(body.alerts.olderMonthNotClean).toContainEqual({ organizationId: org.id, year: 2020, month: 1 });
+      expect(pings.slice(0, 3)).toEqual([HC, URGENT, `${DATA}/fail`]);
+      expect(pings[3]).toMatch(new RegExp(`^${WORKLOAD}(/fail)?$`)); // seed-dependent counts: attempted either way
+    } finally {
+      await prisma.duesGenerationProgress.deleteMany({ where: { id: { in: rows.map((r) => r.id) } } });
+    }
+  });
+
+  it("REQUIRED (test 21): the runner gets the 212 s deadline, and a detection read that uses its FULL 4 s still admits a claim attempt", async () => {
+    vi.stubEnv("CRON_SECRET", SECRET);
+    const slowDetect = async () => {
+      await new Promise((r) => setTimeout(r, 4_000));
+      return clean;
+    };
+    let deadlineSeen = -1;
+    let elapsedAtRunner = -1;
+    const body = await (
+      await handleMonthlyGenerationRequest(authed(), performance.now(), {
+        detect: slowDetect,
+        run: async (deps) => {
+          deadlineSeen = deps.limits!.deadlineMs!;
+          elapsedAtRunner = deps.elapsedMs!();
+          return runReal(deps);
+        },
+      })
+    ).json();
+    expect(deadlineSeen).toBe(212_000);
+    expect(elapsedAtRunner).toBeGreaterThanOrEqual(4_000);
+    expect(body).toMatchObject({ ok: true, stoppedBy: "noClaimableSegment" }); // admitted: it looked for work instead of stopping at the deadline
+  }, 30_000);
 });

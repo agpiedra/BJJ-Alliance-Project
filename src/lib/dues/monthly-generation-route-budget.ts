@@ -29,6 +29,13 @@ export interface RouteBudgetInput {
   generation: GenerationLimits;
   // No heartbeat override: the reserve is HEARTBEAT_TIMEOUT_MS, the same constant pingHeartbeat aborts at, so the budget can
   // never reserve less than execution actually waits.
+  /**
+   * Pings sent one after another after the runner (default 1). The four-check alerting design sends 4: the scheduler ping and
+   * three alert pings (MONTHLY-GENERATION-ALERTING-PLAN.md §5). Each reserves a full HEARTBEAT_TIMEOUT_MS: no concurrency is assumed.
+   */
+  heartbeatPings?: number;
+  /** Worst case of a bounded read the route makes BEFORE the runner (default 0): the alert detection read. Charged to admission. */
+  preRunnerReadMs?: number;
 }
 
 export interface RouteReserves {
@@ -64,12 +71,13 @@ export type RouteBudget =
   | { ok: false; reason: "leaseTooShort"; leaseMs: number; functionMaxMs: number };
 
 export function planRouteBudget(input: RouteBudgetInput): RouteBudget {
-  const { functionMaxMs: F, coldStartReserveMs: C, marginMs: M, bookkeeping: b, generation } = input;
+  const { functionMaxMs: F, coldStartReserveMs: C, marginMs: M, bookkeeping: b, generation, heartbeatPings = 1, preRunnerReadMs = 0 } = input;
   const heartbeat = HEARTBEAT_TIMEOUT_MS;
   if (!(Number.isFinite(F) && F > 0)) return { ok: false, reason: "invalidInput", detail: "functionMaxMs must be a finite positive number" };
-  for (const [name, value] of [["coldStartReserveMs", C], ["marginMs", M]] as const) {
+  for (const [name, value] of [["coldStartReserveMs", C], ["marginMs", M], ["preRunnerReadMs", preRunnerReadMs]] as const) {
     if (!(Number.isFinite(value) && value >= 0)) return { ok: false, reason: "invalidInput", detail: `${name} must be a finite non-negative number` };
   }
+  if (!(Number.isInteger(heartbeatPings) && heartbeatPings >= 1)) return { ok: false, reason: "invalidInput", detail: "heartbeatPings must be an integer >= 1" };
   // The same checks the execution entry points apply (runScheduledJob's bookkeeping, runMonthlyGeneration): never certify a
   // configuration under which a timeout would be disabled or out of order.
   const problem = transactionTimeoutsProblem(b, "bookkeeping", { requireIdle: true }) ?? generationLimitsProblem(generation);
@@ -79,15 +87,17 @@ export function planRouteBudget(input: RouteBudgetInput): RouteBudget {
   if (!(leaseMs > F)) return { ok: false, reason: "leaseTooShort", leaseMs, functionMaxMs: F };
 
   const tx = b.maxWaitMs + b.timeoutMs + b.statementTimeoutMs;
+  const postMs = 2 * tx + heartbeatPings * heartbeat;
   const reserves: RouteReserves = {
     bookkeepingTransactionMs: tx,
-    postMs: 2 * tx + heartbeat,
+    postMs,
     createFailedMs: heartbeat + M,
-    budgetInfeasibleMs: tx + heartbeat + tx + M,
+    // A refusal is a finalized FAILED run: finalize, every ping, the heartbeat-status write (= post), then the margin.
+    budgetInfeasibleMs: postMs + M,
     finalizeUnconfirmedMs: heartbeat + M,
   };
   const generationDeadlineMs = F - C - M - reserves.postMs;
-  const admissionMs = tx + admissionBudgetMs(generation);
+  const admissionMs = tx + preRunnerReadMs + admissionBudgetMs(generation);
   // The runner admits a unit only if elapsed + unit < deadline (strict), so feasibility is strict too.
   if (!(generationDeadlineMs > admissionMs)) {
     const failurePathFits = C + tx + reserves.budgetInfeasibleMs <= F;

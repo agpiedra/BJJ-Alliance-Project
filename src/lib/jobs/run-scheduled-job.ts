@@ -4,7 +4,7 @@ import { requireEnv } from "@/lib/env";
 import { bearerMatches } from "@/lib/auth/secrets-match";
 import { safeErrorCode, type SafeErrorCode } from "@/lib/auth/password-reset-log";
 import { assertTransactionTimeouts } from "@/lib/db/transaction-timeouts";
-import { pingHeartbeat, type HeartbeatOutcome } from "@/lib/jobs/heartbeat";
+import { ALERT_CHECKS, pingAlertCheck, pingHeartbeat, type AlertCheck, type HeartbeatOutcome } from "@/lib/jobs/heartbeat";
 import type { JobName } from "@/lib/jobs/job-names";
 import { Prisma, type JobStatus } from "@/generated/prisma/client";
 
@@ -48,6 +48,41 @@ export interface BookkeepingBounds {
 }
 export interface ScheduledJobOptions {
   bookkeeping?: BookkeepingBounds;
+  /**
+   * Monthly generation's four-check alerting (docs/dues/MONTHLY-GENERATION-ALERTING-PLAN.md §4). When true:
+   * - the job's own heartbeat becomes a pure SCHEDULER (liveness) signal: success whenever the JobRun is finalized, whatever
+   *   the run's outcome; `/fail` only when the create or finalize write fails (unchanged paths);
+   * - after it, the three alert checks are pinged, one after another, from the job's `alerts` (a thrown job: urgent `/fail`,
+   *   the others not sent), and their request outcomes are stored in `JobRun.alertPings`.
+   * Without it (the weekly digest), nothing changes.
+   */
+  alerting?: boolean;
+}
+
+/** Per alert check: true = success ping, false = `/fail`, absent = not evaluated by this run, so nothing is sent. */
+export type AlertSignals = Partial<Record<AlertCheck, boolean>>;
+export type AlertPingOutcome = HeartbeatOutcome | "not_sent";
+export type AlertPings = Record<AlertCheck, AlertPingOutcome>;
+
+/**
+ * Sequential (the route budget reserves one HEARTBEAT_TIMEOUT_MS per ping; no concurrency is assumed). Each check is attempted
+ * independently: `pingAlertCheck` never throws, and the catch below keeps even an unexpected throw in one from stopping the rest.
+ */
+async function sendAlertPings(signals: AlertSignals): Promise<AlertPings> {
+  const result = {} as AlertPings;
+  for (const check of ALERT_CHECKS) {
+    const signal = signals[check];
+    if (signal === undefined) {
+      result[check] = "not_sent";
+      continue;
+    }
+    try {
+      result[check] = await pingAlertCheck(check, signal);
+    } catch {
+      result[check] = "failed";
+    }
+  }
+  return result;
 }
 
 /** What the heartbeat client observed — never proof of what Healthchecks.io received or recorded. */
@@ -117,7 +152,7 @@ function bookkeep<T>(bounds: BookkeepingBounds | undefined, write: (db: Prisma.T
 export async function runScheduledJob(
   jobName: JobName,
   request: Request,
-  fn: () => Promise<{ outcome: JobOutcome; body: Record<string, unknown> }>,
+  fn: () => Promise<{ outcome: JobOutcome; body: Record<string, unknown>; alerts?: AlertSignals }>,
   options: ScheduledJobOptions = {},
 ): Promise<NextResponse> {
   // Validated as executed, before anything else: an invalid configuration (a zero or truncated timeout would disable a bound)
@@ -150,12 +185,15 @@ export async function runScheduledJob(
   let outcome: JobOutcome;
   let body: Record<string, unknown>;
   let threw: SafeErrorCode | null = null;
+  let alerts: AlertSignals = {};
   try {
-    ({ outcome, body } = await fn());
+    ({ outcome, body, alerts = {} } = await fn());
   } catch (error) {
     threw = safeErrorCode(error);
     outcome = { sent: 0, failed: 1, skipped: 0, organizationsProcessed: 0, errors: [threw] };
     body = { ok: false, error: threw };
+    // A thrown job is a run-level failure: urgent `/fail`. The other checks were not evaluated, so they get nothing.
+    alerts = { urgent: false };
   }
 
   const status = deriveStatus(threw !== null, outcome);
@@ -188,12 +226,17 @@ export async function runScheduledJob(
     }
   }
 
-  const success = threw === null && outcome.failed === 0;
+  // With alerting, the job's own heartbeat is the scheduler signal: the run was finalized (we are past that write), so success.
+  const success = options.alerting ? true : threw === null && outcome.failed === 0;
   const heartbeatOutcome = await pingHeartbeat(jobName, success);
+  const alertPings = options.alerting ? await sendAlertPings(alerts) : undefined;
   let resultPersisted: "confirmed" | "unknown" = "confirmed";
   let bookkeepingError: { stage: BookkeepingStage; code: SafeErrorCode } | undefined;
   try {
-    await bookkeep(bounds, (db) => db.jobRun.update({ where: { id: runId }, data: { heartbeatStatus: heartbeatOutcome }, select: { id: true } }));
+    // One write for both, so the alert outcomes need no bookkeeping reserve of their own.
+    await bookkeep(bounds, (db) =>
+      db.jobRun.update({ where: { id: runId }, data: { heartbeatStatus: heartbeatOutcome, ...(alertPings ? { alertPings } : {}) }, select: { id: true } }),
+    );
   } catch (error) {
     // Purely observational — the ping already happened and the run's own result is already
     // committed above; losing this last write must never turn a real result into an error.
@@ -210,7 +253,7 @@ export async function runScheduledJob(
       ...body,
       ok: status === "SUCCEEDED",
       finalized: "confirmed",
-      heartbeat: { request: observe(heartbeatOutcome), resultPersisted },
+      heartbeat: { request: observe(heartbeatOutcome), resultPersisted, ...(alertPings ? { alerts: alertPings } : {}) },
       ...(bookkeepingError ? { bookkeepingError } : {}),
     };
     return NextResponse.json(finalBody, { status: threw ? 500 : 200 });

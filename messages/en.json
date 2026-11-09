@@ -1837,7 +1837,8 @@
           "notSucceeded": "Its latest run did not succeed.",
           "stale": "Its latest run is older than the schedule allows.",
           "stuck": "Its latest run looks stuck.",
-          "heartbeatNotOk": "The latest run's monitoring ping was not confirmed."
+          "heartbeatNotOk": "The latest run's monitoring ping was not confirmed.",
+          "alertChecksNotConfigured": "Its billing and workload alerts are not configured."
         }
       },
       "empty": "No branches or students yet. Readiness is computed for your students.",

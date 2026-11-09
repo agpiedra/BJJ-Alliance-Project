@@ -172,6 +172,66 @@ export async function listClaimableGenerationSegments(
   );
 }
 
+/** What the monthly-generation alert evaluator needs (MONTHLY-GENERATION-ALERTING-PLAN.md §6). Ids, months, timezones, counts. */
+export interface GenerationAlertState {
+  /** EVERY progress row: discovery filters only on the lease, so under Reopen every row is revisited (suspended organizations too). */
+  progress: { organizationId: string; year: number; month: number; lastPassCompletedAt: Date | null; lastPassClean: boolean | null }[];
+  /** Every branch (active or not) of the organizations that have progress rows, as rollover reads them. */
+  branches: { organizationId: string; timezone: string }[];
+  /** Student rows of any status per such organization: every one is visited by every pass. */
+  students: { organizationId: string; count: number }[];
+  /** Status of each such organization: a non-ACTIVE one is refused at the visit gate, so it owes no billing. */
+  organizations: { organizationId: string; status: OrganizationStatus }[];
+  /** More rows than `cap`: nothing is evaluated (condition D). */
+  overflow: boolean;
+}
+
+/**
+ * The alert detection read: ONE read-only transaction, bounded like discovery (`SET LOCAL` statement, lock and idle timeouts;
+ * `maxWait` and `timeout` on the whole), each list capped at `cap + 1`. Throws on any database error or timeout; the caller turns
+ * that into condition D, never into "nothing to report".
+ */
+export async function readGenerationAlertState(
+  cap: number,
+  bounds: { statementTimeoutMs: number; lockTimeoutMs: number; idleInTransactionTimeoutMs: number; maxWaitMs: number; timeoutMs: number },
+): Promise<GenerationAlertState> {
+  assertTransactionTimeouts(bounds, "alert detection bounds", { requireIdle: true });
+  const empty: GenerationAlertState = { progress: [], branches: [], students: [], organizations: [], overflow: false };
+  return unscopedPrisma.$transaction(
+    async (tx) => {
+      await tx.$executeRawUnsafe("SET TRANSACTION READ ONLY");
+      await tx.$executeRawUnsafe(`SET LOCAL statement_timeout = ${Math.trunc(bounds.statementTimeoutMs)}`);
+      await tx.$executeRawUnsafe(`SET LOCAL lock_timeout = ${Math.trunc(bounds.lockTimeoutMs)}`);
+      await tx.$executeRawUnsafe(`SET LOCAL idle_in_transaction_session_timeout = ${Math.trunc(bounds.idleInTransactionTimeoutMs)}`);
+      const progress = await tx.duesGenerationProgress.findMany({
+        select: { organizationId: true, year: true, month: true, lastPassCompletedAt: true, lastPassClean: true },
+        orderBy: { id: "asc" },
+        take: cap + 1,
+      });
+      if (progress.length > cap) return { ...empty, overflow: true };
+      const organizationIds = [...new Set(progress.map((p) => p.organizationId))];
+      if (organizationIds.length === 0) return { ...empty, progress };
+      const branches = await tx.academy.findMany({
+        where: { organizationId: { in: organizationIds } },
+        select: { organizationId: true, timezone: true },
+        orderBy: { id: "asc" },
+        take: cap + 1,
+      });
+      if (branches.length > cap) return { ...empty, overflow: true };
+      const students = await tx.student.groupBy({ by: ["organizationId"], where: { organizationId: { in: organizationIds } }, _count: { _all: true } });
+      const organizations = await tx.organization.findMany({ where: { id: { in: organizationIds } }, select: { id: true, status: true } });
+      return {
+        progress,
+        branches,
+        students: students.map((s) => ({ organizationId: s.organizationId, count: s._count._all })),
+        organizations: organizations.map((o) => ({ organizationId: o.id, status: o.status })),
+        overflow: false,
+      };
+    },
+    { maxWait: bounds.maxWaitMs, timeout: bounds.timeoutMs },
+  );
+}
+
 export interface OrganizationAuditEntry {
   id: string;
   actorEmail: string | null;

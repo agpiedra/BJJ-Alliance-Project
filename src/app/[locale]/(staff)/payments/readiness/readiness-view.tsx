@@ -102,7 +102,7 @@ function itemLabeler(screen: ReadinessScreen, locale: string, t: Translate, paym
 }
 
 /** Check 10's reasons (evaluate.ts `TriggerReason`); anything else falls back to "unknown". */
-const TRIGGER_REASONS = new Set(["notScheduled", "neverRan", "notFinalized", "notSucceeded", "stale", "stuck", "heartbeatNotOk"]);
+const TRIGGER_REASONS = new Set(["notScheduled", "neverRan", "notFinalized", "notSucceeded", "stale", "stuck", "heartbeatNotOk", "alertChecksNotConfigured"]);
 
 function ItemList({ items, label }: { items: string[]; label: (item: string) => { text: string; href?: string } }) {
   if (items.length === 0) return null;

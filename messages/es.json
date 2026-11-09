@@ -1837,7 +1837,8 @@
           "notSucceeded": "Su última ejecución no fue exitosa.",
           "stale": "Su última ejecución es más antigua de lo que permite la programación.",
           "stuck": "Su última ejecución parece atascada.",
-          "heartbeatNotOk": "No se confirmó el aviso de monitoreo de la última ejecución."
+          "heartbeatNotOk": "No se confirmó el aviso de monitoreo de la última ejecución.",
+          "alertChecksNotConfigured": "Sus alertas de facturación y de carga de trabajo no están configuradas."
         }
       },
       "empty": "Aún no hay sedes ni estudiantes. La preparación se calcula para sus estudiantes.",
