@@ -6,11 +6,14 @@ import { PaymentMethod, type Currency } from "@/generated/prisma/client";
 import { resolveActionContext } from "@/lib/tenant/context";
 import { correctLateFeeAndSettle, type CorrectLateFeeResult } from "@/lib/dues/ledger/correct-late-fee";
 import { reversePayment, type ReversePaymentResult } from "@/lib/dues/ledger/reverse-payment";
-import { isReversalReasonCategory } from "@/lib/dues/reversal-classification";
+import { isOpeningCancellationCategory, isReversalReasonCategory } from "@/lib/dues/reversal-classification";
+import { cancelOpeningObligation, type CancelOpeningObligationResult } from "@/lib/dues/ledger/cancel-opening-obligation";
 import { waiveLateFee, type WaiveLateFeeResult } from "@/lib/dues/ledger/waive-late-fee";
 import {
   listCorrectableLateFees,
   listReversiblePayments,
+  listOpeningObligations,
+  type OpeningObligationRow,
   getLateFeeById,
   getPaymentById,
   previewPaymentReversal,
@@ -146,6 +149,31 @@ export async function reversePaymentAction(
   const result = await reversePayment({ context, paymentId, reasonCategory, reversalReason, expectedCancelledObligationIds: expected });
   if (wroteOrDiscoveredChange(result)) await refreshPaymentsPage();
   return result;
+}
+
+/** Stage 9 O2: cancel an erroneous opening obligation. ADMIN only (the writer re-checks); a required category and text. */
+export async function cancelOpeningObligationAction(
+  organizationId: string,
+  _prevState: CancelOpeningObligationResult | { ok: false; error: "invalid" } | Record<string, never>,
+  formData: FormData,
+): Promise<CancelOpeningObligationResult | { ok: false; error: "invalid" }> {
+  const auth = await resolveActionContext(organizationId, ["ADMIN"]);
+  if (!auth.ok) return { ok: false, error: "notFound" };
+  const obligationId = text(formData, "obligationId");
+  const reasonCategory = text(formData, "reasonCategory");
+  const reason = text(formData, "reason");
+  if (!isNonBlankString(obligationId) || !isOpeningCancellationCategory(reasonCategory) || !isNonBlankString(reason)) return { ok: false, error: "invalid" };
+
+  const result = await cancelOpeningObligation({ context: auth.context, obligationId, reasonCategory, reason });
+  if (result.ok || result.error === "alreadyCancelled") await refreshPaymentsPage();
+  return result;
+}
+
+/** Stage 9 O2: a student's opening obligations for the owner's cancel list. ADMIN only. */
+export async function getOpeningObligations(organizationId: string, studentId: string): Promise<OpeningObligationRow[]> {
+  const auth = await resolveActionContext(organizationId, ["ADMIN"]);
+  if (!auth.ok) return [];
+  return listOpeningObligations(auth.context, studentId);
 }
 
 /** O4: the advisory reversal preview for one payment (cancel / owed-again lists). ADMIN only, like every read here. */

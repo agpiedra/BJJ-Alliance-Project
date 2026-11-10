@@ -261,8 +261,9 @@ export type ResolveMonthlyDebtResult =
   | { ok: true; chosenItems: SettlementLineItem[]; allOpenItems: SettlementItem[] }
   | { ok: false; error: "notFound" | "alreadySettled" | "notOldestFirst" | "feeAlreadyAssessed"; alreadySettledIds?: string[] };
 
-type DebtOrderableRef = { id: string; coverage: { year: number; month: number }; type: "MONTHLY" | "SIGNUP" };
-const debtItemPriority = (r: DebtOrderableRef): number => (r.type === "SIGNUP" ? 0 : 1);
+type DebtOrderableRef = { id: string; coverage: { year: number; month: number }; type: "MONTHLY" | "SIGNUP" | "OPENING" };
+// A no-fee item (SIGNUP, or stage 9 OPENING debt from before S) sorts ahead of a MONTHLY due the same month.
+const debtItemPriority = (r: DebtOrderableRef): number => (r.type === "MONTHLY" ? 1 : 0);
 
 export async function resolveMonthlyDebtItemsInTx(
   tx: Tx,
@@ -271,7 +272,7 @@ export async function resolveMonthlyDebtItemsInTx(
   const { organizationId, studentId, obligationIds, receivedOn } = args;
   const all = await tx.duesObligation.findMany({
     // O4: a cancelled obligation is not debt — naming one is `notFound`, and it never counts toward oldest-first ordering.
-    where: { organizationId, studentId, type: { in: ["MONTHLY", "SIGNUP"] }, cancelledAt: null },
+    where: { organizationId, studentId, type: { in: ["MONTHLY", "SIGNUP", "OPENING"] }, cancelledAt: null },
     include: { lateFees: true, settlements: { where: { reversedAt: null }, select: { id: true } } },
   });
   const byId = new Map(all.map((o) => [o.id, o]));
@@ -286,7 +287,8 @@ export async function resolveMonthlyDebtItemsInTx(
 
   const open = all.filter((o) => o.settlements.length === 0);
   const openMonthly = open.filter((o) => o.type === "MONTHLY");
-  const openSignup = open.filter((o) => o.type === "SIGNUP");
+  // SIGNUP and stage 9 OPENING debt: plain items, never late-fee eligible by shape (D7 for OPENING).
+  const openSignup = open.filter((o) => o.type !== "MONTHLY");
   const asTerms = (o: (typeof openMonthly)[number]): ObligationTerms => {
     if (o.graceDeadline === null) throw new Error(`Monthly obligation ${o.id} has no grace deadline`);
     const removed = o.lateFees[0]?.removedAt != null;
@@ -302,7 +304,7 @@ export async function resolveMonthlyDebtItemsInTx(
   };
   const openTerms = openMonthly.map(asTerms);
   const monthlyRefs: DebtOrderableRef[] = openTerms.map((t) => ({ id: t.id, coverage: t.coverage, type: "MONTHLY" }));
-  const signupRefs: DebtOrderableRef[] = openSignup.map((o) => ({ id: o.id, coverage: { year: o.coverageYear, month: o.coverageMonth }, type: "SIGNUP" }));
+  const signupRefs: DebtOrderableRef[] = openSignup.map((o) => ({ id: o.id, coverage: { year: o.coverageYear, month: o.coverageMonth }, type: o.type as "SIGNUP" | "OPENING" }));
 
   // Oldest first (a same-month SIGNUP ahead of a MONTHLY), and the chosen ids must be exactly the first k outstanding:
   // nothing older — including an old unpaid SIGNUP — may be skipped.
@@ -318,7 +320,7 @@ export async function resolveMonthlyDebtItemsInTx(
   const termsById = new Map(openTerms.map((t) => [t.id, t]));
   const feeOwed = new Map<string, boolean>();
   for (const o of chosen) {
-    if (o.type === "SIGNUP") continue;
+    if (o.type !== "MONTHLY") continue;
     const t = termsById.get(o.id)!;
     const late = lateFeeApplies(receivedOn, t.graceDeadline);
     const feeRow = o.lateFees[0] ?? null;
@@ -334,7 +336,7 @@ export async function resolveMonthlyDebtItemsInTx(
 
   const settlementOrder = chosen.slice().sort((x, y) => firstK.indexOf(x.id) - firstK.indexOf(y.id));
   const chosenItems: SettlementLineItem[] = settlementOrder.map((o) => {
-    if (o.type === "SIGNUP") {
+    if (o.type !== "MONTHLY") {
       return { obligationId: o.id, currency: o.currency, amountMinor: columnToMinor(o.amount), feeEligible: false, expectedOwed: false };
     }
     const t = termsById.get(o.id)!;

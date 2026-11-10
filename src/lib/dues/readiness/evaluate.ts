@@ -334,7 +334,14 @@ export function evaluateReadiness(snapshot: ReadinessSnapshot, candidate: YearMo
       "Students (active, or with an opening item) without a current opening-debt review for S (missing, or stale since a change).",
     ),
     triggerHealthCheck(snapshot.trigger),
-    { id: 11, key: "openingCancellationAvailable", status: "notImplemented", detail: "The approved owner cancellation of erroneous opening obligations (O2) is not implemented.", items: [] },
+    {
+      id: 11,
+      key: "openingCancellationAvailable",
+      status: "pass",
+      detail:
+        "The owner can cancel an erroneous opening obligation (O2, stage 9 PR 9-2): owner only, with a required reason, refused while a payment is applied to it.",
+      items: [],
+    },
     {
       id: 12,
       key: "activationMechanismAvailable",

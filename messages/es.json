@@ -1360,7 +1360,8 @@
         "backdatedDisclaimer": "Este total refleja el saldo de hoy. El monto adeudado, y si este envio tendra exito, puede ser diferente para la fecha ingresada; el resultado del servidor es el definitivo.",
         "type": {
           "MONTHLY": "Mensualidad",
-          "SIGNUP": "Inscripcion"
+          "SIGNUP": "Inscripcion",
+          "OPENING": "Saldo inicial, adeudado desde la activación"
         },
         "retry": "Reintentar"
       },
@@ -1448,7 +1449,8 @@
         "allIncluded": "Cada elemento pendiente a continuacion se incluye automaticamente y debe liquidarse junto con este paquete.",
         "type": {
           "MONTHLY": "Mensualidad",
-          "SIGNUP": "Inscripcion"
+          "SIGNUP": "Inscripcion",
+          "OPENING": "Saldo inicial, adeudado desde la activación"
         },
         "retry": "Reintentar"
       },
@@ -1542,7 +1544,8 @@
         "allIncluded": "Cada elemento pendiente a continuacion se incluye automaticamente y debe liquidarse junto con este pago adelantado.",
         "type": {
           "MONTHLY": "Mensualidad",
-          "SIGNUP": "Inscripcion"
+          "SIGNUP": "Inscripcion",
+          "OPENING": "Saldo inicial, adeudado desde la activación"
         },
         "retry": "Reintentar"
       },
@@ -1609,6 +1612,37 @@
     },
     "financialCorrections": {
       "heading": "Corregir, revertir o condonar",
+      "opening": {
+        "heading": "Saldos iniciales",
+        "explainer": "Cancele un saldo inicial solo si se ingresó por error. Cancelar nunca es un reembolso. Un saldo con un pago aplicado no se puede cancelar: primero revierta ese pago.",
+        "none": "Este estudiante no tiene saldos iniciales.",
+        "monthLabel": "Saldo inicial de {month}",
+        "cancelled": "Cancelado: {reason}",
+        "hasActivePayment": "Hay un pago aplicado a este saldo. Revierta ese pago primero para cancelarlo.",
+        "category": "Motivo",
+        "categoryPlaceholder": "Elija un motivo",
+        "categories": {
+          "ENTERED_IN_ERROR": "Ingresado por error",
+          "DUPLICATE": "Duplicado"
+        },
+        "reason": "Explique (obligatorio)",
+        "cancelButton": "Cancelar este saldo",
+        "confirmCopy": "¿Cancelar el saldo inicial de {month} ({amount})? Dejará de deberse. No se puede deshacer.",
+        "confirm": "Sí, cancelarlo",
+        "back": "Volver",
+        "working": "Cancelando…",
+        "success": "El saldo inicial se canceló.",
+        "loadFailed": "No pudimos cargar los saldos iniciales.",
+        "retry": "Reintentar",
+        "errors": {
+          "invalid": "Elija un motivo y explíquelo. No se cambió nada.",
+          "notFound": "Este saldo inicial no está disponible. No se cambió nada.",
+          "notActive": "El nuevo sistema de pagos no está activo para esta academia. No se cambió nada.",
+          "alreadyCancelled": "Este saldo inicial ya estaba cancelado.",
+          "hasActivePayment": "Hay un pago aplicado a este saldo. Revierta ese pago primero. No se cambió nada.",
+          "unknownOutcome": "No pudimos confirmar el resultado. La lista de abajo muestra el estado actual."
+        }
+      },
       "body": "Anule una multa por mora mal calculada, revierta un pago registrado, o condone una multa impaga — sobre un registro ya existente que seleccione abajo. Nada de esto restaura una multa condonada ni reembolsa un pago revertido. Revertir un pago cancela solo los meses prepagados futuros que ese pago creó; todo lo demás que pagó vuelve a deberse.",
       "loading": "Cargando registros...",
       "loadFailed": "No se pudieron cargar los registros de este estudiante.",

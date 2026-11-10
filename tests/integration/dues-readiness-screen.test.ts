@@ -195,7 +195,7 @@ describe("the read model", () => {
     if (!screen.ok || !report.ok) throw new Error("expected both");
     expect(screen.screen.report).toEqual(report.report);
     expect(screen.screen.report.ready).toBe(false);
-    expect(screen.screen.report.checks.filter((c) => c.status === "notImplemented").map((c) => c.id)).toEqual([11, 12]); // check 10 is computed (G2b): it fails until scheduled
+    expect(screen.screen.report.checks.filter((c) => c.status === "notImplemented").map((c) => c.id)).toEqual([12]); // check 10 is computed (G2b): it fails until scheduled; 11 passes since stage 9 PR 9-2 (O2)
     expect(screen.screen.report.checks.find((c) => c.id === 13)!.status).toBe("pass"); // O4 decided and implemented (2026-11-09)
   });
 

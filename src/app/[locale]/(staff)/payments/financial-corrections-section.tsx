@@ -17,6 +17,7 @@ import {
 import type { CorrectableLateFeeRow, ReversalPreview, ReversalPreviewLine, ReversiblePaymentRow } from "@/lib/dues/financial-corrections-queries";
 import { REVERSAL_REASON_CATEGORIES, type ReversalReasonCategory } from "@/lib/dues/reversal-classification";
 import { CURRENCIES } from "@/lib/payments/format-money";
+import { OpeningCancellationList } from "./opening-cancellation-list";
 import type { Currency, PaymentMethod } from "@/generated/prisma/client";
 
 /**
@@ -448,6 +449,9 @@ export function FinancialCorrectionsSection({ organizationId, students }: { orga
               </div>
             )}
           </div>
+
+          {/* Stage 9 O2: cancelling an opening balance entered in error (its own list and recovery; keyed by student). */}
+          <OpeningCancellationList key={selectedStudentId} organizationId={organizationId} studentId={selectedStudentId} />
         </>
       )}
     </div>

@@ -52,7 +52,7 @@ export type DuesEligibilityFact =
 
 export type DuesOutstandingFact = {
   obligationId: string;
-  type: "MONTHLY" | "SIGNUP" | "PACKAGE";
+  type: "MONTHLY" | "SIGNUP" | "PACKAGE" | "OPENING";
   currency: Currency;
   coverageYear: number;
   coverageMonth: number;

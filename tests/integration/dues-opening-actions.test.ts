@@ -861,7 +861,7 @@ describe("no financial effect, and the report end to end", () => {
     asOwner();
     await actions.createOpeningDraft(a.org.id, PRISTINE, draftForm(studentId, { coverageYear: "2025", coverageMonth: "12", legacyPaymentPeriodId: paid.id }));
     const { report } = await reportState(studentId);
-    expect(report.checks.filter((c) => c.status === "notImplemented").map((c) => c.id)).toEqual([11, 12]); // check 10 is computed (G2b): it fails until scheduled
+    expect(report.checks.filter((c) => c.status === "notImplemented").map((c) => c.id)).toEqual([12]); // check 10 is computed (G2b): it fails until scheduled; 11 passes since stage 9 PR 9-2 (O2)
     expect(report.checks.find((c) => c.id === 13)!.status).toBe("pass"); // O4 decided and implemented (2026-11-09)
     expect(report.ready).toBe(false);
     const d = await latestDraft(studentId);

@@ -14,7 +14,7 @@ import type { LedgerDeps } from "@/lib/dues/ledger/activation";
  * rows excluded (nothing left to pay). Not "use server": a plain module, exactly like `dues-facts.ts` itself.
  */
 
-export type PayableObligation = DuesOutstandingFact & { type: "MONTHLY" | "SIGNUP"; settled: false };
+export type PayableObligation = DuesOutstandingFact & { type: "MONTHLY" | "SIGNUP" | "OPENING"; settled: false };
 
 export type PaymentEntryOutstandingResult =
   | { ok: true; obligations: PayableObligation[] }
@@ -23,8 +23,8 @@ export type PaymentEntryOutstandingResult =
 /** `debtItemPriority`'s own documented duplicate (brief §1 — `record-payment.ts:263`'s exact one-line rule: a
  * same-month SIGNUP sorts ahead of a MONTHLY). Kept in sync by the brief's own cross-check test, not by import —
  * `resolveMonthlyDebtItemsInTx`'s copy is module-private and not exported. */
-function localDebtItemPriority(o: { type: "MONTHLY" | "SIGNUP" }): number {
-  return o.type === "SIGNUP" ? 0 : 1;
+function localDebtItemPriority(o: { type: "MONTHLY" | "SIGNUP" | "OPENING" }): number {
+  return o.type === "MONTHLY" ? 1 : 0;
 }
 
 /**

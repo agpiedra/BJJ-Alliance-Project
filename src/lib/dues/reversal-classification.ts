@@ -42,7 +42,20 @@ export function isReversalReasonCategory(value: unknown): value is ReversalReaso
 }
 
 export function storedReversalReason(category: ReversalReasonCategory, text: string): string {
+  return storedCategorizedReason(category, text);
+}
+
+/** The one stored format for a categorized correction reason (O4 reversal, O2 opening cancellation): `[CATEGORY] text`. */
+export function storedCategorizedReason(category: string, text: string): string {
   return `[${category}] ${text.trim()}`;
+}
+
+/** O2 (approved A3–A4, 2026-11-10): why the owner cancels an opening obligation. Required, with a required free text. */
+export const OPENING_CANCELLATION_CATEGORIES = ["ENTERED_IN_ERROR", "DUPLICATE"] as const;
+export type OpeningCancellationCategory = (typeof OPENING_CANCELLATION_CATEGORIES)[number];
+
+export function isOpeningCancellationCategory(value: unknown): value is OpeningCancellationCategory {
+  return typeof value === "string" && (OPENING_CANCELLATION_CATEGORIES as readonly string[]).includes(value);
 }
 
 /** Order-insensitive equality of two id sets (the owner-confirmed cancel set versus the one recomputed under the locks). */
