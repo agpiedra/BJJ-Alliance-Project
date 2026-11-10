@@ -84,14 +84,18 @@ describe("GET /api/health/jobs", () => {
     expect(Object.keys(body.jobs)).toEqual(["weekly-digest", "monthly-generation"]);
   });
 
-  it("REQUIRED (G2b): the registered but UNSCHEDULED monthly-generation job is reported, never stale, and cannot turn health red by itself", async () => {
+  it("REQUIRED (D5): the SCHEDULED monthly-generation job that has never run is stale and turns health red; a run within 4 h is healthy", async () => {
     vi.stubEnv("CRON_SECRET", "test-cron-secret");
-    // A fresh digest run, so the digest alone is healthy; monthly-generation has never run and has no schedule.
+    // A fresh digest run, so the digest alone is healthy; monthly-generation is scheduled (`0 */3 * * *`) and has never run.
     await createRun({ jobName: "weekly-digest", startedAt: new Date() });
-    const body = await (await GET(request("test-cron-secret"))).json();
-    expect(body.jobs["monthly-generation"]).toEqual({ lastRun: null, scheduled: false, stale: false, stuck: false });
-    expect(body.jobs["weekly-digest"].scheduled).toBe(true);
-    expect(body.ok).toBe(true);
+    const never = await (await GET(request("test-cron-secret"))).json();
+    expect(never.jobs["monthly-generation"]).toEqual({ lastRun: null, scheduled: true, stale: true, stuck: false });
+    expect(never.jobs["weekly-digest"].scheduled).toBe(true);
+    expect(never.ok).toBe(false);
+    await createRun({ jobName: "monthly-generation", startedAt: new Date(Date.now() - 3 * 3_600_000) });
+    const fresh = await (await GET(request("test-cron-secret"))).json();
+    expect(fresh.jobs["monthly-generation"]).toMatchObject({ scheduled: true, stale: false, stuck: false });
+    expect(fresh.ok).toBe(true);
   });
 
   it("REQUIRED (G2b): a stuck monthly-generation run still turns health red, scheduled or not", async () => {

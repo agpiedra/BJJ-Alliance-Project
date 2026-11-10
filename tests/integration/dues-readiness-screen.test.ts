@@ -403,11 +403,12 @@ describe("G2b: check 10 (trigger health) renders its reasons from the real scree
     intl.locale = locale;
     const result = await getReadinessScreenForOwner(a.org.id, S);
     if (!result.ok) throw new Error("expected a screen");
-    expect(result.screen.report.checks.find((c) => c.id === 10)).toMatchObject({ status: "fail", items: ["trigger:notScheduled", "trigger:neverRan"] });
+    // D5: the job is now scheduled, so check 10 fails only because it has never run here.
+    expect(result.screen.report.checks.find((c) => c.id === 10)).toMatchObject({ status: "fail", items: ["trigger:neverRan"] });
     const { StatusAndChecks } = await import("../../src/app/[locale]/(staff)/payments/readiness/readiness-view");
     const html = renderToStaticMarkup(await StatusAndChecks({ screen: result.screen, candidate: S, locale }));
     expect(html).toContain(failText);
-    expect(html).toContain(notScheduled);
+    expect(html).not.toContain(notScheduled);
     expect(html).toContain(neverRan);
     expect(html).not.toContain(unknown);
   });
