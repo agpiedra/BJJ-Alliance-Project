@@ -147,7 +147,9 @@ export async function reversePayment(
       // Defensive: nothing can reverse a settlement independently of its payment, or cancel an obligation that still has this
       // payment's active settlement — checked explicitly rather than assumed impossible.
       if (settlements.some((s) => s.reversedAt !== null || s.obligation.cancelledAt !== null)) return refuse("inconsistentState");
-      if (settlements.some((s) => s.obligation.type !== "MONTHLY")) return refuse("unsupportedObligationType");
+      // Stage 9 PR 9-2: a payment that settled OPENING debt is reversible too (it becomes owed again, R3) — A3 needs it: an
+      // opening obligation can be cancelled only once no payment is applied.
+      if (settlements.some((s) => s.obligation.type !== "MONTHLY" && s.obligation.type !== "OPENING")) return refuse("unsupportedObligationType");
       if (settlements.some((s) => s.obligation.lateFees.some((f) => f.removalKind === "VOIDED"))) return refuse("voidedFeeBlocksReversal");
 
       const cancelled: string[] = [];

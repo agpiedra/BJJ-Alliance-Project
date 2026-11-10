@@ -135,6 +135,46 @@ export interface ReversiblePaymentRow {
   };
 }
 
+/** Stage 9 O2: one of a student's opening obligations (debt from before the start month), as the owner's cancel list shows it. */
+export interface OpeningObligationRow {
+  id: string;
+  coverageYear: number;
+  coverageMonth: number;
+  amount: string;
+  currency: string;
+  /** Set once the owner cancelled it (O2); `cancellationReason` is the stored `[CATEGORY] text`. */
+  cancelledAt: string | null;
+  cancellationReason: string | null;
+  /** A payment is currently applied: cancellation refuses until that payment is reversed (A3). Advisory; the writer re-checks. */
+  hasActivePayment: boolean;
+}
+
+/** Stage 9 O2: a student's opening obligations, cancelled ones included (shown as such), oldest first. At most one per
+ * month before S, so unpaginated. Tenant/branch-scoped like the lists above. */
+export async function listOpeningObligations(context: TenantContext, studentId: string): Promise<OpeningObligationRow[]> {
+  if (!isNonBlankString(studentId)) return [];
+  const student = await prisma.student.findFirst({ where: { id: studentId, organizationId: context.organizationId }, select: { id: true, homeAcademyId: true } });
+  if (!student || !inTenantScope(context, student.homeAcademyId)) return [];
+  const rows = await prisma.duesObligation.findMany({
+    where: { organizationId: context.organizationId, studentId: student.id, type: "OPENING" },
+    orderBy: [{ coverageYear: "asc" }, { coverageMonth: "asc" }, { createdAt: "asc" }],
+    select: {
+      id: true, coverageYear: true, coverageMonth: true, amount: true, currency: true, cancelledAt: true, cancellationReason: true,
+      settlements: { where: { reversedAt: null }, select: { id: true } },
+    },
+  });
+  return rows.map((o) => ({
+    id: o.id,
+    coverageYear: o.coverageYear,
+    coverageMonth: o.coverageMonth,
+    amount: o.amount.toFixed(2),
+    currency: o.currency,
+    cancelledAt: o.cancelledAt ? o.cancelledAt.toISOString() : null,
+    cancellationReason: o.cancellationReason,
+    hasActivePayment: o.settlements.length > 0,
+  }));
+}
+
 /** Brief §2.2: a student's own recent, not-yet-reversed `DuesPayment` rows — the reversal candidate list. Bounded,
  * tenant/branch-scoped, each row carrying its settled obligations' own restriction shape for the advisory
  * visible-but-disabled treatment (brief §3 decision 4) — never pre-filtered/hidden. Cursor-paginated (correction
@@ -188,7 +228,7 @@ export async function listReversiblePayments(
       tenderAmount: p.tenderAmount.toFixed(2),
       method: p.method,
       restrictions: {
-        hasUnsupportedObligationType: obligations.some((o) => o.type !== "MONTHLY"),
+        hasUnsupportedObligationType: obligations.some((o) => o.type !== "MONTHLY" && o.type !== "OPENING"),
         hasVoidedFee: obligations.some((o) => o.lateFees.some((f) => f.removalKind === "VOIDED")),
         branchMoved: p.academyId !== student.homeAcademyId,
       },

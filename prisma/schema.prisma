@@ -1514,6 +1514,10 @@ enum DuesObligationType {
   MONTHLY
   PACKAGE
   SIGNUP
+  /// Stage 9 (PR 9-2): reviewed debt from before the start month S, created by the activation switch (PR 9-3) from the owner's
+  /// opening items. No terms, no due or grace date, no policy, never a late fee (D7), never coverage. Cancellable by the owner
+  /// (O2) only while no payment is applied.
+  OPENING
 }
 
 enum DuesObligationOrigin {
@@ -1549,15 +1553,17 @@ model DuesObligation {
   lateFeeAmount   Decimal?             @db.Decimal(10, 2)
   dueOn           DateTime?            @db.Date
   graceDeadline   DateTime?            @db.Date
-  /// The terms version it was priced from (provenance; the amount is snapshotted above).
-  planTermsId     String
+  /// The terms version it was priced from (provenance; the amount is snapshotted above). Null exactly for OPENING (CHECK): opening
+  /// debt is the unpaid part of a legacy month, not priced from ledger terms.
+  planTermsId     String?
   /// MONTHLY only: the policy version its dates and fee came from.
   policyVersionId String?
   /// Null = created by the system job.
   createdById     String?
   createdAt       DateTime             @default(now())
-  /// O4 cancellation marker (migration 20261110120000), set once, all four together, never removed. Today only a prepaid
-  /// (`origin: PREPAYMENT`) future month whose creating payment was reversed may carry it (CHECK). A cancelled obligation is
+  /// Cancellation marker (O4 migration 20261110120000, widened for O2 in 20261112120100), set once, never removed. Two shapes
+  /// (CHECK): a prepaid (`origin: PREPAYMENT`) future MONTHLY whose creating payment was reversed (the reversal is named), or an
+  /// OPENING obligation cancelled by the owner as erroneous (no payment named; refused while a payment is applied). A cancelled obligation is
   /// not owed, cannot be settled or charged a fee (triggers), and its coverage row is released in the same transaction
   /// (deferred consistency triggers). Every reader of "owed" or "covered" must filter `cancelledAt: null`.
   cancelledAt                    DateTime?
@@ -1568,7 +1574,7 @@ model DuesObligation {
 
   student       Student           @relation(fields: [organizationId, studentId], references: [organizationId, id])
   academy       Academy           @relation(fields: [organizationId, academyId], references: [organizationId, id])
-  planTerms     PaymentPlanTerms  @relation(fields: [organizationId, planTermsId], references: [organizationId, id])
+  planTerms     PaymentPlanTerms? @relation(fields: [organizationId, planTermsId], references: [organizationId, id])
   policyVersion DuesPolicyVersion? @relation(fields: [organizationId, policyVersionId], references: [organizationId, id], onDelete: Restrict)
   createdBy     User?             @relation("DuesObligationCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   cancelledBy   User?             @relation("DuesObligationCancelledBy", fields: [cancelledById], references: [id], onDelete: Restrict)

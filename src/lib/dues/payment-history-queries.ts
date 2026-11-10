@@ -48,7 +48,7 @@ export interface PaymentHistorySettlementRow {
   id: string;
   reversedAt: string | null;
   obligationId: string;
-  obligationType: "MONTHLY" | "SIGNUP" | "PACKAGE";
+  obligationType: "MONTHLY" | "SIGNUP" | "PACKAGE" | "OPENING";
   coverageYear: number;
   coverageMonth: number;
   currency: Currency;
@@ -230,7 +230,7 @@ export type PortalPaymentHistoryRow = {
     id: string;
     reversedAt: string | null;
     obligationId: string;
-    obligationType: "MONTHLY" | "SIGNUP" | "PACKAGE";
+    obligationType: "MONTHLY" | "SIGNUP" | "PACKAGE" | "OPENING";
     coverageYear: number;
     coverageMonth: number;
     currency: Currency;

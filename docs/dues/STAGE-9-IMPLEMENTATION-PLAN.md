@@ -1,7 +1,7 @@
 # Stage 9 — smallest implementation plan (draft, 2026-11-10)
 
-**Status (2026-11-10): A1–A8 approved. PR 9-1 (activation record + organization gate) implemented as a draft PR; 9-2 and 9-3
-not started. Nothing migrated on a hosted database, deployed or activated.** Builds on the Stage 8 brief
+**Status (2026-11-10): A1–A8 approved. PR 9-1 (activation record + organization gate) merged as f4a5cbd. PR 9-2 (OPENING
+obligations + O2) implemented as a draft PR. 9-3 not started. Nothing migrated on a hosted database, deployed or activated.** Builds on the Stage 8 brief
 (`STAGE-8-READINESS-BRIEF.md` §5, §7, §8, §12–§14), O4 (`O4-PREPAYMENT-REVERSAL-PLAN.md`, migration
 `20261110120000`) and the alerting plan (`MONTHLY-GENERATION-ALERTING-PLAN.md` §6, condition C).
 
@@ -356,7 +356,8 @@ and triggers.
 - **Migration (one explicit `BEGIN … COMMIT`, as O4):**
   - `DuesObligationType` gains `OPENING`; `planTermsId` nullable for it only; checks so `OPENING` has no due/grace/policy
     and no fee (D7) and **no `DuesCoverage` rows** (months before S are not ledger-covered).
-  - `DuesOpeningItem.materializedObligationId` (deferred in 8b), set once at activation.
+  - `DuesOpeningItem.materializedObligationId` (deferred in 8b), set once at activation. **Moved to PR 9-3** (as built): only the
+    switch writes it, so it ships with the switch rather than as an unused column.
   - **O2 reuses O4's marker columns** (`cancelledAt`, `cancelledById`, `cancellationReason`). Widen
     `DuesObligation_cancellation_marker_complete`: `MONTHLY + PREPAYMENT` ⇒ `cancelledByReversalOfPaymentId` required
     (unchanged); `OPENING` ⇒ it must be NULL.

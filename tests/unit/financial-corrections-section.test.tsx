@@ -24,8 +24,12 @@ const getReversiblePayments = vi.fn();
 const getLateFeeStatus = vi.fn();
 const getPaymentStatus = vi.fn();
 const getReversalPreview = vi.fn();
+// Stage 9 O2: the section also renders the opening-balance list; empty here (its own behavior is tested separately).
+const getOpeningObligations = vi.fn(async () => []);
+const cancelOpeningObligationAction = vi.fn();
 vi.mock("../../src/lib/dues/financial-corrections-actions", () => ({
   correctLateFee, reversePaymentAction, waiveFee, getCorrectableLateFees, getReversiblePayments, getLateFeeStatus, getPaymentStatus, getReversalPreview,
+  getOpeningObligations, cancelOpeningObligationAction,
 }));
 
 const { FinancialCorrectionsSection, LateFeeRow, PaymentRow } = await import("../../src/app/[locale]/(staff)/payments/financial-corrections-section");

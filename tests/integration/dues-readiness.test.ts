@@ -299,7 +299,7 @@ describe("getDuesReadinessForOwner: authorization and isolation", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.report.ready).toBe(false);
-    expect(result.report.checks.filter((c) => c.status === "notImplemented").map((c) => c.id)).toEqual([11, 12]); // check 10 is computed (G2b): it fails until scheduled
+    expect(result.report.checks.filter((c) => c.status === "notImplemented").map((c) => c.id)).toEqual([12]); // check 10 is computed (G2b): it fails until scheduled; 11 passes since stage 9 PR 9-2 (O2)
     expect(result.report.checks.find((c) => c.id === 13)!.status).toBe("pass"); // O4 decided and implemented (2026-11-09)
   });
 
@@ -533,7 +533,7 @@ describe("stage 8b: opening-debt drafts in the snapshot and the fingerprints (fo
     const after = evaluateReadiness(snapshot, S);
     expect(after.preview).toEqual(reportBeforeDrafts.preview);
     expect(after.checks).toEqual(reportBeforeDrafts.checks);
-    expect(after.checks.filter((c) => c.status === "notImplemented").map((c) => c.id)).toEqual([11, 12]); // check 10 is computed (G2b): it fails until scheduled
+    expect(after.checks.filter((c) => c.status === "notImplemented").map((c) => c.id)).toEqual([12]); // check 10 is computed (G2b): it fails until scheduled; 11 passes since stage 9 PR 9-2 (O2)
     expect(after.checks.find((c) => c.id === 13)!.status).toBe("pass"); // O4 decided and implemented (2026-11-09)
     expect(after.ready).toBe(false);
     actAs(a.admin.id, a.org.id);

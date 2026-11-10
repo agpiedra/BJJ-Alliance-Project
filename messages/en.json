@@ -1360,7 +1360,8 @@
         "backdatedDisclaimer": "This total reflects today's balance. The amount due, and whether this submission succeeds at all, may differ for the date you've entered; the server's own result is final.",
         "type": {
           "MONTHLY": "Monthly",
-          "SIGNUP": "Signup"
+          "SIGNUP": "Signup",
+          "OPENING": "Opening balance, owed since activation"
         },
         "retry": "Retry"
       },
@@ -1448,7 +1449,8 @@
         "allIncluded": "Every outstanding item below is included automatically and must be settled together with this package.",
         "type": {
           "MONTHLY": "Monthly",
-          "SIGNUP": "Signup"
+          "SIGNUP": "Signup",
+          "OPENING": "Opening balance, owed since activation"
         },
         "retry": "Retry"
       },
@@ -1542,7 +1544,8 @@
         "allIncluded": "Every outstanding item below is included automatically and must be settled together with this prepayment.",
         "type": {
           "MONTHLY": "Monthly",
-          "SIGNUP": "Signup"
+          "SIGNUP": "Signup",
+          "OPENING": "Opening balance, owed since activation"
         },
         "retry": "Retry"
       },
@@ -1609,6 +1612,37 @@
     },
     "financialCorrections": {
       "heading": "Correct, reverse, or waive",
+      "opening": {
+        "heading": "Opening balances",
+        "explainer": "Cancel an opening balance only if it was entered in error. Cancelling is never a refund. A balance with a payment applied cannot be cancelled: reverse that payment first.",
+        "none": "This student has no opening balances.",
+        "monthLabel": "Opening balance for {month}",
+        "cancelled": "Cancelled: {reason}",
+        "hasActivePayment": "A payment is applied to this balance. Reverse that payment first to cancel it.",
+        "category": "Why",
+        "categoryPlaceholder": "Choose a reason",
+        "categories": {
+          "ENTERED_IN_ERROR": "Entered in error",
+          "DUPLICATE": "Duplicate"
+        },
+        "reason": "Explain (required)",
+        "cancelButton": "Cancel this balance",
+        "confirmCopy": "Cancel the opening balance for {month} ({amount})? It will no longer be owed. This cannot be undone.",
+        "confirm": "Yes, cancel it",
+        "back": "Back",
+        "working": "Cancelling…",
+        "success": "The opening balance was cancelled.",
+        "loadFailed": "We could not load the opening balances.",
+        "retry": "Retry",
+        "errors": {
+          "invalid": "Choose a reason and explain it. Nothing was changed.",
+          "notFound": "This opening balance is not available. Nothing was changed.",
+          "notActive": "The new payment system is not active for this academy. Nothing was changed.",
+          "alreadyCancelled": "This opening balance was already cancelled.",
+          "hasActivePayment": "A payment is applied to this balance. Reverse that payment first. Nothing was changed.",
+          "unknownOutcome": "We could not confirm the result. The list below shows the current state."
+        }
+      },
       "body": "Void a wrongly-assessed late fee, reverse a recorded payment, or forgive an unpaid fee — against an already-recorded record you select below. None of this restores a waived fee or refunds a reversed payment. Reversing a payment cancels only the future prepaid months it alone created; everything else it paid becomes owed again.",
       "loading": "Loading records...",
       "loadFailed": "Couldn't load this student's records.",

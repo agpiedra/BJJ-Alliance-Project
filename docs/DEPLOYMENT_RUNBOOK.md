@@ -536,6 +536,25 @@ WHERE o."cancelledAt" IS NOT NULL ORDER BY o."cancelledAt";
   nothing (table, row, migration record and schema dump identical); on an empty table the schema dump equals one migrated only
   up to O4 (ignoring pg_dump's per-run `\restrict` token), the migration record is gone, and `migrate deploy` re-applies 9-1.
 
+## Stage 9 PR 9-2: opening obligations and O2 (migrations `20261112120000`, `20261112120100`)
+
+- **Migrate first, then deploy.** `20261112120000` adds the enum value `OPENING` (its own one-statement migration: PostgreSQL
+  refuses to use a new enum value in the transaction that adds it). `20261112120100` is one explicit `BEGIN … COMMIT`: the
+  OPENING shape, the coverage refusal, and O4's cancellation rules widened for O2. Existing rows are unaffected (they all
+  already satisfy the new constraints, re-validated by the migration).
+- **Old code on the new schema is safe while no OPENING row exists** — and none can exist before PR 9-3's activation switch.
+- **Nothing in the application creates OPENING rows in PR 9-2.** Payment entry, reversal and O2 cancellation can handle them;
+  the switch (PR 9-3) creates them from the owner's reviewed opening items.
+- **Rollback order (owner approval only):** previous code first; then `docs/dues/stage9-2-schema-rollback.sql`, the only edit
+  of 9-2's migration history. It **refuses once any OPENING obligation exists**. The enum value stays (PostgreSQL cannot drop
+  one without rebuilding the type; unused, it is inert), and so does its migration record. If 9-1 or O4 must also be rolled
+  back, the order is 9-2, then 9-1, then O4.
+- **Rehearsed locally (2026-11-10, disposable PostgreSQL container):** with one OPENING row present the script refused and
+  left the schema and the migration record unchanged; with none it removed only the `20261112120100` record, and a following
+  `migrate deploy` re-applied it. The rolled-back schema is **not** the pre-9-2 schema: it matched a schema-only dump taken
+  after `20261112120000` alone, so it differs from pre-9-2 by exactly one retained item — the value `OPENING` in enum
+  `"DuesObligationType"` (unused, inert; its migration record stays).
+
 ## What breaks in production but never in dev
 
 Ranked by how likely each one is to actually bite in Alliance's first weeks, not by how
