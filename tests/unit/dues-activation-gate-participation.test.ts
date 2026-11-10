@@ -12,12 +12,14 @@ import { productionSourceFiles, stripComments } from "../helpers/source-files";
  */
 const REVIEWED_MODELS = [
   "paymentPeriod", "studentStatusChange", "student", "studentPlanAssignment", "paymentPlanTerms", "duesPolicyVersion", "paymentPlan",
-  "academy", "organization", "duesOpeningItem", "duesReadinessConfirmation", "duesActivation",
+  "academy", "organization", "duesOpeningItem", "duesReadinessConfirmation", "duesActivation", "duesObligation", "duesCoverage",
 ];
 const REVIEWED_TABLES = [
   "PaymentPeriod", "StudentStatusChange", "Student", "StudentPlanAssignment", "PaymentPlanTerms", "DuesPolicyVersion", "PaymentPlan",
-  "Academy", "Organization", "DuesOpeningItem", "DuesReadinessConfirmation", "DuesActivation",
+  "Academy", "Organization", "DuesOpeningItem", "DuesReadinessConfirmation", "DuesActivation", "DuesObligation", "DuesCoverage",
 ];
+// Readiness also reads JobRun (check 10, the platform job's latest run): it has no organization column, so no organization lock
+// can apply to it; it is the platform scheduler's own bookkeeping, not organization data.
 const PRISMA_WRITE = new RegExp(`\\.(${REVIEWED_MODELS.join("|")})\\.(create|createMany|update|updateMany|upsert|delete|deleteMany)\\(`);
 const RAW_WRITE = new RegExp(`(INSERT INTO|UPDATE|DELETE FROM)\\s+"(${REVIEWED_TABLES.join("|")})"`);
 const GATE = /\blockOrganizationGate(WithTimeout)?\(/;
@@ -70,7 +72,9 @@ describe("stage 9 organization gate participation (rule 9)", () => {
   it("every application write to a reviewed table is classified", () => {
     const writers = files.filter((f) => PRISMA_WRITE.test(f.code) || RAW_WRITE.test(f.code)).map((f) => f.path).sort();
     const known = new Set([...PARTICIPANTS, ...COMPOSED, ...Object.keys(NOT_REVIEWED)]);
-    expect(writers.filter((w) => !known.has(w)), "new writer of a reviewed table: take the gate (rule 9) and list it here").toEqual([]);
+    // Ledger files are checked by the transaction rule below: their outermost transactions take the gate first, and their InTx
+    // writers run inside a participant's or a ledger transaction.
+    expect(writers.filter((w) => !known.has(w) && !LEDGER_TX_FILES.test(w)), "new writer of a reviewed table: take the gate (rule 9) and list it here").toEqual([]);
     expect([...known].filter((k) => !writers.includes(k)), "listed file no longer writes a reviewed table: remove it").toEqual([]);
   });
 

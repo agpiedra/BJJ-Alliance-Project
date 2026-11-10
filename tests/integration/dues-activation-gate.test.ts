@@ -207,17 +207,40 @@ describe("PostgreSQL lock modes on the gate (rule 1)", () => {
     expect(await sharer).toEqual({ active: false, activeSince: null });
   });
 
-  it("the switch's lock does not hold up an unrelated insert that references the organization (foreign-key FOR KEY SHARE)", async () => {
+  it("the switch's lock does not hold up an unrelated insert that only references the organization (foreign-key FOR KEY SHARE)", async () => {
+    // An AuditLog row (AuditLog → Organization foreign key): a table no readiness, opening or activation read uses. Every
+    // application write to a table those reads use takes the gate FOR SHARE first instead (rule 9), so it waits like any writer.
+    // `async` so the query starts at once: a Prisma query is lazy and only runs when awaited or then'd.
+    const auditInsert = async () =>
+      prisma.auditLog.create({ data: { organizationId: fx.org.id, actorId: fx.admin.id, action: "gate91.fkProbe", entityType: "Test", entityId: suffix } });
     const h = await hold();
-    const studentId = await newStudent(); // Student → Organization foreign key: completes while the switch lock is held
-    expect(studentId).toBeTruthy();
+    await auditInsert(); // completes while the switch lock is held
     await h.rollback();
-    // Contrast: plain FOR UPDATE would have blocked that insert.
+    // Contrast: plain FOR UPDATE would have blocked that same insert.
     const strict = await hold("FOR UPDATE");
-    const blockedInsert = newStudent();
+    const blockedInsert = auditInsert();
     await waitUntilBlockedBy(strict.pid);
     await strict.rollback();
     await blockedInsert;
+  });
+
+  it("the switch waits for a writer already inside its transaction, then reads what that writer committed", async () => {
+    const studentId = await newStudent();
+    // A participant mid-transaction: it holds the gate FOR SHARE and has written a legacy payment row, not yet committed.
+    const writer = await hold("FOR SHARE");
+    await writer.client.query(
+      `INSERT INTO "PaymentPeriod" ("id","studentId","academyId","organizationId","year","month","planId","status","amount","currency","recordedById")
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 'PAID', 25000, 'CRC', $8)`,
+      [`gate91-pp-${suffix}`, studentId, fx.academy.id, fx.org.id, today.year, today.month, plan.id, fx.admin.id],
+    );
+    // The switch's shape: exclusive gate first, then a separate READ COMMITTED read (here, what readiness check 5 reads).
+    const switched = appPrisma.$transaction(async (tx) => {
+      await gate.lockOrganizationGate(tx, fx.org.id, "update");
+      return tx.paymentPeriod.count({ where: { organizationId: fx.org.id, studentId } });
+    });
+    expect((await waitUntilBlockedBy(writer.pid)).some((q) => /FOR NO KEY UPDATE/.test(q))).toBe(true);
+    await writer.commit();
+    expect(await switched).toBe(1); // the switch sees the row committed while it waited
   });
 
   it("a writer that waited on the gate sees the activation the switch committed during its wait", async () => {
