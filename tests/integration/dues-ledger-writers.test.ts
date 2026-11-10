@@ -5,7 +5,7 @@ import { makeAccountingOrg } from "../helpers/accounting-org";
 import type { TenantContext } from "../../src/lib/tenant/types";
 import {
   createMonthlyObligation,
-  inactiveLedgerActivation,
+  ledgerActivation,
   recordDuesPayment,
   type LedgerActivation,
 } from "../../src/lib/dues/ledger";
@@ -210,8 +210,8 @@ describe("the gate: closed by default, injected open only in tests", () => {
   });
 
   it("the production activation reports every organization inactive", async () => {
-    expect(await inactiveLedgerActivation.isActive(a.org.id)).toBe(false);
-    expect(await inactiveLedgerActivation.isActive("any-organization")).toBe(false);
+    expect(await ledgerActivation.isActive(a.org.id)).toBe(false);
+    expect(await ledgerActivation.isActive("any-organization")).toBe(false);
   });
 
   it("an activation that says inactive for this organization refuses too", async () => {

@@ -9,7 +9,7 @@ import { hashSecret } from "../../src/lib/crypto";
  * precedent): the real `"use server"` actions, called exactly as a real caller would — no `deps` parameter exists
  * on any of the three public signatures to override, so this proves authorization is genuinely checked by
  * `resolveActionContext(organizationId, ["ADMIN"])` and that activation is the real, unmodified, hardcoded-false
- * `inactiveLedgerActivation` default.
+ * `ledgerActivation` default.
  *
  * UNLIKE the ordinary card's own `recordPayment`/`getPayableObligations` (which admit DIRECTOR too): this writer is
  * hard-coded ADMIN-only in the engine itself (`purchase-submission-identity.ts:159`), and this action's own

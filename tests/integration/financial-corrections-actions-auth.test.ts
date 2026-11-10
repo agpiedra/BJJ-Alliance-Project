@@ -9,7 +9,7 @@ import { hashSecret } from "../../src/lib/crypto";
  * precedent): the real `"use server"` actions, called exactly as a real caller would — no `deps` parameter exists on
  * any public signature to override, so this proves authorization is genuinely enforced by
  * `resolveActionContext(organizationId, ["ADMIN"])` and that activation is the real, unmodified,
- * hardcoded-false `inactiveLedgerActivation` default. All three writers are hard-coded ADMIN-only in the engine
+ * hardcoded-false `ledgerActivation` default. All three writers are hard-coded ADMIN-only in the engine
  * itself — a genuine DIRECTOR is rejected with a thrown FORBIDDEN, never admitted through to a `notActive` result.
  */
 const prisma = getTestPrismaClient();

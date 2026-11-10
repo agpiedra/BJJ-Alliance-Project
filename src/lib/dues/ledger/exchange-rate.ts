@@ -3,7 +3,8 @@ import { prisma } from "@/lib/prisma";
 import type { TenantContext } from "@/lib/tenant/types";
 import type { CalendarDate } from "@/lib/dues/calendar";
 import { isRealDate, toDbDate, fromDbDate, type Tx } from "@/lib/dues/ledger/common";
-import { inactiveLedgerActivation, type LedgerDeps } from "@/lib/dues/ledger/activation";
+import { ledgerActivation, type LedgerDeps } from "@/lib/dues/ledger/activation";
+import { lockOrganizationGate } from "@/lib/dues/activation-gate";
 
 export { convertUsdToCrcMinor, convertCrcToUsdMinor, detectAmbiguousRoundedTotals } from "@/lib/dues/ledger/exchange-rate-arithmetic";
 export type { SelectableTotal } from "@/lib/dues/ledger/exchange-rate-arithmetic";
@@ -46,7 +47,7 @@ export const EXCHANGE_RATE_LOCK_NAMESPACE = 1;
  * Currency-conversion brief, PR 2 correction: a genuine reader/writer split on this same reserved key, after PR 2's first
  * cut (a single, always-EXCLUSIVE lock on this key) turned out to serialize every settlement for an organization against
  * every other settlement, not just against a genuine rate correction — a real scalability regression discovered by
- * re-reading a test's own comment rather than reasoning through what "acquired unconditionally, before any row lock" a
+ * re-reading a test's own comment rather than reasoning through what "acquired unconditionally, before any row lock except the organization gate" a
  * shared/inner mode of a lock actually does under concurrent settlements. Postgres's advisory locks support this split
  * NATIVELY, on the identical `(key1, key2)` pair: `pg_advisory_xact_lock_shared` (many holders, none of which conflict
  * with each other) versus `pg_advisory_xact_lock` (one holder, conflicts with every shared AND every exclusive holder).
@@ -149,7 +150,7 @@ export async function enterExchangeRateQuote(
 ): Promise<EnterExchangeRateQuoteResult> {
   const { context, quoteDate, value, expectedCurrentRevision, sourceNote } = args;
   const organizationId = context.organizationId;
-  const activation = deps.activation ?? inactiveLedgerActivation;
+  const activation = deps.activation ?? ledgerActivation;
   if (!(await activation.isActive(organizationId))) return refuse("notActive");
   // Owner-only, checked here rather than trusted from whatever eventually calls this — the same discipline every
   // owner-only writer in this ledger already applies to its own role check.
@@ -166,7 +167,8 @@ export async function enterExchangeRateQuote(
   const trimmedNote = sourceNote && sourceNote.trim() !== "" ? sourceNote.trim() : null;
 
   return await prisma.$transaction(async (tx): Promise<EnterExchangeRateQuoteResult> => {
-    // The literal first statement, EXCLUSIVE — see lockExchangeRateNamespaceShared's own doc comment for the full
+    await lockOrganizationGate(tx, organizationId); // stage 9 rule 9k
+    // The first lock after the stage 9 organization gate, EXCLUSIVE — see lockExchangeRateNamespaceShared's own doc comment for the full
     // reader/writer design and why this write path is the one caller that must never use the shared mode.
     await lockExchangeRateNamespaceExclusive(tx, organizationId);
 

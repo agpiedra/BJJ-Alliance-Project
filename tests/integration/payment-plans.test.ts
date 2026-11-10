@@ -280,7 +280,7 @@ describe("payment plans, default amounts and organization currency", () => {
       expect(audit.after).toMatchObject({ name: "Familiar 2", defaultAmount: 32000 });
 
       expect(await updatePlan(org.organizationId, {}, form({ planId: plan.id, name: CUSTOM_PROMO_PLAN_NAME }))).toMatchObject({ error: "systemPlan" });
-      const promo = await ensureCustomPromoPlan(org.organizationId, org.academyId);
+      const promo = (await ensureCustomPromoPlan(org.organizationId, org.academyId))!;
       expect(await updatePlan(org.organizationId, {}, form({ planId: promo.id, name: "Renamed" }))).toMatchObject({ error: "systemPlan" });
       expect(await deactivatePlan(org.organizationId, promo.id)).toMatchObject({ error: "systemPlan" });
     });
@@ -407,12 +407,12 @@ describe("payment plans, default amounts and organization currency", () => {
       const spanish = await newOrganization({ locale: "es" });
       const english = await newOrganization({ locale: "en" });
 
-      const es = await ensureCustomPromoPlan(spanish.organizationId, spanish.academyId);
-      const en = await ensureCustomPromoPlan(english.organizationId, english.academyId);
+      const es = (await ensureCustomPromoPlan(spanish.organizationId, spanish.academyId))!;
+      const en = (await ensureCustomPromoPlan(english.organizationId, english.academyId))!;
       expect(es.name).toBe("Promoción personalizada");
       expect(en.name).toBe("Custom promotion");
 
-      expect((await ensureCustomPromoPlan(english.organizationId, english.academyId)).id).toBe(en.id);
+      expect((await ensureCustomPromoPlan(english.organizationId, english.academyId))!.id).toBe(en.id);
       expect(await prisma.paymentPlan.count({ where: { academyId: english.academyId, name: { in: ["Custom promotion", "Promoción personalizada"] } } })).toBe(1);
     });
 
@@ -423,7 +423,7 @@ describe("payment plans, default amounts and organization currency", () => {
         data: { academyId: english.academyId, organizationId: english.organizationId, name: "Promoción personalizada" },
       });
 
-      const ensured = await ensureCustomPromoPlan(english.organizationId, english.academyId);
+      const ensured = (await ensureCustomPromoPlan(english.organizationId, english.academyId))!;
 
       expect(ensured.id).toBe(legacy.id);
       expect(await prisma.paymentPlan.count({ where: { academyId: english.academyId, name: { in: ["Custom promotion", "Promoción personalizada"] } } })).toBe(1);
@@ -433,7 +433,7 @@ describe("payment plans, default amounts and organization currency", () => {
       const org = await newOrganization({ locale: "en" });
       actAs(org.ownerId, org.organizationId);
       const student = await makeStudent(org.organizationId, org.academyId, "enpromo");
-      const promo = await ensureCustomPromoPlan(org.organizationId, org.academyId);
+      const promo = (await ensureCustomPromoPlan(org.organizationId, org.academyId))!;
       expect(promo.name).toBe("Custom promotion");
 
       // Recording on it without a promo name is refused, exactly as for the Spanish name.
@@ -453,7 +453,7 @@ describe("payment plans, default amounts and organization currency", () => {
       const org = await newOrganization({ locale: "en", currency: "USD" });
       actAs(org.ownerId, org.organizationId);
       const student = await makeStudent(org.organizationId, org.academyId, "encarry");
-      const promo = await ensureCustomPromoPlan(org.organizationId, org.academyId);
+      const promo = (await ensureCustomPromoPlan(org.organizationId, org.academyId))!;
 
       expect(
         await pay(org.organizationId, {
@@ -509,7 +509,7 @@ describe("payment plans, default amounts and organization currency", () => {
       const org = await newOrganization({ currency: "USD" });
       actAs(org.ownerId, org.organizationId);
       const student = await makeStudent(org.organizationId, org.academyId, "carry");
-      const promo = await ensureCustomPromoPlan(org.organizationId, org.academyId);
+      const promo = (await ensureCustomPromoPlan(org.organizationId, org.academyId))!;
 
       // A recurring promo recorded in dollars...
       expect(

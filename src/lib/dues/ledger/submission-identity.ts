@@ -6,7 +6,8 @@ import { resolveActionContext } from "@/lib/tenant/context";
 import { parseMoney } from "@/lib/dues/config-input";
 import type { CalendarDate } from "@/lib/dues/calendar";
 import { inTenantScope } from "@/lib/dues/ledger/common";
-import { inactiveLedgerActivation, type LedgerDeps } from "@/lib/dues/ledger/activation";
+import { ledgerActivation, type LedgerDeps } from "@/lib/dues/ledger/activation";
+import { lockOrganizationGate } from "@/lib/dues/activation-gate";
 import { lockExchangeRateNamespaceShared } from "@/lib/dues/ledger/exchange-rate";
 import { captureAwaitingRateReceiptInTx } from "@/lib/dues/ledger/awaiting-rate-receipt";
 import {
@@ -187,7 +188,7 @@ const refuse = (error: RecordDuesPaymentError): RecordDuesPaymentWithSubmissionI
  * out-of-band check). A resend of a DIFFERENT request under the same `submissionId` is refused
  * (`submissionPayloadMismatch`) and writes nothing.
  *
- * LOCK ORDER: the identity insert sits AFTER `lockExchangeRateNamespaceShared` (the literal first statement, exactly
+ * LOCK ORDER: the identity insert sits AFTER `lockExchangeRateNamespaceShared` (the first lock after the stage 9 organization gate, exactly
  * like `recordDuesPayment`'s own) and BEFORE the student lock `recordDuesPaymentInTx` itself takes — a losing/replay
  * request never reaches the student lock at all, and two genuinely concurrent submissions for the SAME `submissionId`
  * serialize on the identity row's own unique index, not on the student row.
@@ -208,7 +209,7 @@ export async function recordDuesPaymentWithSubmissionIdentity(
 ): Promise<RecordDuesPaymentWithSubmissionIdentityResult> {
   const { context, studentId, receivedOn, tender, method, obligationIds, notes, maxBackdateDays, submissionId } = args;
   const organizationId = context.organizationId;
-  const activation = deps.activation ?? inactiveLedgerActivation;
+  const activation = deps.activation ?? ledgerActivation;
   if (!(await activation.isActive(organizationId))) return refuse("notActive");
 
   if (typeof studentId !== "string" || studentId === "") return refuse("invalid");
@@ -223,7 +224,8 @@ export async function recordDuesPaymentWithSubmissionIdentity(
 
   try {
     return await prisma.$transaction(async (tx): Promise<RecordDuesPaymentWithSubmissionIdentityResult> => {
-      // The literal first statement, SHARED — identical to recordDuesPayment's own.
+      await lockOrganizationGate(tx, organizationId); // stage 9 rule 9k
+      // The first lock after the stage 9 organization gate, SHARED — identical to recordDuesPayment's own.
       await lockExchangeRateNamespaceShared(tx, organizationId);
       if (deps.afterExchangeRateLockForTest) await deps.afterExchangeRateLockForTest();
 

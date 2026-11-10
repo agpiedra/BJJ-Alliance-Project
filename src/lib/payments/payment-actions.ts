@@ -12,8 +12,20 @@ import { ALL_DEFAULT_PLAN_NAMES } from "@/lib/payments/default-plan-name";
 import { currentCrDateParts } from "@/lib/payments/get-current-period";
 import { isPeriodMoreThanOneMonthInFuture } from "@/lib/payments/period-window";
 import { NOT_PACKAGE_PLAN } from "@/lib/dues/package-plans";
-import { inactiveLedgerActivation } from "@/lib/dues/ledger/activation";
+import { isLockTimeout, LEGACY_PAYMENT_GATE_TIMEOUT_MS, lockOrganizationGateWithTimeout } from "@/lib/dues/activation-gate";
 import type { ActionState } from "@/lib/action-state";
+
+/** The form fields a refusal hands back for re-entry (string values only; never Next's `$ACTION_*` keys). Not exported: in
+ * a "use server" file every export is a callable action. */
+const SUBMITTED_FIELDS = ["studentId", "year", "month", "planId", "status", "amount", "method", "notes", "promoName", "promoReason", "promoRecurring"] as const;
+function submittedPaymentFields(formData: FormData): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const key of SUBMITTED_FIELDS) {
+    const value = formData.get(key);
+    if (typeof value === "string") out[key] = value;
+  }
+  return out;
+}
 
 const recordPaymentSchema = z.object({
   studentId: z.string().min(1),
@@ -75,17 +87,12 @@ export async function recordPayment(
   if (!auth.ok) return { error: "notFound" };
   const context = auth.context;
 
-  // REMAINING-LEDGER-CONSUMERS-BRIEF.md §2.6: once the dues ledger is active for this organization, this legacy
-  // writer refuses — before any further read, and unconditionally before the write below — rather than silently
-  // redirecting the request or converting it into a ledger payment. Resolved from the real, unmodified
-  // `inactiveLedgerActivation` production default every other ledger-gated check in this codebase already uses
-  // (activation.ts's own file comment: "production passes nothing, so every writer ... refuses for every
-  // organization"; `payments/page.tsx` reads this exact same binding to decide what to render) — never a client-
-  // supplied flag, never an override parameter added to this action's own public signature. `markPaymentPaid`
-  // below has no write path of its own: it only ever writes THROUGH this function, so this one check closes both.
-  if (await inactiveLedgerActivation.isActive(organizationId)) {
-    return { error: "ledgerActive" };
-  }
+  // Stage 9 (plan revision 4, rule 6): once the dues ledger is active for this organization, this legacy writer refuses
+  // and writes nothing — decided INSIDE the transaction below, after the organization gate, so a payment that waited on
+  // the activation switch sees the switch's outcome. The submitted values are returned with every refusal so the form can
+  // show them again for re-entry in the new system (React resets uncontrolled fields after an action returns). They go
+  // back only in the action's own response, never into a URL. `markPaymentPaid` below writes only THROUGH this function.
+  const submitted = submittedPaymentFields(formData);
 
   const parsed = recordPaymentSchema.safeParse(Object.fromEntries(formData.entries()));
 
@@ -128,7 +135,14 @@ export async function recordPayment(
     return { error: "promoNameRequired", fieldErrors: { promoName: ["promoNameRequired"] } };
   }
 
-  const result = await prisma.$transaction(async (tx) => {
+  let result;
+  try {
+    result = await prisma.$transaction(async (tx) => {
+    // Rule 6: the gate first (FOR SHARE, bounded wait), then the activation state read after it.
+    const gate = await lockOrganizationGateWithTimeout(tx, student.organizationId, LEGACY_PAYMENT_GATE_TIMEOUT_MS);
+    if (!gate) return { rejected: "notFound" as const };
+    if (gate.activeSince) return { rejected: "ledgerActive" as const, activeSince: gate.activeSince };
+
     const existing = await tx.paymentPeriod.findUnique({
       where: {
         studentId_year_month: { studentId: student.id, year: data.year, month: data.month },
@@ -251,10 +265,18 @@ export async function recordPayment(
 
     return period;
   });
+  } catch (error) {
+    // The gate wait ran out (an activation switch held the organization lock): nothing was written.
+    if (isLockTimeout(error)) return { error: "tryAgain", submitted };
+    throw error;
+  }
 
-  // The transaction bailed out before writing anything: the plan is
-  // deactivated and this call would have put a new payment on it.
+  // The transaction bailed out before writing anything: the ledger is now active, or the plan is deactivated and this
+  // call would have put a new payment on it.
   if ("rejected" in result) {
+    if (result.rejected === "ledgerActive") {
+      return { error: "ledgerActive", submitted, messageValues: { switchedAt: result.activeSince.toISOString() } };
+    }
     return { error: result.rejected };
   }
 

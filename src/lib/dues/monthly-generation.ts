@@ -5,6 +5,7 @@ import { eligibleAndAssigned, type AssignmentRow, type StatusHistoryRow } from "
 import { createMonthlyObligationInTx, isValidCoverageMonth, type CreateMonthlyObligationError } from "@/lib/dues/ledger/create-monthly-obligation";
 import { fromDbDate, inTenantScope, latestEffective, lockBranchShared, lockStudent, type Tx } from "@/lib/dues/ledger/common";
 import type { LedgerDeps } from "@/lib/dues/ledger/activation";
+import { lockOrganizationGate } from "@/lib/dues/activation-gate";
 import { prisma } from "@/lib/prisma";
 import { safeErrorCode, type SafeErrorCode } from "@/lib/auth/password-reset-log";
 import { assertTransactionTimeouts } from "@/lib/db/transaction-timeouts";
@@ -206,6 +207,8 @@ export async function generateMonthlyObligationForStudent(
             await tx.$executeRawUnsafe(`SET LOCAL idle_in_transaction_session_timeout = ${Math.trunc(bounds.idleInTransactionTimeoutMs)}`);
           }
         }
+        // Stage 9 rules 8 and 9k: the organization gate before the fence and every row lock.
+        await lockOrganizationGate(tx, organizationId);
         await options.fence?.(tx);
         const outcome = await decide(tx);
         await options.beforeRecordForTest?.(tx);

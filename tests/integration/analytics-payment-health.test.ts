@@ -26,7 +26,7 @@ import type { LedgerDeps } from "../../src/lib/dues/ledger/activation";
  *    `legacyPaymentHealth` export, which a same-module spy cannot reliably intercept).
  *
  * `getLedgerPaymentHealth`/`getHeadlineTiles` take no `deps` override of their own — both always resolve activation
- * through the real `inactiveLedgerActivation` singleton, exactly like every other page-level ledger consumer
+ * through the real `ledgerActivation` singleton, exactly like every other page-level ledger consumer
  * (`payments-page-ledger-render.test.ts`, `dashboard-page-ledger-render.test.ts`) — so this file mocks
  * `@/lib/dues/ledger/activation` at the TOP LEVEL (Vitest's static `vi.mock` hoisting requires this; a nested
  * `vi.mock` inside `describe` is not reliably hoisted) rather than injecting a per-call override.
@@ -38,7 +38,7 @@ import type { LedgerDeps } from "../../src/lib/dues/ledger/activation";
 let mockActive = true;
 vi.mock("@/lib/dues/ledger/activation", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../src/lib/dues/ledger/activation")>();
-  return { ...actual, inactiveLedgerActivation: { isActive: async () => mockActive } };
+  return { ...actual, ledgerActivation: { isActive: async () => mockActive } };
 });
 
 const { createMonthlyObligation } = await import("../../src/lib/dues/ledger/create-monthly-obligation");

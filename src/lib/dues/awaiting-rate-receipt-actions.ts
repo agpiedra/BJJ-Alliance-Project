@@ -16,7 +16,7 @@ import type { ActionState } from "@/lib/action-state";
  * `resolveReceipt`/`cancelReceipt` are thin wrappers: ALL business logic (drift re-validation, the student lock, the
  * conditional PENDING-only update, the owner-role check, the activation check) lives in
  * `resolveAwaitingRateReceipt`/`cancelAwaitingRateReceipt` (awaiting-rate-receipt.ts), unchanged. Neither ever passes
- * a `deps` argument — production activation stays exactly the hardcoded-false `inactiveLedgerActivation` default
+ * a `deps` argument — production activation stays exactly the server-side `ledgerActivation` default (an effective DuesActivation row; none exists before stage 9 PR 9-3)
  * those functions already apply on their own; nothing client-reachable can ever override it.
  */
 

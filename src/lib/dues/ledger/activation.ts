@@ -1,46 +1,29 @@
 import type { Tx } from "@/lib/dues/ledger/common";
+import { readLedgerActive } from "@/lib/dues/activation-gate";
 
 /**
- * The seam that keeps the first ledger writers (PR 4a) closed to live billing until the approved activation stage.
+ * Where the ledger writers and readers learn whether the ledger is authoritative for an organization.
  *
- * IMPORTANT: THIS IS NOT AUTHORIZATION. It is a test seam and a closed default, nothing more.
- *  - Production passes nothing, so every writer uses `inactiveLedgerActivation` and refuses (`notActive`) for every organization.
- *  - Tests inject an active stub to exercise the writers.
- *  - Before ANY caller is exposed (an action, a route, a job), activation must come from TRUSTED ORGANIZATION STATE read by the server
- *    (the activation stage's own stored, owner-approved settings and readiness result), never from request data and never from a boolean
- *    a caller supplies. Passing `{ isActive: async () => true }` from a caller is exactly the bug this note exists to prevent.
- *  - No activation infrastructure is built here: there is no table, setting or flag to read yet, and none is invented.
+ * Stage 9 (PR 9-1): the production answer comes from TRUSTED ORGANIZATION STATE — an effective `DuesActivation` row
+ * (src/lib/dues/activation-gate.ts) — never from request data and never from a boolean a caller supplies. Passing
+ * `{ isActive: async () => true }` from a production caller is exactly the bug this note exists to prevent; only tests inject
+ * a stub. Nothing in the application writes `DuesActivation` until PR 9-3 (approval and the atomic switch), so today every
+ * organization is inactive and every writer refuses `notActive`, exactly as before.
  *
- * A structural test (tests/unit/dues-ledger-not-exposed.test.ts) fails if anything outside this folder imports the writers, so the
- * first real caller has to update it deliberately, in the same review that decides where activation comes from.
+ * The read is unlocked: activation is one-way (A5, enforced by the database), so "active" never becomes wrong. Writers that
+ * must not race the switch (the legacy ones) hold the organization gate instead (rule 6).
+ *
+ * A structural test (tests/unit/dues-ledger-not-exposed.test.ts) fails if anything outside this folder imports the writers.
  */
 export interface LedgerActivation {
   /** Whether the ledger is authoritative for this organization. Must be answered from trusted, server-side organization state. */
   isActive(organizationId: string): Promise<boolean>;
 }
 
-/**
- * TEST-ONLY local browser seam (O4 owner-flow verification, 2026-11-09). NOT activation and NOT reachable in production:
- *  - `process.env.NODE_ENV === "production"` is inlined at build time, so a production build always takes the first branch and
- *    returns false — whatever the runtime environment holds (`scripts/verify-production-build.ts` checks the compiled output);
- *  - otherwise it still requires BOTH the existing dev-only `E2E_AUTH_BYPASS_SECRET` (the same gate as the e2e session bypass,
- *    listed in KNOWN_LIMITATIONS) AND an explicit `E2E_LEDGER_ACTIVE_ORG_IDS` list naming the disposable organization.
- * Nothing in a request can reach it; it reads only the server's own environment.
- */
-const testOnlyLedgerActiveOrganization: (organizationId: string) => boolean =
-  process.env.NODE_ENV === "production"
-    ? () => false
-    : (organizationId) => {
-        if (!process.env.E2E_AUTH_BYPASS_SECRET) return false;
-        const ids = (process.env.E2E_LEDGER_ACTIVE_ORG_IDS ?? "").split(",").map((id) => id.trim()).filter(Boolean);
-        return ids.includes(organizationId);
-      };
+/** The production implementation: active iff the organization has an effective activation record. */
+export const ledgerActivation: LedgerActivation = { isActive: readLedgerActive };
 
-/** The only production implementation until the activation stage exists: no organization is active. (Outside production
- * builds, the test-only seam above can name disposable local organizations.) */
-export const inactiveLedgerActivation: LedgerActivation = { isActive: async (organizationId) => testOnlyLedgerActiveOrganization(organizationId) };
-
-/** Injected dependencies. All are optional: production uses the closed default activation, the real clock, and no test hooks. */
+/** Injected dependencies. All are optional: production uses `ledgerActivation`, the real clock, and no test hooks. */
 export interface LedgerDeps {
   activation?: LedgerActivation;
   /** The clock. Tests fix it; production leaves it out. */

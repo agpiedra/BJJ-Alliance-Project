@@ -12,7 +12,7 @@ import { recordDuesPaymentWithSubmissionIdentity } from "../../src/lib/dues/ledg
  * Ordinary payment-entry UI brief §8 tier 2 (corrected, point 4): the real `"use server"` actions, called exactly as
  * a real caller would — no `deps` parameter exists on any of the three public signatures to override, so this proves
  * authorization is genuinely checked by resolveActionContext and that activation is the real, unmodified,
- * hardcoded-false `inactiveLedgerActivation` default — matching `exchange-rate-actions-auth.test.ts`/
+ * hardcoded-false `ledgerActivation` default — matching `exchange-rate-actions-auth.test.ts`/
  * `awaiting-rate-receipt-actions-auth.test.ts`'s own exact precedent (read in full for this file).
  *
  * CORRECTED FROM THE ORIGINAL DISPATCH BRIEF: `recordDuesPaymentWithSubmissionIdentity`'s own read order checks

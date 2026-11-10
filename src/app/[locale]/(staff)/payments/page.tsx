@@ -15,7 +15,7 @@ import { listLedgerPaymentStatus, EMPTY_LEDGER_PAYMENT_STATUS } from "@/lib/paym
 import { ensureCustomPromoPlan } from "@/lib/payments/ensure-custom-promo-plan";
 import { listSelectablePlans } from "@/lib/payments/list-plans";
 import { formatMonthYear } from "@/lib/format-month";
-import { inactiveLedgerActivation } from "@/lib/dues/ledger/activation";
+import { ledgerActivation } from "@/lib/dues/ledger/activation";
 import { listStudentsForPaymentEntry } from "@/lib/dues/payment-entry-queries";
 import { PaymentEntrySection } from "./payment-entry-section";
 import { PackagePurchaseSection } from "./package-purchase-section";
@@ -75,7 +75,7 @@ export default async function PaymentsPage() {
   // call site is reached. Same read-only, advisory pre-check of the real, unmodified activation singleton
   // the ordinary payment-entry UI brief §0/§2.5 already established; the engine's own checks (and, for the
   // legacy writers, `recordPayment`'s own §2.6 refusal) remain the actual enforcement either way.
-  const ledgerActive = await inactiveLedgerActivation.isActive(context.organizationId);
+  const ledgerActive = await ledgerActivation.isActive(context.organizationId);
   // §4: the one captured instant shared by every ledger read this page makes (today, exactly one —
   // `listLedgerPaymentStatus`'s own `listRosterPaymentFacts` call) — kept separate from, and never
   // substituted for, `today`'s unrelated existing role (the legacy current-month period lookup and the

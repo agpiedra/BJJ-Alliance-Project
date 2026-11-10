@@ -2,7 +2,7 @@ import { prisma } from "@/lib/prisma";
 import type { TenantContext, SystemJobContext } from "@/lib/tenant/types";
 import { branchScopeWhere } from "@/lib/tenant/context";
 import type { Currency } from "@/generated/prisma/client";
-import { inactiveLedgerActivation, type LedgerDeps } from "@/lib/dues/ledger/activation";
+import { ledgerActivation, type LedgerDeps } from "@/lib/dues/ledger/activation";
 import { todayIn, fromDbDate, latestEffective } from "@/lib/dues/ledger/common";
 import { lateFeeApplies, lateFeeToAssessMinor } from "@/lib/dues/settlement";
 import { eligibleAndAssigned, type StatusHistoryRow, type AssignmentRow } from "@/lib/dues/eligibility";
@@ -328,7 +328,7 @@ export async function listDuesFactsForStudents(
   month?: YearMonth,
   deps: LedgerDeps = {},
 ): Promise<ListDuesFactsResult> {
-  const activation = deps.activation ?? inactiveLedgerActivation;
+  const activation = deps.activation ?? ledgerActivation;
   if (!(await activation.isActive(context.organizationId))) return { ok: false, error: "notActive" };
   if (!Array.isArray(studentIds)) return { ok: false, error: "invalid" };
   if (studentIds.length > MAX_SELECTED) return { ok: false, error: "invalid" };
@@ -356,7 +356,7 @@ export async function listDuesFactsForStudents(
  * `academyIds` answers "which students may I see as STAFF," a different question from "is this my own record."
  */
 export async function getOwnDuesFacts(context: PortalSelfContext, month?: YearMonth, deps: LedgerDeps = {}): Promise<DuesFactsForStudent | null> {
-  const activation = deps.activation ?? inactiveLedgerActivation;
+  const activation = deps.activation ?? ledgerActivation;
   if (!(await activation.isActive(context.organizationId))) return null;
   if (typeof context.linkedStudentId !== "string" || context.linkedStudentId.trim().length === 0) return null;
   if (month !== undefined && !isValidCoverageMonth(month)) return null;

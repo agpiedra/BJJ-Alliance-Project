@@ -3,6 +3,7 @@ import { Prisma, type Currency, type DuesReadinessConfirmationKind } from "@/gen
 import { prisma } from "@/lib/prisma";
 import { lockStudent, type Tx } from "@/lib/students/lock";
 import { lockBranchShared } from "@/lib/dues/ledger/common";
+import { lockOrganizationGate } from "@/lib/dues/activation-gate";
 import { assertYearMonth, compareYearMonth, type YearMonth } from "@/lib/dues/calendar";
 import { currentMonthIn, parseEffectiveMonth, parseMoney } from "@/lib/dues/config-input";
 import { CURRENCIES } from "@/lib/payments/format-money";
@@ -148,6 +149,10 @@ async function underStudentLock(
   try {
     outcome = await prisma.$transaction(
       async (tx) => {
+        // Stage 9 rules 8 and 9j: the organization gate first. After activation, opening debt is ledger state (corrected with
+        // O2), so these review actions refuse.
+        const gate = await lockOrganizationGate(tx, context.organizationId);
+        if (gate?.active) return reject({ error: "ledgerActive" });
         const branch = await lockBranchShared(tx, context.organizationId, student.homeAcademyId);
         if (!branch) return reject({ error: "stale" });
         const locked = await lockStudent(tx, context.organizationId, student.id);

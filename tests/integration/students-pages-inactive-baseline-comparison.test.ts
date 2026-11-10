@@ -15,7 +15,7 @@ import enMessages from "../../messages/en.json";
  * ACTUAL pre-PR2 implementation (commit 83fed6f, the merged state immediately before PR2's own first commit
  * 430dd45) against the CURRENT code for BOTH pages, rendered with IDENTICAL fixtures, a frozen clock, locale, and
  * external-service mocks, under the ledger's real, unmocked, always-inactive production default
- * (`inactiveLedgerActivation = { isActive: async () => false }` — see activation.ts; no activation mock is used or
+ * (`ledgerActivation = { isActive: async () => false }` — see activation.ts; no activation mock is used or
  * needed here, so this exercises the genuine production code path, not a stand-in for it).
  *
  * The baseline source is git-extracted and written to a throwaway SIBLING file — same real directory as the real

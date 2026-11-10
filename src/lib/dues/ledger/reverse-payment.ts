@@ -1,7 +1,8 @@
 import { prisma } from "@/lib/prisma";
 import type { TenantContext } from "@/lib/tenant/types";
 import { currentMonthIn } from "@/lib/dues/config-input";
-import { inactiveLedgerActivation, type LedgerDeps } from "@/lib/dues/ledger/activation";
+import { ledgerActivation, type LedgerDeps } from "@/lib/dues/ledger/activation";
+import { lockOrganizationGate } from "@/lib/dues/activation-gate";
 import { inTenantScope, lockBranchShared, lockStudent } from "@/lib/dues/ledger/common";
 import { lockExchangeRateNamespaceShared } from "@/lib/dues/ledger/exchange-rate";
 import {
@@ -86,7 +87,7 @@ export async function reversePayment(
   const { context, paymentId, reasonCategory, reversalReason } = args;
   const expectedCancelled = args.expectedCancelledObligationIds ?? [];
   const organizationId = context.organizationId;
-  const activation = deps.activation ?? inactiveLedgerActivation;
+  const activation = deps.activation ?? ledgerActivation;
   if (!(await activation.isActive(organizationId))) return refuse("notActive");
   // B6: owner-only, checked here rather than trusted from whatever calls this.
   if (context.organizationRole !== "ADMIN") return refuse("notFound");
@@ -126,6 +127,7 @@ export async function reversePayment(
 
   try {
     return await prisma.$transaction(async (tx): Promise<ReversePaymentResult> => {
+      await lockOrganizationGate(tx, organizationId); // stage 9 rule 9k
       await lockExchangeRateNamespaceShared(tx, organizationId);
       const branch = await lockBranchShared(tx, organizationId, payment.academyId);
       if (!branch) return refuse("notFound");

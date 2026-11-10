@@ -20,7 +20,7 @@ const { enterOrCorrectExchangeRate, getExchangeRateCorrectionWarning } = await i
  * `requireOrganizationAccess`'s bare `Error("FORBIDDEN")`, which `resolveActionContext` does NOT catch — it
  * propagates straight out, uncaught, exactly like `dues-owner-config.test.ts`'s own "FORBIDDEN, not notFound"
  * precedent for every other owner-only action in this codebase. Also proves `"notActive"` under the REAL,
- * unmodified, hardcoded-false `inactiveLedgerActivation` default for a genuine ADMIN — there is no `deps`
+ * unmodified, hardcoded-false `ledgerActivation` default for a genuine ADMIN — there is no `deps`
  * parameter on either export through which any caller could ever make it otherwise.
  */
 const prisma = getTestPrismaClient();

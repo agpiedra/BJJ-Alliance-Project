@@ -17,7 +17,7 @@ import type { ActionState } from "@/lib/action-state";
  * `enterOrCorrectExchangeRate` is a thin wrapper: ALL business logic (revision allocation, RATE_VALUE/ZERO_VALUE
  * validation, the append-only/supersedesId model, the advisory-lock split, the owner-role check) lives in
  * `enterExchangeRateQuote` (exchange-rate.ts), unchanged. It NEVER passes a `deps` argument — production activation
- * stays exactly the hardcoded-false `inactiveLedgerActivation` default that function already applies on its own;
+ * stays exactly the server-side `ledgerActivation` default (an effective DuesActivation row; none exists before stage 9 PR 9-3) that function already applies on its own;
  * nothing client-reachable can ever override it.
  */
 

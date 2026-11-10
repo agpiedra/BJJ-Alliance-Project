@@ -16,7 +16,7 @@ import enMessages from "../../messages/en.json";
  * instruction) doubles as this file's baseline: a real render of the actual pre-PR3 `dashboard/page.tsx`
  * (git-extracted, same throwaway-sibling-file technique `students-pages-inactive-baseline-comparison.test.ts`
  * already established) compared BYTE-FOR-BYTE against the CURRENT page, under the ledger's real, unmocked, always-
- * inactive production default (`inactiveLedgerActivation = { isActive: async () => false }`) — no activation mock
+ * inactive production default (`ledgerActivation = { isActive: async () => false }`) — no activation mock
  * needed here, so this exercises the genuine production code path. The baseline calls `listStudentsToContact(context)`
  * with its own one-argument pre-PR3 signature against the CURRENT (now two-argument) `contact-list.ts` — `ledgerActive`
  * resolves to `undefined`, which is exactly as falsy as the explicit `false` the current page passes, so this is a

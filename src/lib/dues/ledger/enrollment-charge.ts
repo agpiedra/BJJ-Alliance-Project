@@ -1,7 +1,7 @@
 import { Prisma } from "@/generated/prisma/client";
 import type { TenantContext } from "@/lib/tenant/types";
 import { compareDates, dueDateFor, type CalendarDate, type YearMonth } from "@/lib/dues/calendar";
-import { inactiveLedgerActivation, type LedgerDeps } from "@/lib/dues/ledger/activation";
+import { ledgerActivation, type LedgerDeps } from "@/lib/dues/ledger/activation";
 import { inTenantScope, latestEffective, lockPolicyShared, lockTermsShared, toDbDate, type Tx } from "@/lib/dues/ledger/common";
 import { writeMonthlyObligationInTx } from "@/lib/dues/ledger/create-monthly-obligation";
 import { isPackagePlan } from "@/lib/dues/package-plans";
@@ -48,7 +48,7 @@ export async function enrollmentChargeInTx(
 ): Promise<EnrollmentChargeResult> {
   const { context, student, enrollmentDate, assignedPlanId } = args;
   const organizationId = context.organizationId;
-  const activation = deps.activation ?? inactiveLedgerActivation;
+  const activation = deps.activation ?? ledgerActivation;
   if (!(await activation.isActive(organizationId))) return refuse("notActive");
   if (!inTenantScope(context, student.homeAcademyId)) return refuse("notFound");
 

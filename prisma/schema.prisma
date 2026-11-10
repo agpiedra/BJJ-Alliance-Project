@@ -293,6 +293,7 @@ model Organization {
   duesOpeningItems       DuesOpeningItem[]
   duesReadinessConfirmations DuesReadinessConfirmation[]
   duesGenerationProgress     DuesGenerationProgress[]
+  duesActivations            DuesActivation[]
   kioskAttempts       KioskAttempt[]
   queuedCheckIns      QueuedCheckIn[]
   staffAssignments    StaffAssignment[]
@@ -574,6 +575,9 @@ model User {
   duesOpeningItemsCreated        DuesOpeningItem[]           @relation("DuesOpeningItemCreatedBy")
   duesOpeningItemsWithdrawn      DuesOpeningItem[]           @relation("DuesOpeningItemWithdrawnBy")
   duesReadinessConfirmations     DuesReadinessConfirmation[]
+  duesActivationsApproved        DuesActivation[]        @relation("DuesActivationApprovedBy")
+  duesActivationsWithdrawn       DuesActivation[]        @relation("DuesActivationWithdrawnBy")
+  duesActivationsMadeEffective   DuesActivation[]        @relation("DuesActivationEffectiveBy")
   awaitingRateReceiptsCaptured   AwaitingRateReceipt[]   @relation("AwaitingRateReceiptCapturedBy")
   awaitingRateReceiptsResolved   AwaitingRateReceipt[]   @relation("AwaitingRateReceiptResolvedBy")
   awaitingRateReceiptsCancelled  AwaitingRateReceipt[]   @relation("AwaitingRateReceiptCancelledBy")
@@ -2048,6 +2052,39 @@ model JobRun {
   alertPings             Json?
 
   @@index([jobName, startedAt])
+}
+
+/// Stage 9 activation record (docs/dues/STAGE-9-IMPLEMENTATION-PLAN.md, A1; migration 20261111120000). One row per advance
+/// approval: start month S, the configuration fingerprint and per-student fingerprints approved, and who approved when. It
+/// is later either withdrawn or made effective (the atomic switch, PR 9-3), never both, each set once; the row is never
+/// deleted and its approval columns never change. At most one live (not withdrawn) row per organization; at most one
+/// effective row. The ledger is active for an organization iff it has an effective row (`effectiveAt` not null).
+///
+/// PR 9-1 adds the table and the organization gate (src/lib/dues/activation-gate.ts) only: NOTHING in the application writes
+/// this table yet, so every organization stays inactive. Writers of approval, withdrawal and the switch arrive in PR 9-3.
+model DuesActivation {
+  id                  String    @id @default(cuid())
+  organizationId      String
+  startYear           Int
+  startMonth          Int
+  /// Format tag of the two fingerprints below (stage 9 readiness), so a later format change cannot be compared silently.
+  fingerprintFormat   String
+  configFingerprint   String
+  /// `{ [studentId]: studentFingerprint }` at approval.
+  studentFingerprints Json
+  approvedById        String
+  approvedAt          DateTime
+  withdrawnAt         DateTime?
+  withdrawnById       String?
+  effectiveAt         DateTime?
+  effectiveById       String?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  approvedBy   User         @relation("DuesActivationApprovedBy", fields: [approvedById], references: [id], onDelete: Restrict)
+  withdrawnBy  User?        @relation("DuesActivationWithdrawnBy", fields: [withdrawnById], references: [id], onDelete: Restrict)
+  effectiveBy  User?        @relation("DuesActivationEffectiveBy", fields: [effectiveById], references: [id], onDelete: Restrict)
+
+  @@index([organizationId])
 }
 
 /// Monthly-generation progress (docs/dues/MONTHLY-GENERATION-TRIGGER-PLAN.md revision 4, §5): one row per (organization,

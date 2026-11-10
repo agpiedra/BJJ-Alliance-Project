@@ -73,7 +73,7 @@ function wroteOrDiscoveredChange(result: { ok: boolean; error?: string }): boole
 
 /** ADMIN only — the role check happens here; `correctLateFeeAndSettle`'s own identical check (internal) actually
  * enforces it regardless, mirroring every other writer action in this codebase's own two-layer precedent. No `deps`
- * override of any kind — production activation stays the real, unmodified `inactiveLedgerActivation` default. */
+ * override of any kind — production activation stays the real, unmodified `ledgerActivation` default. */
 export async function correctLateFee(
   organizationId: string,
   _prevState: CorrectLateFeeResult | { ok: false; error: "invalid" } | Record<string, never>,

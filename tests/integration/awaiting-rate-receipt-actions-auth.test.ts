@@ -17,7 +17,7 @@ const { resolveReceipt, cancelReceipt, getReceiptStatus, listReceipts } = await 
  * (cited directly, not re-derived): a non-member/inactive-org caller resolves `{ ok: false }` (mapped to `notFound`),
  * while a GENUINE member with the wrong role hits `requireOrganizationAccess`'s bare `Error("FORBIDDEN")`, which
  * `resolveActionContext` does NOT catch — it propagates straight out, uncaught. Also proves `notActive` under the
- * REAL, unmodified, hardcoded-false `inactiveLedgerActivation` default for a genuine ADMIN — there is no `deps`
+ * REAL, unmodified, hardcoded-false `ledgerActivation` default for a genuine ADMIN — there is no `deps`
  * parameter on `resolveReceipt`/`cancelReceipt` through which any caller could ever make it otherwise. `getReceiptStatus`/
  * `listReceipts` are deliberately NOT activation-gated (reads), confirmed by their own tests below.
  */

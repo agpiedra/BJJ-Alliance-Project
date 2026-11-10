@@ -11,7 +11,7 @@ import enMessages from "../../messages/en.json";
 /**
  * Regression for the bug briefly shipped in commit 4734ace and fixed in 631b31e: `payments/page.tsx`'s
  * `ledgerActive` was forced `true` (`const ledgerActive = true as boolean || ledgerActiveReal;`) regardless of
- * the real `inactiveLedgerActivation.isActive()` result, so both the ordinary ledger card and the ADMIN-only
+ * the real `ledgerActivation.isActive()` result, so both the ordinary ledger card and the ADMIN-only
  * package card would have rendered in production no matter the organization's real activation state.
  * `activation.ts`'s own file comment calls mocking it from a test file the SANCTIONED technique ("Tests inject
  * an active stub to exercise the writers") — this is not a workaround, it is the documented test seam.
@@ -22,7 +22,7 @@ const prisma = getTestPrismaClient();
 let mockActive = false;
 vi.mock("@/lib/dues/ledger/activation", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../src/lib/dues/ledger/activation")>();
-  return { ...actual, inactiveLedgerActivation: { isActive: async () => mockActive } };
+  return { ...actual, ledgerActivation: { isActive: async () => mockActive } };
 });
 
 type MockSession = { user: { id: string }; activeOrganizationId: string | null } | null;

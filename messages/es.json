@@ -693,7 +693,8 @@
         "success": "Pago registrado.",
         "invalid": "Por favor revisa el formulario.",
         "notFound": "No se pudo registrar este pago.",
-        "ledgerActive": "Esta organización ahora registra los pagos mediante el flujo de pago del nuevo sistema. Usa la opción de pago del nuevo sistema en la página de Pagos en lugar de este formulario.",
+        "ledgerActive": "Esta academia pasó al nuevo sistema de pagos a las {switchedAt}. Aquí no se guardó nada. Tus datos siguen en este formulario: registra este pago en el nuevo sistema, en la página de Pagos.",
+        "tryAgain": "No se guardó: el sistema de pagos está terminando el cambio. Tus datos siguen en este formulario. Inténtalo de nuevo en un momento.",
         "invalidPlan": "Ese plan no pertenece a la academia de este estudiante.",
         "planInactive": "Ese plan fue desactivado, así que no se puede registrar un pago nuevo en él. Elige un plan activo.",
         "periodTooFarInFuture": "El período no puede ser más de un mes en el futuro.",
@@ -1998,6 +1999,7 @@
             "monthAssigned": "Ese mes ya tiene una asignación. No se guardó nada. La página se actualizó.",
             "pastMonth": "Ese mes ya pasó. No se guardó nada.",
             "notFuture": "Este mes ya comenzó y no se puede cambiar. No se guardó nada.",
+            "ledgerActive": "El nuevo sistema de pagos ya está activo, así que la revisión inicial ya no puede cambiar. No se guardó nada.",
             "unexpected": "El servidor rechazó esto. No se guardó nada."
           }
         }

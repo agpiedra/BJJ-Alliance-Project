@@ -10,6 +10,7 @@ import { CUSTOM_PROMO_PLAN_NAMES, isCustomPromoPlanName } from "@/lib/payments/c
 import { CURRENCIES } from "@/lib/payments/format-money";
 import type { ActionState } from "@/lib/action-state";
 import { NOT_PACKAGE_PLAN, isPackagePlan } from "@/lib/dues/package-plans";
+import { lockOrganizationGate } from "@/lib/dues/activation-gate";
 
 /**
  * Plan management — list, create, edit, DEACTIVATE. Never delete.
@@ -109,6 +110,7 @@ export async function createPlan(organizationId: string, _prevState: ActionState
 
   try {
     await prisma.$transaction(async (tx) => {
+      await lockOrganizationGate(tx, context.organizationId); // stage 9 rule 9g
       const plan = await tx.paymentPlan.create({
         data: {
           academyId,
@@ -176,6 +178,7 @@ export async function updatePlan(organizationId: string, _prevState: ActionState
 
   try {
     await prisma.$transaction(async (tx) => {
+      await lockOrganizationGate(tx, context.organizationId); // stage 9 rule 9g
       const plan = await tx.paymentPlan.update({
         where: { id: existing.id, organizationId: context.organizationId },
         data: { name: parsed.data.name, description: parsed.data.description || null, defaultAmount },
@@ -235,6 +238,7 @@ async function setPlanActive(organizationId: string, planId: string, active: boo
   }
 
   await prisma.$transaction(async (tx) => {
+    await lockOrganizationGate(tx, context.organizationId); // stage 9 rule 9g
     const plan = await tx.paymentPlan.update({ where: { id: existing.id, organizationId: context.organizationId }, data: { active } });
     await tx.auditLog.create({
       data: {
@@ -288,6 +292,9 @@ export async function changeOrganizationCurrency(
   if (before.currency === parsed.data.currency) return { ok: true };
 
   await prisma.$transaction(async (tx) => {
+    // Stage 9 rule 9i. The UPDATE below would wait on the gate anyway (a row update conflicts with FOR SHARE); taking the
+    // gate explicitly keeps this writer in the participating list like every other.
+    await lockOrganizationGate(tx, context.organizationId);
     await tx.organization.update({ where: { id: context.organizationId }, data: { currency: parsed.data.currency } });
     await tx.auditLog.create({
       data: {

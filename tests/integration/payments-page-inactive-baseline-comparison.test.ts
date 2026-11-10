@@ -73,6 +73,12 @@ function removeIfExists(p: string) {
 }
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
+// The historical baseline page (a6bec7b) imports the activation default under its old name, renamed in stage 9 PR 9-1 to
+// `ledgerActivation`. Test-only alias so the baseline still compiles against today's module; both resolve to the same object.
+vi.mock("@/lib/dues/ledger/activation", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../src/lib/dues/ledger/activation")>();
+  return { ...actual, inactiveLedgerActivation: actual.ledgerActivation };
+});
 
 type MockSession = { user: { id: string }; activeOrganizationId: string | null } | null;
 let currentSession: MockSession = null;

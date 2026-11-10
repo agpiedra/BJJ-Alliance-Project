@@ -18,7 +18,7 @@ const listReceipts = vi.fn();
 vi.mock("../../src/lib/dues/awaiting-rate-receipt-actions", () => ({ resolveReceipt, cancelReceipt, getReceiptStatus, listReceipts }));
 
 const isActive = vi.fn();
-vi.mock("../../src/lib/dues/ledger/activation", () => ({ inactiveLedgerActivation: { isActive: (...args: unknown[]) => isActive(...args) } }));
+vi.mock("../../src/lib/dues/ledger/activation", () => ({ ledgerActivation: { isActive: (...args: unknown[]) => isActive(...args) } }));
 
 // next-intl/server's getTranslations refuses to run once it detects a client (jsdom) environment — real in
 // production (an RSC never renders under jsdom), but it means AwaitingRateReceiptSection (an async server component)

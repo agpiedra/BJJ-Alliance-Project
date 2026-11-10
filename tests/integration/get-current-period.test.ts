@@ -67,7 +67,7 @@ describe("getCurrentPaymentPeriod — recurring custom-promotion carry-forward",
 
   it("materializes THIS month's row from last month's recurring custom promotion, carrying its terms forward", async () => {
     const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
-    const promoPlan = await ensureCustomPromoPlan(escazu.organizationId, escazu.id);
+    const promoPlan = (await ensureCustomPromoPlan(escazu.organizationId, escazu.id))!;
     const director = await makeStaffUser("carry-forward-director");
     const student = await makeStudent(escazu.id, escazu.organizationId);
 
@@ -125,7 +125,7 @@ describe("getCurrentPaymentPeriod — recurring custom-promotion carry-forward",
 
   it("does NOT carry forward a NON-recurring custom promotion", async () => {
     const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
-    const promoPlan = await ensureCustomPromoPlan(escazu.organizationId, escazu.id);
+    const promoPlan = (await ensureCustomPromoPlan(escazu.organizationId, escazu.id))!;
     const director = await makeStaffUser("carry-forward-nonrecurring-director");
     const student = await makeStudent(escazu.id, escazu.organizationId);
 
@@ -182,7 +182,7 @@ describe("getCurrentPaymentPeriod — recurring custom-promotion carry-forward",
 
   it("a real row for the current month always wins over any carry-forward candidate", async () => {
     const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
-    const promoPlan = await ensureCustomPromoPlan(escazu.organizationId, escazu.id);
+    const promoPlan = (await ensureCustomPromoPlan(escazu.organizationId, escazu.id))!;
     const mensualidad = await prisma.paymentPlan.findFirstOrThrow({
       where: { academyId: escazu.id, name: "Mensualidad" },
     });
@@ -229,7 +229,7 @@ describe("getCurrentPaymentPeriod — recurring custom-promotion carry-forward",
 
   it("handles the January -> previous December rollover when looking up the prior month", async () => {
     const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
-    const promoPlan = await ensureCustomPromoPlan(escazu.organizationId, escazu.id);
+    const promoPlan = (await ensureCustomPromoPlan(escazu.organizationId, escazu.id))!;
     const director = await makeStaffUser("carry-forward-rollover-director");
     const student = await makeStudent(escazu.id, escazu.organizationId);
 
@@ -261,7 +261,7 @@ describe("getCurrentPaymentPeriod — recurring custom-promotion carry-forward",
   // month is pre-paid.
   it("a recurring PAID promo with a REAL amount > 0 materializes as PENDING next month, not PAID", async () => {
     const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
-    const promoPlan = await ensureCustomPromoPlan(escazu.organizationId, escazu.id);
+    const promoPlan = (await ensureCustomPromoPlan(escazu.organizationId, escazu.id))!;
     const director = await makeStaffUser("carry-forward-realpaid-director");
     const student = await makeStudent(escazu.id, escazu.organizationId);
 
@@ -299,7 +299,7 @@ describe("getCurrentPaymentPeriod — recurring custom-promotion carry-forward",
   // so getting this wrong would make it uncollectable forever.
   it("a recurring PROMO with a REAL amount > 0 materializes as PENDING next month, not PROMO", async () => {
     const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
-    const promoPlan = await ensureCustomPromoPlan(escazu.organizationId, escazu.id);
+    const promoPlan = (await ensureCustomPromoPlan(escazu.organizationId, escazu.id))!;
     const director = await makeStaffUser("carry-forward-realpromo-director");
     const student = await makeStudent(escazu.id, escazu.organizationId);
 
@@ -329,7 +329,7 @@ describe("getCurrentPaymentPeriod — recurring custom-promotion carry-forward",
 
   it("a recurring EXEMPT with a REAL amount > 0 materializes as PENDING next month, not EXEMPT", async () => {
     const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
-    const promoPlan = await ensureCustomPromoPlan(escazu.organizationId, escazu.id);
+    const promoPlan = (await ensureCustomPromoPlan(escazu.organizationId, escazu.id))!;
     const director = await makeStaffUser("carry-forward-realexempt-director");
     const student = await makeStudent(escazu.id, escazu.organizationId);
 
@@ -356,7 +356,7 @@ describe("getCurrentPaymentPeriod — recurring custom-promotion carry-forward",
 
   it("a recurring PAID promo with amount 0 (a full waiver recorded as paid) still carries forward as PAID", async () => {
     const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
-    const promoPlan = await ensureCustomPromoPlan(escazu.organizationId, escazu.id);
+    const promoPlan = (await ensureCustomPromoPlan(escazu.organizationId, escazu.id))!;
     const director = await makeStaffUser("carry-forward-paidzero-director");
     const student = await makeStudent(escazu.id, escazu.organizationId);
 
@@ -383,7 +383,7 @@ describe("getCurrentPaymentPeriod — recurring custom-promotion carry-forward",
 
   it("materializing writes an AuditLog row (payment.carryForward), but a second read does not write another", async () => {
     const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
-    const promoPlan = await ensureCustomPromoPlan(escazu.organizationId, escazu.id);
+    const promoPlan = (await ensureCustomPromoPlan(escazu.organizationId, escazu.id))!;
     const director = await makeStaffUser("carry-forward-audit-director");
     const student = await makeStudent(escazu.id, escazu.organizationId);
 
@@ -420,7 +420,7 @@ describe("getCurrentPaymentPeriod — recurring custom-promotion carry-forward",
   // query that gap) must not permanently kill a recurring promo.
   it("carries forward across a GAP of more than one month with no rows in between", async () => {
     const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
-    const promoPlan = await ensureCustomPromoPlan(escazu.organizationId, escazu.id);
+    const promoPlan = (await ensureCustomPromoPlan(escazu.organizationId, escazu.id))!;
     const director = await makeStaffUser("carry-forward-gap-director");
     const student = await makeStudent(escazu.id, escazu.organizationId);
 
@@ -472,7 +472,7 @@ describe("getCurrentPaymentPeriod — recurring custom-promotion carry-forward",
     // not overshoot past it to the older recurring row (month 6) the way a
     // naive "most recent row WITH promoRecurring: true" search would.
     const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
-    const promoPlan = await ensureCustomPromoPlan(escazu.organizationId, escazu.id);
+    const promoPlan = (await ensureCustomPromoPlan(escazu.organizationId, escazu.id))!;
     const director = await makeStaffUser("carry-forward-cancel-director");
     const student = await makeStudent(escazu.id, escazu.organizationId);
 
@@ -529,7 +529,7 @@ describe("getCurrentPaymentPeriodsForStudents — batched resolution", () => {
 
   it("resolves a mix of already-recorded, carry-forward, and no-history students in one batched call", async () => {
     const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
-    const promoPlan = await ensureCustomPromoPlan(escazu.organizationId, escazu.id);
+    const promoPlan = (await ensureCustomPromoPlan(escazu.organizationId, escazu.id))!;
     const mensualidad = await prisma.paymentPlan.findFirstOrThrow({
       where: { academyId: escazu.id, name: "Mensualidad" },
     });

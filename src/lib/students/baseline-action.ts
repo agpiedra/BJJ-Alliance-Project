@@ -4,6 +4,7 @@ import { resolveActionContext } from "@/lib/tenant/context";
 import { getScopedDb } from "@/lib/tenant/scoped-client";
 import { prisma } from "@/lib/prisma";
 import { lockStudent } from "@/lib/students/lock";
+import { lockOrganizationGate } from "@/lib/dues/activation-gate";
 import { todayInAsDbDate } from "@/lib/students/status-history";
 import type { ActionState } from "@/lib/action-state";
 
@@ -31,6 +32,7 @@ export async function runStatusHistoryBaseline(organizationId: string, _prevStat
   let count = 0;
   for (const student of candidates) {
     const applied = await prisma.$transaction(async (tx) => {
+      await lockOrganizationGate(tx, student.organizationId); // stage 9 rule 9b
       const locked = await lockStudent(tx, student.organizationId, student.id);
       if (!locked) return false;
       // Re-verified under the lock: a real event (or another run) may have raced ahead of this one since `candidates` was read.

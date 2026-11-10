@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import { inactiveLedgerActivation, type LedgerDeps } from "@/lib/dues/ledger/activation";
+import { ledgerActivation, type LedgerDeps } from "@/lib/dues/ledger/activation";
 import { getOwnDuesFacts, type DuesFactsForStudent, type DuesEligibilityFact, type PortalSelfContext } from "@/lib/dues/ledger/dues-facts";
 import { todayIn } from "@/lib/dues/ledger/common";
 
@@ -55,7 +55,7 @@ export async function getOwnPaymentFacts(context: PortalSelfContext, now: Date, 
 
   let facts: DuesFactsForStudent | null;
   try {
-    const activation = deps.activation ?? inactiveLedgerActivation;
+    const activation = deps.activation ?? ledgerActivation;
     facts = await getOwnDuesFacts(context, undefined, { ...deps, activation, now: () => now });
   } catch {
     return { ok: false };

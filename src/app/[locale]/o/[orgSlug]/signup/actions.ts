@@ -9,6 +9,7 @@ import { notifyNewSignup } from "@/lib/notifications/notify-new-signup";
 import { fireAndForget } from "@/lib/notifications/fire-and-forget";
 import { Role, StudentStatus } from "@/generated/prisma/client";
 import { todayInAsDbDate } from "@/lib/students/status-history";
+import { lockOrganizationGate } from "@/lib/dues/activation-gate";
 
 const signupSchema = z
   .object({
@@ -139,6 +140,7 @@ export async function signup(orgSlug: string, _prevState: SignupState, formData:
   });
 
   const studentId = await prisma.$transaction(async (tx) => {
+    await lockOrganizationGate(tx, homeAcademy.organizationId); // stage 9 rule 9b: the gate before any write
     const user = await tx.user.create({
       data: {
         email: data.email,

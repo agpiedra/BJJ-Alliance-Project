@@ -673,7 +673,8 @@ describe("discovery cannot be hidden by rows this run already settled", () => {
     expect(new Set(again.visits.filter((v) => v.ended === "passEnd").map((v) => v.segmentId)).size).toBe(22);
     expect(again.visits.reduce((n, v) => n + v.created, 0)).toBe(0);
     expect(await obligationsFor(big.id)).toHaveLength(3);
-  });
+    // ~2.5 s alone on main (24aabe3) and with stage 9's gate alike; over vitest's 5 s default once under full-suite load.
+  }, 60_000);
 
   it("new-month progress: a month created by rollover mid-run, sliced, then hidden, is still billed in the same run", async () => {
     await settledHead();
@@ -687,7 +688,7 @@ describe("discovery cannot be hidden by rows this run already settled", () => {
     expect(report.visits.some((v) => v.rollover && "inserted" in v.rollover && v.rollover.inserted === 1)).toBe(true);
     expect(await obligationsFor(org.id, undefined, S)).toHaveLength(3); // September fully billed
     expect(await unfinished()).toBe(0);
-  });
+  }, 60_000);
 
   it("the deadline is still enforced: the run stops at its budget with work left, nothing more", async () => {
     await settledHead();

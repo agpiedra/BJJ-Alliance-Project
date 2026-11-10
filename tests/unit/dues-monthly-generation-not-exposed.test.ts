@@ -84,7 +84,7 @@ describe("the monthly-generation runner and visit loop are not reachable from pr
   it("keeps its closed defaults: no start month, inactive ledger, and closure policy a required input with no production value", () => {
     const loop = stripComments(readFileSync(LOOP, "utf8"));
     expect(loop).toContain("deps.generationStart ?? (async () => null)");
-    expect(loop).toContain("deps.activation ?? inactiveLedgerActivation");
+    expect(loop).toContain("deps.activation ?? ledgerActivation");
     expect(loop).toMatch(/closurePolicy: "reopen";/); // required (no `?`), one literal value
     const mentionsClosurePolicy = files.filter((f) => /closurePolicy\s*:/.test(stripComments(f.text))).map((f) => norm(f.file)).sort();
     expect(mentionsClosurePolicy, "besides the loop's type, only the G2b route module passes closurePolicy").toEqual([LOOP, ROUTE_MODULE].sort());

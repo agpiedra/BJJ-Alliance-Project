@@ -25,7 +25,7 @@ const prisma = getTestPrismaClient();
 let mockActive = false;
 vi.mock("@/lib/dues/ledger/activation", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../src/lib/dues/ledger/activation")>();
-  return { ...actual, inactiveLedgerActivation: { isActive: async () => mockActive } };
+  return { ...actual, ledgerActivation: { isActive: async () => mockActive } };
 });
 
 const { sendWeeklyDigestForAcademy } = await import("../../src/lib/notifications/weekly-digest");

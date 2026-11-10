@@ -19,8 +19,7 @@
 import "dotenv/config";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import path from "node:path";
+import { existsSync } from "node:fs";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../src/generated/prisma/client";
 import { resolveGuardedTestDatabaseUrl, testDatabaseChildEnv } from "./lib/test-database-guard";
@@ -187,30 +186,8 @@ async function checkDevPages(label: string, base: string, served: boolean, beltM
   }
 }
 
-/** Every compiled JavaScript file under `.next` (read BEFORE `next dev` writes into it). */
-function compiledFiles(dir = ".next"): string[] {
-  const out: string[] = [];
-  for (const name of readdirSync(dir)) {
-    const full = path.join(dir, name);
-    if (statSync(full).isDirectory()) out.push(...compiledFiles(full));
-    else if (name.endsWith(".js")) out.push(full);
-  }
-  return out;
-}
-
-/** O4 owner-flow verification seam (src/lib/dues/ledger/activation.ts): `NODE_ENV === "production"` is inlined at build, so the
- * branch reading E2E_LEDGER_ACTIVE_ORG_IDS must be eliminated from the compiled app entirely — the production activation default
- * cannot depend on any runtime environment. Positive control: a string from the same ledger code IS present, so an empty search
- * cannot pass by looking in the wrong place. */
-function checkLedgerActivationSeamCompiledOut() {
-  const contents = compiledFiles().map((f) => readFileSync(f, "utf8"));
-  check(contents.length > 0 && contents.some((c) => c.includes("changedSinceReview")), "positive control: compiled ledger code is present in .next");
-  check(!contents.some((c) => c.includes("E2E_LEDGER_ACTIVE_ORG_IDS")), "the test-only ledger activation seam is absent from the production build");
-}
-
 async function main() {
   if (!existsSync(".next/BUILD_ID")) throw new Error("No production build (.next/BUILD_ID). Run `pnpm build` first.");
-  checkLedgerActivationSeamCompiledOut();
 
   const testUrl = resolveGuardedTestDatabaseUrl();
   const secret = `synthetic-${randomBytes(16).toString("hex")}`;

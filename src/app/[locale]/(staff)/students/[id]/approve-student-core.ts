@@ -2,7 +2,8 @@ import { StudentStatus } from "@/generated/prisma/client";
 import { grantStudentMembership } from "@/lib/students/student-membership";
 import { lockStudent, type Tx } from "@/lib/students/lock";
 import { appendStatusChange, todayInAsDbDate } from "@/lib/students/status-history";
-import { inactiveLedgerActivation, type LedgerDeps } from "@/lib/dues/ledger/activation";
+import { ledgerActivation, type LedgerDeps } from "@/lib/dues/ledger/activation";
+import { lockOrganizationGate } from "@/lib/dues/activation-gate";
 import { latestEffective, lockBranchShared, todayIn, toDbDate } from "@/lib/dues/ledger/common";
 import { enrollmentChargeInTx } from "@/lib/dues/ledger/enrollment-charge";
 import { assignPlanInTx } from "@/lib/dues/assignment-core";
@@ -58,7 +59,8 @@ export async function approveStudentInTx(
   deps: LedgerDeps = {},
 ): Promise<void> {
   const { context, student, planId } = args;
-  const activation = deps.activation ?? inactiveLedgerActivation;
+  await lockOrganizationGate(tx, student.organizationId); // stage 9 rule 9b: the gate before any other lock
+  const activation = deps.activation ?? ledgerActivation;
   const isActive = await activation.isActive(student.organizationId);
 
   if (!isActive) {
