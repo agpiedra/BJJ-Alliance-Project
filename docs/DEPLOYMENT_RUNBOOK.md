@@ -580,6 +580,18 @@ WHERE o."cancelledAt" IS NOT NULL ORDER BY o."cancelledAt";
   dump taken after `20261113120000` alone, so it differs from pre-9-3 by exactly one retained item — the value `LEGACY_NO_MONEY`
   in enum `"DuesReadinessConfirmationKind"`.
 
+## D5: the monthly-generation schedule (`vercel.json`, legacy Cron Jobs)
+
+- `vercel.json` `crons` has `/api/cron/monthly-generation` at `0 */3 * * *` (UTC), with `STALE_AFTER_HOURS` 4 (one slot plus an
+  hour; the staging canary's value). No migration.
+- **The entry runs nothing by itself.** Vercel runs `crons` entries only when crons are enabled for the project — a settings step
+  the owner approves separately. Enabling crons runs **every** entry, so the weekly digest (`0 13 * * 1`) starts too: decide on it
+  first (D5 brief §7 item 2, open).
+- **After deploying the entry, `/api/health/jobs` reports `monthly-generation` stale (`ok: false`) until its first run.** That is
+  the intended signal ("scheduled but not running"); expect it until crons are enabled and the first slot has run.
+- Billing still needs an organization's effective activation (stage 9); with none, every run writes no financial row.
+- Rollback: remove the entry and set the threshold back to `null` in one change (the unit test pins them together).
+
 ## What breaks in production but never in dev
 
 Ranked by how likely each one is to actually bite in Alliance's first weeks, not by how

@@ -185,17 +185,22 @@ describe("monitored audit actions", () => {
   });
 });
 
-describe("G2b: the registered but unscheduled monthly-generation job", () => {
+describe("D5: the scheduled monthly-generation job (`0 */3 * * *` UTC, stale after 4 h)", () => {
   const now = Date.UTC(2031, 2, 10, 12);
-  it("REQUIRED: is 'not_scheduled' — never 'overdue' or 'no_recorded_run' — with no threshold and no fresh-until date", () => {
+  const run = (minutesAgo: number, status = "SUCCEEDED") => ({ status, startedAt: new Date(now - minutesAgo * 60_000), finishedAt: null, failed: 0, heartbeatStatus: null });
+
+  it("REQUIRED: with no run it is 'no_recorded_run' (scheduled but never ran), never 'not_scheduled'", () => {
     const job = classifyJob("monthly-generation", { latestRun: null, latestSuccess: null }, now);
-    expect(job).toMatchObject({ jobName: "monthly-generation", schedule: null, staleAfterHours: null, freshness: "not_scheduled", freshUntil: null, stuck: false });
+    expect(job).toMatchObject({ jobName: "monthly-generation", schedule: { cron: "0 */3 * * *", weekly: null }, staleAfterHours: 4, freshness: "no_recorded_run", freshUntil: null, stuck: false });
   });
 
-  it("REQUIRED: a manual run is still 'not_scheduled', and a stuck one is still reported stuck", () => {
-    const startedAt = new Date(now - 31 * 60_000);
-    const latest = { status: "RUNNING", startedAt, finishedAt: null, failed: 0, heartbeatStatus: null };
-    const job = classifyJob("monthly-generation", { latestRun: latest, latestSuccess: null } as never, now);
-    expect(job).toMatchObject({ freshness: "not_scheduled", freshUntil: null, stuck: true });
+  it("REQUIRED: on schedule up to 4 h after its last start (fresh-until shown), overdue after", () => {
+    const fresh = classifyJob("monthly-generation", { latestRun: run(180), latestSuccess: null } as never, now);
+    expect(fresh).toMatchObject({ freshness: "on_schedule", freshUntil: new Date(now - 180 * 60_000 + 4 * 3_600_000) });
+    expect(classifyJob("monthly-generation", { latestRun: run(241), latestSuccess: null } as never, now)).toMatchObject({ freshness: "overdue" });
+  });
+
+  it("a stuck run is still reported stuck", () => {
+    expect(classifyJob("monthly-generation", { latestRun: run(31, "RUNNING"), latestSuccess: null } as never, now)).toMatchObject({ stuck: true });
   });
 });

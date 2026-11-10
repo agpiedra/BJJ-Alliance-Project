@@ -13,8 +13,9 @@ import type { JobName } from "@/lib/jobs/job-names";
  */
 export const STALE_AFTER_HOURS: Record<JobName, number | null> = {
   "weekly-digest": 24 * 8, // weekly (Monday) + a day of slack
-  // D5 (the schedule) is not approved: set this together with the vercel.json entry, from the approved frequency.
-  "monthly-generation": null,
+  // D5 (approved 2026-11-09: legacy Cron Jobs, `0 */3 * * *` UTC): one 3-hour slot plus an hour of slack — the 4 h the staging
+  // cron canary used (docs/dues/D5-SCHEDULING-DECISION-BRIEF.md §7, item 1). Never ran = stale, once scheduled.
+  "monthly-generation": 4,
 };
 
 /** A RUNNING row older than this never finished — almost certainly a crashed or killed

@@ -73,12 +73,16 @@ describe("the monthly-generation runner and visit loop are not reachable from pr
     }
   });
 
-  it("is registered in the job registry but NOT scheduled: no vercel.json entry and no stale threshold until D5", async () => {
-    expect(readFileSync("vercel.json", "utf8"), "the schedule is D5's decision").not.toContain("monthly-generation");
+  it("is scheduled exactly as D5 approved (legacy Cron Jobs, `0 */3 * * *` UTC) with its 4 h stale threshold; the weekly digest entry is unchanged", async () => {
+    const crons = (JSON.parse(readFileSync("vercel.json", "utf8")) as { crons: { path: string; schedule: string }[] }).crons;
+    expect(crons).toEqual([
+      { path: "/api/cron/weekly-digest", schedule: "0 13 * * 1" },
+      { path: "/api/cron/monthly-generation", schedule: "0 */3 * * *" },
+    ]);
     expect(readFileSync("src/lib/jobs/job-names.ts", "utf8")).toContain('"monthly-generation"');
     const { STALE_AFTER_HOURS, resolveJobSchedule } = await import("../../src/lib/jobs/job-health");
-    expect(STALE_AFTER_HOURS["monthly-generation"]).toBeNull();
-    expect(resolveJobSchedule("monthly-generation")).toBeNull();
+    expect(STALE_AFTER_HOURS["monthly-generation"]).toBe(4);
+    expect(resolveJobSchedule("monthly-generation")).toEqual({ cron: "0 */3 * * *", weekly: null });
   });
 
   it("keeps its closed defaults: start month and activation only from an EFFECTIVE activation record, and closure policy a required input with no production value", () => {

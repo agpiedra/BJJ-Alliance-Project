@@ -187,7 +187,7 @@ describe("summarizeMonthlyGenerationRun: MONTHLY-GENERATION-TRIGGER-PLAN.md §8 
   });
 });
 
-describe("registered, not scheduled (D5)", () => {
+describe("scheduled (D5: `0 */3 * * *` UTC, stale after 4 h)", () => {
   it("the registry name is the runner's own job name", () => {
     expect(JOB_NAMES).toContain(GENERATION_JOB_NAME);
   });
@@ -198,9 +198,12 @@ describe("registered, not scheduled (D5)", () => {
     }
   });
 
-  it("an unscheduled job is never stale, run or no run", () => {
-    expect(isJobStale("monthly-generation", null, Date.now())).toBe(false);
-    expect(isJobStale("monthly-generation", new Date(0), Date.now())).toBe(false);
-    expect(isJobStale("weekly-digest", null, Date.now())).toBe(true);
+  it("monthly generation is stale with no run, fresh up to 4 h after its last start, stale after: a single missed 3-hour slot is reported (about an hour after it was due)", () => {
+    const now = Date.parse("2031-11-01T12:00:00Z");
+    expect(isJobStale("monthly-generation", null, now)).toBe(true);
+    expect(isJobStale("monthly-generation", new Date(now - 3 * 3_600_000), now)).toBe(false); // the previous slot
+    expect(isJobStale("monthly-generation", new Date(now - 4 * 3_600_000), now)).toBe(false); // exactly the threshold
+    expect(isJobStale("monthly-generation", new Date(now - 4 * 3_600_000 - 1), now)).toBe(true);
+    expect(isJobStale("monthly-generation", new Date(now - 6 * 3_600_000), now)).toBe(true); // a missed slot plus
   });
 });
