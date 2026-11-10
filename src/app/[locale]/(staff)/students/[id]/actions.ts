@@ -11,6 +11,7 @@ import { getScopedDb } from "@/lib/tenant/scoped-client";
 import { Prisma, StudentStatus } from "@/generated/prisma/client";
 import type { ActionState } from "@/lib/action-state";
 import { lockStudent } from "@/lib/students/lock";
+import { lockOrganizationGate } from "@/lib/dues/activation-gate";
 import { appendStatusChange, todayInAsDbDate } from "@/lib/students/status-history";
 import { resumeChargeInTx } from "@/lib/dues/ledger/resume-charge";
 import { genuineReturnChargeInTx } from "@/lib/dues/ledger/genuine-return-charge";
@@ -277,6 +278,8 @@ export async function archiveStudent(
 
   try {
     await prisma.$transaction(async (tx) => {
+      // Stage 9 rule 9b: the organization gate before anything else.
+      await lockOrganizationGate(tx, student.organizationId);
       // Eligibility-prerequisites brief, 3.2: every status-changing action locks the student row FIRST, before its own update
       // and before the history row's `sequence` is computed — this is what makes `sequence` reflect the true commit order.
       const locked = await lockStudent(tx, student.organizationId, student.id);
@@ -396,6 +399,7 @@ export async function restoreStudent(
 
   try {
     await prisma.$transaction(async (tx) => {
+      await lockOrganizationGate(tx, student.organizationId); // stage 9 rule 9b
       const locked = await lockStudent(tx, student.organizationId, student.id);
       if (!locked) throw new StudentWriteMissError();
 
@@ -560,6 +564,7 @@ export async function pauseStudent(
 
   try {
     await prisma.$transaction(async (tx) => {
+      await lockOrganizationGate(tx, student.organizationId); // stage 9 rule 9b
       const locked = await lockStudent(tx, student.organizationId, student.id);
       if (!locked) throw new StudentWriteMissError();
 
@@ -647,6 +652,7 @@ export async function resumeStudent(
 
   try {
     await prisma.$transaction(async (tx) => {
+      await lockOrganizationGate(tx, context.organizationId); // stage 9 rule 9b
       const charged = await resumeChargeInTx(tx, { context, student: { id: student.id, homeAcademyId: student.homeAcademyId } }, {});
       if (charged.ok) return; // the gated path already wrote status/history/audit/obligation together
 
@@ -755,6 +761,7 @@ export async function returnToTraining(
 
   try {
     await prisma.$transaction(async (tx) => {
+      await lockOrganizationGate(tx, context.organizationId); // stage 9 rule 9b
       const charged = await genuineReturnChargeInTx(
         tx,
         { context, student: { id: student.id, homeAcademyId: student.homeAcademyId, userId: student.userId }, archiveEventId: parsed.data.archiveEventId },

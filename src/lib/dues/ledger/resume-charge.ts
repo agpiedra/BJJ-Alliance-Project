@@ -1,7 +1,7 @@
 import { StudentStatus } from "@/generated/prisma/client";
 import type { TenantContext } from "@/lib/tenant/types";
 import { lockBranchShared, lockStudent, toDbDate, todayIn, type Tx } from "@/lib/dues/ledger/common";
-import { inactiveLedgerActivation, type LedgerDeps } from "@/lib/dues/ledger/activation";
+import { ledgerActivation, type LedgerDeps } from "@/lib/dues/ledger/activation";
 import { writeMonthlyObligationInTx, type CreateMonthlyObligationError } from "@/lib/dues/ledger/create-monthly-obligation";
 import { checkMonthCoverageInTx, resolveMonthlyConfigCandidateInTx } from "@/lib/dues/ledger/monthly-config-resolution";
 import { appendStatusChange } from "@/lib/students/status-history";
@@ -38,7 +38,7 @@ export async function resumeChargeInTx(
 ): Promise<ResumeChargeResult> {
   const { context, student } = args;
   const organizationId = context.organizationId;
-  const activation = deps.activation ?? inactiveLedgerActivation;
+  const activation = deps.activation ?? ledgerActivation;
   if (!(await activation.isActive(organizationId))) return { ok: false, error: "notActive" };
 
   // Lock order: branch FOR SHARE, then student FOR UPDATE — the ledger's own established sequence

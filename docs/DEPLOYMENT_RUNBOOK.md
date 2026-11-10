@@ -512,6 +512,30 @@ WHERE o."cancelledAt" IS NOT NULL ORDER BY o."cancelledAt";
    new, reviewed writer or migration with its own owner approval — never an ad-hoc script.
 5. **Record** the incident and the rows involved (the query above) before and after the fix.
 
+## Stage 9 PR 9-1: activation record and organization gate (migration `20261111120000`)
+
+- **Migrate first, then deploy.** The new code reads `"DuesActivation"` on every ledger check and takes the organization row
+  lock in every writer that affects readiness. On the old schema every ledger check and every legacy payment fails. The
+  migration is one explicit `BEGIN … COMMIT`, creates one empty table and its triggers, and changes no existing row.
+- **Old code on the new schema is safe:** nothing in it reads or writes the table.
+- **Nothing in the application writes `"DuesActivation"` in PR 9-1.** Every organization stays inactive exactly as before.
+  Approval and the activation switch arrive in PR 9-3, with their own runbook section (forward-only after the first
+  effective activation, A5).
+- **Check after deploy:** `SELECT count(*) FROM "DuesActivation"` must be 0. A row here before PR 9-3 means a manual write;
+  investigate before anything else (KNOWN_LIMITATIONS: the gate binds only application code).
+- **Rollback order (owner approval only):**
+  1. **Code first:** deploy a build that predates PR 9-1. It never touches `"DuesActivation"`, so it runs on either schema.
+  2. **Then, only if the schema must go too:** run `docs/dues/stage9-1-schema-rollback.sql` by hand. It is the only
+     sanctioned edit of migration history for 9-1. It takes an `ACCESS EXCLUSIVE` lock and **refuses if any activation
+     record exists** (approval, withdrawal or effective); such rows are never deleted, so the answer then is a forward fix.
+  3. **If O4 must also be rolled back, roll back 9-1 first:** 9-1's insert trigger uses O4's `dues_marker_absent_on_insert()`,
+     which the O4 rollback drops.
+  Never steps 1–2 in reverse: 9-1 code on the pre-9-1 schema fails on every ledger check and legacy payment.
+  `prisma migrate resolve --rolled-back` cannot replace the script (it accepts only a failed migration — verified).
+  Rehearsed locally on a disposable PostgreSQL 17 (2026-11-10): with an activation row present the script refused and changed
+  nothing (table, row, migration record and schema dump identical); on an empty table the schema dump equals one migrated only
+  up to O4 (ignoring pg_dump's per-run `\restrict` token), the migration record is gone, and `migrate deploy` re-applies 9-1.
+
 ## What breaks in production but never in dev
 
 Ranked by how likely each one is to actually bite in Alliance's first weeks, not by how

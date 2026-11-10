@@ -1,7 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import type { TenantContext } from "@/lib/tenant/types";
 import { inTenantScope } from "@/lib/dues/ledger/common";
-import { inactiveLedgerActivation, type LedgerDeps } from "@/lib/dues/ledger/activation";
+import { ledgerActivation, type LedgerDeps } from "@/lib/dues/ledger/activation";
 import type { Currency, PaymentMethod } from "@/generated/prisma/client";
 import { columnToMinor, minorToDecimal } from "@/lib/dues/ledger/minor-units";
 import type { PortalSelfContext } from "@/lib/dues/ledger/dues-facts";
@@ -100,7 +100,7 @@ export async function listPaymentHistoryForStudent(
   opts: { limit?: number; cursor?: string } = {},
   deps: LedgerDeps = {},
 ): Promise<PaymentHistoryResult> {
-  const activation = deps.activation ?? inactiveLedgerActivation;
+  const activation = deps.activation ?? ledgerActivation;
   if (!(await activation.isActive(context.organizationId))) return { ok: false, error: "notActive" };
   if (!isNonBlankString(studentId)) return { ok: false, error: "invalid" };
 
@@ -296,7 +296,7 @@ export async function listOwnPaymentHistory(
   opts: { limit?: number; cursor?: string } = {},
   deps: LedgerDeps = {},
 ): Promise<PortalPaymentHistoryResult> {
-  const activation = deps.activation ?? inactiveLedgerActivation;
+  const activation = deps.activation ?? ledgerActivation;
   if (!(await activation.isActive(context.organizationId))) return { ok: false, error: "notActive" };
   if (typeof context.linkedStudentId !== "string" || context.linkedStudentId.trim().length === 0) {
     return { ok: false, error: "invalid" };

@@ -6,6 +6,9 @@
 -- docs/DEPLOYMENT_RUNBOOK.md ("O4 prepaid-payment reversal") instead — never this script, never manual edits, never disabled
 -- triggers.
 --
+-- If Stage 9 PR 9-1 (20261111120000) is applied, roll it back FIRST (docs/dues/stage9-1-schema-rollback.sql): its insert trigger
+-- uses dues_marker_absent_on_insert(), which this script drops, so this script fails (and changes nothing) until then.
+--
 -- One explicit transaction (Prisma 7.10's `migrate deploy` does not wrap files, and this is run by hand with psql anyway): a
 -- failure anywhere leaves the database exactly as it was. Rehearsed locally on 2026-11-09: a database migrated to the head and
 -- rolled back with this script has the same schema dump as one migrated only up to 20261109120000.

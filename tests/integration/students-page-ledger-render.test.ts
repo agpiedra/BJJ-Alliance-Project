@@ -15,14 +15,14 @@ import enMessages from "../../messages/en.json";
  * surface leaking in, (b) the active path renders the new surface instead, and (c) the corrected legacy-bookmark
  * notice never claims "all students shown" when a real ledger filter is still narrowing the list alongside it.
  * Uses the same sanctioned test seam `payments-page-card-gating.test.ts` already established: mocking
- * `inactiveLedgerActivation` is the documented technique (`activation.ts`'s own file comment), not a workaround.
+ * `ledgerActivation` is the documented technique (`activation.ts`'s own file comment), not a workaround.
  */
 const prisma = getTestPrismaClient();
 
 let mockActive = false;
 vi.mock("@/lib/dues/ledger/activation", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../src/lib/dues/ledger/activation")>();
-  return { ...actual, inactiveLedgerActivation: { isActive: async () => mockActive } };
+  return { ...actual, ledgerActivation: { isActive: async () => mockActive } };
 });
 
 type MockSession = { user: { id: string }; activeOrganizationId: string | null } | null;

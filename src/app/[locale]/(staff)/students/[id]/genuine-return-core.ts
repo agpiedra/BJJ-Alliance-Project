@@ -1,4 +1,4 @@
-import { inactiveLedgerActivation } from "@/lib/dues/ledger/activation";
+import { ledgerActivation } from "@/lib/dues/ledger/activation";
 
 /**
  * Deliberately NOT a "use server" file — mirrors `create-student-core.ts`'s own `isEnrollmentBillingActive`
@@ -10,5 +10,5 @@ import { inactiveLedgerActivation } from "@/lib/dues/ledger/activation";
  * field at all, never from request data.
  */
 export async function isGenuineReturnBillingActive(organizationId: string): Promise<boolean> {
-  return inactiveLedgerActivation.isActive(organizationId);
+  return ledgerActivation.isActive(organizationId);
 }

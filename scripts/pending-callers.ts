@@ -111,11 +111,11 @@ const KNOWN_LIMITATIONS: KnownLimitation[] = [
   },
   {
     description:
-      "A test-only ledger activation seam exists for local browser verification: outside a production build, inactiveLedgerActivation reports an organization active when E2E_AUTH_BYPASS_SECRET is set AND E2E_LEDGER_ACTIVE_ORG_IDS lists it. Like the e2e session bypass, a test-only path that changes what the app does exists at all.",
-    foundIn: "src/lib/dues/ledger/activation.ts (testOnlyLedgerActiveOrganization)",
-    dueBy: "Re-read before launch, together with the e2e session bypass above",
+      "Stage 9 organization gate (PR 9-1): ledger activation is now read from the DuesActivation table, and every writer that changes what readiness reads takes the Organization row lock FOR SHARE first. Writes outside the application bypass it: prisma/seed.ts, data-writing migrations, manual SQL (psql, Prisma Studio, the Supabase dashboard) and operator scripts. A manual INSERT of an effective DuesActivation row would activate the ledger for that organization.",
+    foundIn: "src/lib/dues/activation-gate.ts; prisma/migrations/20261111120000_dues_activation_record",
+    dueBy: "Operating rule before launch: never run the seed or manual writes against production; review any data-writing migration against the gate",
     reason:
-      "process.env.NODE_ENV === 'production' is inlined at build, so the branch is compiled out: scripts/verify-production-build.ts (run in CI) fails if E2E_LEDGER_ACTIVE_ORG_IDS appears anywhere in .next, with a positive control. tests/unit/ledger-activation-test-seam.test.ts proves it is closed by default, closed under NODE_ENV=production even with both variables set, and exact about which organizations it names. Before launch: confirm neither variable is set in any deployed environment, and consider deleting the seam once browser verification no longer needs it.",
+      "A lock protocol only binds code that follows it. tests/unit/dues-activation-gate-participation.test.ts fails on any new application write to a reviewed table outside the participating list. The database keeps the record set-once and undeletable, but it cannot tell an application insert from a manual one. (Replaces the O4 test-only activation seam, deleted in PR 9-1: tests now create real activation rows.)",
   },
   {
     description:

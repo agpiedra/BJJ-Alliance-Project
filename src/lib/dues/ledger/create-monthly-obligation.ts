@@ -3,7 +3,8 @@ import { prisma } from "@/lib/prisma";
 import type { SystemJobContext, TenantContext } from "@/lib/tenant/types";
 import { assertYearMonth, compareDates, compareYearMonth, dueDateFor, graceDeadlineFor, type CalendarDate, type YearMonth } from "@/lib/dues/calendar";
 import { currentMonthIn } from "@/lib/dues/config-input";
-import { inactiveLedgerActivation, type LedgerDeps } from "@/lib/dues/ledger/activation";
+import { ledgerActivation, type LedgerDeps } from "@/lib/dues/ledger/activation";
+import { lockOrganizationGate } from "@/lib/dues/activation-gate";
 import { inTenantScope, isRealDate, latestEffective, lockBranchShared, lockPolicyShared, lockStudent, lockTermsShared, toDbDate, type Tx } from "@/lib/dues/ledger/common";
 
 export type CreateMonthlyObligationError =
@@ -75,7 +76,7 @@ export async function writeMonthlyObligationInTx(
 ): Promise<CreateMonthlyObligationResult> {
   const { context, student, coverage, planTermsId, policyVersionId, origin, minimumDueOn } = args;
   const organizationId = context.organizationId;
-  const activation = deps.activation ?? inactiveLedgerActivation;
+  const activation = deps.activation ?? ledgerActivation;
   if (!(await activation.isActive(organizationId))) return refuse("notActive");
   if (!isValidCoverageMonth(coverage)) return refuse("invalid");
   // minimumDueOn (resume-charge integration): validated here, early, alongside this function's other format/shape
@@ -194,7 +195,7 @@ export async function createMonthlyObligationInTx(
 ): Promise<CreateMonthlyObligationResult> {
   const { context, student, coverage, planTermsId, policyVersionId } = args;
   const organizationId = context.organizationId;
-  const activation = deps.activation ?? inactiveLedgerActivation;
+  const activation = deps.activation ?? ledgerActivation;
   if (!(await activation.isActive(organizationId))) return refuse("notActive");
   if (!isValidCoverageMonth(coverage)) return refuse("invalid");
   if (context.kind === "tenant" && !inTenantScope(context, student.homeAcademyId)) return refuse("notFound");
@@ -235,7 +236,7 @@ export async function createMonthlyObligation(
 ): Promise<CreateMonthlyObligationResult> {
   const { context, studentId, coverage, planTermsId, policyVersionId } = args;
   const organizationId = context.organizationId;
-  const activation = deps.activation ?? inactiveLedgerActivation;
+  const activation = deps.activation ?? ledgerActivation;
   if (!(await activation.isActive(organizationId))) return refuse("notActive");
 
   if (!isValidCoverageMonth(coverage)) return refuse("invalid");
@@ -245,5 +246,8 @@ export async function createMonthlyObligation(
   const student = await prisma.student.findFirst({ where: { id: studentId, organizationId }, select: { id: true, homeAcademyId: true } });
   if (!student || !inTenantScope(context, student.homeAcademyId)) return refuse("notFound");
 
-  return prisma.$transaction((tx) => createMonthlyObligationInTx(tx, { context, student, coverage, planTermsId, policyVersionId }, deps));
+  return prisma.$transaction(async (tx) => {
+    await lockOrganizationGate(tx, organizationId); // stage 9 rule 9k
+    return createMonthlyObligationInTx(tx, { context, student, coverage, planTermsId, policyVersionId }, deps);
+  });
 }

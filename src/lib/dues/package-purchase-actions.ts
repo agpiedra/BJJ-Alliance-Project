@@ -71,7 +71,7 @@ function wroteSomethingNew(result: PurchasePackageWithSubmissionIdentityResult):
  * role check happens here; `purchasePackageWithSubmissionIdentity`'s own identical check (internal to that function)
  * is what actually enforces it regardless, exactly mirroring `recordPayment`'s own two-layer precedent.
  *
- * No `deps` override of any kind — production activation stays the real, unmodified `inactiveLedgerActivation`
+ * No `deps` override of any kind — production activation stays the real, unmodified `ledgerActivation`
  * default every other ledger action in this codebase already uses.
  */
 export async function purchasePackage(

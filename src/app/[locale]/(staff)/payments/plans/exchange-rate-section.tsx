@@ -1,5 +1,5 @@
 import { getTranslations } from "next-intl/server";
-import { inactiveLedgerActivation } from "@/lib/dues/ledger/activation";
+import { ledgerActivation } from "@/lib/dues/ledger/activation";
 import { listRecentExchangeRateQuotes } from "@/lib/dues/exchange-rate-queries";
 import { AddExchangeRateForm, CorrectExchangeRateForm } from "./exchange-rate-forms";
 
@@ -9,7 +9,7 @@ import { AddExchangeRateForm, CorrectExchangeRateForm } from "./exchange-rate-fo
  * organization-wide), from `page.tsx`'s own ADMIN-only branch.
  *
  * Two independent layers, deliberately not merged (brief §2.3): `enterOrCorrectExchangeRate` itself always refuses
- * `"notActive"` when the real, unmodified `inactiveLedgerActivation` reports inactive (unconditional server-side
+ * `"notActive"` when the real, unmodified `ledgerActivation` reports inactive (unconditional server-side
  * enforcement, unaffected by anything here) — this component's OWN read of the same singleton is a read-only,
  * advisory pre-check that hides the forms entirely when inactive, so the owner is never shown a submit button that
  * is guaranteed to fail. Both read the identical production singleton, so they can never disagree under real
@@ -17,7 +17,7 @@ import { AddExchangeRateForm, CorrectExchangeRateForm } from "./exchange-rate-fo
  */
 export async function ExchangeRateSection({ organizationId }: { organizationId: string }) {
   const t = await getTranslations("payments.plans.exchangeRate");
-  const active = await inactiveLedgerActivation.isActive(organizationId);
+  const active = await ledgerActivation.isActive(organizationId);
 
   if (!active) {
     return (

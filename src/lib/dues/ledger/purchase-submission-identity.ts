@@ -5,7 +5,8 @@ import type { TenantContext } from "@/lib/tenant/types";
 import { parseMoney } from "@/lib/dues/config-input";
 import type { CalendarDate, YearMonth } from "@/lib/dues/calendar";
 import { inTenantScope, isRealDate } from "@/lib/dues/ledger/common";
-import { inactiveLedgerActivation, type LedgerDeps } from "@/lib/dues/ledger/activation";
+import { ledgerActivation, type LedgerDeps } from "@/lib/dues/ledger/activation";
+import { lockOrganizationGate } from "@/lib/dues/activation-gate";
 import { lockExchangeRateNamespaceShared } from "@/lib/dues/ledger/exchange-rate";
 import { isValidCoverageMonth } from "@/lib/dues/ledger/create-monthly-obligation";
 import { classifyRecordPaymentError } from "@/lib/dues/ledger/record-payment";
@@ -132,7 +133,7 @@ export type PurchasePackageWithSubmissionIdentityResult =
  * `purchasePackageInTx`. `submissionId` is REQUIRED, never generated here (minting it server-side would defeat
  * the entire point of a client-supplied retry key).
  *
- * LOCK ORDER: the identity insert sits AFTER `lockExchangeRateNamespaceShared` (the literal first statement,
+ * LOCK ORDER: the identity insert sits AFTER `lockExchangeRateNamespaceShared` (the first lock after the stage 9 organization gate,
  * exactly like `purchasePackage`'s own) and BEFORE the writer's own branch/student locks, taken inside
  * `purchasePackageInTx` — a losing/replay request never reaches those locks at all.
  */
@@ -154,7 +155,7 @@ export async function purchasePackageWithSubmissionIdentity(
 ): Promise<PurchasePackageWithSubmissionIdentityResult> {
   const { context, studentId, planTermsId, requestedStartMonth, existingObligationIds, receivedOn, tender, method, notes, maxBackdateDays, submissionId } = args;
   const organizationId = context.organizationId;
-  const activation = deps.activation ?? inactiveLedgerActivation;
+  const activation = deps.activation ?? ledgerActivation;
   if (!(await activation.isActive(organizationId))) return { ok: false, error: "notActive" };
   if (context.organizationRole !== "ADMIN") return { ok: false, error: "notFound" };
 
@@ -186,6 +187,7 @@ export async function purchasePackageWithSubmissionIdentity(
 
   try {
     return await prisma.$transaction(async (tx): Promise<PurchasePackageWithSubmissionIdentityResult> => {
+      await lockOrganizationGate(tx, organizationId); // stage 9 rule 9k
       await lockExchangeRateNamespaceShared(tx, organizationId);
       if (deps.afterExchangeRateLockForTest) await deps.afterExchangeRateLockForTest();
 
@@ -332,7 +334,7 @@ export async function prepayMonthlyObligationsWithSubmissionIdentity(
 ): Promise<PrepayMonthlyObligationsWithSubmissionIdentityResult> {
   const { context, studentId, requestedMonths, existingObligationIds, receivedOn, tender, method, notes, maxBackdateDays, submissionId } = args;
   const organizationId = context.organizationId;
-  const activation = deps.activation ?? inactiveLedgerActivation;
+  const activation = deps.activation ?? ledgerActivation;
   if (!(await activation.isActive(organizationId))) return { ok: false, error: "notActive" };
   if (context.organizationRole !== "ADMIN") return { ok: false, error: "notFound" };
 
@@ -371,6 +373,7 @@ export async function prepayMonthlyObligationsWithSubmissionIdentity(
 
   try {
     return await prisma.$transaction(async (tx): Promise<PrepayMonthlyObligationsWithSubmissionIdentityResult> => {
+      await lockOrganizationGate(tx, organizationId); // stage 9 rule 9k
       await lockExchangeRateNamespaceShared(tx, organizationId);
       if (deps.afterExchangeRateLockForTest) await deps.afterExchangeRateLockForTest();
 

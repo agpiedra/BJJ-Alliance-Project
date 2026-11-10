@@ -64,7 +64,7 @@ function wroteSomethingNew(result: PrepayMonthlyObligationsWithSubmissionIdentit
  * the role check happens here; `prepayMonthlyObligationsWithSubmissionIdentity`'s own identical check (internal)
  * actually enforces it regardless, mirroring `purchasePackage`'s own two-layer precedent.
  *
- * No `deps` override of any kind — production activation stays the real, unmodified `inactiveLedgerActivation`
+ * No `deps` override of any kind — production activation stays the real, unmodified `ledgerActivation`
  * default every other ledger action in this codebase already uses.
  */
 export async function prepayMonths(

@@ -4,7 +4,8 @@ import type { TenantContext } from "@/lib/tenant/types";
 import type { CalendarDate } from "@/lib/dues/calendar";
 import { versionRevision } from "@/lib/dues/config-input";
 import { lateFeeApplies } from "@/lib/dues/settlement";
-import { inactiveLedgerActivation, type LedgerDeps } from "@/lib/dues/ledger/activation";
+import { ledgerActivation, type LedgerDeps } from "@/lib/dues/ledger/activation";
+import { lockOrganizationGate } from "@/lib/dues/activation-gate";
 import { fromDbDate, inTenantScope, isRealDate, lockStudent, type Tx } from "@/lib/dues/ledger/common";
 import { lockExchangeRateNamespaceShared } from "@/lib/dues/ledger/exchange-rate";
 import { classifyRecordPaymentError, recordDuesPaymentInTx, type RecordDuesPaymentError, type RecordDuesPaymentResult } from "@/lib/dues/ledger/record-payment";
@@ -132,7 +133,7 @@ export async function correctLateFeeAndSettle(
 ): Promise<CorrectLateFeeResult> {
   const { context, lateFeeId, expectedRevision, removalReason, receivedOn, tender, method, notes, maxBackdateDays } = args;
   const organizationId = context.organizationId;
-  const activation = deps.activation ?? inactiveLedgerActivation;
+  const activation = deps.activation ?? ledgerActivation;
   if (!(await activation.isActive(organizationId))) return refuse("notActive");
   // Owner-only, checked here rather than trusted from whatever eventually calls this — the same "trust nothing from the caller"
   // discipline already applied to scope and activation elsewhere in this ledger, extended to role since it is this action's own
@@ -149,9 +150,10 @@ export async function correctLateFeeAndSettle(
 
   try {
     return await prisma.$transaction(async (tx): Promise<CorrectLateFeeResult> => {
-      // The literal first statement, SHARED — before even the unlocked pre-read below. See
+      await lockOrganizationGate(tx, organizationId); // stage 9 rule 9k
+      // The first lock after the stage 9 organization gate, SHARED — before even the unlocked pre-read below. See
       // lockExchangeRateNamespaceShared's own doc comment: every true outermost transaction this ledger opens takes it
-      // unconditionally, before any row lock, since this correction composes recordDuesPaymentInTx (an INNER call that
+      // unconditionally, before any row lock except the organization gate, since this correction composes recordDuesPaymentInTx (an INNER call that
       // never takes this lock itself). Shared, not exclusive: this settlement only ever READS a quote, never writes one.
       await lockExchangeRateNamespaceShared(tx, organizationId);
 

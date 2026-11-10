@@ -14,7 +14,7 @@ import * as overdueModule from "../../src/lib/payments/overdue";
 let mockActive = false;
 vi.mock("@/lib/dues/ledger/activation", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../src/lib/dues/ledger/activation")>();
-  return { ...actual, inactiveLedgerActivation: { isActive: async () => mockActive } };
+  return { ...actual, ledgerActivation: { isActive: async () => mockActive } };
 });
 
 const { listStudentsToContact } = await import("../../src/lib/students/contact-list");
@@ -31,7 +31,7 @@ const { listStudentsToContact } = await import("../../src/lib/students/contact-l
  * `listRosterPaymentFacts`/`listDuesFactsForStudents`'s internal `LedgerDeps.activation` (the ENGINE-level
  * enforcement) are the SAME underlying activation state read twice, not two independent toggles — neither this
  * function nor any production caller passes a `deps` override, so `listStudentsToContact(context, true, ...)`
- * alone still hits the real, unmocked `inactiveLedgerActivation` default inside the engine and gets refused.
+ * alone still hits the real, unmocked `ledgerActivation` default inside the engine and gets refused.
  * Mocking `@/lib/dues/ledger/activation` (the SAME sanctioned test seam `payments-page-card-gating.test.ts`
  * already established) makes both reads consistent, exactly as a future real activation implementation would.
  */

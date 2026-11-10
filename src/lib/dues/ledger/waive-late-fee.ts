@@ -1,7 +1,8 @@
 import { prisma } from "@/lib/prisma";
 import type { TenantContext } from "@/lib/tenant/types";
 import { versionRevision } from "@/lib/dues/config-input";
-import { inactiveLedgerActivation, type LedgerDeps } from "@/lib/dues/ledger/activation";
+import { ledgerActivation, type LedgerDeps } from "@/lib/dues/ledger/activation";
+import { lockOrganizationGate } from "@/lib/dues/activation-gate";
 import { inTenantScope, lockStudent } from "@/lib/dues/ledger/common";
 
 /**
@@ -45,7 +46,7 @@ export async function waiveLateFee(
 ): Promise<WaiveLateFeeResult> {
   const { context, lateFeeId, expectedRevision, removalReason } = args;
   const organizationId = context.organizationId;
-  const activation = deps.activation ?? inactiveLedgerActivation;
+  const activation = deps.activation ?? ledgerActivation;
   if (!(await activation.isActive(organizationId))) return refuse("notActive");
   // Owner-only, checked here rather than trusted from whatever eventually calls this — the same discipline
   // `correctLateFeeAndSettle` and `reversePayment` already apply to their own role requirement.
@@ -61,6 +62,7 @@ export async function waiveLateFee(
   if (!fee || !inTenantScope(context, fee.obligation.academyId)) return refuse("notFound");
 
   return await prisma.$transaction(async (tx): Promise<WaiveLateFeeResult> => {
+    await lockOrganizationGate(tx, organizationId); // stage 9 rule 9k
     // The student row FOR UPDATE serializes this waiver against a concurrent payment, assessment run, correction, reversal, or a
     // second waiver/void attempt on the same fee — whichever acquires the lock first fully determines what the others see.
     const locked = await lockStudent(tx, organizationId, fee.obligation.studentId);

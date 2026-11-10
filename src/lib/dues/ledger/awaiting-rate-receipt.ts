@@ -5,7 +5,8 @@ import type { TenantContext } from "@/lib/tenant/types";
 import { addMonths, compareYearMonth, type CalendarDate } from "@/lib/dues/calendar";
 import { currentMonthIn, policyRevisionOf, versionRevision } from "@/lib/dues/config-input";
 import { lateFeeApplies, settleReceipt, type CrossCurrencyCandidates, type SettlementItem } from "@/lib/dues/settlement";
-import { inactiveLedgerActivation, type LedgerDeps } from "@/lib/dues/ledger/activation";
+import { ledgerActivation, type LedgerDeps } from "@/lib/dues/ledger/activation";
+import { lockOrganizationGate } from "@/lib/dues/activation-gate";
 import { fromDbDate, inTenantScope, latestEffective, lockAssignmentShared, lockBranchShared, lockStudent, toDbDate, type Tx } from "@/lib/dues/ledger/common";
 import { voidLateFeeInTx } from "@/lib/dues/ledger/correct-late-fee";
 import { lockExchangeRateNamespaceShared } from "@/lib/dues/ledger/exchange-rate";
@@ -220,7 +221,7 @@ export async function resolveAwaitingRateReceipt(
 ): Promise<ResolveAwaitingRateReceiptResult> {
   const { context, receiptId } = args;
   const organizationId = context.organizationId;
-  const activation = deps.activation ?? inactiveLedgerActivation;
+  const activation = deps.activation ?? ledgerActivation;
   if (!(await activation.isActive(organizationId))) return refuseResolve("notActive");
   // Owner-only, checked here rather than trusted from whatever eventually calls this — the same discipline every
   // owner-only writer in this ledger already applies to its own role check.
@@ -233,7 +234,8 @@ export async function resolveAwaitingRateReceipt(
 
   try {
     return await prisma.$transaction(async (tx): Promise<ResolveAwaitingRateReceiptResult> => {
-      // The literal first statement, SHARED — resolution is a genuine settlement-shaped transaction (it reads whatever
+      await lockOrganizationGate(tx, organizationId); // stage 9 rule 9k
+      // The first lock after the stage 9 organization gate, SHARED — resolution is a genuine settlement-shaped transaction (it reads whatever
       // rate now exists via settleObligationsInTx/writeSettlementInTx), so it takes the identical lock every settlement
       // writer does, never the exclusive mode (resolution never writes a quote).
       await lockExchangeRateNamespaceShared(tx, organizationId);
@@ -504,7 +506,7 @@ export async function cancelAwaitingRateReceipt(
 ): Promise<CancelAwaitingRateReceiptResult> {
   const { context, receiptId, reason } = args;
   const organizationId = context.organizationId;
-  const activation = deps.activation ?? inactiveLedgerActivation;
+  const activation = deps.activation ?? ledgerActivation;
   if (!(await activation.isActive(organizationId))) return { ok: false, error: "notActive" };
   if (context.organizationRole !== "ADMIN") return { ok: false, error: "notFound" };
   if (typeof receiptId !== "string" || receiptId === "") return { ok: false, error: "invalid" };
@@ -514,6 +516,7 @@ export async function cancelAwaitingRateReceipt(
   if (!pre || !inTenantScope(context, pre.academyId)) return { ok: false, error: "notFound" };
 
   return await prisma.$transaction(async (tx): Promise<CancelAwaitingRateReceiptResult> => {
+    await lockOrganizationGate(tx, organizationId); // stage 9 rule 9k
     const locked = await lockStudent(tx, organizationId, pre.studentId);
     if (!locked || locked.homeAcademyId !== pre.academyId) return { ok: false, error: "notFound" };
     if (deps.afterCancelStudentLockForTest) await deps.afterCancelStudentLockForTest(tx);

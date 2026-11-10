@@ -7,7 +7,7 @@ import { hashSecret } from "../../src/lib/crypto";
 /**
  * STUDENT-PORTAL-LEDGER-INTEGRATION-BRIEF.md §3.3/§4: `getOwnPaymentHistoryPage`'s own authorization bridge,
  * called exactly as a real client would (no `deps` override exists on its public signature, so every call here
- * runs under the REAL, unmodified, hardcoded-false `inactiveLedgerActivation` default). Mirrors
+ * runs under the REAL, unmodified, hardcoded-false `ledgerActivation` default). Mirrors
  * `[id]/payment-history-actions.test.ts`'s own `actAs`/session-mocking precedent and its "notActive proves the
  * authorization check passed" framing exactly.
  *

@@ -28,7 +28,7 @@ vi.mock("../../src/lib/dues/exchange-rate-actions", () => ({
 
 const isActive = vi.fn();
 vi.mock("../../src/lib/dues/ledger/activation", () => ({
-  inactiveLedgerActivation: { isActive: (...args: unknown[]) => isActive(...args) },
+  ledgerActivation: { isActive: (...args: unknown[]) => isActive(...args) },
 }));
 
 const listRecentExchangeRateQuotes = vi.fn();

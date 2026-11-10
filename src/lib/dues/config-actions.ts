@@ -20,6 +20,7 @@ import {
   termsRevision,
   type Parsed,
 } from "@/lib/dues/config-input";
+import { lockOrganizationGate } from "@/lib/dues/activation-gate";
 
 /**
  * Owner configuration of student dues (PR 3): plan terms (price, currency, months covered) and a branch's dues policy (due day, grace
@@ -108,6 +109,9 @@ function readPolicy(formData: FormData): { value: PolicyInput } | { errors: Reco
  * the saves for one branch strictly sequential, and the timezone is read under the same lock.
  */
 async function lockBranch(tx: Tx, organizationId: string, academyId: string): Promise<{ timezone: string } | null> {
+  // Stage 9 rule 9f: every save's first lock is the organization gate (FOR SHARE), then the branch. This helper is the first
+  // statement of all five configuration transactions, so taking the gate here covers each of them.
+  await lockOrganizationGate(tx, organizationId);
   const rows = await tx.$queryRaw<{ timezone: string }[]>`
     SELECT "timezone" FROM "Academy" WHERE "id" = ${academyId} AND "organizationId" = ${organizationId} FOR UPDATE`;
   return rows[0] ?? null;

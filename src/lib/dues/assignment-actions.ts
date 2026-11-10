@@ -7,6 +7,7 @@ import { compareYearMonth, type YearMonth } from "@/lib/dues/calendar";
 import { currentMonthIn, parseEffectiveMonth, versionRevision } from "@/lib/dues/config-input";
 import { getScopedDb } from "@/lib/tenant/scoped-client";
 import { lockStudent, type Tx } from "@/lib/students/lock";
+import { lockOrganizationGate } from "@/lib/dues/activation-gate";
 import type { ActionState } from "@/lib/action-state";
 import { assignPlanInTx, resolvePlanId } from "@/lib/dues/assignment-core";
 
@@ -84,6 +85,7 @@ export async function assignPlan(organizationId: string, _prevState: ActionState
   let outcome: Rejection | null;
   try {
     outcome = await prisma.$transaction(async (tx) => {
+      await lockOrganizationGate(tx, context.organizationId); // stage 9 rule 9e
       const locked = await lockStudent(tx, context.organizationId, student.id);
       if (!locked) return reject("notFound"); // vanished between the pre-transaction read and the lock — no live path today
       // Evaluated fresh, under the lock, not before it: a month current when this action started can turn past while it waited
@@ -135,6 +137,7 @@ export async function correctAssignment(organizationId: string, _prevState: Acti
   let outcome: Rejection | null;
   try {
     outcome = await prisma.$transaction(async (tx) => {
+      await lockOrganizationGate(tx, context.organizationId); // stage 9 rule 9e
       const row = await lockAssignment(tx, context.organizationId, found.id);
       if (!row) return reject("notFound");
       const rowMonth: YearMonth = { year: row.effectiveYear, month: row.effectiveMonth };

@@ -8,7 +8,7 @@ import { hashSecret } from "../../src/lib/crypto";
  * Monthly-prepayment UI brief §8 tier 2 — mirrors `package-purchase-actions-auth.test.ts` exactly. No `deps`
  * parameter exists on any of the three public signatures to override, so this proves authorization is genuinely
  * checked by `resolveActionContext(organizationId, ["ADMIN"])` and that activation is the real, unmodified,
- * hardcoded-false `inactiveLedgerActivation` default.
+ * hardcoded-false `ledgerActivation` default.
  *
  * `prepayMonthlyObligationsWithSubmissionIdentity` is hard-coded ADMIN-only in the engine itself
  * (`purchase-submission-identity.ts:337`), identical to the package writer — a genuine DIRECTOR is rejected with a

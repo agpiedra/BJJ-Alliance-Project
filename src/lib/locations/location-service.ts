@@ -3,6 +3,7 @@ import { digestLookupSecret, generateRandomToken } from "@/lib/crypto";
 import { requireEnv } from "@/lib/env";
 import { slugify } from "@/lib/organizations/slug";
 import { ensureDefaultPlan } from "@/lib/payments/ensure-default-plan";
+import { lockOrganizationGate } from "@/lib/dues/activation-gate";
 import { resolveAcademyBySlug } from "@/lib/tenant/platform-lookups";
 import { Prisma } from "@/generated/prisma/client";
 import type { TenantContext } from "@/lib/tenant/types";
@@ -69,6 +70,7 @@ export async function createLocationForOwner(context: TenantContext, input: NewL
   const { organizationId } = context;
 
   return prisma.$transaction(async (tx) => {
+    await lockOrganizationGate(tx, organizationId); // stage 9 rule 9h: the gate before any other lock
     // One creation at a time per organization, so the duplicate-name check below
     // and the insert cannot interleave. Released with the transaction, so safe
     // behind a transaction pooler.

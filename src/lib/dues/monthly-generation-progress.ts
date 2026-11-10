@@ -7,7 +7,7 @@ import { listClaimableGenerationSegments } from "@/lib/tenant/platform-lookups";
 import type { SystemJobContext } from "@/lib/tenant/types";
 import { compareYearMonth, type YearMonth } from "@/lib/dues/calendar";
 import { currentMonthIn } from "@/lib/dues/config-input";
-import { inactiveLedgerActivation, type LedgerDeps } from "@/lib/dues/ledger/activation";
+import { ledgerActivation, type LedgerDeps } from "@/lib/dues/ledger/activation";
 import type { Tx } from "@/lib/dues/ledger/common";
 import { isPositiveIntegerMs, transactionTimeoutsProblem } from "@/lib/db/transaction-timeouts";
 import {
@@ -378,7 +378,7 @@ async function visitSegment(claim: Claim, deps: MonthlyGenerationRunDeps, limits
   const gate = await attempt(async () => {
     const context = await bounded(limits, (tx) => resolveSystemJobContext(claim.organizationId, GENERATION_JOB_NAME, tx));
     if (!context) return { refused: "organizationNotActive" as const };
-    if (!(await (deps.activation ?? inactiveLedgerActivation).isActive(claim.organizationId))) return { refused: "ledgerNotActive" as const };
+    if (!(await (deps.activation ?? ledgerActivation).isActive(claim.organizationId))) return { refused: "ledgerNotActive" as const };
     const start = await (deps.generationStart ?? (async () => null))(claim.organizationId);
     if (!start || compareYearMonth(month, start) < 0) return { refused: "beforeStart" as const };
     return { context };

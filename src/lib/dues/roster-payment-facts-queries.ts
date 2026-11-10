@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import type { TenantContext, SystemJobContext } from "@/lib/tenant/types";
-import { inactiveLedgerActivation, type LedgerDeps } from "@/lib/dues/ledger/activation";
+import { ledgerActivation, type LedgerDeps } from "@/lib/dues/ledger/activation";
 import { listDuesFactsForStudents, type DuesFactsForStudent, type DuesPendingReceiptFact } from "@/lib/dues/ledger/dues-facts";
 import { todayIn } from "@/lib/dues/ledger/common";
 import type { Currency } from "@/generated/prisma/client";
@@ -23,7 +23,7 @@ const CHUNK_CONCURRENCY = 4;
 
 /** Page-level pre-check so neither page imports `ledger/activation` directly. Read ONCE per page load. */
 export async function isLedgerActiveForOrg(organizationId: string, deps: LedgerDeps = {}): Promise<boolean> {
-  const activation = deps.activation ?? inactiveLedgerActivation;
+  const activation = deps.activation ?? ledgerActivation;
   return activation.isActive(organizationId);
 }
 

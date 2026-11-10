@@ -69,7 +69,7 @@ function wroteSomethingNew(result: RecordDuesPaymentWithSubmissionIdentityResult
  * (unconditional, internal to that function) is what actually excludes an out-of-branch `DIRECTOR`, exactly mirroring
  * `getSubmissionOutcome`'s own two-layer split (§1) — this action never duplicates that check itself.
  *
- * No `deps` override of any kind — production activation stays the real, unmodified `inactiveLedgerActivation`
+ * No `deps` override of any kind — production activation stays the real, unmodified `ledgerActivation`
  * default every other ledger action in this codebase already uses.
  */
 export async function recordPayment(

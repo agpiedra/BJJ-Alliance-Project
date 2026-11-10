@@ -2,6 +2,7 @@ import type { TenantContext } from "@/lib/tenant/types";
 import { assessLateFeeInTx, type AssessLateFeeError } from "@/lib/dues/ledger/record-payment";
 import { inTenantScope, lockStudent, todayIn } from "@/lib/dues/ledger/common";
 import type { LedgerDeps } from "@/lib/dues/ledger/activation";
+import { lockOrganizationGate } from "@/lib/dues/activation-gate";
 import { prisma } from "@/lib/prisma";
 
 /**
@@ -35,6 +36,7 @@ export async function assessLateFeesForStudent(context: TenantContext, studentId
 
   try {
     return await prisma.$transaction(async (tx): Promise<LateFeeAssessmentResult> => {
+      await lockOrganizationGate(tx, organizationId); // stage 9 rule 9k
       const locked = await lockStudent(tx, organizationId, student.id);
       if (!locked || locked.homeAcademyId !== student.homeAcademyId) return { ok: false, reason: "conflict" };
       // A plain read, not a lock — exactly recordDuesPayment's own pattern (it never takes lockBranchShared either): this path

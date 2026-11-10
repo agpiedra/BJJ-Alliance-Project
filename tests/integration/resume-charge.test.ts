@@ -133,7 +133,7 @@ describe("the testable composition boundary (plan §3, §6)", () => {
   it("resumeChargeInTx is the separate, deps-injectable core — production never reaches its gated branch", async () => {
     const s = await newStudent("INACTIVE", "boundary");
     const result = await appPrisma.$transaction((tx) => resumeChargeInTx(tx, { context: context(), student: { id: s.id, homeAcademyId: a.academy.id } }, {}));
-    // default deps ({}) => inactiveLedgerActivation => "notActive", before any lock — proving the gated branch is
+    // default deps ({}) => ledgerActivation => "notActive", before any lock — proving the gated branch is
     // structurally unreachable without an explicit, test-only deps override.
     expect(result).toEqual({ ok: false, error: "notActive" });
     await prisma.student.update({ where: { id: s.id }, data: { status: "INACTIVE" } }); // resumeChargeInTx took no lock, nothing to undo besides this

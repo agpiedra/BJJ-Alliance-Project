@@ -47,7 +47,7 @@ afterAll(async () => {
 }, 120_000);
 
 // This action has NO `deps` parameter on its public signature (by design — a real caller could never supply one),
-// so every call here runs under the REAL, unmodified, hardcoded-false `inactiveLedgerActivation` default. A
+// so every call here runs under the REAL, unmodified, hardcoded-false `ledgerActivation` default. A
 // genuinely authorized caller therefore always observes `notActive` — that IS the proof the role/membership check
 // passed, the identical framing `financial-corrections-actions-auth.test.ts` already established for its own
 // writer actions. Real pagination/cursor/branch-scope behavior is already proven at the READER level (with a

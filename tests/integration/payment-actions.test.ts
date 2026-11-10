@@ -34,7 +34,7 @@ vi.mock("@/auth", () => ({
 let mockActive = false;
 vi.mock("@/lib/dues/ledger/activation", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../src/lib/dues/ledger/activation")>();
-  return { ...actual, inactiveLedgerActivation: { isActive: async () => mockActive } };
+  return { ...actual, ledgerActivation: { isActive: async () => mockActive } };
 });
 
 const { recordPayment, markPaymentPaid } = await import("../../src/lib/payments/payment-actions");
@@ -531,7 +531,7 @@ describe("recordPayment", () => {
 
   it("a custom-promotion plan without a `promoName` is rejected with promoNameRequired, writing no row", async () => {
     const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
-    const promoPlan = await ensureCustomPromoPlan(escazu.organizationId, escazu.id);
+    const promoPlan = (await ensureCustomPromoPlan(escazu.organizationId, escazu.id))!;
     const admin = await makeStaffUser("ADMIN", "record-promo-noname-admin");
     const student = await makeStudent(escazu.id, escazu.organizationId);
 
@@ -549,7 +549,7 @@ describe("recordPayment", () => {
 
   it("a custom promotion WITH a promoName records the promo fields, including a recurring flag", async () => {
     const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
-    const promoPlan = await ensureCustomPromoPlan(escazu.organizationId, escazu.id);
+    const promoPlan = (await ensureCustomPromoPlan(escazu.organizationId, escazu.id))!;
     expect(promoPlan.name).toBe(CUSTOM_PROMO_PLAN_NAME);
     const admin = await makeStaffUser("ADMIN", "record-promo-admin");
     const student = await makeStudent(escazu.id, escazu.organizationId);
@@ -687,8 +687,8 @@ describe("ensureCustomPromoPlan", () => {
   it("is idempotent: calling it twice for the same academy returns the SAME row, not a duplicate", async () => {
     const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
 
-    const first = await ensureCustomPromoPlan(escazu.organizationId, escazu.id);
-    const second = await ensureCustomPromoPlan(escazu.organizationId, escazu.id);
+    const first = (await ensureCustomPromoPlan(escazu.organizationId, escazu.id))!;
+    const second = (await ensureCustomPromoPlan(escazu.organizationId, escazu.id))!;
     expect(second.id).toBe(first.id);
 
     const count = await prisma.paymentPlan.count({
@@ -701,8 +701,8 @@ describe("ensureCustomPromoPlan", () => {
     const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
     const escalante = await prisma.academy.findUniqueOrThrow({ where: { slug: "escalante" } });
 
-    const escazuPlan = await ensureCustomPromoPlan(escazu.organizationId, escazu.id);
-    const escalantePlan = await ensureCustomPromoPlan(escalante.organizationId, escalante.id);
+    const escazuPlan = (await ensureCustomPromoPlan(escazu.organizationId, escazu.id))!;
+    const escalantePlan = (await ensureCustomPromoPlan(escalante.organizationId, escalante.id))!;
     expect(escazuPlan.id).not.toBe(escalantePlan.id);
     expect(escazuPlan.name).toBe(CUSTOM_PROMO_PLAN_NAME);
     expect(escalantePlan.name).toBe(CUSTOM_PROMO_PLAN_NAME);
@@ -787,7 +787,7 @@ describe("markPaymentPaid", () => {
   // silently failed `recordPayment`'s own "promo name required" guard.
   it("flips an existing PENDING custom-promo row to PAID, forwarding its promo fields so recordPayment's promo-name guard doesn't reject it", async () => {
     const escazu = await prisma.academy.findUniqueOrThrow({ where: { slug: "escazu" } });
-    const promoPlan = await ensureCustomPromoPlan(escazu.organizationId, escazu.id);
+    const promoPlan = (await ensureCustomPromoPlan(escazu.organizationId, escazu.id))!;
     const admin = await makeStaffUser("ADMIN", "markpaid-promo-admin");
     const student = await makeStudent(escazu.id, escazu.organizationId);
     await prisma.paymentPeriod.create({
@@ -830,14 +830,33 @@ describe("recordPayment / markPaymentPaid: the dues-ledger activation boundary (
   // not show; a forged request or a stale/previously-opened form reaches exactly this same code path.
   afterAll(cleanup);
 
-  beforeEach(() => {
+  // Stage 9 PR 9-1: `recordPayment` decides from the organization gate inside its own transaction (a real, effective
+  // `DuesActivation` row), not from the `ledgerActivation` stub — so "active" here is that real row, removed after each test
+  // (activation rows are undeletable by design; test cleanup bypasses the trigger the same way other suites clean ledger rows).
+  async function activate(organizationId: string) {
+    const id = `pa-act-${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
+    const approver = await prisma.organizationMembership.findFirstOrThrow({ where: { organizationId, role: "ADMIN" }, select: { userId: true } });
+    await prisma.$executeRaw`INSERT INTO "DuesActivation" ("id","organizationId","startYear","startMonth","fingerprintFormat","configFingerprint","studentFingerprints","approvedById","approvedAt")
+      VALUES (${id}, ${organizationId}, 2026, 12, 'test', 'cfg', '{}'::jsonb, ${approver.userId}, now())`;
+    await prisma.$executeRaw`UPDATE "DuesActivation" SET "effectiveAt" = now(), "effectiveById" = ${approver.userId} WHERE "id" = ${id}`;
+  }
+  async function deactivateAll() {
+    await prisma.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe("SET LOCAL session_replication_role = replica");
+      await tx.$executeRaw`DELETE FROM "DuesActivation" WHERE "id" LIKE 'pa-act-%'`;
+    });
+  }
+
+  beforeEach(async () => {
     currentSession = null;
     mockActive = false;
+    await deactivateAll();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     vi.restoreAllMocks();
     mockActive = false;
+    await deactivateAll();
   });
 
   it("recordPayment refuses with ledgerActive once the ledger is active, writing zero PaymentPeriod/AuditLog rows", async () => {
@@ -850,7 +869,7 @@ describe("recordPayment / markPaymentPaid: the dues-ledger activation boundary (
     const auditCountBefore = await prisma.auditLog.count({ where: { organizationId: admin.organizationId, action: "payment.record" } });
 
     currentSession = { user: { id: admin.id, role: "ADMIN" }, activeOrganizationId: admin.organizationId };
-    mockActive = true;
+    await activate(admin.organizationId);
     const result = await recordPayment(
       admin.organizationId,
       {},
@@ -877,7 +896,7 @@ describe("recordPayment / markPaymentPaid: the dues-ledger activation boundary (
     const auditCountBefore = await prisma.auditLog.count({ where: { organizationId: admin.organizationId, action: "payment.record" } });
 
     currentSession = { user: { id: admin.id, role: "ADMIN" }, activeOrganizationId: admin.organizationId };
-    mockActive = true;
+    await activate(admin.organizationId);
     // Genuinely conflicting with the row above on every field the upsert's `update` branch would otherwise touch
     // (status, amount, notes) — if the activation check were ever bypassed or placed after the upsert, THIS is
     // what would catch it: a row-count check alone cannot distinguish "nothing happened" from "the same row was
@@ -909,7 +928,7 @@ describe("recordPayment / markPaymentPaid: the dues-ledger activation boundary (
     const auditCountBefore = await prisma.auditLog.count({ where: { organizationId: admin.organizationId, action: "payment.record" } });
 
     currentSession = { user: { id: admin.id, role: "ADMIN" }, activeOrganizationId: admin.organizationId };
-    mockActive = true;
+    await activate(admin.organizationId);
     const result = await markPaymentPaid(admin.organizationId, student.id, 2026, 12);
     expect(result.error).toBe("ledgerActive");
 
@@ -945,7 +964,7 @@ describe("recordPayment / markPaymentPaid: the dues-ledger activation boundary (
     const student = await makeStudent(escazu.id, escazu.organizationId);
 
     currentSession = { user: { id: instructor.id, role: "INSTRUCTOR" }, activeOrganizationId: instructor.organizationId };
-    mockActive = true;
+    await activate(instructor.organizationId);
     await expect(
       recordPayment(instructor.organizationId, {}, formData({ studentId: student.id, year: "2026", month: "11", planId: plan.id, status: "PAID" })),
     ).rejects.toThrow("FORBIDDEN");
@@ -968,7 +987,7 @@ describe("recordPayment / markPaymentPaid: the dues-ledger activation boundary (
       // the EXPLICIT argument this call names instead — the exact 1f-4 stale-tab/tampered-bind shape, now proven
       // under an active ledger too.
       currentSession = { user: { id: admin.id, role: "ADMIN" }, activeOrganizationId: admin.organizationId };
-      mockActive = true;
+      await activate(admin.organizationId);
       const result = await recordPayment(
         otherOrg.id,
         {},
@@ -990,7 +1009,7 @@ describe("recordPayment / markPaymentPaid: the dues-ledger activation boundary (
     const student = await makeStudent(escazu.id, escazu.organizationId);
 
     currentSession = { user: { id: instructor.id, role: "INSTRUCTOR" }, activeOrganizationId: instructor.organizationId };
-    mockActive = true;
+    await activate(instructor.organizationId);
     await expect(markPaymentPaid(instructor.organizationId, student.id, 2026, 12)).rejects.toThrow("FORBIDDEN");
 
     const period = await paymentPeriodFor(student.id, 2026, 12);

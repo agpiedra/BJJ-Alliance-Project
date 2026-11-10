@@ -4,7 +4,8 @@ import { getScopedDb } from "@/lib/tenant/scoped-client";
 import { todayInAsDbDate } from "@/lib/students/status-history";
 import type { Tx } from "@/lib/students/lock";
 import type { TenantContext } from "@/lib/tenant/types";
-import { inactiveLedgerActivation, type LedgerDeps } from "@/lib/dues/ledger/activation";
+import { ledgerActivation, type LedgerDeps } from "@/lib/dues/ledger/activation";
+import { lockOrganizationGate } from "@/lib/dues/activation-gate";
 import { todayIn } from "@/lib/dues/ledger/common";
 import { enrollmentChargeInTx } from "@/lib/dues/ledger/enrollment-charge";
 import { assignPlanInTx } from "@/lib/dues/assignment-core";
@@ -100,7 +101,8 @@ export async function createStudentInTx(
   deps: LedgerDeps = {},
 ): Promise<{ studentId: string }> {
   const { context, academy, data, rank, codeHash, beltAwardedAt, planId, creationRequestId, fingerprint } = args;
-  const activation = deps.activation ?? inactiveLedgerActivation;
+  await lockOrganizationGate(tx, academy.organizationId); // stage 9 rule 9b: the gate before any other lock
+  const activation = deps.activation ?? ledgerActivation;
   const isActive = await activation.isActive(academy.organizationId);
   // ONE creation instant, captured once — reused for both the status-history effectiveOn and (when active) the
   // ledger charge's own enrollment date, never a second clock read (D13: a staff-created student's E is the
@@ -224,7 +226,7 @@ export async function createStudentInTx(
  * `LedgerActivation` implementation), matching this file's own activation gate exactly.
  */
 export async function isEnrollmentBillingActive(organizationId: string): Promise<boolean> {
-  return inactiveLedgerActivation.isActive(organizationId);
+  return ledgerActivation.isActive(organizationId);
 }
 
 export type CreateStudentCoreResult =

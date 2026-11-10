@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { Prisma } from "@/generated/prisma/client";
 import { CUSTOM_PROMO_PLAN_NAMES, customPromoPlanNameFor } from "@/lib/payments/custom-promo-plan-name";
+import { isLockTimeout, lockOrganizationGateWithTimeout, PAGE_LOAD_GATE_TIMEOUT_MS } from "@/lib/dues/activation-gate";
 
 /**
  * Idempotent "ensure this academy has a custom-promo plan". Safe to call on
@@ -14,11 +15,12 @@ import { CUSTOM_PROMO_PLAN_NAMES, customPromoPlanNameFor } from "@/lib/payments/
  * `Organization.defaultLocale` — the same rule as the default monthly plan.
  * The `@@unique([academyId, name])` constraint settles a concurrent first
  * render: the loser re-reads the winner's row.
+ *
+ * Stage 9 rule 7 (page-load writer): the create takes the organization gate first, with a short wait. Once the ledger is
+ * active, or when the wait runs out, nothing is created and this returns null; the page renders anyway (callers ignore the
+ * return value).
  */
-export async function ensureCustomPromoPlan(
-  organizationId: string,
-  academyId: string,
-): Promise<{ id: string; name: string }> {
+export async function ensureCustomPromoPlan(organizationId: string, academyId: string): Promise<{ id: string; name: string } | null> {
   const select = { id: true, name: true } as const;
   const find = () =>
     prisma.paymentPlan.findFirst({
@@ -29,16 +31,18 @@ export async function ensureCustomPromoPlan(
   const existing = await find();
   if (existing) return existing;
 
-  const { defaultLocale } = await prisma.organization.findUniqueOrThrow({
-    where: { id: organizationId },
-    select: { defaultLocale: true },
-  });
   try {
-    return await prisma.paymentPlan.create({
-      data: { academyId, organizationId, name: customPromoPlanNameFor(defaultLocale) },
-      select,
+    return await prisma.$transaction(async (tx) => {
+      const gate = await lockOrganizationGateWithTimeout(tx, organizationId, PAGE_LOAD_GATE_TIMEOUT_MS);
+      if (!gate || gate.active) return null;
+      const { defaultLocale } = await tx.organization.findUniqueOrThrow({ where: { id: organizationId }, select: { defaultLocale: true } });
+      return tx.paymentPlan.create({
+        data: { academyId, organizationId, name: customPromoPlanNameFor(defaultLocale) },
+        select,
+      });
     });
   } catch (error) {
+    if (isLockTimeout(error)) return null;
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
       const raced = await find();
       if (raced) return raced;

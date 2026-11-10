@@ -23,20 +23,20 @@ import { productionSourceFiles, stripComments } from "../helpers/source-files";
  *     wrapper around `enterExchangeRateQuote`, owner-only, never passing a `deps` override),
  *     `src/lib/dues/exchange-rate-queries.ts` (plain reads; imports only `isRealDate` from `dues/ledger/common.ts`, never a
  *     writer, to guard a quote-date input the same way the engine's own write path already does), and
- *     `payments/plans/exchange-rate-section.tsx` (a server component's own read-only `inactiveLedgerActivation.isActive`
+ *     `payments/plans/exchange-rate-section.tsx` (a server component's own read-only `ledgerActivation.isActive`
  *     pre-check, advisory only — `enterOrCorrectExchangeRate` itself is the unconditional enforcement) are the three new
  *     importers the owner exchange-rate UI brief adds. `src/lib/dues/awaiting-rate-receipt-actions.ts` (a thin "use
  *     server" wrapper around the already-complete `resolveAwaitingRateReceipt`/`cancelAwaitingRateReceipt`, owner-only,
  *     never passing a `deps` override), `src/lib/dues/awaiting-rate-receipt-queries.ts` (plain reads; imports only the
  *     snapshot schema/type, never a writer), and `payments/plans/awaiting-rate-receipt-section.tsx` (the same
- *     read-only `inactiveLedgerActivation.isActive` pre-check pattern) are the three new importers the owner
+ *     read-only `ledgerActivation.isActive` pre-check pattern) are the three new importers the owner
  *     awaiting-rate receipt queue UI brief adds. `src/lib/dues/payment-entry-actions.ts` (a thin "use server" wrapper
  *     around `recordDuesPaymentWithSubmissionIdentity`/`getSubmissionOutcome` from PR #89, never passing a `deps`
  *     override, plus `getPayableObligations` composing `listPayableObligations`), `src/lib/dues/payment-entry-queries.ts`
  *     (plain reads over `listDuesFactsForStudents`, never a writer), `src/lib/dues/payment-entry-recovery.ts`
  *     (TYPE-ONLY — imports `RecordDuesPaymentWithSubmissionIdentityResult`/`SubmissionOutcome` as types to classify a
  *     result the action layer already returned; erased at compile time, no runtime dependency on the ledger), and
- *     `src/app/[locale]/(staff)/payments/page.tsx` (the same read-only `inactiveLedgerActivation.isActive` pre-check
+ *     `src/app/[locale]/(staff)/payments/page.tsx` (the same read-only `ledgerActivation.isActive` pre-check
  *     pattern, advisory only) are the four new importers the ordinary payment-entry UI brief adds.
  *     `src/lib/dues/package-purchase-queries.ts` (plain reads; imports `firstUncoveredFrom`/`SCHEMA_MAX_MONTH` from
  *     `prepay-monthly.ts` read-only, and `inTenantScope`/`latestEffective` from `common.ts`, never a writer),
@@ -71,7 +71,7 @@ import { productionSourceFiles, stripComments } from "../helpers/source-files";
  *     `page.tsx` themselves, which import `PortalSelfContext` from this file's own RE-EXPORT rather than from
  *     `dues/ledger/dues-facts` directly, needing no entries of their own. `src/lib/payments/payment-actions.ts`
  *     (REMAINING-LEDGER-CONSUMERS-BRIEF.md §2.6, PR 2) is the one new importer that brief's PR 2 adds: the legacy
- *     `recordPayment`/`markPaymentPaid` writers' own read-only `inactiveLedgerActivation.isActive` check — unlike
+ *     `recordPayment`/`markPaymentPaid` writers' own read-only `ledgerActivation.isActive` check — unlike
  *     every other page-level pre-check in this list, this one IS the real, unconditional enforcement (there is no
  *     separate engine-level gate for these two legacy writers), never a ledger write itself.
  *  2. They are plain library functions: no `"use server"` (which would make an exported function an invocable endpoint), no route, no
@@ -82,7 +82,7 @@ const LEDGER_DIR = "src/lib/dues/ledger/";
 const IMPORTS_LEDGER = /(?:from\s+|import\s*\(\s*|require\s*\(\s*)["'][^"']*dues\/ledger(?:\/[^"']*)?["']/;
 const AUTHORIZED_CALLERS = [
   "src/lib/dues/monthly-generation.ts",
-  // Monthly-generation G1: the visit loop over DuesGenerationProgress imports the closed-default `inactiveLedgerActivation`,
+  // Monthly-generation G1: the visit loop over DuesGenerationProgress imports the closed-default `ledgerActivation`,
   // `LedgerDeps` and the `Tx` type — never a writer; its only ledger writes go through monthly-generation.ts's runner. It has
   // no production importer itself (tests/unit/dues-monthly-generation-not-exposed.test.ts).
   "src/lib/dues/monthly-generation-progress.ts",
@@ -114,10 +114,8 @@ const AUTHORIZED_CALLERS = [
   "src/app/[locale]/(staff)/students/roster-ledger-status.tsx",
   "src/app/[locale]/(staff)/students/[id]/student-balance-summary.tsx",
   "src/lib/dues/portal-ledger-queries.ts",
-  // REMAINING-LEDGER-CONSUMERS-BRIEF.md §2.6 (PR 2): the legacy `recordPayment`/`markPaymentPaid` writers' own
-  // activation-boundary refusal — reads `inactiveLedgerActivation.isActive(organizationId)` directly, the same
-  // read-only binding `payments/page.tsx` already imports, never a writer call.
-  "src/lib/payments/payment-actions.ts",
+  // (Stage 9 PR 9-1: `src/lib/payments/payment-actions.ts` left this list — its activation refusal now reads the organization
+  // gate in `src/lib/dues/activation-gate.ts`, inside its own transaction, instead of `ledgerActivation`.)
   // Stage 8 PR 8a (docs/dues/STAGE-8-READINESS-BRIEF.md §10): the read-only readiness preview imports only the pure
   // `latestEffective` from `ledger/common.ts` and `decimalToMinor` from `ledger/minor-units.ts` — the same version selection
   // and minor-unit arithmetic the monthly writer uses — never a writer, a lock or a transaction. (Totals are formatted by its

@@ -693,7 +693,8 @@
         "success": "Payment recorded.",
         "invalid": "Please check the form for errors.",
         "notFound": "Could not record this payment.",
-        "ledgerActive": "This organization now records payments through the ledger payment flow. Use the ledger payment option on the Payments page instead of this form.",
+        "ledgerActive": "This academy switched to the new payment system at {switchedAt}. Nothing was saved here. Your entries are still in this form: record this payment in the new system on the Payments page.",
+        "tryAgain": "Not saved: the payment system is busy switching over. Your entries are still in this form. Try again in a moment.",
         "invalidPlan": "That plan does not belong to this student's academy.",
         "planInactive": "That plan has been deactivated, so no new payment can be recorded on it. Choose an active plan.",
         "periodTooFarInFuture": "The period cannot be more than one month in the future.",
@@ -1998,6 +1999,7 @@
             "monthAssigned": "That month already has an assignment. Nothing was saved. The page has been refreshed.",
             "pastMonth": "That month has already passed. Nothing was saved.",
             "notFuture": "This month has started and can no longer be changed. Nothing was saved.",
+            "ledgerActive": "The new payment system is already active, so the opening review can no longer change. Nothing was saved.",
             "unexpected": "The server refused this. Nothing was saved."
           }
         }

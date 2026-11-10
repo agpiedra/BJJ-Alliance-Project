@@ -4,7 +4,8 @@ import type { TenantContext } from "@/lib/tenant/types";
 import { addMonths, compareDates, compareYearMonth, type CalendarDate, type YearMonth } from "@/lib/dues/calendar";
 import { currentMonthIn, parseMoney } from "@/lib/dues/config-input";
 import { settleReceipt, type CrossCurrencyCandidates, type SettlementItem } from "@/lib/dues/settlement";
-import { inactiveLedgerActivation, type LedgerDeps } from "@/lib/dues/ledger/activation";
+import { ledgerActivation, type LedgerDeps } from "@/lib/dues/ledger/activation";
+import { lockOrganizationGate } from "@/lib/dues/activation-gate";
 import { inTenantScope, isRealDate, latestEffective, lockBranchShared, lockStudent, lockTermsShared, minusDays, todayIn, type Tx } from "@/lib/dues/ledger/common";
 import { resolveCrossCurrency, type RateEvidence } from "@/lib/dues/ledger/cross-currency-settlement";
 import { isValidCoverageMonth } from "@/lib/dues/ledger/create-monthly-obligation";
@@ -479,7 +480,7 @@ export async function purchasePackage(
 ): Promise<PurchasePackageResult> {
   const { context, studentId, planTermsId, requestedStartMonth, existingObligationIds, receivedOn, tender, method, notes, maxBackdateDays } = args;
   const organizationId = context.organizationId;
-  const activation = deps.activation ?? inactiveLedgerActivation;
+  const activation = deps.activation ?? ledgerActivation;
   if (!(await activation.isActive(organizationId))) return refuse("notActive");
   // Owner-only, checked here rather than trusted from whatever eventually calls this — the same discipline
   // correctLateFeeAndSettle/reversePayment/waiveLateFee/prepayMonthlyObligations already apply to their own role requirement.
@@ -512,8 +513,9 @@ export async function purchasePackage(
 
   try {
     return await prisma.$transaction(async (tx): Promise<PurchasePackageResult> => {
-      // The literal first statement, SHARED, before the branch lock. See lockExchangeRateNamespaceShared's own doc
-      // comment: every true outermost transaction this ledger opens takes it unconditionally, before any row lock.
+      await lockOrganizationGate(tx, organizationId); // stage 9 rule 9k
+      // The first lock after the stage 9 organization gate, SHARED, before the branch lock. See lockExchangeRateNamespaceShared's own doc
+      // comment: every true outermost transaction this ledger opens takes it unconditionally, before any row lock except the organization gate.
       await lockExchangeRateNamespaceShared(tx, organizationId);
       if (deps.afterExchangeRateLockForTest) await deps.afterExchangeRateLockForTest();
       return purchasePackageInTx(tx, { context, student, planTermsId, requestedStartMonth, existingObligationIds, receivedOn, tender, method, notes, maxBackdateDays }, deps);

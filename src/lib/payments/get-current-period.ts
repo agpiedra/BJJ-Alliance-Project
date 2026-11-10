@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { ZONE } from "@/lib/scheduling/zone";
 import { isCustomPromoPlanName } from "@/lib/payments/custom-promo-plan-name";
 import { isUniqueConstraintError } from "@/lib/prisma-errors";
+import { isLockTimeout, lockOrganizationGateWithTimeout, PAGE_LOAD_GATE_TIMEOUT_MS } from "@/lib/dues/activation-gate";
 import { Prisma, type Currency, type PaymentMethod, type PaymentStatus } from "@/generated/prisma/client";
 
 export type CurrentPaymentPeriod = {
@@ -191,6 +192,10 @@ async function materializeCarryForward(
   const status = carriedStatusFor(candidate);
   try {
     const created = await prisma.$transaction(async (tx) => {
+      // Stage 9 rule 7 (page-load writer): the organization gate first, with a short wait. Once the ledger is active this
+      // writes nothing; the caller renders without the row.
+      const gate = await lockOrganizationGateWithTimeout(tx, candidate.organizationId, PAGE_LOAD_GATE_TIMEOUT_MS);
+      if (!gate || gate.active) return null;
       const created = await tx.paymentPeriod.create({
         data: {
           studentId,
@@ -248,6 +253,8 @@ async function materializeCarryForward(
 
     return created;
   } catch (error) {
+    // The gate wait ran out (an activation switch held the organization lock): render without creating the row (rule 7).
+    if (isLockTimeout(error)) return null;
     if (!isUniqueConstraintError(error)) throw error;
     return prisma.paymentPeriod.findUnique({
       where: {

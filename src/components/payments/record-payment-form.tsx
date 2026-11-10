@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState, useEffect, useMemo, useState } from "react";
-import { useTranslations } from "next-intl";
+import { useFormatter, useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { recordPayment } from "@/lib/payments/payment-actions";
 import { isCustomPromoPlanName } from "@/lib/payments/custom-promo-plan-name";
@@ -100,7 +100,26 @@ export function RecordPaymentForm({
   const t = useTranslations("students.detail.recordPayment");
   const tPaymentStatus = useTranslations("students.paymentStatus");
   const tMethod = useTranslations("payments.method");
+  const format = useFormatter();
   const [state, formAction, isPending] = useActionState(recordPayment.bind(null, organizationId), INITIAL_STATE);
+  // Stage 9 rule 6: a refusal at switch time (ledger now active, or the gate wait ran out) echoes the submitted values. React
+  // resets uncontrolled fields after every action, so they are rendered back as defaults, and the keyed blocks below remount
+  // so those defaults apply. Controlled fields (student, plan, amount) keep their own state.
+  const restored = state.submitted;
+  const restoreKey = restored ? JSON.stringify(restored) : "initial";
+  const shown = {
+    month: restored?.year && restored.month ? `${restored.year}-${restored.month.padStart(2, "0")}` : defaults.month,
+    method: restored ? (restored.method ?? "") : (defaults.method ?? ""),
+    status: (restored?.status as PaymentStatus | undefined) ?? defaults.status ?? PaymentStatus.PAID,
+    notes: restored ? restored.notes : (defaults.notes ?? undefined),
+    promoName: restored ? restored.promoName : (defaults.promoName ?? undefined),
+    promoReason: restored ? restored.promoReason : (defaults.promoReason ?? undefined),
+    promoRecurring: restored ? restored.promoRecurring === "on" : (defaults.promoRecurring ?? false),
+  };
+  const errorValues =
+    state.messageValues?.switchedAt !== undefined
+      ? { switchedAt: format.dateTime(new Date(state.messageValues.switchedAt), { hour: "numeric", minute: "2-digit" }) }
+      : undefined;
 
   // Deliberately NOT `?? students[0]?.id` on the unscoped `/payments` page:
   // pre-selecting the alphabetically-first student would make the
@@ -180,7 +199,7 @@ export function RecordPaymentForm({
     <form action={submitWithAdjustedFields} className="flex flex-col gap-4">
       {lockedStudentId && <input type="hidden" name="studentId" value={lockedStudentId} />}
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+      <div key={restoreKey} className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         {!lockedStudentId && (
           <label className="flex flex-col gap-1 text-sm">
             <span>{t("student")}</span>
@@ -229,7 +248,7 @@ export function RecordPaymentForm({
             type="month"
             name="period"
             required
-            defaultValue={defaults.month}
+            defaultValue={shown.month}
             className="h-9 rounded-lg border border-input bg-transparent px-2.5 text-sm"
           />
         </label>
@@ -238,7 +257,7 @@ export function RecordPaymentForm({
           <span>{t("method")}</span>
           <select
             name="method"
-            defaultValue={defaults.method ?? ""}
+            defaultValue={shown.method}
             className="h-9 rounded-lg border border-input bg-transparent px-2.5 text-sm"
           >
             <option value="">{t("methodPlaceholder")}</option>
@@ -276,7 +295,7 @@ export function RecordPaymentForm({
           <select
             name="status"
             required
-            defaultValue={defaults.status ?? PaymentStatus.PAID}
+            defaultValue={shown.status}
             className="h-9 rounded-lg border border-input bg-transparent px-2.5 text-sm"
           >
             {STATUS_OPTIONS.map((status) => (
@@ -292,14 +311,14 @@ export function RecordPaymentForm({
           <input
             type="text"
             name="notes"
-            defaultValue={defaults.notes ?? undefined}
+            defaultValue={shown.notes}
             className="h-9 rounded-lg border border-input bg-transparent px-2.5 text-sm"
           />
         </label>
       </div>
 
       {isCustomPromoPlan && canManagePromotions && (
-        <div className="flex flex-col gap-3 rounded-lg border border-brand-gold/30 bg-brand-gold/15 p-4">
+        <div key={restoreKey} className="flex flex-col gap-3 rounded-lg border border-brand-gold/30 bg-brand-gold/15 p-4">
           <p className="font-mono text-[10.5px] tracking-[.11em] text-muted-foreground uppercase">
             {t("promo.heading")}
           </p>
@@ -311,7 +330,7 @@ export function RecordPaymentForm({
                 name="promoName"
                 required
                 placeholder={t("promo.namePlaceholder")}
-                defaultValue={defaults.promoName ?? undefined}
+                defaultValue={shown.promoName}
                 className="h-9 rounded-lg border border-input bg-background px-2.5 text-sm"
               />
             </label>
@@ -337,7 +356,7 @@ export function RecordPaymentForm({
                 type="text"
                 name="promoReason"
                 placeholder={t("promo.reasonPlaceholder")}
-                defaultValue={defaults.promoReason ?? undefined}
+                defaultValue={shown.promoReason}
                 className="h-9 rounded-lg border border-input bg-background px-2.5 text-sm"
               />
             </label>
@@ -345,7 +364,7 @@ export function RecordPaymentForm({
               <input
                 type="checkbox"
                 name="promoRecurring"
-                defaultChecked={defaults.promoRecurring ?? false}
+                defaultChecked={shown.promoRecurring}
               />
               {t("promo.recurring")}
             </label>
@@ -360,7 +379,11 @@ export function RecordPaymentForm({
         </p>
       )}
 
-      {state.error && <p className="text-sm text-bad">{t(state.error)}</p>}
+      {state.error && (
+        <p role="alert" className="text-sm text-bad">
+          {t(state.error, errorValues)}
+        </p>
+      )}
       {state.ok && <p className="text-sm text-ok">{t("success")}</p>}
 
       <div className="flex items-center justify-end gap-2">
