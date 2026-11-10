@@ -327,6 +327,13 @@ describe("the switch (rules 4–7)", () => {
     currentSession = null;
   });
 
+  it("regression (browser pass): a page load creating the system's custom-promotion plan after approval does not block the switch", async () => {
+    const o = await readyAndApproved("custompromo");
+    const { ensureCustomPromoPlan } = await import("../../src/lib/payments/ensure-custom-promo-plan");
+    expect(await ensureCustomPromoPlan(o.fx.org.id, o.fx.academy.id)).toMatchObject({ name: expect.any(String) });
+    expect(await activateCore(o.ctx, switchAt(inS(2)))).toMatchObject({ ok: true });
+  });
+
   it("rule 6: a student changed after approval (an old-system payment for an earlier month) blocks until re-reviewed AFTER approval; then it switches and lists them", async () => {
     const o = await readyAndApproved("refresh");
     await prisma.paymentPeriod.create({

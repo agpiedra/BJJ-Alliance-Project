@@ -420,6 +420,10 @@ and triggers.
   - A8 classification: rows rules 8–10 do not name (`EXEMPT` without an amount, negative amounts) are `inconsistent` (block,
     never acknowledgeable). The acknowledgement is a `DuesReadinessConfirmation` of kind `LEGACY_NO_MONEY` bound to the row's
     exact stored content including `recordedAt` (every legacy write sets it), so any write makes it stale for good.
+  - Found in the browser pass and fixed: the system's lazily created "custom promotion" plan (`ensureCustomPromoPlan`, run by a
+    student-page or payments-page load) changed the configuration fingerprint, so one page view after approval made the switch
+    refuse "configuration changed". That plan is now left out of the branch fingerprint while it has no terms (it prices nothing);
+    with terms it counts. Side effect: the same page view no longer stales pricing acknowledgements either.
   - Switch bounds: lock timeout 5 s (refusal `busy`), statement timeout 15 s, transaction timeout 30 s.
   - `approvedOpeningTotals` added to `DuesActivation` (old vs new totals on the switch screen, A1).
   - Not built: `ledgerStartsOn` (S is `startYear`/`startMonth`); a database rule that every OPENING obligation has an item

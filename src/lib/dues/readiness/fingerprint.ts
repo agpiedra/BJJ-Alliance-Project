@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { YearMonth } from "@/lib/dues/calendar";
 import type { ReadinessSnapshot } from "@/lib/dues/readiness/snapshot";
+import { isCustomPromoPlanName } from "@/lib/payments/custom-promo-plan-name";
 
 /**
  * Deterministic content fingerprints (docs/dues/STAGE-8-READINESS-BRIEF.md §4/§6). They hash the reviewed CONTENT, not
@@ -97,7 +98,11 @@ export function studentFingerprint(snapshot: ReadinessSnapshot, studentId: strin
 export function branchFingerprint(snapshot: ReadinessSnapshot, academyId: string): string {
   const branch = snapshot.branches.find((b) => b.id === academyId);
   if (!branch) throw new Error(`branchFingerprint: unknown branch ${academyId}`);
-  const plans = byId(snapshot.plans.filter((p) => p.academyId === academyId));
+  // The system's own "custom promotion" plan, created lazily by a page load (`ensureCustomPromoPlan`), is left out while it has no
+  // terms: it prices nothing, and its creation must not change what an approval or a pricing acknowledgement attests (found in the
+  // stage 9 browser pass: one student-page view after approval made the switch refuse "configuration changed"). With terms it counts.
+  const termed = new Set(snapshot.terms.map((t) => t.planId));
+  const plans = byId(snapshot.plans.filter((p) => p.academyId === academyId && !(isCustomPromoPlanName(p.name) && !termed.has(p.id))));
   const planIds = new Set(plans.map((p) => p.id));
   return hash({
     format: FINGERPRINT_FORMAT,

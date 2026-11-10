@@ -133,6 +133,17 @@ describe("fingerprints (r3)", () => {
     expect(studentFingerprint(snapshot({ legacyPayments: [legacy({ month: 10 })] }), "s1", S)).not.toBe(studentFingerprint(base, "s1", S));
   });
 
+  it("the system's lazily created custom-promotion plan (no terms) changes no fingerprint; given terms, it does", () => {
+    const base = snapshot();
+    const custom = { id: "p-custom", academyId: "b1", name: "Custom promotion", active: true };
+    const withCustom = snapshot({ plans: [...base.plans, custom] });
+    expect(configurationFingerprint(withCustom)).toBe(configurationFingerprint(base));
+    const priced = snapshot({ plans: [...base.plans, custom], terms: [...base.terms, { ...base.terms[0]!, id: "t-custom", planId: "p-custom" }] });
+    expect(configurationFingerprint(priced)).not.toBe(configurationFingerprint(base));
+    // An owner plan with the same shape is configuration.
+    expect(configurationFingerprint(snapshot({ plans: [...base.plans, { ...custom, name: "Weekend" }] }))).not.toBe(configurationFingerprint(base));
+  });
+
   it("the configuration fingerprint ignores student content and changes with any price, policy, plan, branch, timezone or currency", () => {
     const base = snapshot();
     expect(configurationFingerprint(snapshot({ legacyPayments: [legacy({ month: 10 })], students: [{ id: "s1", homeAcademyId: "b1", status: "INACTIVE" }] }))).toBe(configurationFingerprint(base));
