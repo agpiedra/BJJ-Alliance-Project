@@ -674,7 +674,9 @@
         "columnPlan": "Plan",
         "columnStatus": "Estado",
         "columnAmount": "Monto",
-        "columnNotes": "Notas"
+        "columnNotes": "Notas",
+        "newSystemHandled": "Gestionado por el nuevo sistema",
+        "newSystemBilled": "Cobrado en el nuevo sistema"
       },
       "recordPayment": {
         "toggle": "Registrar un pago",
@@ -1751,7 +1753,7 @@
     "readiness": {
       "eyebrow": "{orgName} · Preparación de cuotas",
       "heading": "Preparación de cuotas",
-      "sub": "Un informe de solo lectura para un mes de inicio candidato. Nada en esta página cambia datos ni activa el registro de cuotas.",
+      "sub": "Un informe para un mes de inicio candidato, y los pasos de activación del dueño. Solo los botones del panel de activación aprueban o cambian al nuevo sistema.",
       "backToPlans": "Volver a planes de pago",
       "month": {
         "label": "Mes de inicio",
@@ -1763,7 +1765,9 @@
       },
       "status": {
         "notReady": "No está listo",
-        "notReadyBody": "Este informe nunca activa el registro de cuotas. La activación es una etapa aparte, posterior, que aún no existe.",
+        "notReadyBody": "La aprobación y el cambio requieren que todas las verificaciones se aprueben. Este informe por sí mismo no cambia nada.",
+        "ready": "Listo",
+        "readyBody": "Todas las verificaciones se aprueban para este mes. Aprobar y hacer el cambio son pasos aparte del dueño en el panel de activación; este informe por sí mismo no cambia nada.",
         "asOf": "Datos al {time}.",
         "asOfBody": "Los cambios hechos después de ese momento no se muestran hasta que recargue esta página. Esta página no bloquea nada ni impide cambios."
       },
@@ -1792,8 +1796,8 @@
           "fail": "Estudiantes activos sin plan, o sin un \"sin plan\" explícito, para {month}."
         },
         "noLegacyFromStart": {
-          "title": "Sin pagos del sistema anterior desde {month}",
-          "fail": "Pagos registrados en el sistema anterior para {month} o después. Se cobrarían dos veces."
+          "title": "Registros del sistema anterior desde {month}",
+          "fail": "Registros del sistema anterior para {month} o después que bloquean: pagos registrados, exoneraciones y registros inconsistentes (elija un mes de inicio posterior), o pendientes con método o notas aún no confirmados como \"no se recibió dinero\"."
         },
         "pricingAcknowledged": {
           "title": "Precio confirmado para estudiantes con promoción o exoneración",
@@ -1835,7 +1839,85 @@
         "notEligibleForStart": "No corresponde cobrar en {month}",
         "openingItemLinkedToPaidRow": "Deuda inicial vinculada a un pago PAGADO",
         "openingItemAboveReference": "Deuda inicial mayor que el precio del plan o el monto registrado de ese mes",
-        "openingItemCurrencyDiffersFromPlan": "Deuda inicial en una moneda distinta a la del plan"
+        "openingItemCurrencyDiffersFromPlan": "Deuda inicial en una moneda distinta a la del plan",
+        "legacyPlaceholderHandledByNewSystem": "Marcadores sin pagar del sistema anterior para {month} o después (gestionados por el nuevo sistema; nunca se modifican)"
+      },
+      "activation": {
+        "heading": "Cambiar al nuevo sistema de pagos",
+        "intro": "Solo el dueño aprueba, retira o hace el cambio. Ningún pago se pausa: el cambio es un paso corto que se completa por entero o no cambia nada.",
+        "active": "El nuevo sistema de pagos está activo desde {time} (mes de inicio {month}). Las pantallas de pagos anteriores son de solo lectura.",
+        "approved": "Aprobado para {month} el {time}.",
+        "approvedOtherMonth": "Hay una aprobación para {month}. Muestre ese mes para hacer el cambio, o retire la aprobación para aprobar otro mes.",
+        "window": "El cambio puede hacerse desde {opens} hasta antes de {closes} ({zone}).",
+        "noPause": "Los pagos nunca se pausan. Un pago tomado en el sistema anterior para un mes antes del mes de inicio cambia la revisión de ese estudiante; revíselo de nuevo antes de hacer el cambio.",
+        "configurationChanged": "Los precios, políticas, planes, sedes o la moneda cambiaron después de la aprobación. El cambio será rechazado: retire esta aprobación y apruebe un mes de inicio posterior.",
+        "changedHeading": "Estudiantes que cambiaron desde la aprobación",
+        "noneChanged": "Ningún estudiante cambió desde la aprobación.",
+        "totalsChange": "deuda inicial {before} al aprobar, {after} ahora",
+        "refreshed": "revisado de nuevo después de la aprobación",
+        "needsRefresh": "necesita una nueva revisión",
+        "activate": "Cambiar al nuevo sistema para {month}",
+        "withdraw": "Retirar la aprobación",
+        "approveBy": "La aprobación para {month} debe darse antes de {deadline} ({zone}).",
+        "approveNeedsReady": "La aprobación requiere que todas las verificaciones de arriba se aprueben.",
+        "approve": "Aprobar {month}",
+        "pending": "Procesando…",
+        "saved": {
+          "approve": "Aprobado. Todavía no se ha hecho el cambio.",
+          "withdraw": "Aprobación retirada. No se hizo ningún cambio.",
+          "activate": "Cambio hecho. El nuevo sistema de pagos está activo."
+        },
+        "refused": {
+          "notFound": "No disponible.",
+          "invalid": "La solicitud no era válida. No se guardó nada.",
+          "alreadyActive": "El nuevo sistema de pagos ya está activo. No se cambió nada.",
+          "approvalExists": "Ya existe una aprobación. Retírela primero. No se guardó nada.",
+          "tooLate": "Es tarde para aprobar este mes: una sede ya llegó al día 1. Elija un mes de inicio posterior. No se guardó nada.",
+          "stale": "Los datos cambiaron después de cargar esta página. Revíselos de nuevo e intente otra vez. No se guardó nada.",
+          "notReady": "No todas las verificaciones se aprueban. No se guardó nada. Con fallas:",
+          "busy": "Había otro cambio en curso. No se guardó nada. Intente de nuevo.",
+          "noApproval": "No hay ninguna aprobación sobre la cual actuar. No se cambió nada.",
+          "windowNotOpen": "La ventana del cambio todavía no se ha abierto en todas las sedes. No se cambió nada.",
+          "windowClosed": "La ventana del cambio ya cerró. Retire esta aprobación y apruebe un mes de inicio posterior. No se cambió nada.",
+          "configurationChanged": "Los precios, políticas, planes, sedes o la moneda cambiaron después de la aprobación. Retírela y apruebe un mes de inicio posterior. No se cambió nada.",
+          "needsReconfirmation": "Estos estudiantes cambiaron después de la aprobación y primero necesitan una nueva revisión. No se cambió nada:",
+          "progressRowExists": "Ya existen registros de facturación para esta organización, lo cual no debería ser posible antes del cambio. No se cambió nada; contacte a soporte.",
+          "unexpected": "Rechazado. No se guardó nada."
+        },
+        "unknownTitle": "Resultado desconocido",
+        "unknownBody": "Se perdió la respuesta. El paso puede haberse completado o no. Recargue esta página para ver el estado real antes de intentar de nuevo.",
+        "reload": "Recargar esta página",
+        "approveTitle": "¿Aprobar {month} como mes de inicio?",
+        "approveBody": "Esto registra la configuración y el contenido revisado de cada estudiante tal como están ahora. No hace el cambio. Puede retirarla en cualquier momento antes del cambio.",
+        "approveConfirm": "Aprobar",
+        "withdrawTitle": "¿Retirar la aprobación?",
+        "withdrawBody": "No se hace ningún cambio. Puede aprobar de nuevo después.",
+        "withdrawConfirm": "Retirar",
+        "activateTitle": "¿Cambiar al nuevo sistema de pagos para {month}?",
+        "activateConfirm": "Cambiar ahora",
+        "activateEffectLegacy": "Desde ese momento las pantallas de pagos anteriores dejan de aceptar pagos; un pago en curso allí se rechaza y sus datos se conservan para volver a ingresarlos.",
+        "activateEffectOpening": "Cada deuda inicial revisada se convierte en un cobro adeudado desde la activación, sin fecha de vencimiento ni recargo.",
+        "activateEffectMonthly": "Los cobros mensuales empiezan con {month}.",
+        "activateEffectNoUndo": "Esto no se puede deshacer. Las correcciones se hacen dentro del nuevo sistema.",
+        "legacyHeading": "Registros del sistema anterior para {month} y después",
+        "legacyNone": "No hay registros del sistema anterior para {month} o después.",
+        "legacyRow": "{student}, {month}: {status}, {amount}",
+        "method": "método: {method}",
+        "notes": "notas: {notes}",
+        "noOpeningDebt": "ninguna",
+        "class": {
+          "placeholder": "Marcador sin pagar: gestionado por el nuevo sistema (no bloquea).",
+          "ambiguousPending": "Pendiente con método o notas: bloquea hasta que confirme que no se recibió dinero.",
+          "acknowledged": "Usted confirmó que no se recibió dinero por este registro (no bloquea).",
+          "ackStale": "Su confirmación anterior ya no coincide con este registro.",
+          "recordedPayment": "Pago registrado: bloquea. Elija un mes de inicio posterior.",
+          "waiver": "Exoneración: bloquea. Elija un mes de inicio posterior.",
+          "inconsistent": "Registro inconsistente: bloquea. Elija un mes de inicio posterior."
+        },
+        "noMoney": "Confirmar que no se recibió dinero por este registro",
+        "noMoneyTitle": "¿Confirmar que no se recibió dinero?",
+        "noMoneyBody": "Esto registra, a su nombre, que no se recibió dinero por exactamente este registro tal como se muestra. El registro en sí no cambia. Cualquier cambio posterior al registro anula esta confirmación.",
+        "noMoneyConfirm": "Confirmar"
       },
       "noteO3": "La deuda de inscripción anterior al cambio queda fuera de este inicio. No se condona.",
       "totals": {

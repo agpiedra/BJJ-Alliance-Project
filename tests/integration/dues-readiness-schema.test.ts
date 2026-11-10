@@ -256,7 +256,7 @@ describe("the database objects exist as designed (the drift check cannot see the
     const triggers = await prisma.$queryRaw<{ tgname: string }[]>`
       SELECT tgname FROM pg_trigger WHERE NOT tgisinternal AND tgrelid IN ('"DuesOpeningItem"'::regclass, '"DuesReadinessConfirmation"'::regclass) ORDER BY tgname`;
     expect(triggers.map((t) => t.tgname)).toEqual([
-      "DuesOpeningItem_marker_once", "DuesOpeningItem_no_delete", "DuesReadinessConfirmation_no_delete", "DuesReadinessConfirmation_no_update",
+      "DuesOpeningItem_markers", "DuesOpeningItem_no_delete", "DuesReadinessConfirmation_no_delete", "DuesReadinessConfirmation_no_update",
     ]);
   });
 });
@@ -491,11 +491,11 @@ describe("immutability", () => {
   it("draft content never changes; the marker is set once; nothing is deleted", async () => {
     await isolated(async (tx) => {
       const d = await createDraft(tx);
-      await refused(tx, () => tx.duesOpeningItem.update({ where: { id: d.id }, data: { amount: "1.00" } }), "only the withdrawal marker may be set, once");
-      await refused(tx, () => tx.duesOpeningItem.update({ where: { id: d.id }, data: { note: "rewritten" } }), "only the withdrawal marker may be set, once");
-      await refused(tx, () => tx.duesOpeningItem.update({ where: { id: d.id }, data: { ...withdrawnMarker(), amount: "1.00" } }), "no other column may change", "marker plus content");
+      await refused(tx, () => tx.duesOpeningItem.update({ where: { id: d.id }, data: { amount: "1.00" } }), "an opening item's content never changes");
+      await refused(tx, () => tx.duesOpeningItem.update({ where: { id: d.id }, data: { note: "rewritten" } }), "an opening item's content never changes");
+      await refused(tx, () => tx.duesOpeningItem.update({ where: { id: d.id }, data: { ...withdrawnMarker(), amount: "1.00" } }), "an opening item's content never changes", "marker plus content");
       await tx.duesOpeningItem.update({ where: { id: d.id }, data: withdrawnMarker("first") });
-      await refused(tx, () => tx.duesOpeningItem.update({ where: { id: d.id }, data: { withdrawalReason: "second" } }), "it is already set");
+      await refused(tx, () => tx.duesOpeningItem.update({ where: { id: d.id }, data: { withdrawalReason: "second" } }), "a withdrawn opening item never changes");
       await refused(tx, () => tx.duesOpeningItem.delete({ where: { id: d.id } }), "rows are never deleted");
     });
   });
@@ -581,7 +581,7 @@ describe("concurrent replacement protection", () => {
       release.resolve(); // released even if the wait assertion fails, so no transaction is left holding a lock
     }
     await first;
-    expect(dbMessage(await rogue)).toContain("only the withdrawal marker may be set, once (it is already set)");
+    expect(dbMessage(await rogue)).toContain("a withdrawn opening item never changes");
     expect(await prisma.duesOpeningItem.count({ where: { id: rogueSuccessor } })).toBe(0);
   }, 60_000);
 

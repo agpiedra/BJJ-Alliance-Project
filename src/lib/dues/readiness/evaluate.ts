@@ -6,10 +6,14 @@ import type { StudentStatus } from "@/generated/prisma/client";
 import {
   FINGERPRINT_FORMAT,
   branchFingerprint,
+  classifyLegacyRow,
+  configurationFingerprint,
+  legacyNoMoneyBinding,
   openingReviewBinding,
   organizationFingerprint,
   pricingAckBinding,
   studentFingerprint,
+  type LegacyRowClass,
 } from "@/lib/dues/readiness/fingerprint";
 import type { ReadinessSnapshot } from "@/lib/dues/readiness/snapshot";
 
@@ -69,6 +73,21 @@ export interface OpeningDraftTotal {
   total: string;
 }
 
+/**
+ * Stage 9 A8: every legacy row for S or later, classified from stored fields. `acknowledgement` is the owner's current "no money
+ * was received" for an ambiguous row (null for every other class: only an ambiguous row can be acknowledged); `binding` is what a
+ * new acknowledgement must match (the row's exact stored content).
+ */
+export interface LegacyFromStartRow {
+  legacyId: string;
+  studentId: string;
+  year: number;
+  month: number;
+  classification: LegacyRowClass;
+  acknowledgement: ConfirmationState | null;
+  binding: string;
+}
+
 export interface ReadinessReport {
   candidate: YearMonth;
   ready: boolean;
@@ -76,9 +95,11 @@ export interface ReadinessReport {
   warnings: { key: string; items: string[] }[];
   notes: string[];
   preview: { students: StudentPreview[]; branches: BranchPreview[] };
-  fingerprints: { organization: string; branches: Record<string, string>; students: Record<string, string> };
+  /** `configuration`: what an approval fixes (stage 9 A1; `configurationFingerprint`). */
+  fingerprints: { organization: string; configuration: string; branches: Record<string, string>; students: Record<string, string> };
   confirmations: StudentConfirmations[];
   openingDrafts: OpeningDraftTotal[];
+  legacyFromStart: LegacyFromStartRow[];
 }
 
 const toDate = (iso: string): CalendarDate => ({ year: Number(iso.slice(0, 4)), month: Number(iso.slice(5, 7)), day: Number(iso.slice(8, 10)) });
@@ -91,6 +112,47 @@ const sortedIds = (ids: Iterable<string>) => [...new Set(ids)].sort();
 function totalToDecimal(minor: number): string {
   if (!Number.isSafeInteger(minor) || minor < 0) throw new RangeError(`Total out of range: ${minor}`);
   return `${Math.floor(minor / 100)}.${String(minor % 100).padStart(2, "0")}`;
+}
+
+/**
+ * Stage 9 rule 6 (A1): which students changed since approval and are NOT yet refreshed. A student changed when their fingerprint
+ * differs from the approved one (including a student added or gone since). Refreshed = a current, valid opening review recorded
+ * AFTER the approval, plus a valid pricing acknowledgement recorded after it when check 6 requires one. Re-confirming after the
+ * 1st is allowed (it reviews pre-S facts; the configuration cannot change). Pure: the switch and the screen both use it.
+ */
+export function studentsNeedingRefresh(
+  approval: { studentFingerprints: Record<string, string>; approvedAt: Date },
+  snapshot: ReadinessSnapshot,
+  report: ReadinessReport,
+): { changed: string[]; notRefreshed: string[] } {
+  const current = report.fingerprints.students;
+  const ids = [...new Set([...Object.keys(approval.studentFingerprints), ...Object.keys(current)])].sort();
+  const changed = ids.filter((id) => approval.studentFingerprints[id] !== current[id]);
+  const promo = new Set(promoStudentIds(snapshot));
+  const stateOf = new Map(report.confirmations.map((c) => [c.studentId, c]));
+  const after = (state: ConfirmationState) => state.state === "valid" && new Date(state.confirmedAt).getTime() > approval.approvedAt.getTime();
+  const notRefreshed = changed.filter((id) => {
+    const c = stateOf.get(id);
+    if (!c) return true; // gone since approval: nothing can be confirmed for it
+    return !after(c.openingReview) || (promo.has(id) && !after(c.pricingAck));
+  });
+  return { changed, notRefreshed };
+}
+
+/** Stage 9 A1: each student's ACTIVE opening drafts per currency (`{ [studentId]: [{ currency, total }] }`, currencies sorted). */
+export function openingTotalsByStudent(snapshot: ReadinessSnapshot): Record<string, { currency: string; total: string }[]> {
+  const minor = new Map<string, Map<string, number>>();
+  for (const d of snapshot.openingItems) {
+    const perCurrency = minor.get(d.studentId) ?? new Map<string, number>();
+    perCurrency.set(d.currency, (perCurrency.get(d.currency) ?? 0) + decimalToMinor(d.amount));
+    minor.set(d.studentId, perCurrency);
+  }
+  return Object.fromEntries(
+    [...minor.entries()].map(([studentId, m]) => [
+      studentId,
+      [...m.entries()].sort(([a], [b]) => (a < b ? -1 : 1)).map(([currency, total]) => ({ currency, total: totalToDecimal(total) })),
+    ]),
+  );
 }
 
 function previewStudent(snapshot: ReadinessSnapshot, student: ReadinessSnapshot["students"][number], s: YearMonth): StudentPreview {
@@ -172,8 +234,8 @@ function triggerHealthCheck(trigger: ReadinessSnapshot["trigger"]): ReadinessChe
     status: reasons.length === 0 ? "pass" : "fail",
     detail:
       reasons.length === 0
-        ? "The monthly-generation trigger is scheduled and its latest run finished SUCCEEDED with a confirmed heartbeat. This is trigger health only — not billing completeness, not scheduler proof, not alert delivery, and not overdue-month alerting (reported on separate alert checks; condition C is not evaluable until stage 9)."
-        : "The monthly-generation trigger is not healthy (see the reasons). This checks trigger health only — never billing completeness or overdue-month alerting (reported on separate alert checks; condition C is not evaluable until stage 9).",
+        ? "The monthly-generation trigger is scheduled and its latest run finished SUCCEEDED with a confirmed heartbeat. This is trigger health only — not billing completeness, not scheduler proof, not alert delivery, and not overdue-month alerting (reported on separate alert checks, conditions A–D)."
+        : "The monthly-generation trigger is not healthy (see the reasons). This checks trigger health only — never billing completeness or overdue-month alerting (reported on separate alert checks, conditions A–D).",
     items: reasons.map((r) => `trigger:${r}`),
   };
 }
@@ -214,14 +276,39 @@ export function evaluateReadiness(snapshot: ReadinessSnapshot, candidate: YearMo
     return assignment.planId !== null && planAcademy.get(assignment.planId) !== st.homeAcademyId;
   });
 
-  // 5. No legacy PaymentPeriod for S or later (the legacy one-month-ahead window): it would be charged twice.
-  const check5 = snapshot.legacyPayments.filter((p) => compareYearMonth({ year: p.year, month: p.month }, s) >= 0);
+  // 5 (stage 9 A8, approved 2026-11-10). Every legacy row for S or later is classified from stored fields. An unpaid placeholder
+  // does not block (the ledger's S charge supersedes it; it is never changed). An ambiguous pending row blocks unless the owner's
+  // current acknowledgement matches its exact content. A recorded payment, a waiver or an inconsistent row always blocks.
+  const legacyFromStart: LegacyFromStartRow[] = snapshot.legacyPayments
+    .filter((p) => compareYearMonth({ year: p.year, month: p.month }, s) >= 0)
+    .sort((a, b) => (a.id < b.id ? -1 : 1))
+    .map((p) => {
+      const classification = classifyLegacyRow(p);
+      const binding = legacyNoMoneyBinding(s, p);
+      let acknowledgement: ConfirmationState | null = null;
+      if (classification === "ambiguousPending") {
+        const current = snapshot.confirmations
+          .filter((c) => c.kind === "LEGACY_NO_MONEY" && c.legacyPaymentPeriodId === p.id && c.candidateYear === s.year && c.candidateMonth === s.month)
+          .reduce<ReadinessSnapshot["confirmations"][number] | null>((best, c) => (best === null || c.sequence > best.sequence ? c : best), null);
+        acknowledgement = !current
+          ? { state: "missing" }
+          : {
+              state: current.fingerprintFormat === FINGERPRINT_FORMAT && current.binding === binding ? "valid" : "stale",
+              sequence: current.sequence,
+              confirmedAt: current.confirmedAt,
+              declaredNoOpeningDebt: null,
+            };
+      }
+      return { legacyId: p.id, studentId: p.studentId, year: p.year, month: p.month, classification, acknowledgement, binding };
+    });
+  const check5 = legacyFromStart.filter((r) => r.classification !== "placeholder" && r.acknowledgement?.state !== "valid");
+  const placeholders = legacyFromStart.filter((r) => r.classification === "placeholder");
 
   const promoStudents = promoStudentIds(snapshot);
 
   // Stage 8c. A confirmation is valid only when its format is current and its binding equals the binding recomputed from THIS
   // snapshot; the current one per identity is the highest `sequence` (never a timestamp or an id).
-  const studentFps = new Map(students.map((st) => [st.id, studentFingerprint(snapshot, st.id)]));
+  const studentFps = new Map(students.map((st) => [st.id, studentFingerprint(snapshot, st.id, s)]));
   const branchFps = new Map(snapshot.branches.map((b) => [b.id, branchFingerprint(snapshot, b.id)]));
   const confirmationState = (st: ReadinessSnapshot["students"][number], kind: "OPENING_REVIEWED" | "PRICING_ACKNOWLEDGED"): ConfirmationState => {
     const current = snapshot.confirmations
@@ -310,7 +397,13 @@ export function evaluateReadiness(snapshot: ReadinessSnapshot, candidate: YearMo
       "Branches without a policy for S, or eligible students without applicable terms or policy for S.",
     ),
     computed(4, "assignments", check4.map((st) => `student:${st.id}`), "Every active student has a plan (or an explicit 'no plan') effective for S.", "Active students with no assignment effective for S, or one on another branch's plan."),
-    computed(5, "noLegacyFromStart", check5.map((p) => `legacy:${p.id}`), "No legacy payment exists for S or later.", "Legacy payments recorded for S or later would be charged again."),
+    computed(
+      5,
+      "noLegacyFromStart",
+      check5.map((r) => `legacy:${r.legacyId}`),
+      "No legacy row for S or later blocks: any that exist are unpaid placeholders (handled by the new system) or acknowledged as no money received.",
+      "Legacy rows for S or later that block: recorded payments, waivers and inconsistent rows (move S), or pending rows with a method or notes that are not acknowledged as no money received.",
+    ),
     computed(
       6,
       "pricingAcknowledged",
@@ -345,8 +438,9 @@ export function evaluateReadiness(snapshot: ReadinessSnapshot, candidate: YearMo
     {
       id: 12,
       key: "activationMechanismAvailable",
-      status: "notImplemented",
-      detail: "The stage 9 activation mechanism (approval, manual activation, legacy refusal, gate lock) is not implemented. This check is about the mechanism existing, not about the organization being active.",
+      status: "pass",
+      detail:
+        "The stage 9 activation mechanism exists (advance approval, the owner's atomic switch in the window from the 1st to the 10th of S, legacy refusal under the organization gate). This check is about the mechanism existing, not about the organization being active.",
       items: [],
     },
     {
@@ -392,15 +486,18 @@ export function evaluateReadiness(snapshot: ReadinessSnapshot, candidate: YearMo
       ...(linkedToPaid.length ? [{ key: "openingItemLinkedToPaidRow", items: linkedToPaid }] : []),
       ...(aboveReference.length ? [{ key: "openingItemAboveReference", items: aboveReference }] : []),
       ...(currencyDiffers.length ? [{ key: "openingItemCurrencyDiffersFromPlan", items: currencyDiffers }] : []),
+      ...(placeholders.length ? [{ key: "legacyPlaceholderHandledByNewSystem", items: placeholders.map((r) => `legacy:${r.legacyId}`) }] : []),
     ],
     notes: ["Pre-switch signup debt is excluded from this activation scope (owner decision O3); it is not waived."],
     preview: { students: previews, branches },
     fingerprints: {
       organization: organizationFingerprint(snapshot, s),
+      configuration: configurationFingerprint(snapshot),
       branches: Object.fromEntries(branchFps),
       students: Object.fromEntries(studentFps),
     },
     confirmations,
     openingDrafts,
+    legacyFromStart,
   };
 }

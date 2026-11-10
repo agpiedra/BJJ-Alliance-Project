@@ -182,6 +182,8 @@ export interface GenerationAlertState {
   students: { organizationId: string; count: number }[];
   /** Status of each such organization: a non-ACTIVE one is refused at the visit gate, so it owes no billing. */
   organizations: { organizationId: string; status: OrganizationStatus }[];
+  /** Stage 9 condition C: every organization with an EFFECTIVE activation (read even when there is no progress row at all). */
+  activatedOrganizations: string[];
   /** More rows than `cap`: nothing is evaluated (condition D). */
   overflow: boolean;
 }
@@ -196,7 +198,7 @@ export async function readGenerationAlertState(
   bounds: { statementTimeoutMs: number; lockTimeoutMs: number; idleInTransactionTimeoutMs: number; maxWaitMs: number; timeoutMs: number },
 ): Promise<GenerationAlertState> {
   assertTransactionTimeouts(bounds, "alert detection bounds", { requireIdle: true });
-  const empty: GenerationAlertState = { progress: [], branches: [], students: [], organizations: [], overflow: false };
+  const empty: GenerationAlertState = { progress: [], branches: [], students: [], organizations: [], activatedOrganizations: [], overflow: false };
   return unscopedPrisma.$transaction(
     async (tx) => {
       await tx.$executeRawUnsafe("SET TRANSACTION READ ONLY");
@@ -209,8 +211,16 @@ export async function readGenerationAlertState(
         take: cap + 1,
       });
       if (progress.length > cap) return { ...empty, overflow: true };
+      const activations = await tx.duesActivation.findMany({
+        where: { effectiveAt: { not: null } },
+        select: { organizationId: true },
+        orderBy: { id: "asc" },
+        take: cap + 1,
+      });
+      if (activations.length > cap) return { ...empty, overflow: true };
+      const activatedOrganizations = activations.map((a) => a.organizationId);
       const organizationIds = [...new Set(progress.map((p) => p.organizationId))];
-      if (organizationIds.length === 0) return { ...empty, progress };
+      if (organizationIds.length === 0) return { ...empty, progress, activatedOrganizations };
       const branches = await tx.academy.findMany({
         where: { organizationId: { in: organizationIds } },
         select: { organizationId: true, timezone: true },
@@ -225,6 +235,7 @@ export async function readGenerationAlertState(
         branches,
         students: students.map((s) => ({ organizationId: s.organizationId, count: s._count._all })),
         organizations: organizations.map((o) => ({ organizationId: o.id, status: o.status })),
+        activatedOrganizations,
         overflow: false,
       };
     },

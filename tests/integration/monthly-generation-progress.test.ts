@@ -1,6 +1,7 @@
 import "dotenv/config";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { getTestPrismaClient } from "../helpers/test-db";
+import { forceDeleteForTest } from "../helpers/force-delete";
 import { makeAccountingOrg } from "../helpers/accounting-org";
 import type { LedgerActivation } from "../../src/lib/dues/ledger/activation";
 import type { YearMonth } from "../../src/lib/dues/calendar";
@@ -156,11 +157,11 @@ async function expectContiguous(org: Org, segmentId: string) {
 }
 
 beforeEach(async () => {
-  await prisma.$executeRaw`DELETE FROM "DuesGenerationProgress"`;
+  await forceDeleteForTest(prisma, { sql: `DELETE FROM "DuesGenerationProgress"` });
 });
 
 afterAll(async () => {
-  await prisma.$executeRaw`DELETE FROM "DuesGenerationProgress"`;
+  await forceDeleteForTest(prisma, { sql: `DELETE FROM "DuesGenerationProgress"` });
   for (const org of orgs) {
     await prisma.$transaction(
       async (tx) => {

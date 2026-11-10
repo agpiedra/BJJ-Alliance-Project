@@ -674,7 +674,9 @@
         "columnPlan": "Plan",
         "columnStatus": "Status",
         "columnAmount": "Amount",
-        "columnNotes": "Notes"
+        "columnNotes": "Notes",
+        "newSystemHandled": "Handled by the new system",
+        "newSystemBilled": "Billed in the new system"
       },
       "recordPayment": {
         "toggle": "Record a payment",
@@ -1751,7 +1753,7 @@
     "readiness": {
       "eyebrow": "{orgName} · Dues readiness",
       "heading": "Dues readiness",
-      "sub": "A read-only report for one candidate start month. Nothing on this page changes data or activates the dues ledger.",
+      "sub": "A report for one candidate start month, and the owner's activation steps. Only the activation panel's own buttons approve or switch to the new system.",
       "backToPlans": "Back to payment plans",
       "month": {
         "label": "Start month",
@@ -1763,7 +1765,9 @@
       },
       "status": {
         "notReady": "Not ready",
-        "notReadyBody": "This report never activates the dues ledger. Activation is a separate, later stage that is not built yet.",
+        "notReadyBody": "Approval and the switch need every check to pass. This report itself changes nothing.",
+        "ready": "Ready",
+        "readyBody": "Every check passes for this month. Approving and switching are separate owner steps in the activation panel; this report itself changes nothing.",
         "asOf": "Data as of {time}.",
         "asOfBody": "Changes made after that moment are not shown until you reload this page. This page does not lock anything or prevent changes."
       },
@@ -1792,8 +1796,8 @@
           "fail": "Active students without a plan, or an explicit \"no plan\", for {month}."
         },
         "noLegacyFromStart": {
-          "title": "No old-system payments from {month} on",
-          "fail": "Payments recorded in the old system for {month} or later. They would be charged twice."
+          "title": "Old-system rows from {month} on",
+          "fail": "Old-system rows for {month} or later that block: recorded payments, waivers and inconsistent rows (choose a later start month), or pending rows with a method or notes not yet confirmed as \"no money received\"."
         },
         "pricingAcknowledged": {
           "title": "Pricing acknowledged for promo or exempt students",
@@ -1835,7 +1839,85 @@
         "notEligibleForStart": "Not eligible to be charged for {month}",
         "openingItemLinkedToPaidRow": "Opening debt linked to a PAID payment",
         "openingItemAboveReference": "Opening debt above that month's plan price or recorded amount",
-        "openingItemCurrencyDiffersFromPlan": "Opening debt in a different currency than the plan"
+        "openingItemCurrencyDiffersFromPlan": "Opening debt in a different currency than the plan",
+        "legacyPlaceholderHandledByNewSystem": "Unpaid old-system placeholders for {month} or later (handled by the new system; never changed)"
+      },
+      "activation": {
+        "heading": "Switch to the new payment system",
+        "intro": "Only the owner approves, withdraws or switches. Nothing pauses any payment: the switch is one short step that either completes entirely or changes nothing.",
+        "active": "The new payment system has been active since {time} (start month {month}). Old payment screens are read-only.",
+        "approved": "Approved for {month} on {time}.",
+        "approvedOtherMonth": "There is an approval for {month}. Show that month to switch, or withdraw the approval to approve another month.",
+        "window": "The switch can run from {opens} until before {closes} ({zone}).",
+        "noPause": "Payments are never paused. A payment taken in the old system for a month before the start month changes that student's review; review that student again before switching.",
+        "configurationChanged": "Prices, policies, plans, branches or the currency changed after approval. The switch will refuse: withdraw this approval and approve a later start month.",
+        "changedHeading": "Students changed since approval",
+        "noneChanged": "No student changed since approval.",
+        "totalsChange": "opening debt {before} at approval, {after} now",
+        "refreshed": "reviewed again after approval",
+        "needsRefresh": "needs a new review",
+        "activate": "Switch to the new system for {month}",
+        "withdraw": "Withdraw approval",
+        "approveBy": "Approval for {month} must be given before {deadline} ({zone}).",
+        "approveNeedsReady": "Approval needs every check above to pass.",
+        "approve": "Approve {month}",
+        "pending": "Working…",
+        "saved": {
+          "approve": "Approved. Nothing has switched yet.",
+          "withdraw": "Approval withdrawn. Nothing switched.",
+          "activate": "Switched. The new payment system is now active."
+        },
+        "refused": {
+          "notFound": "Not available.",
+          "invalid": "That request was not valid. Nothing was saved.",
+          "alreadyActive": "The new payment system is already active. Nothing was changed.",
+          "approvalExists": "There is already an approval. Withdraw it first. Nothing was saved.",
+          "tooLate": "Too late to approve this month: a branch has already reached the 1st. Choose a later start month. Nothing was saved.",
+          "stale": "The data changed after this page loaded. Review it again and retry. Nothing was saved.",
+          "notReady": "Not every check passes. Nothing was saved. Failing:",
+          "busy": "Another change was in progress. Nothing was saved. Try again.",
+          "noApproval": "There is no approval to act on. Nothing was changed.",
+          "windowNotOpen": "The switch window has not opened yet in every branch. Nothing was changed.",
+          "windowClosed": "The switch window has closed. Withdraw this approval and approve a later start month. Nothing was changed.",
+          "configurationChanged": "Prices, policies, plans, branches or the currency changed after approval. Withdraw it and approve a later start month. Nothing was changed.",
+          "needsReconfirmation": "These students changed after approval and need a new review first. Nothing was changed:",
+          "progressRowExists": "Billing records already exist for this organization, which should be impossible before the switch. Nothing was changed; contact support.",
+          "unexpected": "Refused. Nothing was saved."
+        },
+        "unknownTitle": "Outcome unknown",
+        "unknownBody": "The response was lost. The step may or may not have completed. Reload this page to see the real state before trying again.",
+        "reload": "Reload this page",
+        "approveTitle": "Approve {month} as the start month?",
+        "approveBody": "This records the configuration and every student's reviewed content as they are now. It switches nothing. You can withdraw it at any time before the switch.",
+        "approveConfirm": "Approve",
+        "withdrawTitle": "Withdraw the approval?",
+        "withdrawBody": "Nothing switches. You can approve again afterwards.",
+        "withdrawConfirm": "Withdraw",
+        "activateTitle": "Switch to the new payment system for {month}?",
+        "activateConfirm": "Switch now",
+        "activateEffectLegacy": "From that moment the old payment screens stop accepting payments; a payment in progress there is refused and its entries are kept for re-entry.",
+        "activateEffectOpening": "Each reviewed opening debt becomes a charge owed since activation, with no due date and no late fee.",
+        "activateEffectMonthly": "Monthly charges start with {month}.",
+        "activateEffectNoUndo": "This cannot be undone. Corrections are made inside the new system.",
+        "legacyHeading": "Old-system rows for {month} and later",
+        "legacyNone": "No old-system rows for {month} or later.",
+        "legacyRow": "{student}, {month}: {status}, {amount}",
+        "method": "method: {method}",
+        "notes": "notes: {notes}",
+        "noOpeningDebt": "none",
+        "class": {
+          "placeholder": "Unpaid placeholder: handled by the new system (does not block).",
+          "ambiguousPending": "Pending with a method or notes: blocks until you confirm no money was received.",
+          "acknowledged": "You confirmed no money was received for this row (does not block).",
+          "ackStale": "Your earlier confirmation no longer matches this row.",
+          "recordedPayment": "Recorded payment: blocks. Choose a later start month.",
+          "waiver": "Waiver: blocks. Choose a later start month.",
+          "inconsistent": "Inconsistent row: blocks. Choose a later start month."
+        },
+        "noMoney": "Confirm no money was received for this row",
+        "noMoneyTitle": "Confirm no money was received?",
+        "noMoneyBody": "This records, under your name, that no money was received for exactly this row as shown. The row itself is not changed. Any later change to the row cancels this confirmation.",
+        "noMoneyConfirm": "Confirm"
       },
       "noteO3": "Pre-switch signup debt is excluded from this start. It is not waived.",
       "totals": {

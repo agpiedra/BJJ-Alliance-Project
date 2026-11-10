@@ -299,7 +299,7 @@ describe("getDuesReadinessForOwner: authorization and isolation", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.report.ready).toBe(false);
-    expect(result.report.checks.filter((c) => c.status === "notImplemented").map((c) => c.id)).toEqual([12]); // check 10 is computed (G2b): it fails until scheduled; 11 passes since stage 9 PR 9-2 (O2)
+    expect(result.report.checks.filter((c) => c.status === "notImplemented").map((c) => c.id)).toEqual([]); // check 10 is computed (G2b): it fails until scheduled; 11 passes since PR 9-2 (O2), 12 since PR 9-3
     expect(result.report.checks.find((c) => c.id === 13)!.status).toBe("pass"); // O4 decided and implemented (2026-11-09)
   });
 
@@ -430,7 +430,7 @@ describe("equivalence with the real monthly writer (active stub, rolled back)", 
 
 describe("stage 8b: opening-debt drafts in the snapshot and the fingerprints (format r2)", () => {
   const load = (hooks = {}) => runReadOnlySnapshot(appPrisma, (tx) => loadReadinessSnapshot(tx, a.org.id, hooks));
-  const binding = (snapshot: Awaited<ReturnType<typeof load>>, studentId: string) => openingReviewBinding(S, studentFingerprint(snapshot, studentId));
+  const binding = (snapshot: Awaited<ReturnType<typeof load>>, studentId: string) => openingReviewBinding(S, studentFingerprint(snapshot, studentId, S));
   const draft = (studentId: string, coverageMonth: number, over: { amount?: string; note?: string; legacyPaymentPeriodId?: string } = {}) =>
     prisma.duesOpeningItem.create({
       data: { organizationId: a.org.id, studentId, coverageYear: 2030, coverageMonth, amount: "100.00", currency: "USD", note: "Unpaid before the switch", createdById: a.admin.id, ...over },
@@ -459,7 +459,7 @@ describe("stage 8b: opening-debt drafts in the snapshot and the fingerprints (fo
     const stored = await prisma.duesReadinessConfirmation.create({
       data: {
         organizationId: a.org.id, studentId, candidateYear: S.year, candidateMonth: S.month, kind: "OPENING_REVIEWED", sequence: 1, fingerprintFormat: FINGERPRINT_FORMAT,
-        binding: b0, studentFingerprint: studentFingerprint(await load(), studentId), declaredNoOpeningDebt: true, confirmedById: a.admin.id,
+        binding: b0, studentFingerprint: studentFingerprint(await load(), studentId, S), declaredNoOpeningDebt: true, confirmedById: a.admin.id,
       },
     });
     const valid = async () => stored.fingerprintFormat === FINGERPRINT_FORMAT && stored.binding === binding(await load(), studentId);
@@ -533,7 +533,7 @@ describe("stage 8b: opening-debt drafts in the snapshot and the fingerprints (fo
     const after = evaluateReadiness(snapshot, S);
     expect(after.preview).toEqual(reportBeforeDrafts.preview);
     expect(after.checks).toEqual(reportBeforeDrafts.checks);
-    expect(after.checks.filter((c) => c.status === "notImplemented").map((c) => c.id)).toEqual([12]); // check 10 is computed (G2b): it fails until scheduled; 11 passes since stage 9 PR 9-2 (O2)
+    expect(after.checks.filter((c) => c.status === "notImplemented").map((c) => c.id)).toEqual([]); // check 10 is computed (G2b): it fails until scheduled; 11 passes since PR 9-2 (O2), 12 since PR 9-3
     expect(after.checks.find((c) => c.id === 13)!.status).toBe("pass"); // O4 decided and implemented (2026-11-09)
     expect(after.ready).toBe(false);
     actAs(a.admin.id, a.org.id);

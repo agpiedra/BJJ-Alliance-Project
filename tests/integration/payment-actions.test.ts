@@ -836,13 +836,16 @@ describe("recordPayment / markPaymentPaid: the dues-ledger activation boundary (
   async function activate(organizationId: string) {
     const id = `pa-act-${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
     const approver = await prisma.organizationMembership.findFirstOrThrow({ where: { organizationId, role: "ADMIN" }, select: { userId: true } });
-    await prisma.$executeRaw`INSERT INTO "DuesActivation" ("id","organizationId","startYear","startMonth","fingerprintFormat","configFingerprint","studentFingerprints","approvedById","approvedAt")
-      VALUES (${id}, ${organizationId}, 2026, 12, 'test', 'cfg', '{}'::jsonb, ${approver.userId}, now())`;
+    // Stage 9 PR 9-3: an effective activation needs its start month's progress row (deferred check), as the switch writes it.
+    await prisma.$executeRaw`INSERT INTO "DuesGenerationProgress" ("id","organizationId","year","month","lastVisitedAt") VALUES (${`${id}-p`}, ${organizationId}, 2026, 12, 'epoch') ON CONFLICT DO NOTHING`;
+    await prisma.$executeRaw`INSERT INTO "DuesActivation" ("id","organizationId","startYear","startMonth","fingerprintFormat","configFingerprint","studentFingerprints","approvedOpeningTotals","approvedById","approvedAt")
+      VALUES (${id}, ${organizationId}, 2026, 12, 'test', 'cfg', '{}'::jsonb, '{}'::jsonb, ${approver.userId}, now())`;
     await prisma.$executeRaw`UPDATE "DuesActivation" SET "effectiveAt" = now(), "effectiveById" = ${approver.userId} WHERE "id" = ${id}`;
   }
   async function deactivateAll() {
     await prisma.$transaction(async (tx) => {
       await tx.$executeRawUnsafe("SET LOCAL session_replication_role = replica");
+      await tx.$executeRaw`DELETE FROM "DuesGenerationProgress" WHERE "id" LIKE 'pa-act-%'`;
       await tx.$executeRaw`DELETE FROM "DuesActivation" WHERE "id" LIKE 'pa-act-%'`;
     });
   }

@@ -69,6 +69,16 @@ export async function readLedgerActive(organizationId: string): Promise<boolean>
   return (await effectiveSince(prisma, organizationId)) !== null;
 }
 
+/** The start month S of the organization's EFFECTIVE activation, or null while inactive. Unlocked, for display (same reasoning as
+ * `readLedgerActive`: an effective activation never changes). */
+export async function readLedgerStart(organizationId: string): Promise<{ year: number; month: number } | null> {
+  const row = await prisma.duesActivation.findFirst({
+    where: { organizationId, effectiveAt: { not: null } },
+    select: { startYear: true, startMonth: true },
+  });
+  return row ? { year: row.startYear, month: row.startMonth } : null;
+}
+
 /** PostgreSQL `lock_not_available` (55P03), as raised by `lock_timeout`, through Prisma's driver adapter. */
 export function isLockTimeout(error: unknown): boolean {
   const e = error as { message?: unknown; meta?: { driverAdapterError?: { cause?: { originalCode?: unknown; originalMessage?: unknown } } } };

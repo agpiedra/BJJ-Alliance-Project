@@ -1,7 +1,8 @@
 # Stage 9 — smallest implementation plan (draft, 2026-11-10)
 
-**Status (2026-11-10): A1–A8 approved. PR 9-1 (activation record + organization gate) merged as f4a5cbd. PR 9-2 (OPENING
-obligations + O2) implemented as a draft PR. 9-3 not started. Nothing migrated on a hosted database, deployed or activated.** Builds on the Stage 8 brief
+**Status (2026-11-10): A1–A8 approved. PR 9-1 merged as f4a5cbd; PR 9-2 (OPENING obligations + O2) merged as f9354b3; PR 9-3
+(approval, atomic switch, opening charges, first progress row, condition C) implemented as a draft PR. Nothing migrated on a
+hosted database, deployed or activated; activation also stays impossible until check 10 (D5's schedule) passes.** Builds on the Stage 8 brief
 (`STAGE-8-READINESS-BRIEF.md` §5, §7, §8, §12–§14), O4 (`O4-PREPAYMENT-REVERSAL-PLAN.md`, migration
 `20261110120000`) and the alerting plan (`MONTHLY-GENERATION-ALERTING-PLAN.md` §6, condition C).
 
@@ -406,6 +407,30 @@ and triggers.
 - **Tests:** each stale-approval refusal; activation vs a legacy payment (both orders); activation creates exactly the
   reviewed opening rows and nothing for months ≥ S; generation creates S only after activation; real-browser owner flow
   in EN/ES (registered owner, disposable database), O2 included.
+- **As built (2026-11-10):** `src/lib/dues/readiness/activation-core.ts` (approve, withdraw, switch; owner-only actions in
+  `activation-actions.ts`), migrations `20261113120000` (enum `LEGACY_NO_MONEY`) and `20261113120100`. Decisions made in
+  implementation, for review:
+  - The configuration fingerprint an approval fixes = organization currency + every branch fingerprint (timezone, policies,
+    plans incl. legacy plans, terms). Student content is NOT in it (re-confirmed instead, rule 6).
+  - Rule 6 "changed" = the student's fingerprint differs from the approved one (a student added or gone counts); "refreshed" =
+    a valid opening review recorded after the approval, plus a pricing acknowledgement after it where check 6 needs one. This
+    applies to every changed student, active or not.
+  - Fingerprint format r3: the student fingerprint is per S; S+ unpaid placeholders are left out (A8 text above); legacy rows
+    now include `method` and `notes`. Every existing confirmation becomes stale (none exist outside tests).
+  - A8 classification: rows rules 8–10 do not name (`EXEMPT` without an amount, negative amounts) are `inconsistent` (block,
+    never acknowledgeable). The acknowledgement is a `DuesReadinessConfirmation` of kind `LEGACY_NO_MONEY` bound to the row's
+    exact stored content including `recordedAt` (every legacy write sets it), so any write makes it stale for good.
+  - Found in the browser pass and fixed: the system's lazily created "custom promotion" plan (`ensureCustomPromoPlan`, run by a
+    student-page or payments-page load) changed the configuration fingerprint, so one page view after approval made the switch
+    refuse "configuration changed". That plan is now left out of the branch fingerprint while it has no terms (it prices nothing);
+    with terms it counts. Side effect: the same page view no longer stales pricing acknowledgements either.
+  - Switch bounds: lock timeout 5 s (refusal `busy`), statement timeout 15 s, transaction timeout 30 s.
+  - Clock (final review): approval, withdrawal and the switch take their instant from the DATABASE clock (`clock_timestamp()`)
+    right after the gate is granted — the clock that stamps `confirmedAt` — so "recorded after the approval" (rule 6) never
+    compares two machines' clocks, and the window (A1) is judged on the same clock.
+  - `approvedOpeningTotals` added to `DuesActivation` (old vs new totals on the switch screen, A1).
+  - Not built: `ledgerStartsOn` (S is `startYear`/`startMonth`); a database rule that every OPENING obligation has an item
+    (the switch is its only writer in the application; the item → charge link is database-checked).
 
 ### Migration and rollback
 

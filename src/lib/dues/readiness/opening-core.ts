@@ -9,7 +9,15 @@ import { currentMonthIn, parseEffectiveMonth, parseMoney } from "@/lib/dues/conf
 import { CURRENCIES } from "@/lib/payments/format-money";
 import type { ActionState } from "@/lib/action-state";
 import type { TenantContext } from "@/lib/tenant/types";
-import { FINGERPRINT_FORMAT, branchFingerprint, openingReviewBinding, pricingAckBinding, studentFingerprint } from "@/lib/dues/readiness/fingerprint";
+import {
+  FINGERPRINT_FORMAT,
+  branchFingerprint,
+  classifyLegacyRow,
+  legacyNoMoneyBinding,
+  openingReviewBinding,
+  pricingAckBinding,
+  studentFingerprint,
+} from "@/lib/dues/readiness/fingerprint";
 import type { ReadinessSnapshot } from "@/lib/dues/readiness/snapshot";
 
 /**
@@ -338,7 +346,8 @@ export async function loadReviewContentInTx(tx: Tx, organizationId: string, stud
         FROM "StudentPlanAssignment" a WHERE a."organizationId" = ${organizationId} AND a."studentId" = ${studentId}), '[]'::json),
       'legacyPayments', COALESCE((SELECT json_agg(json_build_object('id', p."id", 'studentId', p."studentId", 'year', p."year", 'month', p."month",
           'status', p."status"::text, 'amount', p."amount"::text, 'currency', p."currency"::text, 'planId', p."planId",
-          'promoName', p."promoName", 'promoRecurring', p."promoRecurring"))
+          'promoName', p."promoName", 'promoRecurring', p."promoRecurring", 'method', p."method"::text, 'notes', p."notes",
+          'recordedAt', to_char(p."recordedAt", 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')))
         FROM "PaymentPeriod" p WHERE p."organizationId" = ${organizationId} AND p."studentId" = ${studentId}), '[]'::json),
       'monthlyObligations', COALESCE((SELECT json_agg(json_build_object('id', o."id", 'studentId', o."studentId",
           'coverageYear', o."coverageYear", 'coverageMonth', o."coverageMonth"))
@@ -399,7 +408,7 @@ export type Declaration = "noOpeningDebt" | "itemsAsShown";
  */
 export async function recordConfirmationCore(
   context: TenantContext,
-  input: { studentId: string; candidate: YearMonth; kind: DuesReadinessConfirmationKind; binding: string; declaration: Declaration | null },
+  input: { studentId: string; candidate: YearMonth; kind: Exclude<DuesReadinessConfirmationKind, "LEGACY_NO_MONEY">; binding: string; declaration: Declaration | null },
   hooks: TestHooks = {},
 ): Promise<ActionState> {
   const student = await findStudent(context.organizationId, input.studentId);
@@ -408,7 +417,7 @@ export async function recordConfirmationCore(
   return underStudentLock(context, student, hooks, false, async (tx) => {
     const content = await loadReviewContentInTx(tx, context.organizationId, student.id, student.homeAcademyId);
     await hooks.afterContentRead?.(tx);
-    const studentFp = studentFingerprint(content, student.id);
+    const studentFp = studentFingerprint(content, student.id, input.candidate);
     const branchFp = input.kind === "PRICING_ACKNOWLEDGED" ? branchFingerprint(content, student.homeAcademyId) : null;
     const fresh = branchFp === null ? openingReviewBinding(input.candidate, studentFp) : pricingAckBinding(input.candidate, studentFp, branchFp);
     if (fresh !== input.binding) return reject({ error: "stale" });
@@ -460,6 +469,79 @@ export async function recordConfirmationCore(
           sequence: next,
           binding: fresh,
           declaredNoOpeningDebt,
+        },
+      },
+    });
+    await hooks.afterAudit?.(tx);
+    return null;
+  });
+}
+
+/**
+ * Stage 9 A8 (b), approved 2026-11-10: the owner records "no money was received for this row" for ONE ambiguous pending legacy
+ * row of S or later (rule 9). Owner only (the action authorizes `ADMIN`). Same gate and locks as every confirmation; under them:
+ * re-read the student's content, refuse unless the row is this student's, for S or later, and still ambiguous (a recorded payment,
+ * waiver or inconsistent row can never be acknowledged — rule 10); recompute the binding from the row's exact stored content
+ * (including `recordedAt`, so ANY write to the row since the owner looked is `stale`); append with the next sequence; audit row in
+ * the same transaction. The legacy row itself is never touched.
+ */
+export async function recordNoMoneyAcknowledgementCore(
+  context: TenantContext,
+  input: { studentId: string; candidate: YearMonth; legacyPaymentPeriodId: string; binding: string },
+  hooks: TestHooks = {},
+): Promise<ActionState> {
+  const student = await findStudent(context.organizationId, input.studentId);
+  if (!student) return { error: "notFound" };
+
+  return underStudentLock(context, student, hooks, false, async (tx) => {
+    const content = await loadReviewContentInTx(tx, context.organizationId, student.id, student.homeAcademyId);
+    await hooks.afterContentRead?.(tx);
+    const row = content.legacyPayments.find((p) => p.id === input.legacyPaymentPeriodId);
+    if (!row) return reject({ error: "notFound" });
+    if (compareYearMonth({ year: row.year, month: row.month }, input.candidate) < 0 || classifyLegacyRow(row) !== "ambiguousPending") {
+      return reject({ error: "invalid", fieldErrors: { legacyPaymentPeriodId: ["notAcknowledgeable"] } });
+    }
+    const fresh = legacyNoMoneyBinding(input.candidate, row);
+    if (fresh !== input.binding) return reject({ error: "stale" });
+
+    const [{ next }] = await tx.$queryRaw<{ next: number }[]>`
+      SELECT COALESCE(MAX("sequence"), 0) + 1 AS next FROM "DuesReadinessConfirmation"
+      WHERE "organizationId" = ${context.organizationId} AND "studentId" = ${student.id}
+        AND "candidateYear" = ${input.candidate.year} AND "candidateMonth" = ${input.candidate.month}
+        AND "kind" = 'LEGACY_NO_MONEY'::"DuesReadinessConfirmationKind"`;
+    const created = await tx.duesReadinessConfirmation.create({
+      data: {
+        organizationId: context.organizationId,
+        studentId: student.id,
+        candidateYear: input.candidate.year,
+        candidateMonth: input.candidate.month,
+        kind: "LEGACY_NO_MONEY",
+        sequence: next,
+        fingerprintFormat: FINGERPRINT_FORMAT,
+        binding: fresh,
+        studentFingerprint: studentFingerprint(content, student.id, input.candidate),
+        legacyPaymentPeriodId: row.id,
+        confirmedById: context.actorUserId,
+      },
+    });
+    await hooks.beforeAudit?.(tx);
+    await tx.auditLog.create({
+      data: {
+        actorId: context.actorUserId,
+        organizationId: context.organizationId,
+        academyId: student.homeAcademyId,
+        action: "duesReadinessConfirmation.recordNoMoney",
+        entityType: "DuesReadinessConfirmation",
+        entityId: created.id,
+        before: Prisma.DbNull,
+        after: {
+          studentId: student.id,
+          kind: "LEGACY_NO_MONEY",
+          candidate: `${input.candidate.year}-${String(input.candidate.month).padStart(2, "0")}`,
+          sequence: next,
+          legacyPaymentPeriodId: row.id,
+          binding: fresh,
+          row: { year: row.year, month: row.month, status: row.status, amount: row.amount, currency: row.currency, method: row.method, notes: row.notes, recordedAt: row.recordedAt },
         },
       },
     });

@@ -39,6 +39,7 @@ const PARTICIPANTS = [
   "src/lib/payments/plan-actions.ts", // 9g, 9i
   "src/lib/locations/location-service.ts", // 9h
   "src/lib/dues/readiness/opening-core.ts", // 9j
+  "src/lib/dues/readiness/activation-core.ts", // stage 9 PR 9-3: approval, withdrawal and the switch take the gate EXCLUSIVELY
 ];
 
 /** Write only inside a transaction a participant opened, after that participant took the gate. */

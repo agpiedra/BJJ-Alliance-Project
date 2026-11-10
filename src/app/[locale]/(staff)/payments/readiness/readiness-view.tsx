@@ -14,6 +14,7 @@ import { AssignmentRows, AssignPlanForm, BaselineControl, CorrectAssignmentForm 
 import { OpeningReviewControl, PricingAckControl } from "./confirmation-forms";
 import { AddDraftForm, ReplaceDraftForm, WithdrawDraftButton } from "./draft-forms";
 import { ScopeStatus } from "./use-readiness-action";
+import { ActivationPanel } from "./activation-panel";
 
 /**
  * Stage 8d-1: the owner's readiness screen, rendered on the server. The start-month picker is a plain GET form.
@@ -138,11 +139,14 @@ export async function StatusAndChecks({ screen, candidate, locale }: { screen: R
 
   return (
     <>
-      <section aria-labelledby="readiness-status" className="flex flex-col gap-2 rounded-xl border border-bad-line bg-bad-soft p-4">
-        <h2 id="readiness-status" className="text-base font-semibold text-bad">
-          {t("status.notReady")}
+      <section
+        aria-labelledby="readiness-status"
+        className={cn("flex flex-col gap-2 rounded-xl border p-4", report.ready ? "border-ok-line bg-ok-soft" : "border-bad-line bg-bad-soft")}
+      >
+        <h2 id="readiness-status" className={cn("text-base font-semibold", report.ready ? "text-ok" : "text-bad")}>
+          {report.ready ? t("status.ready") : t("status.notReady")}
         </h2>
-        <p className="text-sm">{t("status.notReadyBody")}</p>
+        <p className="text-sm">{report.ready ? t("status.readyBody") : t("status.notReadyBody")}</p>
         <p className="text-sm">
           <strong>{t("status.asOf", { time: dateTime(screen.asOf, locale) })}</strong> {t("status.asOfBody")}
         </p>
@@ -206,6 +210,73 @@ export async function StatusAndChecks({ screen, candidate, locale }: { screen: R
         </CardContent>
       </Card>
     </>
+  );
+}
+
+/**
+ * Stage 9 PR 9-3: the activation panel, prepared here on the server (names, months, money, instants in the first branch's named
+ * timezone) from the SAME snapshot as everything else on the page, then handed to the client panel as text.
+ */
+export async function Activation({ screen, candidate, locale, organizationId }: { screen: ReadinessScreen; candidate: YearMonth; locale: string; organizationId: string }) {
+  const t = await getTranslations("payments.readiness");
+  const tt: Translate = (key, values) => t(key as never, values as never);
+  const tPayment = await getTranslations("students.paymentStatus");
+  const { report, activation } = screen;
+  const zone = activation.displayZone;
+  const at = (iso: string) =>
+    new Intl.DateTimeFormat(locale === "es" ? "es-CR" : "en-US", { timeZone: zone, dateStyle: "medium", timeStyle: "short" }).format(new Date(iso));
+  const students = new Map(screen.students.map((s) => [s.id, s]));
+  const totals = (list: { currency: string; total: string }[]) => (list.length === 0 ? tt("activation.noOpeningDebt") : list.map((x) => money(x.total, x.currency, locale)).join(" + "));
+  const live = activation.live;
+  return (
+    <ActivationPanel
+      organizationId={organizationId}
+      candidate={{ year: candidate.year, month: candidate.month, label: formatMonthYear(candidate.year, candidate.month, locale) }}
+      ready={report.ready}
+      organizationFingerprint={report.fingerprints.organization}
+      window={activation.window ? { approvalDeadline: at(activation.window.approvalDeadline), opensAt: at(activation.window.opensAt), closesAt: at(activation.window.closesAt), zone } : null}
+      live={
+        live
+          ? {
+              startLabel: formatMonthYear(live.startYear, live.startMonth, locale),
+              approvedAt: at(live.approvedAt),
+              effectiveAt: live.effectiveAt ? at(live.effectiveAt) : null,
+              forThisMonth: live.startYear === candidate.year && live.startMonth === candidate.month,
+              configurationMatches: live.configurationMatches,
+              changedStudents:
+                live.changedStudents?.map((c) => ({
+                  studentId: c.studentId,
+                  name: students.get(c.studentId)?.name ?? tt("items.unknown"),
+                  approvedTotals: totals(c.approvedTotals),
+                  currentTotals: totals(c.currentTotals),
+                  refreshed: c.refreshed,
+                })) ?? null,
+            }
+          : null
+      }
+      legacyRows={report.legacyFromStart.map((r) => {
+        const row = students.get(r.studentId)?.legacyRows.find((l) => l.id === r.legacyId);
+        const detail = [row?.method ? tt("activation.method", { method: row.method }) : null, row?.notes?.trim() ? tt("activation.notes", { notes: row.notes }) : null]
+          .filter((x): x is string => x !== null)
+          .join(" · ");
+        return {
+          legacyId: r.legacyId,
+          studentId: r.studentId,
+          label: tt("activation.legacyRow", {
+            student: students.get(r.studentId)?.name ?? "",
+            month: formatMonthYear(r.year, r.month, locale),
+            status: row ? tPayment(row.status as never) : "",
+            amount: row?.amount ? money(row.amount, row.currency, locale) : "—",
+          }),
+          detail: detail || null,
+          classification: r.classification,
+          acknowledgement: r.acknowledgement?.state ?? null,
+          binding: r.binding,
+        };
+      })}
+      checkTitles={Object.fromEntries(report.checks.map((c) => [c.key, tt(`checks.${c.key}.title`, { month: formatMonthYear(candidate.year, candidate.month, locale) })]))}
+      studentNames={Object.fromEntries(screen.students.map((s) => [s.id, s.name]))}
+    />
   );
 }
 

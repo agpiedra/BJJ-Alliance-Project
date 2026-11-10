@@ -94,9 +94,14 @@ async function hold(mode: "FOR NO KEY UPDATE" | "FOR UPDATE" | "FOR SHARE" = "FO
     /** Inside the held transaction: an approved activation made effective (what the switch commits). */
     activate: async () => {
       const id = `gate91-act-${++n}-${suffix}`;
+      // Stage 9 PR 9-3: an effective activation needs its start month's progress row in the same transaction (deferred check).
       await client.query(
-        `INSERT INTO "DuesActivation" ("id","organizationId","startYear","startMonth","fingerprintFormat","configFingerprint","studentFingerprints","approvedById","approvedAt")
-         VALUES ($1, $2, 2026, 12, 'test', 'cfg', '{}'::jsonb, $3, now())`,
+        `INSERT INTO "DuesGenerationProgress" ("id","organizationId","year","month","lastVisitedAt") VALUES ($1, $2, 2026, 12, 'epoch') ON CONFLICT DO NOTHING`,
+        [`${id}-p`, fx.org.id],
+      );
+      await client.query(
+        `INSERT INTO "DuesActivation" ("id","organizationId","startYear","startMonth","fingerprintFormat","configFingerprint","studentFingerprints","approvedOpeningTotals","approvedById","approvedAt")
+         VALUES ($1, $2, 2026, 12, 'test', 'cfg', '{}'::jsonb, '{}'::jsonb, $3, now())`,
         [id, fx.org.id, fx.admin.id],
       );
       await client.query(`UPDATE "DuesActivation" SET "effectiveAt" = now(), "effectiveById" = $2 WHERE "id" = $1`, [id, fx.admin.id]);
@@ -126,6 +131,7 @@ async function clearActivation() {
   await prisma.$transaction(async (tx) => {
     await tx.$executeRawUnsafe("SET LOCAL session_replication_role = replica");
     await tx.$executeRaw`DELETE FROM "DuesActivation" WHERE "organizationId" = ${fx.org.id}`;
+    await tx.$executeRaw`DELETE FROM "DuesGenerationProgress" WHERE "organizationId" = ${fx.org.id}`;
   });
 }
 
@@ -166,8 +172,8 @@ afterAll(async () => {
 describe("DuesActivation: the database keeps the record set-once", () => {
   const insert = (id: string, extra = "") =>
     prisma.$executeRawUnsafe(
-      `INSERT INTO "DuesActivation" ("id","organizationId","startYear","startMonth","fingerprintFormat","configFingerprint","studentFingerprints","approvedById","approvedAt"${extra ? ',"effectiveAt","effectiveById"' : ""})
-       VALUES ('${id}', '${fx.org.id}', 2026, 12, 'f', 'c', '{}'::jsonb, '${fx.admin.id}', now()${extra})`,
+      `INSERT INTO "DuesActivation" ("id","organizationId","startYear","startMonth","fingerprintFormat","configFingerprint","studentFingerprints","approvedOpeningTotals","approvedById","approvedAt"${extra ? ',"effectiveAt","effectiveById"' : ""})
+       VALUES ('${id}', '${fx.org.id}', 2026, 12, 'f', 'c', '{}'::jsonb, '{}'::jsonb, '${fx.admin.id}', now()${extra})`,
     );
 
   it("refuses a row born effective, then allows effective once; approval columns, a second marker, a second live row and delete all refuse", async () => {
@@ -177,6 +183,9 @@ describe("DuesActivation: the database keeps the record set-once", () => {
     await expect(prisma.$executeRawUnsafe(`UPDATE "DuesActivation" SET "startMonth" = 11 WHERE "id" = 'a1-${suffix}'`)).rejects.toThrow(/approval is immutable/);
     await expect(prisma.$executeRawUnsafe(`UPDATE "DuesActivation" SET "effectiveAt" = now() WHERE "id" = 'a1-${suffix}'`)).rejects.toThrow(/DuesActivation_effective_complete/);
     expect(await ledgerActivation.isActive(fx.org.id)).toBe(false); // approved only: not active
+    // Stage 9 PR 9-3: effective without the start month's progress row is refused at commit; with it, accepted.
+    await expect(prisma.$executeRawUnsafe(`UPDATE "DuesActivation" SET "effectiveAt" = now(), "effectiveById" = '${fx.admin.id}' WHERE "id" = 'a1-${suffix}'`)).rejects.toThrow(/must have its start month's progress row/);
+    await prisma.duesGenerationProgress.create({ data: { organizationId: fx.org.id, year: 2026, month: 12, lastVisitedAt: new Date(0) } });
     await prisma.$executeRawUnsafe(`UPDATE "DuesActivation" SET "effectiveAt" = now(), "effectiveById" = '${fx.admin.id}' WHERE "id" = 'a1-${suffix}'`);
     expect(await ledgerActivation.isActive(fx.org.id)).toBe(true);
     await expect(prisma.$executeRawUnsafe(`UPDATE "DuesActivation" SET "effectiveAt" = now() - interval '1 day' WHERE "id" = 'a1-${suffix}'`)).rejects.toThrow(/already effective/);

@@ -40,14 +40,6 @@ interface KnownLimitation {
 
 const KNOWN_LIMITATIONS: KnownLimitation[] = [
   {
-    description:
-      "STAGE-9 BLOCKER: overdue-month condition C (an ACTIVATED organization with no progress row) is not evaluable: there is no activation source until stage 9. Its implementation and tests are activation blockers.",
-    foundIn: "src/lib/dues/monthly-generation-alerts.ts (evaluateGenerationAlerts, conditionC)",
-    dueBy: "Before stage 9 (activation) — required before any organization's progress row exists",
-    reason:
-      "Four-check alerting (docs/dues/MONTHLY-GENERATION-ALERTING-PLAN.md) implements conditions A (new month at risk after 15 h), B (older month not clean) and D (detection failed) from a bounded read of persisted progress rows reserved in the route budget. C needs stage 9's activation record to compare against the progress rows, so it is reported \"notEvaluable\": never as passed, and the urgent check's success ping never covers it. Stage 9 must supply the source, then implement and test C. Readiness check 10 is trigger health only and does NOT cover it.",
-  },
-  {
     description: "The \"approaching\" threshold (5 remaining attendances) is a hardcoded literal that doesn't generalize.",
     foundIn: "src/lib/students/promotion-queue.ts (APPROACHING_THRESHOLD)",
     dueBy: "Phase 4 settings candidate",

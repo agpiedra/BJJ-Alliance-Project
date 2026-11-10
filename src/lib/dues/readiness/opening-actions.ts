@@ -10,14 +10,16 @@ import {
   parseDraftContent,
   parseReason,
   recordConfirmationCore,
+  recordNoMoneyAcknowledgementCore,
   replaceOpeningDraftCore,
   withdrawOpeningDraftCore,
   type Declaration,
 } from "@/lib/dues/readiness/opening-core";
 
 /**
- * Stage 8 PR 8c: the owner's five actions over opening-debt drafts and readiness confirmations. Every export of a "use server"
- * file is a callable action, so this file exports exactly these five and nothing else (tests/unit/dues-readiness-not-exposed.test.ts).
+ * Stage 8 PR 8c: the owner's five actions over opening-debt drafts and readiness confirmations, plus stage 9's A8 acknowledgement
+ * (`acknowledgeNoMoney`). Every export of a "use server" file is a callable action, so this file exports exactly these six and
+ * nothing else (tests/unit/dues-readiness-not-exposed.test.ts).
  * Built ahead of the owner screen (8d), registered in scripts/pending-callers.ts; no screen calls them yet.
  *
  * Authorization comes first and is server-derived: owner (`ADMIN`) of THIS organization only. A non-member gets `notFound`, and
@@ -97,6 +99,19 @@ export async function recordOpeningReview(organizationId: string, _prevState: Ac
   if (!declaration) fieldErrors.declaration = ["invalid"];
   if (!candidate || !binding || !declaration) return { error: "invalid", fieldErrors };
   return recordConfirmationCore(context, { studentId, candidate, kind: "OPENING_REVIEWED", binding, declaration });
+}
+
+/** Stage 9 A8 (b): "no money was received for this row", for one ambiguous pending legacy row of S or later. Owner only. */
+export async function acknowledgeNoMoney(organizationId: string, _prevState: ActionState, formData: FormData): Promise<ActionState> {
+  const context = await owner(organizationId);
+  if (!context) return { error: "notFound" };
+  const read = reader(formData);
+  const studentId = read("studentId");
+  const legacyPaymentPeriodId = read("legacyPaymentPeriodId");
+  if (!studentId || !legacyPaymentPeriodId) return { error: "notFound" };
+  const { candidate, binding, fieldErrors } = readConfirmation(read);
+  if (!candidate || !binding) return { error: "invalid", fieldErrors };
+  return recordNoMoneyAcknowledgementCore(context, { studentId, candidate, legacyPaymentPeriodId, binding });
 }
 
 export async function acknowledgePricing(organizationId: string, _prevState: ActionState, formData: FormData): Promise<ActionState> {

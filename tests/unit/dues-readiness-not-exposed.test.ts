@@ -30,19 +30,28 @@ const SCREEN_FILES = ["src/app/[locale]/(staff)/payments/readiness/page.tsx", "s
  * the five 8c server actions and nothing else from it — never the cores, the loader, the fingerprints or the read model.
  */
 const CLIENT_FORM_FILES = ["src/app/[locale]/(staff)/payments/readiness/confirmation-forms.tsx", "src/app/[locale]/(staff)/payments/readiness/draft-forms.tsx"];
+/** Stage 9 PR 9-3: the owner's activation panel, a client file importing only the activation actions and the A8 acknowledgement. */
+const ACTIVATION_PANEL = "src/app/[locale]/(staff)/payments/readiness/activation-panel.tsx";
 
 describe("the readiness report is not reachable from a browser", () => {
   it.each(FILES)("%s is a plain server module: no \"use server\" / \"use client\"", (file) => {
     expect(readFileSync(file, "utf8")).not.toMatch(/^\s*["']use (server|client)["']/m);
   });
 
-  it("outside the readiness folder, only the 8d screen and its two client form files import it", () => {
+  it("outside the readiness folder, only the 8d screen, its two client form files and the activation panel import it", () => {
     const importers = productionSourceFiles()
       .filter((f) => !f.file.replaceAll("\\", "/").startsWith("src/lib/dues/readiness/"))
       .filter((f) => IMPORTS_READINESS.test(stripComments(f.text)))
       .map((f) => f.file.replaceAll("\\", "/"))
       .sort();
-    expect(importers).toEqual([...SCREEN_FILES, ...CLIENT_FORM_FILES].sort());
+    expect(importers).toEqual([...SCREEN_FILES, ...CLIENT_FORM_FILES, ACTIVATION_PANEL].sort());
+  });
+
+  it("the activation panel is a client file that imports only the activation actions and the 8c/A8 actions", () => {
+    const text = stripComments(readFileSync(ACTIVATION_PANEL, "utf8"));
+    expect(text).toMatch(/^"use client";/);
+    const modules = [...text.matchAll(/from\s+["'][^"']*dues\/readiness(?:\/([a-z-]+))?["']/g)].map((m) => m[1] ?? "index").sort();
+    expect(modules).toEqual(["activation-actions", "opening-actions"]);
   });
 
   it.each(CLIENT_FORM_FILES)("%s is a client file that imports only the 8c server actions from the readiness folder", (file) => {
@@ -85,12 +94,26 @@ describe("the 8c owner actions expose exactly five server actions and nothing el
   const ACTIONS = "src/lib/dues/readiness/opening-actions.ts";
   const CORE = "src/lib/dues/readiness/opening-core.ts";
 
-  it("opening-actions.ts is \"use server\" and exports exactly the five actions", () => {
+  it("opening-actions.ts is \"use server\" and exports exactly the five actions plus stage 9's A8 acknowledgement", () => {
     const text = readFileSync(ACTIONS, "utf8");
     expect(text).toMatch(/^"use server";/);
     const exported = [...stripComments(text).matchAll(/^export\s+(?:async\s+)?(?:function|const|let|class|type|interface)\s+(\w+)/gm)].map((m) => m[1]).sort();
-    expect(exported).toEqual(["acknowledgePricing", "createOpeningDraft", "recordOpeningReview", "replaceOpeningDraft", "withdrawOpeningDraft"]);
+    expect(exported).toEqual(["acknowledgeNoMoney", "acknowledgePricing", "createOpeningDraft", "recordOpeningReview", "replaceOpeningDraft", "withdrawOpeningDraft"]);
     expect(stripComments(text)).not.toMatch(/^export\s*\{|^export\s+\*|^export\s+default/m);
+  });
+
+  it("stage 9: activation-actions.ts is \"use server\" with exactly three owner actions, each authorizing ADMIN first; the core is a plain module", () => {
+    const text = readFileSync("src/lib/dues/readiness/activation-actions.ts", "utf8");
+    expect(text).toMatch(/^"use server";/);
+    const code = stripComments(text);
+    const exported = [...code.matchAll(/^export\s+(?:async\s+)?(?:function|const|let|class|type|interface)\s+(\w+)/gm)].map((m) => m[1]).sort();
+    expect(exported).toEqual(["activateLedger", "approveActivation", "withdrawActivationApproval"]);
+    expect(code).not.toMatch(/^export\s*\{|^export\s+\*|^export\s+default/m);
+    expect(code).toContain('resolveActionContext(organizationId, ["ADMIN"])');
+    for (const name of exported) expect(code, name).toMatch(new RegExp(`export async function ${name}\\(organizationId: string[^)]*\\)[^{]*\\{\\s*const context = await owner\\(organizationId\\);\\s*if \\(!context\\) return`));
+    expect(readFileSync("src/lib/dues/readiness/activation-core.ts", "utf8")).not.toMatch(/^\s*["']use (server|client)["']/m);
+    const panel = stripComments(readFileSync(ACTIVATION_PANEL, "utf8"));
+    for (const name of [...exported, "acknowledgeNoMoney"]) expect(panel, name).toMatch(new RegExp(`${name}\\(`));
   });
 
   it("opening-core.ts is a plain module, and neither file imports a ledger writer", () => {
