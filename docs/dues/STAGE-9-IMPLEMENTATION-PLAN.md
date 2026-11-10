@@ -1,8 +1,20 @@
 # Stage 9 — smallest implementation plan (draft, 2026-11-10)
 
-**Status (2026-11-10): A1–A8 approved. PR 9-1 merged as f4a5cbd; PR 9-2 (OPENING obligations + O2) merged as f9354b3; PR 9-3
-(approval, atomic switch, opening charges, first progress row, condition C) implemented as a draft PR. Nothing migrated on a
-hosted database, deployed or activated; activation also stays impossible until check 10 (D5's schedule) passes.** Builds on the Stage 8 brief
+**Status (2026-11-10): Stage 9 implementation MERGED — NOT deployed, NOT migrated on any hosted database, NOT activated.**
+PR 9-1 #163 = f4a5cbd; PR 9-2 #164 = f9354b3; PR 9-3 #165 = efa5321 (merge tree a5efda7 = reviewed head 6523c80).
+- Activation stays impossible until readiness check 10 passes: the monthly trigger scheduled (D5) AND a finalized, monitored,
+  successful run on the target deployment.
+- **Forward-only after the first effective activation (A5).** Before any rollback, check
+  `SELECT count(*) FROM "DuesActivation" WHERE "effectiveAt" IS NOT NULL;` — non-zero means no code or schema rollback; recover
+  forward (O2, reversal, a fix release). Code older than 9-3 would stop billing an activated organization. Rollback scripts
+  refuse once records exist; order 9-3, 9-2, 9-1, O4 (runbook).
+- **Browser-test limitations of 9-3 (still true):** the EN/ES owner flow (20/20 each, registered owners, disposable database,
+  real window) made check 10 healthy with a LOCAL, uncommitted `vercel.json` entry plus one synthetic successful monitoring run;
+  the November approval was written by the real approval core with an Oct 31 clock (the UI correctly refuses a started month);
+  reviews were recorded through the real confirmation writer, not clicked; and the run preceded the final-review change to the
+  database clock (covered by integration tests only). No real activation has ever run on a hosted deployment.
+
+Builds on the Stage 8 brief
 (`STAGE-8-READINESS-BRIEF.md` §5, §7, §8, §12–§14), O4 (`O4-PREPAYMENT-REVERSAL-PLAN.md`, migration
 `20261110120000`) and the alerting plan (`MONTHLY-GENERATION-ALERTING-PLAN.md` §6, condition C).
 
