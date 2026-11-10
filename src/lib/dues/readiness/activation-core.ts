@@ -84,6 +84,17 @@ async function bounded<T>(body: (tx: Tx) => Promise<T>): Promise<T> {
   );
 }
 
+/**
+ * The decision instant, read AFTER the gate is granted. Production uses the DATABASE clock (`clock_timestamp()`), the same clock
+ * that stamps `DuesReadinessConfirmation.confirmedAt`, so "a confirmation recorded after the approval" (rule 6) is never decided
+ * across two machines' clocks; and taken after the lock, it is ordered after every writer the gate waited for. Tests inject `now`.
+ */
+async function decisionInstant(tx: Tx, deps: ActivationDeps): Promise<Date> {
+  if (deps.now) return deps.now();
+  const [{ now }] = await tx.$queryRaw<{ now: Date }[]>`SELECT clock_timestamp() AS now`;
+  return now;
+}
+
 async function readiness(tx: Tx, organizationId: string, s: YearMonth, deps: ActivationDeps): Promise<{ snapshot: ReadinessSnapshot; report: ReadinessReport }> {
   const loaded = await loadReadinessSnapshot(tx, organizationId);
   const snapshot = deps.triggerForTest ? { ...loaded, trigger: deps.triggerForTest } : loaded;
@@ -117,7 +128,7 @@ export async function approveActivationCore(
       const live = await tx.duesActivation.findFirst({ where: { organizationId, withdrawnAt: null }, select: { id: true } });
       if (live) return refusal<ApproveResult>({ ok: false, error: "approvalExists" });
 
-      const now = (deps.now ?? (() => new Date()))();
+      const now = await decisionInstant(tx, deps);
       const { snapshot, report } = await readiness(tx, organizationId, input.candidate, deps);
       const window = activationWindow(input.candidate, snapshot.branches.map((b) => b.timezone));
       if (!window) return refusal<ApproveResult>({ ok: false, error: "invalid" });
@@ -170,7 +181,7 @@ export async function withdrawApprovalCore(context: TenantContext, deps: Activat
       if (gate.active) return refusal<WithdrawResult>({ ok: false, error: "alreadyActive" });
       const live = await tx.duesActivation.findFirst({ where: { organizationId, withdrawnAt: null }, select: { id: true, startYear: true, startMonth: true } });
       if (!live) return refusal<WithdrawResult>({ ok: false, error: "noApproval" });
-      const now = (deps.now ?? (() => new Date()))();
+      const now = await decisionInstant(tx, deps);
       await tx.duesActivation.update({ where: { id: live.id, organizationId }, data: { withdrawnAt: now, withdrawnById: context.actorUserId } });
       await tx.auditLog.create({
         data: {
@@ -213,7 +224,7 @@ export async function activateCore(context: TenantContext, deps: ActivationDeps 
       if (!approval) return refusal<ActivateResult>({ ok: false, error: "noApproval" });
 
       const s = { year: approval.startYear, month: approval.startMonth };
-      const now = (deps.now ?? (() => new Date()))();
+      const now = await decisionInstant(tx, deps);
       const { snapshot, report } = await readiness(tx, organizationId, s, deps);
       const window = activationWindow(s, snapshot.branches.map((b) => b.timezone));
       if (!window || now.getTime() < window.opensAt.getTime()) return refusal<ActivateResult>({ ok: false, error: "windowNotOpen" });

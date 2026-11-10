@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { activationWindow, SWITCH_WINDOW_DAYS } from "../../src/lib/dues/readiness/candidate";
-import { classifyLegacyRow, configurationFingerprint, legacyNoMoneyBinding, studentFingerprint, FINGERPRINT_FORMAT } from "../../src/lib/dues/readiness/fingerprint";
+import {
+  branchFingerprint,
+  classifyLegacyRow,
+  configurationFingerprint,
+  legacyNoMoneyBinding,
+  openingReviewBinding,
+  pricingAckBinding,
+  studentFingerprint,
+  FINGERPRINT_FORMAT,
+} from "../../src/lib/dues/readiness/fingerprint";
 import { evaluateReadiness, studentsNeedingRefresh } from "../../src/lib/dues/readiness/evaluate";
 import type { ReadinessSnapshot } from "../../src/lib/dues/readiness/snapshot";
 
@@ -51,6 +60,18 @@ describe("A1 window (P = 10): from the LAST branch's 00:00 on the 1st to the FIR
       opensAt: new Date("2026-11-01T06:00:00Z"), // Costa Rica reaches it last
       closesAt: new Date("2026-11-11T05:00:00Z"), // New York reaches the 11th first (EST, UTC-5) = 10 Nov 23:00 in Costa Rica
     });
+  });
+
+  it("the widest spread (Kiritimati UTC+14 and Pago Pago UTC-11, 25 h apart): approval by the earliest 1st, open from the latest 1st, closed at the earliest 11th; still a 9-day window", () => {
+    const w = activationWindow(S, ["Pacific/Kiritimati", "Pacific/Pago_Pago"])!;
+    expect(w).toEqual({
+      approvalDeadline: new Date("2026-10-31T10:00:00Z"), // Kiritimati reaches 1 Nov first
+      opensAt: new Date("2026-11-01T11:00:00Z"), // Pago Pago reaches 1 Nov last
+      closesAt: new Date("2026-11-10T10:00:00Z"), // Kiritimati reaches 11 Nov first
+    });
+    expect(w.closesAt.getTime() - w.opensAt.getTime()).toBe((9 * 24 - 1) * 3_600_000);
+    // The order of the branch list never matters.
+    expect(activationWindow(S, ["Pacific/Pago_Pago", "Pacific/Kiritimati"])).toEqual(w);
   });
 
   it("nothing can be decided without a branch or with an unknown timezone", () => {
@@ -167,5 +188,34 @@ describe("rule 6: students changed since approval must be refreshed by confirmat
     const after = snapshot({ legacyPayments: [legacy({ month: 10, status: "PAID" })] }); // an October payment arriving 2 Nov
     expect(studentsNeedingRefresh({ studentFingerprints: approved, approvedAt }, before, evaluateReadiness(before, S))).toEqual({ changed: [], notRefreshed: [] });
     expect(studentsNeedingRefresh({ studentFingerprints: approved, approvedAt }, after, evaluateReadiness(after, S))).toEqual({ changed: ["s1"], notRefreshed: ["s1"] });
+  });
+
+  it("a changed promo/exempt student needs BOTH a review and a pricing acknowledgement recorded after approval; before approval never counts", () => {
+    const promoRow = legacy({ id: "promo", month: 9, status: "PROMO", promoName: "Family", promoRecurring: true });
+    const before = snapshot({ legacyPayments: [promoRow] });
+    const approved = evaluateReadiness(before, S).fingerprints.students;
+    const changedRows = [promoRow, legacy({ id: "oct", month: 10, status: "PROMO", promoName: "Family", promoRecurring: true })];
+    const conf = (kind: "OPENING_REVIEWED" | "PRICING_ACKNOWLEDGED", at: string, s: ReadinessSnapshot) => {
+      const fp = evaluateReadiness(s, S).fingerprints.students.s1!;
+      return {
+        id: `${kind}-${at}`, studentId: "s1", candidateYear: S.year, candidateMonth: S.month, kind, sequence: at > "2026-10-30" ? 2 : 1, fingerprintFormat: FINGERPRINT_FORMAT,
+        binding: kind === "OPENING_REVIEWED" ? openingReviewBinding(S, fp) : pricingAckBinding(S, fp, branchFingerprint(s, "b1")),
+        declaredNoOpeningDebt: kind === "OPENING_REVIEWED" ? true : null, legacyPaymentPeriodId: null, confirmedAt: at,
+      };
+    };
+    const changed = snapshot({ legacyPayments: changedRows });
+    const reviewedOnly = snapshot({ legacyPayments: changedRows, confirmations: [conf("OPENING_REVIEWED", "2026-10-31T09:00:00.000Z", changed)] });
+    expect(studentsNeedingRefresh({ studentFingerprints: approved, approvedAt }, reviewedOnly, evaluateReadiness(reviewedOnly, S)).notRefreshed).toEqual(["s1"]);
+    const both = snapshot({
+      legacyPayments: changedRows,
+      confirmations: [conf("OPENING_REVIEWED", "2026-10-31T09:00:00.000Z", changed), conf("PRICING_ACKNOWLEDGED", "2026-10-31T09:01:00.000Z", changed)],
+    });
+    expect(studentsNeedingRefresh({ studentFingerprints: approved, approvedAt }, both, evaluateReadiness(both, S)).notRefreshed).toEqual([]);
+    // The same valid confirmations, recorded before the approval instant, do not count as a refresh.
+    const early = snapshot({
+      legacyPayments: changedRows,
+      confirmations: [conf("OPENING_REVIEWED", "2026-10-29T09:00:00.000Z", changed), conf("PRICING_ACKNOWLEDGED", "2026-10-29T09:01:00.000Z", changed)],
+    });
+    expect(studentsNeedingRefresh({ studentFingerprints: approved, approvedAt }, early, evaluateReadiness(early, S)).notRefreshed).toEqual(["s1"]);
   });
 });

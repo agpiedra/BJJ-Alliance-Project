@@ -425,6 +425,9 @@ and triggers.
     refuse "configuration changed". That plan is now left out of the branch fingerprint while it has no terms (it prices nothing);
     with terms it counts. Side effect: the same page view no longer stales pricing acknowledgements either.
   - Switch bounds: lock timeout 5 s (refusal `busy`), statement timeout 15 s, transaction timeout 30 s.
+  - Clock (final review): approval, withdrawal and the switch take their instant from the DATABASE clock (`clock_timestamp()`)
+    right after the gate is granted — the clock that stamps `confirmedAt` — so "recorded after the approval" (rule 6) never
+    compares two machines' clocks, and the window (A1) is judged on the same clock.
   - `approvedOpeningTotals` added to `DuesActivation` (old vs new totals on the switch screen, A1).
   - Not built: `ledgerStartsOn` (S is `startYear`/`startMonth`); a database rule that every OPENING obligation has an item
     (the switch is its only writer in the application; the item → charge link is database-checked).

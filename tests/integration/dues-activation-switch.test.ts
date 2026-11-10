@@ -334,6 +334,36 @@ describe("the switch (rules 4–7)", () => {
     expect(await activateCore(o.ctx, switchAt(inS(2)))).toMatchObject({ ok: true });
   });
 
+  it("the exception is only for the UNPRICED system plan: once it gets prices, and when any owner plan is added, the switch refuses configurationChanged and writes nothing", async () => {
+    const priced = await readyAndApproved("custompromo-priced");
+    const { ensureCustomPromoPlan } = await import("../../src/lib/payments/ensure-custom-promo-plan");
+    const plan = await ensureCustomPromoPlan(priced.fx.org.id, priced.fx.academy.id);
+    await prisma.paymentPlanTerms.create({
+      data: { organizationId: priced.fx.org.id, planId: plan!.id, effectiveYear: 2026, effectiveMonth: 1, priceAmount: "20000.00", currency: "CRC", monthsCovered: 1, createdById: priced.fx.admin.id },
+    });
+    expect(await activateCore(priced.ctx, switchAt(inS(2)))).toEqual({ ok: false, error: "configurationChanged" });
+    expect(await switchWrites(priced)).toEqual(NOTHING);
+
+    const ownerPlan = await readyAndApproved("ownerplan");
+    await prisma.paymentPlan.create({ data: { organizationId: ownerPlan.fx.org.id, academyId: ownerPlan.fx.academy.id, name: "Weekend only" } });
+    expect(await activateCore(ownerPlan.ctx, switchAt(inS(2)))).toEqual({ ok: false, error: "configurationChanged" });
+    expect(await switchWrites(ownerPlan)).toEqual(NOTHING);
+  });
+
+  it("rule 6 on the DATABASE clock (no injected clock): a re-review after approval counts; the approval's own earlier review does not", async () => {
+    const o = await build("dbclock");
+    await review(o, o.s1);
+    await review(o, o.s2);
+    const r = await report(o);
+    expect(await approveActivationCore(o.ctx, { candidate: S, organizationFingerprint: r.fingerprints.organization }, { triggerForTest: HEALTHY })).toMatchObject({ ok: true });
+    await prisma.paymentPeriod.create({
+      data: { organizationId: o.fx.org.id, studentId: o.s1, academyId: o.fx.academy.id, year: PREV.year, month: PREV.month, planId: o.planId, status: "PAID", amount: "25000.00", currency: "CRC", method: "EFECTIVO", recordedById: o.fx.admin.id },
+    });
+    expect(await activateCore(o.ctx, switchAt(inS(2)))).toEqual({ ok: false, error: "needsReconfirmation", students: [o.s1] });
+    await review(o, o.s1);
+    expect(await activateCore(o.ctx, switchAt(inS(2)))).toMatchObject({ ok: true, refreshedStudents: [o.s1] });
+  });
+
   it("rule 6: a student changed after approval (an old-system payment for an earlier month) blocks until re-reviewed AFTER approval; then it switches and lists them", async () => {
     const o = await readyAndApproved("refresh");
     await prisma.paymentPeriod.create({
@@ -497,6 +527,69 @@ describe("real writer races (concurrency rules 5, 6, 8), proved with pg_blocking
     client.release();
     expect(await switchWrites(o)).toEqual(NOTHING);
     expect(await activateCore(o.ctx, switchAt(inS(2)))).toMatchObject({ ok: true });
+  });
+});
+
+describe("approval and acknowledgement under concurrency", () => {
+  it("approval waits for an in-flight writer, then refuses stale (the owner must look at the new content); nothing written", async () => {
+    const o = await build("approve-inflight");
+    await review(o, o.s1);
+    await review(o, o.s2);
+    const shown = (await report(o)).fingerprints.organization;
+    const p = pausePoint();
+    const writing = createOpeningDraftCore(
+      o.ctx,
+      o.s1,
+      { coverageYear: PREV.year, coverageMonth: PREV.month, amount: "5000.00", currency: "CRC", note: "found late", legacyPaymentPeriodId: null },
+      { afterLocks: p.hook },
+    );
+    const writerPid = await p.at;
+    const approving = approveActivationCore(o.ctx, { candidate: S, organizationFingerprint: shown }, { now: approvalClock, triggerForTest: HEALTHY });
+    expect((await waitUntilBlockedBy(writerPid)).some((q) => /FOR NO KEY UPDATE/.test(q))).toBe(true);
+    p.release();
+    expect(await writing).toEqual({ ok: true });
+    expect(await approving).toEqual({ ok: false, error: "stale" });
+    expect(await prisma.duesActivation.count({ where: { organizationId: o.fx.org.id } })).toBe(0);
+  });
+
+  it("approval and withdrawal answer busy after the lock timeout and write nothing", async () => {
+    const o = await build("approve-busy");
+    await review(o, o.s1);
+    await review(o, o.s2);
+    const shown = (await report(o)).fingerprints.organization;
+    const client = await pool.connect();
+    openClients.add(client);
+    await client.query("BEGIN");
+    await client.query(`SELECT "id" FROM "Organization" WHERE "id" = $1 FOR SHARE`, [o.fx.org.id]);
+    expect(await approveActivationCore(o.ctx, { candidate: S, organizationFingerprint: shown }, { now: approvalClock, triggerForTest: HEALTHY })).toEqual({ ok: false, error: "busy" });
+    expect(await withdrawApprovalCore(o.ctx)).toEqual({ ok: false, error: "busy" });
+    await client.query("ROLLBACK");
+    openClients.delete(client);
+    client.release();
+    expect(await prisma.duesActivation.count({ where: { organizationId: o.fx.org.id } })).toBe(0);
+    expect(await prisma.auditLog.count({ where: { organizationId: o.fx.org.id, action: { startsWith: "duesActivation." } } })).toBe(0);
+  });
+
+  it("an old-system write racing a 'no money' acknowledgement of the same row leaves that acknowledgement stale (it never vouches for content it did not see)", async () => {
+    const o = await build("ack-race");
+    const row = await prisma.paymentPeriod.create({
+      data: { organizationId: o.fx.org.id, studentId: o.s1, academyId: o.fx.academy.id, year: S.year, month: S.month, planId: o.planId, status: "PENDING", amount: "25000.00", currency: "CRC", method: "EFECTIVO", notes: "cash?", recordedById: o.fx.admin.id },
+    });
+    const s = await snap(o);
+    const shownRow = s.legacyPayments.find((x) => x.id === row.id)!;
+    const p = pausePoint();
+    const acking = recordNoMoneyAcknowledgementCore(o.ctx, { studentId: o.s1, candidate: S, legacyPaymentPeriodId: row.id, binding: legacyNoMoneyBinding(S, shownRow) }, { afterContentRead: p.hook });
+    await p.at;
+    asOwner(o);
+    const writing = recordPayment(o.fx.org.id, {}, form({ studentId: o.s1, year: String(S.year), month: String(S.month), planId: o.planId, status: "PENDING", amount: "25000", method: "EFECTIVO", notes: "paid at the desk" }));
+    await new Promise((r) => setTimeout(r, 300));
+    p.release();
+    expect(await acking).toEqual({ ok: true });
+    expect(await writing).toEqual({ ok: true });
+    currentSession = null;
+    const r = await report(o);
+    expect(r.legacyFromStart.find((x) => x.legacyId === row.id)?.acknowledgement?.state).toBe("stale");
+    expect(r.checks.find((c) => c.id === 5)).toMatchObject({ status: "fail", items: [`legacy:${row.id}`] });
   });
 });
 
