@@ -550,8 +550,10 @@ WHERE o."cancelledAt" IS NOT NULL ORDER BY o."cancelledAt";
   one without rebuilding the type; unused, it is inert), and so does its migration record. If 9-1 or O4 must also be rolled
   back, the order is 9-2, then 9-1, then O4.
 - **Rehearsed locally (2026-11-10, disposable PostgreSQL container):** with one OPENING row present the script refused and
-  left the schema and the migration record unchanged; with none it restored a schema-only dump identical to the pre-9-2 one
-  (enum value kept), removed only the `20261112120100` record, and a following `migrate deploy` re-applied it.
+  left the schema and the migration record unchanged; with none it removed only the `20261112120100` record, and a following
+  `migrate deploy` re-applied it. The rolled-back schema is **not** the pre-9-2 schema: it matched a schema-only dump taken
+  after `20261112120000` alone, so it differs from pre-9-2 by exactly one retained item — the value `OPENING` in enum
+  `"DuesObligationType"` (unused, inert; its migration record stays).
 
 ## What breaks in production but never in dev
 

@@ -137,10 +137,11 @@ describe("O2 database rules (O4's safeguards, widened by type)", () => {
     await expect(rawCancel(row.id, `"cancelledAt" = now(), "cancelledById" = '${fx.admin.id}', "cancellationReason" = '[ENTERED_IN_ERROR] x'`)).resolves.toBe(1);
   });
 
-  it("refuses an O2 marker that names a payment, has a blank reason, or is applied to a non-OPENING non-prepaid obligation", async () => {
+  // The O2 marker on a MONTHLY (prepaid or staff) row is refused in o4-prepayment-reversal.test.ts, next to O4's own marker checks.
+  it("refuses an O2 marker that names a payment or has a blank reason", async () => {
     const row = await opening(await newStudent(), 5);
     await expect(rawCancel(row.id, `"cancelledAt" = now(), "cancelledById" = '${fx.admin.id}', "cancellationReason" = '  '`)).rejects.toThrow(/cancellation_marker_complete/);
-    await expect(rawCancel(row.id, `"cancelledAt" = now(), "cancelledById" = '${fx.admin.id}', "cancellationReason" = 'x', "cancelledByReversalOfPaymentId" = 'nope'`)).rejects.toThrow();
+    await expect(rawCancel(row.id, `"cancelledAt" = now(), "cancelledById" = '${fx.admin.id}', "cancellationReason" = 'x', "cancelledByReversalOfPaymentId" = 'nope'`)).rejects.toThrow(/cancellation_marker_complete/);
   });
 
   it("a cancelled opening obligation can never be settled, and its marker never changes", async () => {

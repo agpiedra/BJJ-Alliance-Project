@@ -256,6 +256,10 @@ describe("database enforcement (migration 20261110120000) — every refusal leav
     const before = await snapshot(s.id);
     await refusedTx("DuesObligation_cancellation_marker_complete", (tx) => tx.duesObligation.update({ where: { id: p.obligationIds[1] }, data: { cancelledAt: new Date() } }));
     await refusedTx("DuesObligation_cancellation_marker_complete", (tx) => tx.duesObligation.update({ where: { id: staffId }, data: cancelData(p.paymentId) }));
+    // Stage 9 O2's marker (no payment named) is for OPENING only: it can cancel neither a prepaid nor a staff monthly row.
+    const o2Marker = { cancelledAt: new Date(), cancelledById: a.admin.id, cancellationReason: "[ENTERED_IN_ERROR] x", cancelledByReversalOfPaymentId: null };
+    await refusedTx("DuesObligation_cancellation_marker_complete", (tx) => tx.duesObligation.update({ where: { id: p.obligationIds[1] }, data: o2Marker }));
+    await refusedTx("DuesObligation_cancellation_marker_complete", (tx) => tx.duesObligation.update({ where: { id: staffId }, data: o2Marker }));
     await refusedTx("obligation rows are immutable", (tx) => tx.duesObligation.update({ where: { id: p.obligationIds[1] }, data: { amount: "1.00" } }));
     await refusedTx("coverage rows are never updated", (tx) => tx.duesCoverage.updateMany({ where: { obligationId: p.obligationIds[1] }, data: { month: 12 } }));
     await refusedTx("the cancellation marker cannot be set on insert", (tx) => tx.duesObligation.create({ data: staffRow(s.id, 2032, 6, cancelData(p.paymentId)) }));
