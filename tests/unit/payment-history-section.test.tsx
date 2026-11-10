@@ -192,6 +192,7 @@ describe("PaymentHistorySection: historical display completeness (review fix)", 
           principalAmount: "50.00",
           lateFee: { id: "fee-1", amount: "10.00", removalKind: "WAIVED" as const },
           totalAmount: "60.00",
+          obligationCancelled: false,
         },
       ],
     };
@@ -213,10 +214,13 @@ describe("PaymentHistorySection: historical display completeness (review fix)", 
           principalAmount: "50.00",
           lateFee: null,
           totalAmount: "50.00",
+          obligationCancelled: false,
         },
       ],
     };
     renderSection({ initialRows: [p2, p1], initialCursor: null });
+    // O4 (B10): no settlement here is a cancelled prepaid month, so the label never appears.
+    expect(screen.queryByText("Cancelled: payment reversed")).toBeNull();
 
     expect(screen.getByText("Reversed")).toBeTruthy(); // exactly P1
     // P1's distinct breakdown: principal + fee = total, never collapsed into a single total-only figure.

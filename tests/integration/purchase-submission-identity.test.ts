@@ -503,7 +503,7 @@ describe("capture and replay", () => {
     const args = packageArgs(s.id, d, submissionId);
     const r1 = await purchasePackageWithSubmissionIdentity(args, deps({ now: nowAt(d) }));
     if (!r1.ok) throw new Error(`fixture: expected success, got ${JSON.stringify(r1)}`);
-    const reversed = await reversePayment({ context: context(), paymentId: r1.paymentId, reversalReason: "test reversal" }, deps());
+    const reversed = await reversePayment({ context: context(), paymentId: r1.paymentId, reasonCategory: "RECORDED_IN_ERROR", reversalReason: "test reversal" }, deps());
     expect(reversed).toMatchObject({ ok: false }); // a PACKAGE obligation is never MONTHLY — reverse-payment.ts's own existing unsupportedObligationType check refuses it outright
 
     const replay = await purchasePackageWithSubmissionIdentity(args, deps({ now: nowAt(d) }));
@@ -540,7 +540,7 @@ describe("capture and replay", () => {
     const args = prepayArgs(s.id, d, submissionId);
     const r1 = await prepayMonthlyObligationsWithSubmissionIdentity(args, deps({ now: nowAt(d) }));
     if (!r1.ok) throw new Error(`fixture: expected success, got ${JSON.stringify(r1)}`);
-    const reversed = await reversePayment({ context: context(), paymentId: r1.paymentId, reversalReason: "test reversal" }, deps());
+    const reversed = await reversePayment({ context: context(), paymentId: r1.paymentId, reasonCategory: "RECORDED_IN_ERROR", reversalReason: "test reversal" }, deps());
     expect(reversed).toMatchObject({ ok: false }); // any PREPAYMENT-origin obligation refuses the WHOLE payment's reversal outright, permanently
 
     const replay = await prepayMonthlyObligationsWithSubmissionIdentity(args, deps({ now: nowAt(d) }));

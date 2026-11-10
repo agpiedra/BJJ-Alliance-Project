@@ -423,7 +423,7 @@ describe("capture, resolution, cancellation and reversal replay", () => {
     const args = { context: context(), studentId: s.id, receivedOn: d, tender: { currency: "USD" as const, amount: "100.00" }, method: "EFECTIVO" as const, obligationIds: [ob], maxBackdateDays: 5, submissionId };
     const r1 = await recordDuesPaymentWithSubmissionIdentity(args, deps({ now: nowAt(d) }));
     if (!r1.ok) throw new Error(`fixture: expected success, got ${JSON.stringify(r1)}`);
-    const reversed = await reversePayment({ context: context(), paymentId: r1.paymentId, reversalReason: "test reversal" }, deps());
+    const reversed = await reversePayment({ context: context(), paymentId: r1.paymentId, reasonCategory: "RECORDED_IN_ERROR", reversalReason: "test reversal" }, deps());
     expect(reversed).toMatchObject({ ok: true });
 
     const settlementsBefore = await prisma.duesSettlement.count({ where: { organizationId: a.org.id, obligationId: ob } });

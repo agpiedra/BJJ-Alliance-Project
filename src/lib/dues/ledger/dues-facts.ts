@@ -168,11 +168,12 @@ async function computeDuesFactsForStudents(
       where: { organizationId, studentId: { in: ids } },
       select: { studentId: true, effectiveYear: true, effectiveMonth: true, planId: true, plan: { select: { academyId: true } } },
     }),
+    // O4: cancelled obligations are not owed and released coverage covers nothing (B10: they leave balances and coverage).
     db.duesObligation.findMany({
-      where: { organizationId, studentId: { in: ids } },
+      where: { organizationId, studentId: { in: ids }, cancelledAt: null },
       include: { lateFees: true, settlements: { where: { reversedAt: null }, select: { id: true } } },
     }),
-    db.duesCoverage.findMany({ where: { organizationId, studentId: { in: ids } }, select: { studentId: true, year: true, month: true, obligationId: true } }),
+    db.duesCoverage.findMany({ where: { organizationId, studentId: { in: ids }, releasedAt: null }, select: { studentId: true, year: true, month: true, obligationId: true } }),
     db.awaitingRateReceipt.findMany({
       where: { organizationId, studentId: { in: ids }, status: "PENDING" },
       select: { id: true, studentId: true, kind: true, tenderCurrency: true, tenderAmount: true, snapshot: true },

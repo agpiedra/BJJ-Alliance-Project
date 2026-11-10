@@ -19,8 +19,26 @@ export interface LedgerActivation {
   isActive(organizationId: string): Promise<boolean>;
 }
 
-/** The only production implementation until the activation stage exists: no organization is active. */
-export const inactiveLedgerActivation: LedgerActivation = { isActive: async () => false };
+/**
+ * TEST-ONLY local browser seam (O4 owner-flow verification, 2026-11-09). NOT activation and NOT reachable in production:
+ *  - `process.env.NODE_ENV === "production"` is inlined at build time, so a production build always takes the first branch and
+ *    returns false — whatever the runtime environment holds (`scripts/verify-production-build.ts` checks the compiled output);
+ *  - otherwise it still requires BOTH the existing dev-only `E2E_AUTH_BYPASS_SECRET` (the same gate as the e2e session bypass,
+ *    listed in KNOWN_LIMITATIONS) AND an explicit `E2E_LEDGER_ACTIVE_ORG_IDS` list naming the disposable organization.
+ * Nothing in a request can reach it; it reads only the server's own environment.
+ */
+const testOnlyLedgerActiveOrganization: (organizationId: string) => boolean =
+  process.env.NODE_ENV === "production"
+    ? () => false
+    : (organizationId) => {
+        if (!process.env.E2E_AUTH_BYPASS_SECRET) return false;
+        const ids = (process.env.E2E_LEDGER_ACTIVE_ORG_IDS ?? "").split(",").map((id) => id.trim()).filter(Boolean);
+        return ids.includes(organizationId);
+      };
+
+/** The only production implementation until the activation stage exists: no organization is active. (Outside production
+ * builds, the test-only seam above can name disposable local organizations.) */
+export const inactiveLedgerActivation: LedgerActivation = { isActive: async (organizationId) => testOnlyLedgerActiveOrganization(organizationId) };
 
 /** Injected dependencies. All are optional: production uses the closed default activation, the real clock, and no test hooks. */
 export interface LedgerDeps {
@@ -49,6 +67,13 @@ export interface LedgerDeps {
    * back together, rather than assuming Prisma's transaction semantics "just work" without ever exercising it.
    */
   afterReversalMarkersForTest?: () => Promise<void>;
+  /**
+   * O4 test-only synchronization point, called by `reversePayment` immediately after its branch and student locks succeed and its
+   * deciding instant is captured — never referenced by production code, never given a value outside a test. Receives the open
+   * transaction so a test can capture its backend pid for a `pg_blocking_pids`-verified genuine-overlap proof against a
+   * concurrent payment, prepayment, generation, waiver, resolution, timezone save or second reversal.
+   */
+  afterReversalLocksForTest?: (tx: Tx) => Promise<void>;
   /**
    * Test-only synchronization point, called by `waiveLateFee` (waive-late-fee.ts) right after the fee's removal marker and its
    * own audit row are written, but before the transaction commits — never referenced by production code, never given a value

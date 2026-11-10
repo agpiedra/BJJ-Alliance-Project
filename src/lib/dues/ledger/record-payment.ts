@@ -80,7 +80,8 @@ export async function assessLateFeeInTx(
   if (!isRealDate(asOf)) return { ok: false, error: "invalid" };
 
   const obligation = await tx.duesObligation.findFirst({
-    where: { id: obligationId, organizationId, type: "MONTHLY" },
+    // O4: a cancelled obligation is not owed and can never carry a fee (the database refuses the insert too).
+    where: { id: obligationId, organizationId, type: "MONTHLY", cancelledAt: null },
     select: { id: true, academyId: true, amount: true, currency: true, lateFeeAmount: true, graceDeadline: true, coverageYear: true, coverageMonth: true },
   });
   if (!obligation || !inTenantScope(context, obligation.academyId) || obligation.graceDeadline === null) return { ok: false, error: "notFound" };
@@ -268,7 +269,8 @@ export async function resolveMonthlyDebtItemsInTx(
 ): Promise<ResolveMonthlyDebtResult> {
   const { organizationId, studentId, obligationIds, receivedOn } = args;
   const all = await tx.duesObligation.findMany({
-    where: { organizationId, studentId, type: { in: ["MONTHLY", "SIGNUP"] } },
+    // O4: a cancelled obligation is not debt — naming one is `notFound`, and it never counts toward oldest-first ordering.
+    where: { organizationId, studentId, type: { in: ["MONTHLY", "SIGNUP"] }, cancelledAt: null },
     include: { lateFees: true, settlements: { where: { reversedAt: null }, select: { id: true } } },
   });
   const byId = new Map(all.map((o) => [o.id, o]));

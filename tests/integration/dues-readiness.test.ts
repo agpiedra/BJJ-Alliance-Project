@@ -300,7 +300,7 @@ describe("getDuesReadinessForOwner: authorization and isolation", () => {
     if (!result.ok) return;
     expect(result.report.ready).toBe(false);
     expect(result.report.checks.filter((c) => c.status === "notImplemented").map((c) => c.id)).toEqual([11, 12]); // check 10 is computed (G2b): it fails until scheduled
-    expect(result.report.checks.find((c) => c.id === 13)!.status).toBe("decisionPending");
+    expect(result.report.checks.find((c) => c.id === 13)!.status).toBe("pass"); // O4 decided and implemented (2026-11-09)
   });
 
   it.each([
@@ -527,14 +527,14 @@ describe("stage 8b: opening-debt drafts in the snapshot and the fingerprints (fo
     expect(after.fingerprints.students[studentId]).not.toBe(baseline.fingerprints.students[studentId]);
   });
 
-  it("with drafts present, the MONTHLY preview and its totals are unchanged, checks 6-12 stay notImplemented, 13 decisionPending, ready false", async () => {
+  it("with drafts present, the MONTHLY preview and its totals are unchanged, checks 6-12 stay notImplemented, 13 pass (O4 decided), ready false", async () => {
     const snapshot = await load();
     expect(snapshot.openingItems.length + snapshot.withdrawnOpeningItems.length).toBeGreaterThan(0); // not vacuous
     const after = evaluateReadiness(snapshot, S);
     expect(after.preview).toEqual(reportBeforeDrafts.preview);
     expect(after.checks).toEqual(reportBeforeDrafts.checks);
     expect(after.checks.filter((c) => c.status === "notImplemented").map((c) => c.id)).toEqual([11, 12]); // check 10 is computed (G2b): it fails until scheduled
-    expect(after.checks.find((c) => c.id === 13)!.status).toBe("decisionPending");
+    expect(after.checks.find((c) => c.id === 13)!.status).toBe("pass"); // O4 decided and implemented (2026-11-09)
     expect(after.ready).toBe(false);
     actAs(a.admin.id, a.org.id);
     const result = await getDuesReadinessForOwner(a.org.id, S);

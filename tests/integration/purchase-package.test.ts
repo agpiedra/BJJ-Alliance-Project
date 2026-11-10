@@ -533,7 +533,7 @@ describe("purchasePackage: reversal is already refused by reverse-payment.ts's e
     const r = await purchase({ studentId: s.id, tender: { currency: "USD", amount: "270.00" } });
     expect(r).toMatchObject({ ok: true });
     if (!r.ok) return;
-    const reversed = await reversePayment({ context: context(), paymentId: r.paymentId, reversalReason: "test" }, deps());
+    const reversed = await reversePayment({ context: context(), paymentId: r.paymentId, reasonCategory: "RECORDED_IN_ERROR", reversalReason: "test" }, deps());
     expect(reversed).toEqual({ ok: false, error: "unsupportedObligationType" });
   });
 });

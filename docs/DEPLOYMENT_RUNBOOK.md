@@ -433,6 +433,85 @@ Nothing in a release activates it. An existing organization stays on its current
 `pnpm promotion:accounting report --org=<slug>` and then `activate --org=<slug> --report=<reportId> --activated-by=<email>`
 (a dry run first, then `--apply`), on an explicit ask. It is not a step of this checklist.
 
+## O4 prepaid-payment reversal (migration `20261110120000`) — read before deploying OR rolling back
+
+> **⚠ CODE ROLLBACK BECOMES UNSAFE AFTER THE FIRST CANCELLATION.**
+> Once any prepaid month has been cancelled by a payment reversal, **never** deploy a build older than O4 (or revert the O4
+> code). An older build does not know cancelled obligations or released coverage exist: it would show cancelled months as
+> owed and covered again, refuse to bill them (it sees the month as already billed), and let payments target them up to the
+> database's own refusal. **After the first cancellation the only safe path is forward recovery (below).**
+
+Owner decisions B1–B10 (2026-11-09); design in `docs/dues/O4-PREPAYMENT-REVERSAL-PLAN.md`. Reversing a payment cancels the
+future prepaid months that payment alone created (their coverage is released, and the monthly job bills each month normally
+when it opens); started months and every other charge become owed again. Nothing is ever deleted.
+
+### 1. Applying the migration
+
+1. **Backup first**, as for any migration (section 1 above).
+2. **Migrate, then deploy.** The O4 code reads the new columns; on the old schema every obligation/coverage read fails. The
+   pre-O4 code on the new schema is safe **until** the first cancellation (the narrowed unique indexes behave exactly as
+   before while nothing is cancelled).
+3. **The migration is one explicit transaction** (`BEGIN … COMMIT` inside the file). Verified locally on 2026-11-09:
+   `prisma migrate deploy` (Prisma 7.10) does **not** wrap a migration file in a transaction — a failure mid-file left earlier
+   statements applied — while the explicit transaction made a failing file change nothing. If it fails: the database is
+   unchanged, Prisma records the migration as failed; fix the cause, run
+   `prisma migrate resolve --rolled-back 20261110120000_dues_prepayment_reversal_cancellation`, then deploy again.
+4. **Structure checks after migrating** (expect the counts shown):
+
+```sql
+SELECT count(*) FROM pg_trigger WHERE tgname IN ('DuesCoverage_release_once','DuesObligation_cancellation_guard',
+  'DuesObligation_cancellation_consistent','DuesCoverage_release_consistent','DuesObligation_prepayment_settled_at_creation',
+  'DuesSettlement_obligation_not_cancelled','DuesLateFee_obligation_not_cancelled','DuesObligation_no_marker_on_insert',
+  'DuesCoverage_no_marker_on_insert');                                                                       -- 9
+SELECT count(*) FROM pg_trigger WHERE tgname = 'DuesCoverage_no_update';                                    -- 0
+SELECT indexdef FROM pg_indexes WHERE indexname IN ('DuesObligation_student_month_monthly_key','DuesCoverage_studentId_year_month_key');
+-- both end in WHERE … "cancelledAt" IS NULL / WHERE ("releasedAt" IS NULL)
+```
+
+### 2. Is a code or schema rollback still possible? Ask the database
+
+```sql
+SELECT (SELECT count(*) FROM "DuesObligation" WHERE "cancelledAt" IS NOT NULL) AS cancelled_obligations,
+       (SELECT count(*) FROM "DuesCoverage"   WHERE "releasedAt"  IS NOT NULL) AS released_coverage;
+```
+
+- **Both 0:** no cancellation has happened. A code rollback to a pre-O4 build is safe. A schema rollback is possible with
+  `docs/dues/o4-schema-rollback.sql`, **only with explicit owner approval**, after the code rollback. It re-checks the counts
+  under table locks and refuses otherwise. Rehearsed locally on 2026-11-09: rolled back, the schema dump and migration
+  records equal those of a database that never had O4; with a released row present it refused and changed nothing.
+- **Either above 0: do not roll back code or schema.** Use forward recovery.
+
+### 3. Forward recovery (after the first cancellation)
+
+1. **Contain without going backwards.** If reversals themselves must stop, ship a *forward* build whose
+   `reversePaymentAction` refuses (or whose screen hides the action) — keeping every O4 reader filter and the writer's
+   database rules in place. Do not deactivate the ledger as a containment step unless the owner decides to; do not disable
+   triggers; do not edit rows by hand (the triggers refuse it anyway).
+2. **Assess, read-only.** List what was cancelled and by which reversal:
+
+```sql
+SELECT o."id", o."studentId", o."coverageYear", o."coverageMonth", o."cancelledAt", o."cancelledByReversalOfPaymentId",
+       p."reversalReason", p."reversedById"
+FROM "DuesObligation" o JOIN "DuesPayment" p ON p."id" = o."cancelledByReversalOfPaymentId"
+WHERE o."cancelledAt" IS NOT NULL ORDER BY o."cancelledAt";
+```
+
+   The database already guarantees each row is consistent (coverage released, exactly one settlement ever — the reversed
+   payment's —, no fee, month not started at cancellation). A row that looks wrong is therefore a *business* mistake (the
+   wrong payment was reversed), not corruption.
+3. **Correct a mistaken cancellation forward, never by un-cancelling.** The month is uncovered again, so:
+   - **a future month:** the owner prepays it again, or leaves it for the monthly job to bill when it opens;
+   - **a month that has since opened:** a cancellation can only happen *before* its month opens (the database enforces it), so
+     that month's own generation pass ran afterwards and billed it like any other month if the student was eligible. Confirm
+     with `SELECT * FROM "DuesObligation" WHERE "studentId" = '<id>' AND "coverageYear" = <y> AND "coverageMonth" = <m> AND
+     "cancelledAt" IS NULL` (one row expected). If none exists (for example, the student was not eligible then), that is the
+     ordinary billing outcome, not an O4 fault. Whether a *finished* generation pass revisits a student later is not
+     verified here — do not rely on it.
+   The cancelled row and its history stay as the record of what happened.
+4. **Fix the defect in code**, with tests, as a normal forward release. If data needs a new kind of correction, that is a
+   new, reviewed writer or migration with its own owner approval — never an ad-hoc script.
+5. **Record** the incident and the rows involved (the query above) before and after the fix.
+
 ## What breaks in production but never in dev
 
 Ranked by how likely each one is to actually bite in Alliance's first weeks, not by how

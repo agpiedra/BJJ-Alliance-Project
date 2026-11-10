@@ -12,8 +12,10 @@ import {
   getReversiblePayments,
   getLateFeeStatus,
   getPaymentStatus,
+  getReversalPreview,
 } from "@/lib/dues/financial-corrections-actions";
-import type { CorrectableLateFeeRow, ReversiblePaymentRow } from "@/lib/dues/financial-corrections-queries";
+import type { CorrectableLateFeeRow, ReversalPreview, ReversalPreviewLine, ReversiblePaymentRow } from "@/lib/dues/financial-corrections-queries";
+import { REVERSAL_REASON_CATEGORIES, type ReversalReasonCategory } from "@/lib/dues/reversal-classification";
 import { CURRENCIES } from "@/lib/payments/format-money";
 import type { Currency, PaymentMethod } from "@/generated/prisma/client";
 
@@ -127,7 +129,7 @@ const ERROR_KEY: Record<string, string> = {
   alreadyReversed: "alreadyReversed",
   unsupportedObligationType: "unsupportedObligationType",
   voidedFeeBlocksReversal: "voidedFeeBlocksReversal",
-  prepaymentBlocksReversal: "prepaymentBlocksReversal",
+  changedSinceReview: "changedSinceReview",
   inconsistentState: "unexpected",
   notOldestFirst: "notOldestFirst",
   rateUnavailable: "rateUnavailable",
@@ -839,8 +841,28 @@ export function PaymentRow({
   const [confirmedState, setConfirmedState] = useState<PaymentConfirmedState>(null);
   const [recovery, setRecovery] = useState<RecoveryState>(IDLE_RECOVERY);
   const [reason, setReason] = useState("");
+  const [reasonCategory, setReasonCategory] = useState<ReversalReasonCategory | "">("");
+  // O4: the advisory preview the owner confirms. Re-fetched whenever the form opens or the writer reports it went stale.
+  const [preview, setPreview] = useState<ReversalPreview | "loading" | "failed" | null>(null);
+  const [previewNonce, setPreviewNonce] = useState(0);
 
   const needsRefresh = transportFailure || error?.code === "alreadyReversed";
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    setPreview("loading");
+    getReversalPreview(organizationId, payment.id)
+      .then((p) => {
+        if (!cancelled) setPreview(p ?? "failed");
+      })
+      .catch(() => {
+        if (!cancelled) setPreview("failed");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, previewNonce, organizationId, payment.id]);
 
   // Correction round 2, issue 1 (CI-caught race, fixed) — same reasoning as `LateFeeRow`'s own identical comment:
   // reported imperatively at each exact mutation point below, never derived via a `useEffect` watching `needsRefresh`.
@@ -882,13 +904,16 @@ export function PaymentRow({
 
   async function handleReverse(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (typeof preview !== "object" || preview === null || reasonCategory === "") return;
     setBusy(true);
     setError(null);
     onBlockingChange?.(payment.id, true);
     try {
       const fd = new FormData();
       fd.set("paymentId", payment.id);
+      fd.set("reasonCategory", reasonCategory);
       fd.set("reversalReason", reason);
+      for (const line of preview.cancel) fd.append("expectedCancelledObligationId", line.obligationId);
       const result = await reversePaymentAction(organizationId, {}, fd);
       if (result.ok) {
         setConfirmedState({ kind: "reversed", source: "direct" });
@@ -896,6 +921,7 @@ export function PaymentRow({
         onResolved(payment.id, true, studentId, { kind: "payment", source: "direct" });
       } else {
         setError({ code: result.error });
+        if (result.error === "changedSinceReview") setPreviewNonce((n) => n + 1); // show the owner the new effect to re-confirm
         if (result.error !== "alreadyReversed") onBlockingChange?.(payment.id, false);
       }
     } catch {
@@ -907,7 +933,8 @@ export function PaymentRow({
 
   const finalized = confirmedState?.kind === "reversed";
   const disabled = busy || needsRefresh;
-  const restricted = payment.restrictions.hasUnsupportedObligationType || payment.restrictions.hasPrepaymentOrigin || payment.restrictions.hasVoidedFee;
+  const restricted = payment.restrictions.hasUnsupportedObligationType || payment.restrictions.hasVoidedFee || payment.restrictions.branchMoved;
+  const previewReady = typeof preview === "object" && preview !== null;
 
   return (
     <li className="flex flex-col gap-2 rounded-lg border border-border p-3">
@@ -926,8 +953,8 @@ export function PaymentRow({
       {restricted && !finalized && (
         <div className="flex flex-col gap-0.5 text-xs text-muted-foreground">
           {payment.restrictions.hasUnsupportedObligationType && <p>{t("payment.restriction.unsupportedObligationType")}</p>}
-          {payment.restrictions.hasPrepaymentOrigin && <p>{t("payment.restriction.prepaymentOrigin")}</p>}
           {payment.restrictions.hasVoidedFee && <p>{t("payment.restriction.voidedFee")}</p>}
+          {payment.restrictions.branchMoved && <p>{t("payment.restriction.branchMoved")}</p>}
         </div>
       )}
 
@@ -957,15 +984,66 @@ export function PaymentRow({
       {!finalized && open && (
         <form onSubmit={handleReverse} className="flex flex-col gap-2 border-t border-border pt-2">
           <p className="text-xs text-muted-foreground">{t("payment.reverseConfirmCopy")}</p>
+          <p className="text-xs text-muted-foreground">{t("payment.reverseNotRefund")}</p>
+          {preview === "loading" && <p className="text-sm text-muted-foreground">{t("payment.preview.loading")}</p>}
+          {preview === "failed" && (
+            <div className="flex items-center gap-2">
+              <p role="alert" className="text-sm text-bad">{t("payment.preview.failed")}</p>
+              <Button type="button" variant="outline" onClick={() => setPreviewNonce((n) => n + 1)}>{t("recovery.checkAgain")}</Button>
+            </div>
+          )}
+          {typeof preview === "object" && preview !== null && (
+            <div className="flex flex-col gap-1 text-sm" data-testid="reversal-preview">
+              <PreviewList title={t("payment.preview.cancel")} lines={preview.cancel} />
+              <PreviewList title={t("payment.preview.owedStarted")} lines={preview.owedStarted} />
+              <PreviewList title={t("payment.preview.owedIndependent")} lines={preview.owedIndependent} />
+            </div>
+          )}
+          <label className="flex flex-col gap-1 text-sm">
+            <span>{t("fields.reasonCategory")}</span>
+            <select
+              className={FIELD_CLASS}
+              required
+              disabled={disabled}
+              value={reasonCategory}
+              onChange={(e) => setReasonCategory(e.target.value as ReversalReasonCategory | "")}
+            >
+              <option value="">{t("fields.reasonCategoryPlaceholder")}</option>
+              {REVERSAL_REASON_CATEGORIES.map((c) => (
+                <option key={c} value={c}>{t(`payment.reasonCategory.${c}`)}</option>
+              ))}
+            </select>
+          </label>
           <label className="flex flex-col gap-1 text-sm">
             <span>{t("fields.reason")}</span>
             <Input type="text" required maxLength={500} disabled={disabled} value={reason} onChange={(e) => setReason(e.target.value)} />
           </label>
           <div>
-            <Button type="submit" disabled={disabled}>{busy ? t("submitting") : t("payment.reverseSubmit")}</Button>
+            <Button type="submit" disabled={disabled || !previewReady || reasonCategory === ""}>{busy ? t("submitting") : t("payment.reverseSubmit")}</Button>
           </div>
         </form>
       )}
     </li>
+  );
+}
+
+/** O4: one group of the reversal preview (cancel / owed again). Advisory — the writer recomputes under its locks. */
+function PreviewList({ title, lines }: { title: string; lines: ReversalPreviewLine[] }) {
+  const t = useTranslations("payments.financialCorrections");
+  return (
+    <div className="flex flex-col">
+      <span className="font-medium">{title}</span>
+      {lines.length === 0 ? (
+        <span className="text-xs text-muted-foreground">{t("payment.preview.none")}</span>
+      ) : (
+        <ul className="text-xs">
+          {lines.map((l) => (
+            <li key={l.obligationId}>
+              {l.coverageYear}-{String(l.coverageMonth).padStart(2, "0")} — {l.amount} {l.currency}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }

@@ -918,7 +918,8 @@
         "removalKind": {
           "WAIVED": "waived",
           "VOIDED": "voided"
-        }
+        },
+        "cancelledByReversal": "Cancelled: payment reversed"
       },
       "eligibilityNotice": {
         "notRecorded": "No monthly charge is recorded for this period.",
@@ -1607,7 +1608,7 @@
     },
     "financialCorrections": {
       "heading": "Correct, reverse, or waive",
-      "body": "Void a wrongly-assessed late fee, reverse a recorded payment, or forgive an unpaid fee — against an already-recorded record you select below. None of this restores a waived fee, refunds a reversed payment, or re-releases coverage.",
+      "body": "Void a wrongly-assessed late fee, reverse a recorded payment, or forgive an unpaid fee — against an already-recorded record you select below. None of this restores a waived fee or refunds a reversed payment. Reversing a payment cancels only the future prepaid months it alone created; everything else it paid becomes owed again.",
       "loading": "Loading records...",
       "loadFailed": "Couldn't load this student's records.",
       "retry": "Retry",
@@ -1623,7 +1624,9 @@
         "amount": "Amount received",
         "currency": "Currency",
         "method": "Method",
-        "notes": "Notes"
+        "notes": "Notes",
+        "reasonCategory": "Reason category",
+        "reasonCategoryPlaceholder": "Choose a reason category"
       },
       "fees": {
         "heading": "Late fees",
@@ -1654,15 +1657,28 @@
       "payment": {
         "reverseAction": "Reverse",
         "reverseSubmit": "Reverse payment",
-        "reverseConfirmCopy": "Submitting reverses the WHOLE selected payment and all of its settlements. This is never a refund and never releases coverage back.",
+        "reverseConfirmCopy": "Submitting reverses the WHOLE selected payment and all of its settlements. Prepaid months that have not started are cancelled (shown below); everything else becomes owed again. This is never a refund.",
         "restriction": {
           "unsupportedObligationType": "This payment includes a package or signup-type item and cannot be reversed.",
-          "prepaymentOrigin": "This payment includes a prepaid future month. It can never be reversed, including its other items.",
-          "voidedFee": "This payment is behind a voided late fee and cannot be reversed."
+          "voidedFee": "This payment is behind a voided late fee and cannot be reversed.",
+          "branchMoved": "This payment was recorded in a branch the student has since left. It cannot be reversed (launch restriction)."
         },
         "outcome": {
           "reversedDirect": "This payment was reversed.",
           "reversedObserved": "This payment is now shown as reversed."
+        },
+        "reverseNotRefund": "A reversal records that this payment was never validly received or was recorded in error. It is not a refund and not a membership cancellation.",
+        "preview": {
+          "loading": "Checking what this reversal would do…",
+          "failed": "Could not load what this reversal would do.",
+          "cancel": "Prepaid months that will be cancelled (billed normally when they start)",
+          "owedStarted": "Prepaid months already started (owed again)",
+          "owedIndependent": "Other charges (owed again)",
+          "none": "None"
+        },
+        "reasonCategory": {
+          "NOT_RECEIVED": "Not received or bounced",
+          "RECORDED_IN_ERROR": "Recorded in error"
         }
       },
       "recovery": {
@@ -1683,7 +1699,7 @@
         "alreadyReversed": "This payment was already reversed.",
         "unsupportedObligationType": "This payment includes an item that cannot be reversed.",
         "voidedFeeBlocksReversal": "This payment is behind a voided late fee and cannot be reversed.",
-        "prepaymentBlocksReversal": "This payment includes a prepaid future month and can never be reversed.",
+        "changedSinceReview": "What this reversal would do has changed since you reviewed it (for example, a month started). Review the updated effect and confirm again.",
         "notOldestFirst": "Older unpaid debt exists for this student and must be settled first.",
         "rateUnavailable": "No exchange rate is currently available. This correction was not completed; nothing was saved.",
         "alreadySettled": "This obligation was already settled another way. The list has been refreshed.",

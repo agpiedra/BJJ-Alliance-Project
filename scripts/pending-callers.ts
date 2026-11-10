@@ -111,11 +111,19 @@ const KNOWN_LIMITATIONS: KnownLimitation[] = [
   },
   {
     description:
-      "reversePayment permanently refuses reversal of the ENTIRE payment if any of its settlements covers a PREPAYMENT-origin obligation — including once that obligation's coverage month has passed and it looks, in every other respect, like an ordinary settled obligation. There is no partial-reversal mechanism, so a payment that combined ordinary current debt with even one prepaid future month becomes entirely unreversible through this writer, including the ordinary-debt portion.",
-    foundIn: "src/lib/dues/ledger/reverse-payment.ts (prepaymentBlocksReversal); src/lib/dues/ledger/prepay-monthly.ts (origin: 'PREPAYMENT')",
-    dueBy: "Readiness/activation review — must be reconsidered before any organization goes live with both prepayment and reversal exposed",
+      "A test-only ledger activation seam exists for local browser verification: outside a production build, inactiveLedgerActivation reports an organization active when E2E_AUTH_BYPASS_SECRET is set AND E2E_LEDGER_ACTIVE_ORG_IDS lists it. Like the e2e session bypass, a test-only path that changes what the app does exists at all.",
+    foundIn: "src/lib/dues/ledger/activation.ts (testOnlyLedgerActiveOrganization)",
+    dueBy: "Re-read before launch, together with the e2e session bypass above",
     reason:
-      "Approved as a temporary, conservative restriction (monthly-prepayment brief §8): type: 'MONTHLY' alone cannot distinguish a prepayment purchase from an ordinary obligation, so origin is what the check is keyed on. Deliberately does not decide cancellation, refund or coverage-release policy for a prepayment — reversal is refused outright instead of attempting any of those, until a real policy for them exists. Candidate fix: a dedicated prepayment-cancellation writer that decides what happens to the reserved coverage and any refund, then narrows or replaces this blanket reversal refusal.",
+      "process.env.NODE_ENV === 'production' is inlined at build, so the branch is compiled out: scripts/verify-production-build.ts (run in CI) fails if E2E_LEDGER_ACTIVE_ORG_IDS appears anywhere in .next, with a positive control. tests/unit/ledger-activation-test-seam.test.ts proves it is closed by default, closed under NODE_ENV=production even with both variables set, and exact about which organizations it names. Before launch: confirm neither variable is set in any deployed environment, and consider deleting the seam once browser verification no longer needs it.",
+  },
+  {
+    description:
+      "O4 launch restriction (owner decision B9, 2026-11-09): reversePayment refuses (notFound) a payment recorded in a branch the student has since left. An owner cannot reverse a pre-transfer payment, e.g. one that bounced after the student moved. (The former blanket refusal of any payment with a prepaid month, prepaymentBlocksReversal, is gone: O4 option 4 replaced it.)",
+    foundIn: "src/lib/dues/ledger/reverse-payment.ts (locked.homeAcademyId !== payment.academyId); src/lib/dues/financial-corrections-queries.ts (restrictions.branchMoved)",
+    dueBy: "Revisit only if owners report pre-transfer reversals are needed — not scheduled",
+    reason:
+      "Keeps one timezone for the 'month already started' decision: the payment's branch IS the student's home branch, which is also the monthly job's rule. Relaxing it means using the current home branch's timezone (docs/dues/O4-PREPAYMENT-REVERSAL-PLAN.md §5.2), about a day of work and its own race tests.",
   },
 ];
 

@@ -95,11 +95,12 @@ export async function writeMonthlyObligationInTx(
 
   // A duplicate returns the existing obligation and changes nothing: no snapshot edit, no coverage row, no audit row.
   const existing = await tx.duesObligation.findFirst({
-    where: { organizationId, studentId: student.id, type: "MONTHLY", coverageYear: coverage.year, coverageMonth: coverage.month },
+    // O4: a cancelled obligation and its released coverage are not "already billed" — the month is billed normally (B2).
+    where: { organizationId, studentId: student.id, type: "MONTHLY", coverageYear: coverage.year, coverageMonth: coverage.month, cancelledAt: null },
     select: { id: true },
   });
   if (existing) return { ok: true, created: false, obligationId: existing.id };
-  const taken = await tx.duesCoverage.findFirst({ where: { organizationId, studentId: student.id, year: coverage.year, month: coverage.month }, select: { id: true } });
+  const taken = await tx.duesCoverage.findFirst({ where: { organizationId, studentId: student.id, year: coverage.year, month: coverage.month, releasedAt: null }, select: { id: true } });
   if (taken) return refuse("coverageTaken");
 
   // The named versions must exist in THIS organization (a foreign or unknown id is notFound), then be locked BEFORE any value is read.

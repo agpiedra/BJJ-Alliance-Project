@@ -253,7 +253,7 @@ describe("stage 8b: opening-debt drafts in the student fingerprint (format r2)",
     expect(after.checks).toEqual(before.checks);
     expect(after.ready).toBe(false);
     expect(after.checks.filter((c) => c.status === "notImplemented").map((c) => c.id)).toEqual([11, 12]); // check 10 is computed (G2b): it fails until scheduled
-    expect(after.checks.find((c) => c.id === 13)!.status).toBe("decisionPending");
+    expect(after.checks.find((c) => c.id === 13)!.status).toBe("pass"); // O4 decided and implemented (2026-11-09)
   });
 });
 
@@ -336,12 +336,12 @@ describe("readiness: checks 1-5 are computed", () => {
 });
 
 describe("readiness: never falsely ready", () => {
-  it("stage 8c: checks 6-9 are computed, 10 fails (computed trigger health, not scheduled), 11-12 stay notImplemented and 13 decisionPending; 9 fails with no reviews", () => {
+  it("stage 8c: checks 6-9 are computed, 10 fails (computed trigger health, not scheduled), 11-12 stay notImplemented and 13 passes (O4 decided); 9 fails with no reviews", () => {
     const report = evaluateReadiness(base(), S);
     expect(report.checks.map((c) => [c.id, c.status])).toEqual([
       [1, "pass"], [2, "pass"], [3, "pass"], [4, "pass"], [5, "pass"],
       [6, "pass"], [7, "pass"], [8, "pass"], [9, "fail"],
-      [10, "fail"], [11, "notImplemented"], [12, "notImplemented"], [13, "decisionPending"],
+      [10, "fail"], [11, "notImplemented"], [12, "notImplemented"], [13, "pass"],
     ]);
     expect(report.ready).toBe(false);
   });
@@ -430,7 +430,7 @@ describe("stage 8c: confirmations, checks 6-9, warnings and opening totals", () 
     const r = report(reviewAll(clone(base())));
     expect(r.checks.filter((c) => c.id <= 9).every((c) => c.status === "pass")).toBe(true);
     expect(r.checks.filter((c) => c.status === "notImplemented").map((c) => c.id)).toEqual([11, 12]); // check 10 is computed (G2b): it fails until scheduled
-    expect(r.checks.find((c) => c.id === 13)!.status).toBe("decisionPending");
+    expect(r.checks.find((c) => c.id === 13)!.status).toBe("pass"); // O4 decided and implemented (2026-11-09)
     expect(r.ready).toBe(false);
   });
 

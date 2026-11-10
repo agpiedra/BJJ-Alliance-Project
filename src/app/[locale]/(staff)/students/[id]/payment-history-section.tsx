@@ -160,6 +160,9 @@ export function PaymentHistorySection({
                                     total: formatMoney(Number(s.totalAmount), s.currency, locale),
                                   })
                                 : formatMoney(Number(s.totalAmount), s.currency, locale)}
+                              {s.obligationCancelled && (
+                                <Badge variant="outline" className="ml-2">{t("ledger.history.cancelledByReversal")}</Badge>
+                              )}
                             </span>
                             {/* Gap B (PR #95): `removalKind` is the referenced fee's CURRENT, separately-mutable
                                 state — never a claim that THIS settlement itself waived/voided anything. The

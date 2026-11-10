@@ -383,7 +383,7 @@ describe("getLedgerPaymentHealth (reader-level)", () => {
       const before = await paymentHealthModule.getLedgerPaymentHealth(tenantContext(org), [student.id], NOW);
       expect(before).toMatchObject({ percent: 100, confirmedPaidCount: 1 });
 
-      const reversed = await reversePayment({ context: tenantContext(org), paymentId: settled.paymentId, reversalReason: "test reversal" }, writerDeps);
+      const reversed = await reversePayment({ context: tenantContext(org), paymentId: settled.paymentId, reasonCategory: "RECORDED_IN_ERROR", reversalReason: "test reversal" }, writerDeps);
       if (!reversed.ok) throw new Error(`fixture: reversal failed: ${reversed.error}`);
 
       const after = await paymentHealthModule.getLedgerPaymentHealth(tenantContext(org), [student.id], NOW);

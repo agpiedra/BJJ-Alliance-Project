@@ -111,8 +111,9 @@ export async function firstUncoveredFrom(tx: Tx, organizationId: string, student
   // own MONTHLY. Excluded here explicitly (an allow-list, not a deny-list, so a FUTURE obligation type defaults to
   // NOT being treated as coverage unless deliberately added) so a SIGNUP-only enrollment month is never wrongly
   // treated as already covered.
-  const obligationMonths = await tx.duesObligation.findMany({ where: { organizationId, studentId, type: { in: ["MONTHLY", "PACKAGE"] } }, select: { coverageYear: true, coverageMonth: true } });
-  const coverageMonths = await tx.duesCoverage.findMany({ where: { organizationId, studentId }, select: { year: true, month: true } });
+  // O4: a cancelled prepaid month (and its released coverage) is uncovered again — it can be prepaid again or billed normally.
+  const obligationMonths = await tx.duesObligation.findMany({ where: { organizationId, studentId, type: { in: ["MONTHLY", "PACKAGE"] }, cancelledAt: null }, select: { coverageYear: true, coverageMonth: true } });
+  const coverageMonths = await tx.duesCoverage.findMany({ where: { organizationId, studentId, releasedAt: null }, select: { year: true, month: true } });
   const covered = new Set<string>();
   for (const o of obligationMonths) covered.add(`${o.coverageYear}-${o.coverageMonth}`);
   for (const c of coverageMonths) covered.add(`${c.year}-${c.month}`);

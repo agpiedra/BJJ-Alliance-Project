@@ -23,8 +23,9 @@ const getCorrectableLateFees = vi.fn();
 const getReversiblePayments = vi.fn();
 const getLateFeeStatus = vi.fn();
 const getPaymentStatus = vi.fn();
+const getReversalPreview = vi.fn();
 vi.mock("../../src/lib/dues/financial-corrections-actions", () => ({
-  correctLateFee, reversePaymentAction, waiveFee, getCorrectableLateFees, getReversiblePayments, getLateFeeStatus, getPaymentStatus,
+  correctLateFee, reversePaymentAction, waiveFee, getCorrectableLateFees, getReversiblePayments, getLateFeeStatus, getPaymentStatus, getReversalPreview,
 }));
 
 const { FinancialCorrectionsSection, LateFeeRow, PaymentRow } = await import("../../src/app/[locale]/(staff)/payments/financial-corrections-section");
@@ -53,7 +54,15 @@ const FEE2 = {
 
 const PAYMENT = {
   id: "pay-1", receivedOn: { year: 2030, month: 3, day: 20 }, tenderCurrency: "USD", tenderAmount: "100.00", method: "EFECTIVO",
-  restrictions: { hasUnsupportedObligationType: false, hasPrepaymentOrigin: false, hasVoidedFee: false },
+  restrictions: { hasUnsupportedObligationType: false, hasVoidedFee: false, branchMoved: false },
+};
+
+// O4: a payment that settled current debt (ob-1), a started prepaid month (ob-s) and a future prepaid month (ob-c).
+const PREVIEW = {
+  paymentId: "pay-1",
+  cancel: [{ obligationId: "ob-c", coverageYear: 2030, coverageMonth: 5, amount: "100.00", currency: "USD" }],
+  owedStarted: [{ obligationId: "ob-s", coverageYear: 2030, coverageMonth: 4, amount: "100.00", currency: "USD" }],
+  owedIndependent: [{ obligationId: "ob-1", coverageYear: 2030, coverageMonth: 3, amount: "100.00", currency: "USD" }],
 };
 
 const STUDENTS = [{ id: "s1", firstName: "Ana", lastName: "Soto", academyId: "a1", academyName: "Alliance" }];
@@ -66,6 +75,7 @@ beforeEach(() => {
   getReversiblePayments.mockReset().mockResolvedValue({ rows: [], nextCursor: null });
   getLateFeeStatus.mockReset();
   getPaymentStatus.mockReset();
+  getReversalPreview.mockReset().mockResolvedValue(PREVIEW);
 });
 
 describe("LateFeeRow: correction — explicit tender entry, obligation-amount reference context, operation-specific confirmation copy", () => {
@@ -116,22 +126,47 @@ describe("LateFeeRow: waiver — explicit values and its own confirmation copy",
 });
 
 describe("PaymentRow: reversal — its own confirmation copy and exact submitted values", () => {
-  it("shows the reversal-specific confirmation copy; submits only paymentId/reversalReason", async () => {
-    reversePaymentAction.mockResolvedValue({ ok: true, paymentId: PAYMENT.id, settlementIds: ["s1"] });
+  it("shows the O4 preview, requires a reason category, and submits exactly the months the owner saw as cancelled", async () => {
+    reversePaymentAction.mockResolvedValue({ ok: true, paymentId: PAYMENT.id, settlementIds: ["s1"], cancelledObligationIds: ["ob-c"], owedAgainObligationIds: ["ob-s", "ob-1"] });
     render(withMessages(<PaymentRow organizationId="org-1" payment={PAYMENT} onResolved={vi.fn()} />));
 
     fireEvent.click(screen.getByRole("button", { name: /Reverse/i }));
     expect(screen.getByText(/reverses the WHOLE selected payment/i)).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText(/Reason/i), { target: { value: "owner error" } });
+    expect(screen.getByText(/not a refund and not a membership cancellation/i)).toBeInTheDocument();
+    const preview = await screen.findByTestId("reversal-preview");
+    expect(getReversalPreview).toHaveBeenCalledWith("org-1", PAYMENT.id);
+    expect(preview).toHaveTextContent(/will be cancelled.*2030-05/i);
+    expect(preview).toHaveTextContent(/already started.*2030-04/i);
+    expect(preview).toHaveTextContent(/Other charges.*2030-03/i);
+
+    fireEvent.change(screen.getByLabelText(/Reason \(required\)/i), { target: { value: "transfer bounced" } });
+    // B7: no category chosen yet — the submit stays disabled.
+    expect(screen.getByRole("button", { name: /Reverse payment/i })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText(/Reason category/i), { target: { value: "NOT_RECEIVED" } });
     fireEvent.click(screen.getByRole("button", { name: /Reverse payment/i }));
 
     await waitFor(() => expect(reversePaymentAction).toHaveBeenCalledTimes(1));
     const fd = reversePaymentAction.mock.calls[0][2] as FormData;
     expect(fd.get("paymentId")).toBe(PAYMENT.id);
-    expect(fd.get("reversalReason")).toBe("owner error");
-    expect([...fd.keys()]).toHaveLength(2);
+    expect(fd.get("reasonCategory")).toBe("NOT_RECEIVED");
+    expect(fd.get("reversalReason")).toBe("transfer bounced");
+    expect(fd.getAll("expectedCancelledObligationId")).toEqual(["ob-c"]); // only the cancel list, never the owed-again ones
+    expect(new Set(fd.keys())).toEqual(new Set(["paymentId", "reasonCategory", "reversalReason", "expectedCancelledObligationId"]));
 
     await waitFor(() => expect(screen.getByText(/^This payment was reversed\.$/)).toBeInTheDocument());
+  });
+
+  it("changedSinceReview: shows why, and re-fetches the preview for the owner to confirm again", async () => {
+    reversePaymentAction.mockResolvedValue({ ok: false, error: "changedSinceReview" });
+    render(withMessages(<PaymentRow organizationId="org-1" payment={PAYMENT} onResolved={vi.fn()} />));
+    fireEvent.click(screen.getByRole("button", { name: /Reverse/i }));
+    await screen.findByTestId("reversal-preview");
+    fireEvent.change(screen.getByLabelText(/Reason \(required\)/i), { target: { value: "recorded twice" } });
+    fireEvent.change(screen.getByLabelText(/Reason category/i), { target: { value: "RECORDED_IN_ERROR" } });
+    fireEvent.click(screen.getByRole("button", { name: /Reverse payment/i }));
+
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/changed since you reviewed it/i));
+    await waitFor(() => expect(getReversalPreview).toHaveBeenCalledTimes(2));
   });
 });
 
@@ -291,10 +326,10 @@ describe("LateFeeRow: concurrent state change — a different action removed thi
 });
 
 describe("PaymentRow: a restricted payment stays visible, disabled, with a specific explanation (brief §3 decision 4)", () => {
-  it("a payment carrying a prepayment-origin obligation is never hidden, shows the named explanation, and its reverse action is disabled", () => {
-    const restricted = { ...PAYMENT, restrictions: { hasUnsupportedObligationType: false, hasPrepaymentOrigin: true, hasVoidedFee: false } };
+  it("O4 B9: a payment from a branch the student has left is never hidden, shows the named explanation, and its reverse action is disabled", () => {
+    const restricted = { ...PAYMENT, restrictions: { hasUnsupportedObligationType: false, hasVoidedFee: false, branchMoved: true } };
     render(withMessages(<PaymentRow organizationId="org-1" payment={restricted} onResolved={vi.fn()} />));
-    expect(screen.getByText(/includes a prepaid future month/i)).toBeInTheDocument();
+    expect(screen.getByText(/branch the student has since left/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Reverse/i })).toBeDisabled();
   });
 

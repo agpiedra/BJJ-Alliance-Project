@@ -722,17 +722,49 @@ describe("prepayMonthlyObligations: preserves ordinary payment behavior", () => 
   });
 });
 
-describe("reversePayment: prepaymentBlocksReversal (also covered directly in reverse-payment.test.ts)", () => {
-  it("a payment settling a PREPAYMENT-origin obligation refuses reversal, permanently, even once the month has passed", async () => {
-    const s = await newStudent("reversalblock");
+describe("reversePayment and prepayment (O4, owner decisions B1–B10; replaces the former prepaymentBlocksReversal refusal)", () => {
+  it("reversing a prepayment before its month starts cancels the month (only when confirmed), and the month can then be prepaid again", async () => {
+    const s = await newStudent("reversalcancel");
     await assign(s.id, planA.id);
     const r = await prepay({ studentId: s.id, requestedMonths: months(2031, 1, 1), tender: { currency: "USD", amount: "100.00" } });
     expect(r).toMatchObject({ ok: true });
     if (!r.ok) return;
-    const reversed = await reversePayment({ context: context(), paymentId: r.paymentId, reversalReason: "attempted reversal of a prepaid month" }, deps());
-    expect(reversed).toEqual({ ok: false, error: "prepaymentBlocksReversal" });
-    // Even once the calendar has moved well past January 2031, the restriction remains — origin never changes back.
-    const stillBlocked = await reversePayment({ context: context(), paymentId: r.paymentId, reversalReason: "attempted again, months later" }, deps({ now: at("2031-06-01T12:00:00") }));
-    expect(stillBlocked).toEqual({ ok: false, error: "prepaymentBlocksReversal" });
+    // Not confirmed: the writer never cancels a month the caller did not name.
+    const unconfirmed = await reversePayment({ context: context(), paymentId: r.paymentId, reasonCategory: "RECORDED_IN_ERROR", reversalReason: "recorded twice" }, deps());
+    expect(unconfirmed).toEqual({ ok: false, error: "changedSinceReview" });
+    expect((await prisma.duesPayment.findUniqueOrThrow({ where: { id: r.paymentId } })).reversedAt).toBeNull();
+
+    const reversed = await reversePayment(
+      { context: context(), paymentId: r.paymentId, reasonCategory: "RECORDED_IN_ERROR", reversalReason: "recorded twice", expectedCancelledObligationIds: r.obligationIds },
+      deps(),
+    );
+    expect(reversed).toMatchObject({ ok: true, cancelledObligationIds: r.obligationIds, owedAgainObligationIds: [] });
+    const cancelled = await prisma.duesObligation.findUniqueOrThrow({ where: { id: r.obligationIds[0] } });
+    expect(cancelled.cancelledAt).not.toBeNull();
+    expect(cancelled.cancelledByReversalOfPaymentId).toBe(r.paymentId);
+    expect(cancelled.cancellationReason).toBe("[RECORDED_IN_ERROR] recorded twice");
+    expect(await prisma.duesCoverage.count({ where: { obligationId: cancelled.id, releasedAt: null } })).toBe(0);
+
+    // The month is uncovered again: prepaying it again creates a new, live obligation alongside the cancelled one.
+    const again = await prepay({ studentId: s.id, requestedMonths: months(2031, 1, 1), tender: { currency: "USD", amount: "100.00" } });
+    expect(again).toMatchObject({ ok: true });
+    expect(await prisma.duesObligation.count({ where: { studentId: s.id, coverageYear: 2031, coverageMonth: 1, cancelledAt: null } })).toBe(1);
+    expect(await prisma.duesObligation.count({ where: { studentId: s.id, coverageYear: 2031, coverageMonth: 1 } })).toBe(2);
+  });
+
+  it("reversing a prepayment after its month has started makes it owed again — never cancelled", async () => {
+    const s = await newStudent("reversalstarted");
+    await assign(s.id, planA.id);
+    const r = await prepay({ studentId: s.id, requestedMonths: months(2031, 1, 1), tender: { currency: "USD", amount: "100.00" } });
+    expect(r).toMatchObject({ ok: true });
+    if (!r.ok) return;
+    const reversed = await reversePayment(
+      { context: context(), paymentId: r.paymentId, reasonCategory: "NOT_RECEIVED", reversalReason: "bounced" },
+      deps({ now: at("2031-06-01T12:00:00") }),
+    );
+    expect(reversed).toMatchObject({ ok: true, cancelledObligationIds: [], owedAgainObligationIds: r.obligationIds });
+    const owed = await prisma.duesObligation.findUniqueOrThrow({ where: { id: r.obligationIds[0] } });
+    expect(owed.cancelledAt).toBeNull();
+    expect(await prisma.duesCoverage.count({ where: { obligationId: owed.id, releasedAt: null } })).toBe(1);
   });
 });

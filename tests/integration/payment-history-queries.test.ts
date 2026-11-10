@@ -227,7 +227,7 @@ describe("listPaymentHistoryForStudent: reversed payment retains full original s
     );
     if (!recorded.ok) throw new Error("fixture payment failed");
 
-    const reversed = await reversePayment({ context: context(a), paymentId: recorded.paymentId, reversalReason: "test reversal" }, deps());
+    const reversed = await reversePayment({ context: context(a), paymentId: recorded.paymentId, reasonCategory: "RECORDED_IN_ERROR", reversalReason: "test reversal" }, deps());
     expect(reversed.ok).toBe(true);
 
     const result = await listPaymentHistoryForStudent(context(a), student.id, {}, deps());
@@ -261,7 +261,7 @@ describe("listPaymentHistoryForStudent: the reversal-before-waiver-before-resett
     if (!firstPayment.ok) throw new Error("fixture first payment failed");
 
     // Step 2: that payment is reversed.
-    const reversed = await reversePayment({ context: context(a), paymentId: firstPayment.paymentId, reversalReason: "test reversal" }, deps());
+    const reversed = await reversePayment({ context: context(a), paymentId: firstPayment.paymentId, reasonCategory: "RECORDED_IN_ERROR", reversalReason: "test reversal" }, deps());
     expect(reversed.ok).toBe(true);
 
     // Step 3: only now (no active settlement references it) is the fee waived.

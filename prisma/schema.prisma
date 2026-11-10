@@ -565,7 +565,8 @@ model User {
   exchangeRateQuotesEntered      ExchangeRateQuote[]
   studentPlanAssignmentsCreated  StudentPlanAssignment[]
   studentStatusChangesActed      StudentStatusChange[]
-  duesObligationsCreated         DuesObligation[]
+  duesObligationsCreated         DuesObligation[]        @relation("DuesObligationCreatedBy")
+  duesObligationsCancelled       DuesObligation[]        @relation("DuesObligationCancelledBy")
   duesLateFeesRemoved            DuesLateFee[]
   duesPaymentsRecorded           DuesPayment[]           @relation("DuesPaymentRecordedBy")
   duesPaymentsReversed           DuesPayment[]           @relation("DuesPaymentReversedBy")
@@ -1468,9 +1469,9 @@ model StudentStatusChange {
 //  - tenant- and student-safe composite foreign keys: a coverage row, a payment, a settlement and a fee can only point at rows of
 //    the same organization, and a settlement's payment and obligation must belong to the same student; foreign keys restrict and
 //    nothing cascades;
-//  - one monthly obligation per student per coverage month; ONE COVERAGE ROW PER STUDENT PER CALENDAR MONTH, UNCONDITIONALLY, with no
-//    release or cancellation column (a payment reversal never releases coverage; releasing it, and cancelling an obligation, are
-//    separate operations whose rules are not approved); one late fee per obligation;
+//  - one LIVE monthly obligation per student per coverage month and ONE UNRELEASED COVERAGE ROW PER STUDENT PER CALENDAR MONTH (O4,
+//    migration 20261110120000: the only release is a set-once marker written together with the cancellation of a prepaid future
+//    month by reversing the payment that created it; an ordinary payment reversal never releases coverage); one late fee per obligation;
 //  - AT MOST ONE ACTIVE SETTLEMENT per obligation (partial unique index on rows with no reversal marker); a reversed settlement
 //    stays as history and the obligation can be settled again by a new row;
 //  - history is never deleted: payments, settlements, coverage rows and obligations reject DELETE. A payment or settlement rejects any
@@ -1551,12 +1552,23 @@ model DuesObligation {
   /// Null = created by the system job.
   createdById     String?
   createdAt       DateTime             @default(now())
+  /// O4 cancellation marker (migration 20261110120000), set once, all four together, never removed. Today only a prepaid
+  /// (`origin: PREPAYMENT`) future month whose creating payment was reversed may carry it (CHECK). A cancelled obligation is
+  /// not owed, cannot be settled or charged a fee (triggers), and its coverage row is released in the same transaction
+  /// (deferred consistency triggers). Every reader of "owed" or "covered" must filter `cancelledAt: null`.
+  cancelledAt                    DateTime?
+  cancelledById                  String?
+  cancellationReason             String?
+  /// The reversed payment whose reversal cancelled this obligation.
+  cancelledByReversalOfPaymentId String?
 
   student       Student           @relation(fields: [organizationId, studentId], references: [organizationId, id])
   academy       Academy           @relation(fields: [organizationId, academyId], references: [organizationId, id])
   planTerms     PaymentPlanTerms  @relation(fields: [organizationId, planTermsId], references: [organizationId, id])
   policyVersion DuesPolicyVersion? @relation(fields: [organizationId, policyVersionId], references: [organizationId, id], onDelete: Restrict)
-  createdBy     User?             @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  createdBy     User?             @relation("DuesObligationCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  cancelledBy   User?             @relation("DuesObligationCancelledBy", fields: [cancelledById], references: [id], onDelete: Restrict)
+  cancelledByReversalOf DuesPayment? @relation("DuesObligationCancelledByReversal", fields: [organizationId, cancelledByReversalOfPaymentId, studentId], references: [organizationId, id, studentId], onDelete: Restrict)
   organization  Organization      @relation(fields: [organizationId], references: [id])
   coverage      DuesCoverage[]
   /// At most one: the database has a unique index on DuesLateFee.obligationId (Prisma types it one-to-many because the foreign key also carries the type).
@@ -1573,21 +1585,23 @@ model DuesObligation {
   @@index([policyVersionId])
 }
 
-/// One row per covered calendar month, written with its obligation. Never updated, never deleted; unique per student and month with no
-/// release column, so coverage stays reserved through a payment reversal.
+/// One row per covered calendar month, written with its obligation. Never deleted. The only permitted update sets `releasedAt`
+/// once, together with its obligation's O4 cancellation (deferred trigger). Unique per student and month among UNRELEASED rows
+/// (partial unique index `DuesCoverage_studentId_year_month_key`, migration 20261110120000; not expressible here), so coverage
+/// stays reserved through an ordinary payment reversal and is freed only by a cancellation.
 model DuesCoverage {
-  id             String   @id @default(cuid())
+  id             String    @id @default(cuid())
   organizationId String
   studentId      String
   obligationId   String
   year           Int
   month          Int
+  releasedAt     DateTime?
 
   student      Student        @relation(fields: [organizationId, studentId], references: [organizationId, id])
   obligation   DuesObligation @relation(fields: [organizationId, obligationId, studentId], references: [organizationId, id, studentId])
   organization Organization   @relation(fields: [organizationId], references: [id])
 
-  @@unique([studentId, year, month])
   @@index([organizationId])
   @@index([obligationId])
 }
@@ -1659,6 +1673,8 @@ model DuesPayment {
   /// receipt, rejected by the foreign key itself, not merely by application logic.
   resolvedFromReceipt AwaitingRateReceipt? @relation(fields: [organizationId, resolvedFromReceiptId, studentId], references: [organizationId, id, studentId], onDelete: Restrict)
   settlements  DuesSettlement[]
+  /// O4: prepaid future months cancelled by this payment's reversal.
+  cancelledObligations DuesObligation[] @relation("DuesObligationCancelledByReversal")
   /// Payment-submission-identity prerequisite: the attempt row whose winning INSERT settled into this payment, if this
   /// payment was recorded through `recordDuesPaymentWithSubmissionIdentity` rather than the plain, untouched `recordDuesPayment`.
   submissionAttempt DuesPaymentAttempt?
