@@ -81,9 +81,11 @@ describe("the monthly-generation runner and visit loop are not reachable from pr
     expect(resolveJobSchedule("monthly-generation")).toBeNull();
   });
 
-  it("keeps its closed defaults: no start month, inactive ledger, and closure policy a required input with no production value", () => {
+  it("keeps its closed defaults: start month and activation only from an EFFECTIVE activation record, and closure policy a required input with no production value", () => {
     const loop = stripComments(readFileSync(LOOP, "utf8"));
-    expect(loop).toContain("deps.generationStart ?? (async () => null)");
+    // Stage 9: S comes from the organization's effective DuesActivation (written only by the owner's switch), in a bounded read.
+    expect(loop).toContain("deps.generationStart ?? ((id: string) => startFromActivation(id, limits))");
+    expect(loop).toMatch(/startFromActivation[\s\S]*bounded\(limits,[\s\S]*duesActivation\.findFirst\(\{ where: \{ organizationId, effectiveAt: \{ not: null \} \}/);
     expect(loop).toContain("deps.activation ?? ledgerActivation");
     expect(loop).toMatch(/closurePolicy: "reopen";/); // required (no `?`), one literal value
     const mentionsClosurePolicy = files.filter((f) => /closurePolicy\s*:/.test(stripComments(f.text))).map((f) => norm(f.file)).sort();
@@ -95,11 +97,15 @@ describe("the monthly-generation runner and visit loop are not reachable from pr
     expect(route).not.toMatch(/\bactivation\s*:|generationStart\s*:|ForTest\s*:/);
   });
 
-  it("no production file other than the loop's rollover writes DuesGenerationProgress rows through the model API", () => {
+  it("no production file other than the loop's rollover and the activation switch (its first row) writes DuesGenerationProgress rows", () => {
     const writers = files
       .filter((f) => /duesGenerationProgress\s*\.\s*(create|createMany|upsert|update|updateMany|delete|deleteMany)\b/.test(stripComments(f.text)))
-      .map((f) => norm(f.file));
-    expect(writers).toEqual([LOOP]);
+      .map((f) => norm(f.file))
+      .sort();
+    expect(writers).toEqual(["src/lib/dues/readiness/activation-core.ts", LOOP].sort());
+    // The switch only ever inserts (one row, for S, in its own transaction); it never updates or deletes a progress row.
+    const sw = stripComments(readFileSync("src/lib/dues/readiness/activation-core.ts", "utf8"));
+    expect(sw.match(/duesGenerationProgress\s*\.\s*(create|createMany|upsert|update|updateMany|delete|deleteMany)\b/g)).toEqual(["duesGenerationProgress.create"]);
     const rawWriters = files.filter((f) => /(UPDATE|INSERT\s+INTO|DELETE\s+FROM)\s+"DuesGenerationProgress"/.test(stripComments(f.text))).map((f) => norm(f.file));
     expect(rawWriters).toEqual([LOOP]);
   });
@@ -134,15 +140,16 @@ describe("the monthly-generation runner and visit loop are not reachable from pr
     expect(registry).not.toContain('symbol: "planRouteBudget"');
   });
 
-  it("overdue-month condition C (not evaluable until stage 9) is a registered STAGE-9 BLOCKER, and readiness check 10 says it does not cover it", async () => {
+  it("overdue-month condition C is evaluated (stage 9 PR 9-3) and is no longer a registered STAGE-9 BLOCKER", async () => {
     const registry = readFileSync("scripts/pending-callers.ts", "utf8");
-    expect(registry).toMatch(/STAGE-9 BLOCKER: overdue-month condition C \(an ACTIVATED organization with no progress row\) is not evaluable/);
-    expect(registry).toContain("Before stage 9 (activation)");
+    expect(registry).not.toContain("STAGE-9 BLOCKER: overdue-month condition C");
     const evaluate = readFileSync("src/lib/dues/readiness/evaluate.ts", "utf8");
-    expect(evaluate.match(/condition C is not evaluable until stage 9/g)?.length).toBe(2); // pass and fail detail
-    // The evaluator reports C as not evaluable on every path, never as passed.
-    const alerts = readFileSync("src/lib/dues/monthly-generation-alerts.ts", "utf8");
-    expect(alerts).toContain('conditionC: "notEvaluable"');
-    expect(alerts).not.toMatch(/conditionC:\s*"(ok|pass|passed|clear)"/);
+    expect(evaluate).not.toContain("condition C is not evaluable");
+    // Both halves of C are computed from the bounded read, and a failed detection leaves C null (never "passed").
+    const alerts = stripComments(readFileSync("src/lib/dues/monthly-generation-alerts.ts", "utf8"));
+    expect(alerts).toContain("activatedWithoutProgress");
+    expect(alerts).toContain("progressWithoutActivation");
+    expect(alerts).toContain("conditionC: null");
+    expect(alerts).not.toContain('"notEvaluable"');
   });
 });

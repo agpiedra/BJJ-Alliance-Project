@@ -1197,6 +1197,7 @@ model PaymentPeriod {
   recordedBy   User         @relation(fields: [recordedById], references: [id])
   organization Organization @relation(fields: [organizationId], references: [id])
   openingItems DuesOpeningItem[]
+  noMoneyAcknowledgements DuesReadinessConfirmation[] @relation("DuesNoMoneyAcknowledgement")
 
   @@unique([studentId, year, month])
   /// Stage 8b: the target of `DuesOpeningItem`'s legacy link, so the database pins a link to the same organization,
@@ -1584,6 +1585,8 @@ model DuesObligation {
   /// At most one: the database has a unique index on DuesLateFee.obligationId (Prisma types it one-to-many because the foreign key also carries the type).
   lateFees      DuesLateFee[]
   settlements   DuesSettlement[]
+  /// OPENING only: the opening item the activation switch created it from.
+  materializedFrom DuesOpeningItem[] @relation("DuesOpeningItemMaterialized")
 
   /// Targets of the composite foreign keys of coverage, fees, settlements.
   @@unique([organizationId, id])
@@ -1790,6 +1793,8 @@ enum DuesOpeningItemWithdrawalKind {
 enum DuesReadinessConfirmationKind {
   OPENING_REVIEWED
   PRICING_ACKNOWLEDGED
+  /// Stage 9 A8 (b): "no money was received for this row", bound to one legacy row's exact stored content.
+  LEGACY_NO_MONEY
 }
 
 /// An owner-staged opening debt for one past month: the unpaid principal only (D7, no automatic late fee), in the currency
@@ -1816,8 +1821,12 @@ model DuesOpeningItem {
   withdrawalKind        DuesOpeningItemWithdrawalKind?
   withdrawalReason      String?
   supersededById        String?                        @unique
+  /// Stage 9 PR 9-3: the OPENING obligation the activation switch created from this item. Set once, only on an active item,
+  /// only to an OPENING obligation with this item's exact content (trigger `dues_opening_item_markers`).
+  materializedObligationId String?                     @unique
 
   student             Student          @relation(fields: [organizationId, studentId], references: [organizationId, id])
+  materializedObligation DuesObligation? @relation("DuesOpeningItemMaterialized", fields: [organizationId, materializedObligationId, studentId], references: [organizationId, id, studentId], onDelete: Restrict, map: "DuesOpeningItem_materialized_obligation_fkey")
   /// Same organization, student AND month (MATCH SIMPLE: unchecked when the link is null).
   legacyPaymentPeriod PaymentPeriod?   @relation(fields: [organizationId, studentId, coverageYear, coverageMonth, legacyPaymentPeriodId], references: [organizationId, studentId, year, month, id], onDelete: Restrict)
   /// Same organization and student; the month may change. DEFERRABLE INITIALLY DEFERRED in the migration SQL.
@@ -1857,10 +1866,13 @@ model DuesReadinessConfirmation {
   studentFingerprint    String
   branchFingerprint     String?
   declaredNoOpeningDebt Boolean?
+  /// LEGACY_NO_MONEY only (CHECK): the legacy row the acknowledgement is bound to.
+  legacyPaymentPeriodId String?
   confirmedById         String
   confirmedAt           DateTime                      @default(now())
 
   student      Student      @relation(fields: [organizationId, studentId], references: [organizationId, id])
+  legacyPaymentPeriod PaymentPeriod? @relation("DuesNoMoneyAcknowledgement", fields: [legacyPaymentPeriodId], references: [id], onDelete: Restrict)
   confirmedBy  User         @relation(fields: [confirmedById], references: [id], onDelete: Restrict)
   organization Organization @relation(fields: [organizationId], references: [id])
 
@@ -2078,6 +2090,8 @@ model DuesActivation {
   configFingerprint   String
   /// `{ [studentId]: studentFingerprint }` at approval.
   studentFingerprints Json
+  /// Stage 9 PR 9-3: `{ [studentId]: [{ currency, total }] }`, the active opening totals at approval (the switch shows old vs new).
+  approvedOpeningTotals Json
   approvedById        String
   approvedAt          DateTime
   withdrawnAt         DateTime?

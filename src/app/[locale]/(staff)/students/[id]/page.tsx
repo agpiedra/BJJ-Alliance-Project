@@ -17,6 +17,7 @@ import { getStudentForStaff } from "./get-student";
 import { getPromotionHistory } from "./get-promotion-history";
 import { getPromotionCreditHistory } from "./get-promotion-credit-history";
 import { getPaymentHistory } from "./get-payment-history";
+import { readLedgerStart } from "@/lib/dues/activation-gate";
 import { isLedgerActiveForOrg, listRosterPaymentFacts, toRosterLedgerDisplay, type DuesPendingReceiptFact } from "@/lib/dues/roster-payment-facts-queries";
 import { listPaymentHistoryForStudent, type PaymentHistoryRow } from "@/lib/dues/payment-history-queries";
 import { StudentBalanceSummary } from "./student-balance-summary";
@@ -88,14 +89,14 @@ export default async function StudentDetailPage({
   const summary = await getAtBeltSummary(student.id, context.organizationId, configByTrack);
   const promotionHistory = await getPromotionHistory(student.id, context.organizationId);
   const creditHistoryRaw = await getPromotionCreditHistory(student.id, context.organizationId, student.beltAwardedAt);
-  const paymentHistory = await getPaymentHistory(student.id, context.organizationId);
   const attendanceEntries = await getRecentAttendanceEntries(student.id, context.organizationId);
 
   // ROSTER-STUDENT-DETAIL-INTEGRATION-BRIEF.md §2.4: ONE captured instant, read ONCE per page load. `ledgerActive:
   // false` (the real production default) leaves `legacyHistory` as the page's one and only payment-history content,
-  // byte-identical to this page's pre-integration output — `paymentHistory` above is computed unconditionally either
-  // way, so nothing about the legacy path changes shape or timing.
+  // unchanged. Stage 9 A8 rule 11: once active, legacy rows for months from S on are labelled "handled by the new system",
+  // or "billed" where the ledger's charge exists (`ledgerStart` is null while inactive, so no row is labelled).
   const ledgerActive = await isLedgerActiveForOrg(context.organizationId);
+  const paymentHistory = await getPaymentHistory(student.id, context.organizationId, ledgerActive ? await readLedgerStart(context.organizationId) : null);
   let balanceDisplay: ReturnType<typeof toRosterLedgerDisplay> | null = null;
   let pendingReceipts: DuesPendingReceiptFact[] = [];
   let historyInitial: { rows: PaymentHistoryRow[]; cursor: string | null; failed: boolean } = {
@@ -444,6 +445,11 @@ export default async function StudentDetailPage({
                           <td className="py-2 pr-4 align-top whitespace-nowrap">{period.planName}</td>
                           <td className="py-2 pr-4 align-top">
                             <Badge variant="outline">{tPaymentStatus(period.status)}</Badge>
+                            {period.newSystem && (
+                              <p className="mt-1 text-xs text-muted-foreground">
+                                {tDetail(period.newSystem === "billed" ? "paymentHistory.newSystemBilled" : "paymentHistory.newSystemHandled")}
+                              </p>
+                            )}
                           </td>
                           <td className="py-2 pr-4 align-top whitespace-nowrap">
                             {period.amount != null ? formatMoney(period.amount, period.currency, locale) : "—"}

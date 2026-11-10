@@ -11,6 +11,11 @@ export type PaymentHistoryEntry = {
   /** The currency `amount` was recorded in (the row's own snapshot). */
   currency: Currency;
   notes: string | null;
+  /**
+   * Stage 9 A8 rule 11, only after the switch and only for months from S on: `billed` where the ledger's own monthly charge for
+   * that month exists, otherwise `handled` ("handled by the new system"). Null for every other row. Never inferred from the row.
+   */
+  newSystem: "billed" | "handled" | null;
 };
 
 /**
@@ -28,7 +33,22 @@ export type PaymentHistoryEntry = {
 export async function getPaymentHistory(
   studentId: string,
   organizationId: string,
+  /** The effective activation's S, or null while the legacy system is authoritative (then every `newSystem` is null). */
+  ledgerStart: { year: number; month: number } | null = null,
 ): Promise<PaymentHistoryEntry[]> {
+  const fromStart = (p: { year: number; month: number }) =>
+    ledgerStart !== null && (p.year > ledgerStart.year || (p.year === ledgerStart.year && p.month >= ledgerStart.month));
+  const charged = ledgerStart
+    ? new Set(
+        (
+          await prisma.duesObligation.findMany({
+            // O4: a cancelled charge was never billed.
+            where: { organizationId, studentId, type: "MONTHLY", cancelledAt: null, OR: [{ coverageYear: { gt: ledgerStart.year } }, { coverageYear: ledgerStart.year, coverageMonth: { gte: ledgerStart.month } }] },
+            select: { coverageYear: true, coverageMonth: true },
+          })
+        ).map((o) => `${o.coverageYear}-${o.coverageMonth}`),
+      )
+    : new Set<string>();
   const periods = await prisma.paymentPeriod.findMany({
     where: { studentId, organizationId },
     orderBy: [{ year: "desc" }, { month: "desc" }],
@@ -57,5 +77,6 @@ export async function getPaymentHistory(
     amount: period.amount?.toNumber() ?? null,
     currency: period.currency,
     notes: period.notes,
+    newSystem: !fromStart(period) ? null : charged.has(`${period.year}-${period.month}`) ? "billed" : "handled",
   }));
 }

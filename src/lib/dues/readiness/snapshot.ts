@@ -35,6 +35,11 @@ export interface ReadinessSnapshot {
     planId: string;
     promoName: string | null;
     promoRecurring: boolean;
+    /** Stage 9 A8: what decides whether a PENDING row is an unpaid placeholder or ambiguous. */
+    method: string | null;
+    notes: string | null;
+    /** Set by every legacy write: an A8 acknowledgement is bound to it, so any later write makes it stale. ISO instant. */
+    recordedAt: string;
   }[];
   monthlyObligations: { id: string; studentId: string; coverageYear: number; coverageMonth: number }[];
   coverage: { id: string; studentId: string; year: number; month: number }[];
@@ -65,6 +70,8 @@ export interface ReadinessSnapshot {
     fingerprintFormat: string;
     binding: string;
     declaredNoOpeningDebt: boolean | null;
+    /** LEGACY_NO_MONEY only: the legacy row it is bound to. */
+    legacyPaymentPeriodId: string | null;
     confirmedAt: string;
   }[];
   /**
@@ -115,7 +122,10 @@ export async function loadReadinessSnapshot(
   const assignments = await tx.studentPlanAssignment.findMany({ where, select: { id: true, studentId: true, planId: true, effectiveYear: true, effectiveMonth: true } });
   const legacyPayments = await tx.paymentPeriod.findMany({
     where,
-    select: { id: true, studentId: true, year: true, month: true, status: true, amount: true, currency: true, planId: true, promoName: true, promoRecurring: true },
+    select: {
+      id: true, studentId: true, year: true, month: true, status: true, amount: true, currency: true, planId: true, promoName: true, promoRecurring: true,
+      method: true, notes: true, recordedAt: true,
+    },
   });
   const monthlyObligations = await tx.duesObligation.findMany({
     // O4: a cancelled obligation was never billed; released coverage covers nothing.
@@ -135,7 +145,7 @@ export async function loadReadinessSnapshot(
     where,
     select: {
       id: true, studentId: true, candidateYear: true, candidateMonth: true, kind: true, sequence: true, fingerprintFormat: true, binding: true,
-      declaredNoOpeningDebt: true, confirmedAt: true,
+      declaredNoOpeningDebt: true, legacyPaymentPeriodId: true, confirmedAt: true,
     },
   });
   // Check 10 (trigger health): the latest monthly-generation JobRun — a platform job, not this organization's data.
@@ -155,7 +165,7 @@ export async function loadReadinessSnapshot(
     students,
     statusChanges: statusChanges.map((s) => ({ ...s, effectiveOn: isoDate(s.effectiveOn) })),
     assignments,
-    legacyPayments: legacyPayments.map((p) => ({ ...p, amount: p.amount === null ? null : p.amount.toFixed(2) })),
+    legacyPayments: legacyPayments.map((p) => ({ ...p, amount: p.amount === null ? null : p.amount.toFixed(2), recordedAt: p.recordedAt.toISOString() })),
     monthlyObligations,
     coverage,
     openingItems: drafts

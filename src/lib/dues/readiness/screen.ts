@@ -5,9 +5,16 @@ import { currentMonthIn, versionRevision } from "@/lib/dues/config-input";
 import { latestEffective } from "@/lib/dues/ledger/common";
 import { todayInAsDbDate } from "@/lib/students/status-history";
 import { authorizeOwner } from "@/lib/dues/readiness";
-import { defaultCandidateMonth, isCandidateMonth } from "@/lib/dues/readiness/candidate";
-import { evaluateReadiness, promoStudentIds, type ReadinessReport, type StudentPreview } from "@/lib/dues/readiness/evaluate";
-import { openingReviewBinding, pricingAckBinding } from "@/lib/dues/readiness/fingerprint";
+import { activationWindow, defaultCandidateMonth, isCandidateMonth } from "@/lib/dues/readiness/candidate";
+import {
+  evaluateReadiness,
+  openingTotalsByStudent,
+  promoStudentIds,
+  studentsNeedingRefresh,
+  type ReadinessReport,
+  type StudentPreview,
+} from "@/lib/dues/readiness/evaluate";
+import { FINGERPRINT_FORMAT, openingReviewBinding, pricingAckBinding } from "@/lib/dues/readiness/fingerprint";
 import { loadReadinessSnapshot } from "@/lib/dues/readiness/snapshot";
 
 /**
@@ -53,6 +60,26 @@ export interface ReadinessScreen {
   legacyRows: Record<string, { studentId: string; year: number; month: number; status: string }>;
   /** Students with no status row at all: what `runStatusHistoryBaseline` would write for (organization-wide, every status). */
   baseline: { total: number; active: number; byBranch: Record<string, number> };
+  /** Stage 9 PR 9-3: the activation state and what the owner needs to approve, refresh and switch (display only). */
+  activation: ScreenActivation;
+}
+
+export interface ScreenActivation {
+  /** The window for the DISPLAYED S, from the branches' timezones (null with no branch). ISO instants. */
+  window: { approvalDeadline: string; opensAt: string; closesAt: string } | null;
+  /** The timezone the panel shows instants in: the first branch's (by id), named beside every time. Never a hard-coded zone. */
+  displayZone: string;
+  /** The live (not withdrawn) approval, effective or not. */
+  live: {
+    startYear: number;
+    startMonth: number;
+    approvedAt: string;
+    effectiveAt: string | null;
+    /** Only when the displayed S is the approved S (otherwise null): is the configuration unchanged since approval? */
+    configurationMatches: boolean | null;
+    /** Only when the displayed S is the approved S: students changed since approval, old and new opening totals, refreshed or not. */
+    changedStudents: { studentId: string; approvedTotals: { currency: string; total: string }[]; currentTotals: { currency: string; total: string }[]; refreshed: boolean }[] | null;
+  } | null;
 }
 
 export interface ScreenBranch {
@@ -77,7 +104,19 @@ export interface ScreenStudent {
   openingBinding: string;
   /** `pricingAckBinding(...)` over THIS snapshot; promo/exempt students only. */
   pricingBinding: string | null;
-  legacyRows: { id: string; year: number; month: number; status: string; amount: string | null; currency: string; promoName: string | null; promoRecurring: boolean }[];
+  legacyRows: {
+    id: string;
+    year: number;
+    month: number;
+    status: string;
+    amount: string | null;
+    currency: string;
+    promoName: string | null;
+    promoRecurring: boolean;
+    /** Stage 9 A8: shown beside an ambiguous row (what makes it ambiguous), exactly as stored. */
+    method: string | null;
+    notes: string | null;
+  }[];
   /** `forS`: the assignment effective for S (`planId: null` = explicit "no plan"), or null when none exists. `future`: strictly
    * after the branch's current month, the only ones `correctAssignment` accepts, with the revision token it checks. */
   assignment: { forS: { planId: string | null; year: number; month: number } | null; future: { id: string; year: number; month: number; planId: string | null; revision: string }[] };
@@ -103,13 +142,44 @@ export async function getReadinessScreenForOwner(
     const snapshot = await loadReadinessSnapshot(tx, ownOrganizationId, testHooks);
     const names = await tx.student.findMany({ where: { organizationId: ownOrganizationId }, select: { id: true, firstName: true, lastName: true } });
     const branches = await tx.academy.findMany({ where: { organizationId: ownOrganizationId }, select: { id: true, name: true }, orderBy: { name: "asc" } });
-    return { now, snapshot, names, branches };
+    const approval = await tx.duesActivation.findFirst({ where: { organizationId: ownOrganizationId, withdrawnAt: null } });
+    return { now, snapshot, names, branches, approval };
   });
 
-  const { snapshot } = loaded;
+  const { snapshot, approval } = loaded;
   const fallback = defaultCandidateMonth(snapshot.branches.map((b) => b.timezone), loaded.now);
-  const s = candidate ?? fallback.month;
+  // With a live approval, its S is the default: the owner refreshes and switches against exactly that month.
+  const s = candidate ?? (approval ? { year: approval.startYear, month: approval.startMonth } : fallback.month);
   const report = evaluateReadiness(snapshot, { year: s.year, month: s.month });
+  const window = activationWindow(s, snapshot.branches.map((b) => b.timezone));
+  const sameS = approval !== null && approval.startYear === s.year && approval.startMonth === s.month;
+  const currentTotals = openingTotalsByStudent(snapshot);
+  const approvedTotals = (approval?.approvedOpeningTotals ?? {}) as Record<string, { currency: string; total: string }[]>;
+  const refresh =
+    approval && sameS
+      ? studentsNeedingRefresh({ studentFingerprints: approval.studentFingerprints as Record<string, string>, approvedAt: approval.approvedAt }, snapshot, report)
+      : null;
+  const activation: ScreenActivation = {
+    window: window ? { approvalDeadline: window.approvalDeadline.toISOString(), opensAt: window.opensAt.toISOString(), closesAt: window.closesAt.toISOString() } : null,
+    displayZone: [...snapshot.branches].sort((a, b) => (a.id < b.id ? -1 : 1))[0]?.timezone ?? "UTC",
+    live: approval
+      ? {
+          startYear: approval.startYear,
+          startMonth: approval.startMonth,
+          approvedAt: approval.approvedAt.toISOString(),
+          effectiveAt: approval.effectiveAt?.toISOString() ?? null,
+          configurationMatches: sameS ? approval.configFingerprint === report.fingerprints.configuration && approval.fingerprintFormat === FINGERPRINT_FORMAT : null,
+          changedStudents: refresh
+            ? refresh.changed.map((studentId) => ({
+                studentId,
+                approvedTotals: approvedTotals[studentId] ?? [],
+                currentTotals: currentTotals[studentId] ?? [],
+                refreshed: !refresh.notRefreshed.includes(studentId),
+              }))
+            : null,
+        }
+      : null,
+  };
   const nameOf = new Map(loaded.names.map((s) => [s.id, `${s.firstName} ${s.lastName}`.trim()]));
   const promo = new Set(promoStudentIds(snapshot));
   const legacyById = new Map(snapshot.legacyPayments.map((p) => [p.id, p]));
@@ -163,7 +233,9 @@ export async function getReadinessScreenForOwner(
             pricingBinding: isPromo && branchFp ? pricingAckBinding(s, studentFp, branchFp) : null,
             legacyRows: snapshot.legacyPayments
               .filter((p) => p.studentId === st.id)
-              .map(({ id, year, month, status, amount, currency, promoName, promoRecurring }) => ({ id, year, month, status, amount, currency, promoName, promoRecurring }))
+              .map(({ id, year, month, status, amount, currency, promoName, promoRecurring, method, notes }) => ({
+                id, year, month, status, amount, currency, promoName, promoRecurring, method, notes,
+              }))
               .sort((x, y) => x.year - y.year || x.month - y.month),
             assignment: {
               forS: forS ? { planId: forS.planId, year: forS.effectiveYear, month: forS.effectiveMonth } : null,
@@ -196,6 +268,7 @@ export async function getReadinessScreenForOwner(
         active: withoutHistory.filter((st) => st.status === "ACTIVE").length,
         byBranch: withoutHistory.reduce<Record<string, number>>((acc, st) => ({ ...acc, [st.homeAcademyId]: (acc[st.homeAcademyId] ?? 0) + 1 }), {}),
       },
+      activation,
     },
   };
 }

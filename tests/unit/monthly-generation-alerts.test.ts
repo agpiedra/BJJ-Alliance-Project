@@ -22,6 +22,7 @@ const state = (over: Partial<State> = {}): State => ({
   branches: [{ organizationId: ORG, timezone: CR }],
   students: [{ organizationId: ORG, count: 55 }],
   organizations: [{ organizationId: ORG, status: "ACTIVE" }],
+  activatedOrganizations: [ORG],
   overflow: false,
   ...over,
 });
@@ -110,14 +111,36 @@ describe("non-ACTIVE organizations owe no billing: no A, B or D for them, but th
   });
 });
 
-describe("condition C is not evaluable; D is any detection failure", () => {
-  it("REQUIRED: C is reported notEvaluable on every path (ok, overflow, read failure) — never as passed", async () => {
-    expect(evaluateGenerationAlerts(state(), at("2031-11-01T10:00:00Z")).conditionC).toBe("notEvaluable");
-    expect(evaluateGenerationAlerts(state({ overflow: true }), at("2031-11-01T10:00:00Z")).conditionC).toBe("notEvaluable");
-    const failedRead = await detectGenerationAlerts(at("2031-11-01T10:00:00Z"), async () => {
+describe("condition C (stage 9): activation and progress rows must agree; D is any detection failure", () => {
+  const now = at("2031-11-01T10:00:00Z");
+  it("REQUIRED: an activated organization with NO progress row is C, and fails the urgent check (whatever its status)", () => {
+    for (const status of ["ACTIVE", "SUSPENDED"] as const) {
+      const report = evaluateGenerationAlerts(state({ progress: [], organizations: [{ organizationId: ORG, status }] }), now);
+      expect(report.conditionC).toEqual({ activatedWithoutProgress: [ORG], progressWithoutActivation: [] });
+      expect(alertSignalsFor(report, 0).urgent).toBe(false);
+    }
+  });
+
+  it("REQUIRED: progress rows for an organization with NO effective activation are C, and fail the urgent check", () => {
+    const report = evaluateGenerationAlerts(state({ activatedOrganizations: [] }), now);
+    expect(report.conditionC).toEqual({ activatedWithoutProgress: [], progressWithoutActivation: [ORG] });
+    expect(alertSignalsFor(report, 0).urgent).toBe(false);
+  });
+
+  it("C is not 'billing not finished': an activated organization with rows but no clean pass is A's business, not C", () => {
+    const report = evaluateGenerationAlerts(state(), at("2031-11-01T21:00:00Z"));
+    expect(report.conditionC).toEqual({ activatedWithoutProgress: [], progressWithoutActivation: [] });
+    expect(report.newMonthAtRisk).toHaveLength(1);
+  });
+
+  it("C is never reported as passed when detection failed (overflow, read failure): it is null and the urgent check fails", async () => {
+    const overflow = evaluateGenerationAlerts(state({ overflow: true }), now);
+    expect(overflow.conditionC).toBeNull();
+    expect(alertSignalsFor(overflow, 0)).toEqual({ urgent: false });
+    const failedRead = await detectGenerationAlerts(now, async () => {
       throw new Error("boom");
     });
-    expect(failedRead.conditionC).toBe("notEvaluable");
+    expect(failedRead.conditionC).toBeNull();
   });
 
   it.each([
@@ -141,8 +164,8 @@ describe("condition C is not evaluable; D is any detection failure", () => {
     expect(JSON.stringify(report)).not.toContain("secret detail");
   });
 
-  it("an empty progress table (today's production state) reports nothing and every check succeeds", () => {
-    const report = evaluateGenerationAlerts({ progress: [], branches: [], students: [], organizations: [], overflow: false }, at("2031-11-02T00:00:00Z"));
+  it("no activation and no progress row (today's production state) reports nothing and every check succeeds", () => {
+    const report = evaluateGenerationAlerts({ progress: [], branches: [], students: [], organizations: [], activatedOrganizations: [], overflow: false }, at("2031-11-02T00:00:00Z"));
     expect(report).toMatchObject({ detection: "ok", newMonthAtRisk: [], olderMonthNotClean: [], workload: { reasons: [] } });
     expect(alertSignalsFor(report, 0)).toEqual({ urgent: true, data: true, workload: true });
   });

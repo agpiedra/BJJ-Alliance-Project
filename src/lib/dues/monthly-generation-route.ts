@@ -74,8 +74,8 @@ export function monthlyGenerationRouteBudget(functionMaxMs = MONTHLY_GENERATION_
  * pass that finished with UNPRICED or PENDING students, a skipped rollover, and an error outside a student transaction
  * (a visit's stage error, a claim error, a discovery error). A run that stops at its deadline with work left is NOT a
  * failure. The §8 "overdue month" failure comes from `alerts` (MONTHLY-GENERATION-ALERTING-PLAN.md): conditions A (new month at
- * risk), B (older month not clean) and D (detection failed) each count in `failed`; workload-review thresholds NEVER do, and
- * condition C is reported "notEvaluable" (a STAGE-9 BLOCKER). Deliberately NOT added (G2-ROUTE-BUDGET-PLAN.md §1.4, revision 2,
+ * risk), B (older month not clean), C (stage 9: an activation without progress rows or progress rows without an activation) and
+ * D (detection failed) each count in `failed`; workload-review thresholds NEVER do. Deliberately NOT added (G2-ROUTE-BUDGET-PLAN.md §1.4, revision 2,
  * which corrected §8): a `remainingSegments` or completeness field — a deadline stop shows `stoppedBy`, each visit's `ended`,
  * and its codes. `runLevelErrors` (claim, discovery, visit-stage and skipped-rollover errors) feed the urgent alert check.
  * Only ids, months, reason codes and counts leave this function (plan §10).
@@ -143,6 +143,14 @@ export function summarizeMonthlyGenerationRun(
       failed += 1;
       errors.push(`olderMonthNotClean org:${m.organizationId} ${month(m)}`);
     }
+    for (const id of alerts.conditionC?.activatedWithoutProgress ?? []) {
+      failed += 1;
+      errors.push(`activatedWithoutProgress org:${id}`);
+    }
+    for (const id of alerts.conditionC?.progressWithoutActivation ?? []) {
+      failed += 1;
+      errors.push(`progressWithoutActivation org:${id}`);
+    }
   }
 
   const body = {
@@ -209,7 +217,8 @@ export function handleMonthlyGenerationRequest(
       // The detection read runs first, so its result does not depend on generation finishing. It never throws (a failure is
       // condition D), and a failed detection never stops generation. Its real duration is charged through `elapsedMs`.
       const alerts = await detect(now());
-      // Production defaults only: no activation, no start month. D3 = Reopen (approved): no month closes.
+      // Production defaults only: activation and the start month S come from the organization's effective `DuesActivation`
+      // (stage 9), never from the request. D3 = Reopen (approved): no month closes.
       const report = await run({ closurePolicy: "reopen", limits: { deadlineMs: budget.generationDeadlineMs }, elapsedMs });
       const { outcome, body, runLevelErrors } = summarizeMonthlyGenerationRun(report, alerts);
       return { outcome, body, alerts: alertSignalsFor(alerts, runLevelErrors) };

@@ -555,6 +555,31 @@ WHERE o."cancelledAt" IS NOT NULL ORDER BY o."cancelledAt";
   after `20261112120000` alone, so it differs from pre-9-2 by exactly one retained item — the value `OPENING` in enum
   `"DuesObligationType"` (unused, inert; its migration record stays).
 
+## Stage 9 PR 9-3: approval, the activation switch, condition C (migrations `20261113120000`, `20261113120100`)
+
+- **Migrate first, then deploy.** `20261113120000` adds the enum value `LEGACY_NO_MONEY` (own migration, as above).
+  `20261113120100` is one explicit `BEGIN … COMMIT`: the approval's opening totals, the opening item's set-once link to its
+  OPENING charge, the per-row "no money received" acknowledgement, **progress rows can no longer be deleted**, and an effective
+  activation must have its start month's progress row (checked at commit). Nothing is written; every organization stays inactive.
+- **New code on the old schema fails** (it reads the new columns): migrate first.
+- **Activation is impossible until every readiness check passes**, including check 10 (the monthly trigger is scheduled and
+  healthy), which needs D5's `vercel.json` entry. Merging or deploying 9-3 activates nothing.
+- **Condition C is now evaluated** on every monthly-generation run: an activated organization without progress rows, or progress
+  rows without an effective activation, fails the urgent check. Before any activation both lists are empty.
+- **After the first effective activation: forward-only (A5).** Database check before any rollback:
+  `SELECT count(*) FROM "DuesActivation" WHERE "effectiveAt" IS NOT NULL;` — non-zero means no code or schema rollback; recover
+  forward (O2 cancellation, reversal, a fix release). Code older than 9-3 would stop billing an activated organization (it has
+  no production start month).
+- **Rollback order (owner approval only, only while no organization has an activation record):** previous code first; then
+  `docs/dues/stage9-3-schema-rollback.sql`, the only edit of 9-3's migration history. It **refuses once any activation record
+  (approved, withdrawn or effective) or any "no money received" acknowledgement exists**. The enum value `LEGACY_NO_MONEY` in
+  `"DuesReadinessConfirmationKind"` stays, with its migration record. If more must go: 9-3, then 9-2, then 9-1, then O4.
+- **Rehearsed locally (2026-11-10, disposable PostgreSQL container):** with one activation record present the script refused and
+  left the schema and the `20261113120100` record unchanged; with none it removed only that record, and a following `migrate
+  deploy` re-applied it (its three triggers back). The rolled-back schema is **not** the pre-9-3 schema: it matched a schema-only
+  dump taken after `20261113120000` alone, so it differs from pre-9-3 by exactly one retained item — the value `LEGACY_NO_MONEY`
+  in enum `"DuesReadinessConfirmationKind"`.
+
 ## What breaks in production but never in dev
 
 Ranked by how likely each one is to actually bite in Alliance's first weeks, not by how

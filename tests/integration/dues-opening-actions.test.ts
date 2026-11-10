@@ -454,7 +454,7 @@ describe("confirmations: stale reviews and explicit no debt", () => {
     asOwner();
     expect(await actions.recordOpeningReview(a.org.id, PRISTINE, review(studentId, shown.opening))).toEqual({ ok: true });
     const stored = await prisma.duesReadinessConfirmation.findFirstOrThrow({ where: { organizationId: a.org.id, studentId } });
-    expect(stored).toMatchObject({ kind: "OPENING_REVIEWED", sequence: 1, declaredNoOpeningDebt: true, binding: shown.opening, confirmedById: a.admin.id, fingerprintFormat: "r2" });
+    expect(stored).toMatchObject({ kind: "OPENING_REVIEWED", sequence: 1, declaredNoOpeningDebt: true, binding: shown.opening, confirmedById: a.admin.id, fingerprintFormat: "r3" });
     const valid = await reportState(studentId);
     expect(valid.state.openingReview.state).toBe("valid");
     expect(valid.report.checks.find((c) => c.id === 9)!.items).not.toContain(`student:${studentId}`);
@@ -666,7 +666,7 @@ describe("B: the single-statement content read", () => {
           let compared = 0;
           for (const st of report.students) {
             const single = await core.loadReviewContentInTx(tx as never, a.org.id, st.id, st.homeAcademyId);
-            expect(studentFingerprint(single, st.id), `student ${st.id}`).toBe(studentFingerprint(report, st.id));
+            expect(studentFingerprint(single, st.id, S), `student ${st.id}`).toBe(studentFingerprint(report, st.id, S));
             expect(branchFingerprint(single, st.homeAcademyId), `branch ${st.homeAcademyId}`).toBe(branchFingerprint(report, st.homeAcademyId));
             compared++;
           }
@@ -861,7 +861,7 @@ describe("no financial effect, and the report end to end", () => {
     asOwner();
     await actions.createOpeningDraft(a.org.id, PRISTINE, draftForm(studentId, { coverageYear: "2025", coverageMonth: "12", legacyPaymentPeriodId: paid.id }));
     const { report } = await reportState(studentId);
-    expect(report.checks.filter((c) => c.status === "notImplemented").map((c) => c.id)).toEqual([12]); // check 10 is computed (G2b): it fails until scheduled; 11 passes since stage 9 PR 9-2 (O2)
+    expect(report.checks.filter((c) => c.status === "notImplemented").map((c) => c.id)).toEqual([]); // check 10 is computed (G2b): it fails until scheduled; 11 passes since PR 9-2 (O2), 12 since PR 9-3
     expect(report.checks.find((c) => c.id === 13)!.status).toBe("pass"); // O4 decided and implemented (2026-11-09)
     expect(report.ready).toBe(false);
     const d = await latestDraft(studentId);

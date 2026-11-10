@@ -1,5 +1,6 @@
 import "dotenv/config";
 import { getTestPrismaClient } from "../helpers/test-db";
+import { forceDeleteForTest } from "../helpers/force-delete";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import type { MonthlyGenerationRunDeps, MonthlyGenerationRunReport } from "../../src/lib/dues/monthly-generation-progress";
 
@@ -167,8 +168,8 @@ describe("GET /api/cron/monthly-generation (G2b)", () => {
       visits: [],
       finalized: "confirmed",
       heartbeat: { request: "notConfigured", resultPersisted: "confirmed", alerts: { urgent: "not_configured", data: "not_configured", workload: "not_configured" } },
-      // The real detection read ran against the empty table: nothing to report; condition C is never claimed as passed.
-      alerts: { detection: "ok", newMonthAtRisk: [], olderMonthNotClean: [], conditionC: "notEvaluable", workload: { reasons: [] } },
+      // The real detection read ran against the empty tables: no activation and no progress row, so nothing to report (C included).
+      alerts: { detection: "ok", newMonthAtRisk: [], olderMonthNotClean: [], conditionC: { activatedWithoutProgress: [], progressWithoutActivation: [] }, workload: { reasons: [] } },
     });
     const run = await latestRun();
     expect(run).toMatchObject({
@@ -183,23 +184,25 @@ describe("GET /api/cron/monthly-generation (G2b)", () => {
     expect(await prisma.duesGenerationProgress.count()).toBe(0);
   });
 
-  it("REQUIRED: production defaults stay closed through the route: a claimable progress row is refused and no financial row is written", async () => {
+  it("REQUIRED: production defaults stay closed through the route: a progress row without an activation is refused, writes nothing, and is reported as condition C", async () => {
     vi.stubEnv("CRON_SECRET", SECRET);
     const org = await prisma.organization.findFirstOrThrow({ select: { id: true } });
     const row = await prisma.duesGenerationProgress.create({ data: { organizationId: org.id, year: 2031, month: 3, lastVisitedAt: new Date(0) } });
     const obligationsBefore = await prisma.duesObligation.count();
     try {
       const body = await (await GET(authed())).json();
-      expect(body.ok).toBe(true);
       expect(body.created).toBe(0);
       expect(body.visits).toHaveLength(1);
       expect(body.visits[0]).toMatchObject({ segmentId: row.id, ended: "refused" });
       expect(["organizationNotActive", "ledgerNotActive", "beforeStart"]).toContain(body.visits[0].refused);
+      // Stage 9: only the switch creates progress rows, so a row with no effective activation is an invariant failure (C).
+      expect(body.alerts.conditionC.progressWithoutActivation).toContain(org.id);
+      expect(body.ok).toBe(false);
       expect(await prisma.duesObligation.count()).toBe(obligationsBefore);
       const after = await prisma.duesGenerationProgress.findUniqueOrThrow({ where: { id: row.id } });
       expect(after.cursorStudentId).toBeNull();
     } finally {
-      await prisma.duesGenerationProgress.delete({ where: { id: row.id } });
+      await forceDeleteForTest(prisma, { sql: `DELETE FROM "DuesGenerationProgress" WHERE "id" = $1`, params: [row.id] });
     }
   });
 
@@ -272,10 +275,10 @@ describe("four-check alerting through the route (MONTHLY-GENERATION-ALERTING-PLA
     newMonthAtRisk: [],
     olderMonthNotClean: [],
     notActiveOrganizations: [],
-    conditionC: "notEvaluable",
+    conditionC: { activatedWithoutProgress: [], progressWithoutActivation: [] },
     workload: { reasons: [], counts: { progressRows: 0, organizations: 0, maxStudentsPerOrganization: 0, studentsTotal: 0, maxBranchesPerOrganization: 0 } },
   };
-  const failedDetection: Report = { detection: "P2024", newMonthAtRisk: [], olderMonthNotClean: [], notActiveOrganizations: [], conditionC: "notEvaluable", workload: null };
+  const failedDetection: Report = { detection: "P2024", newMonthAtRisk: [], olderMonthNotClean: [], notActiveOrganizations: [], conditionC: null, workload: null };
   function stubAll() {
     vi.stubEnv("CRON_SECRET", SECRET);
     vi.stubEnv("HEALTHCHECK_MONTHLY_GENERATION_URL", HC);
@@ -293,13 +296,15 @@ describe("four-check alerting through the route (MONTHLY-GENERATION-ALERTING-PLA
     ["B: an older month not clean", { ...clean, olderMonthNotClean: [{ organizationId: "org-1", year: 2031, month: 9 }] }, "FAILED", 1, [HC, URGENT, `${DATA}/fail`, WORKLOAD]],
     ["a workload threshold only", { ...clean, workload: { ...clean.workload!, reasons: ["progressRows"] } }, "SUCCEEDED", 0, [HC, URGENT, DATA, `${WORKLOAD}/fail`]],
     ["D: detection failed", failedDetection, "FAILED", 1, [HC, `${URGENT}/fail`]],
+    ["C: an activation without progress rows", { ...clean, conditionC: { activatedWithoutProgress: ["org-1"], progressWithoutActivation: [] } }, "FAILED", 1, [HC, `${URGENT}/fail`, DATA, WORKLOAD]],
+    ["C: progress rows without an activation", { ...clean, conditionC: { activatedWithoutProgress: [], progressWithoutActivation: ["org-2"] } }, "FAILED", 1, [HC, `${URGENT}/fail`, DATA, WORKLOAD]],
   ] as const)("%s → JobRun %s with failed=%i; requests %j", async (_label, detect, status, failed, expected) => {
     stubAll();
     const body = await go(detect as Report);
     expect(pings).toEqual(expected);
     const run = await latestRun();
     expect(run).toMatchObject({ status, failed, heartbeatStatus: "ok" });
-    expect(body.alerts).toMatchObject({ conditionC: "notEvaluable" });
+    expect(body.alerts).toMatchObject({ conditionC: (detect as Report).conditionC });
   });
 
   it("REQUIRED: a failed detection never stops billing — the runner still runs, and data/workload are not sent", async () => {
@@ -331,15 +336,28 @@ describe("four-check alerting through the route (MONTHLY-GENERATION-ALERTING-PLA
         data: { organizationId: org.id, ...current, lastVisitedAt: now, lastPassCompletedAt: now, lastPassIneligible: 0, lastPassCovered: 0, lastPassUnpriced: 0, lastPassPending: 0, lastPassClean: true },
       }),
     ]);
+    // Stage 9 condition C: progress rows belong to an organization with an effective activation (S = the oldest row's month), as
+    // only the switch creates them — otherwise the real read would rightly report C and fail the urgent check.
+    const user = await prisma.user.findFirstOrThrow({ select: { id: true } });
+    const activation = await prisma.duesActivation.create({
+      data: { organizationId: org.id, startYear: 2020, startMonth: 1, fingerprintFormat: "r3", configFingerprint: "x", studentFingerprints: {}, approvedOpeningTotals: {}, approvedById: user.id, approvedAt: now },
+    });
+    await prisma.duesActivation.update({ where: { id: activation.id }, data: { effectiveAt: now, effectiveById: user.id } });
     try {
       // Generation itself is not under test here; the real detection read is.
       const body = await (await handleMonthlyGenerationRequest(authed(), performance.now(), { run: async () => emptyReport() })).json();
       expect(body.alerts).toMatchObject({ detection: "ok", newMonthAtRisk: [] });
+      expect(body.alerts.conditionC.activatedWithoutProgress).not.toContain(org.id);
+      expect(body.alerts.conditionC.progressWithoutActivation).not.toContain(org.id);
       expect(body.alerts.olderMonthNotClean).toContainEqual({ organizationId: org.id, year: 2020, month: 1 });
       expect(pings.slice(0, 3)).toEqual([HC, URGENT, `${DATA}/fail`]);
       expect(pings[3]).toMatch(new RegExp(`^${WORKLOAD}(/fail)?$`)); // seed-dependent counts: attempted either way
     } finally {
-      await prisma.duesGenerationProgress.deleteMany({ where: { id: { in: rows.map((r) => r.id) } } });
+      await forceDeleteForTest(
+        prisma,
+        { sql: `DELETE FROM "DuesActivation" WHERE "id" = $1`, params: [activation.id] },
+        { sql: `DELETE FROM "DuesGenerationProgress" WHERE "id" = ANY($1::text[])`, params: [rows.map((r) => r.id)] },
+      );
     }
   });
 

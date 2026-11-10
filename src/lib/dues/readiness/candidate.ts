@@ -1,5 +1,30 @@
+import { DateTime } from "luxon";
 import { assertYearMonth, compareYearMonth, type YearMonth } from "@/lib/dues/calendar";
 import { nextMonthIn } from "@/lib/dues/config-input";
+
+/** Stage 9 A1, P = 10 (approved 2026-11-10): the switch may run until the FIRST branch reaches local 00:00 on day P + 1 of S. */
+export const SWITCH_WINDOW_DAYS = 10;
+
+/**
+ * Stage 9 A1 (approved 2026-11-10), from the branches' own timezones only — due and grace days play no part:
+ * - `approvalDeadline`: approval is accepted only BEFORE the first branch reaches local 00:00 on the 1st of S;
+ * - `opensAt`: the switch may run from the moment the LAST branch reaches local 00:00 on the 1st of S;
+ * - `closesAt`: until (exclusive) the FIRST branch reaches local 00:00 on day `SWITCH_WINDOW_DAYS + 1` of S.
+ * Null with no branch or an unknown timezone: nothing can be decided, so the callers refuse.
+ */
+export function activationWindow(s: YearMonth, timezones: readonly string[]): { approvalDeadline: Date; opensAt: Date; closesAt: Date } | null {
+  if (timezones.length === 0) return null;
+  const at = (day: number, zone: string) => DateTime.fromObject({ year: s.year, month: s.month, day }, { zone });
+  const firsts = timezones.map((z) => at(1, z));
+  const closes = timezones.map((z) => at(SWITCH_WINDOW_DAYS + 1, z));
+  if ([...firsts, ...closes].some((d) => !d.isValid)) return null;
+  const ms = (ds: DateTime[]) => ds.map((d) => d.toMillis());
+  return {
+    approvalDeadline: new Date(Math.min(...ms(firsts))),
+    opensAt: new Date(Math.max(...ms(firsts))),
+    closesAt: new Date(Math.min(...ms(closes))),
+  };
+}
 
 /**
  * The candidate start month S: pure rules, no database (so they are unit-tested without one).

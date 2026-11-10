@@ -50,9 +50,9 @@ import {
  *
  * What this does NOT do: no month closure — D3 = Reopen is the approved policy (MONTHLY-GENERATION-DECISION-BRIEF.md §0), and
  * `closurePolicy: "reopen"` is its only value (see the type). No scheduler (D5). Its one production caller is the G2b route,
- * which passes the production defaults — `generationStart` defaults to "no start month" and `LedgerActivation` to inactive, so a
- * run refuses every segment and writes no financial row; and the progress table itself is empty until stage 9 inserts an
- * organization's first row.
+ * which passes the production defaults — activation and `generationStart` both come from the organization's effective
+ * `DuesActivation` (stage 9 PR 9-3), so an organization that has not switched is refused every segment and gets no financial
+ * row; and the progress table has a row for an organization only once its switch inserted the first one.
  */
 
 export const GENERATION_JOB_NAME = "monthly-generation";
@@ -119,9 +119,8 @@ export interface MonthlyGenerationRunDeps extends LedgerDeps {
    */
   closurePolicy: "reopen";
   /**
-   * The organization's start month S. Production default: none, so no segment is ever processed (plan §4). Like
-   * `activation.isActive`, it is called outside any bounded transaction: the defaults do no I/O, and stage 9's implementations
-   * must bound their own reads (a stated limit of the deadline, see `runMonthlyGeneration`).
+   * The organization's start month S. Production default (stage 9): S of the organization's effective activation, read in one
+   * bounded transaction (`startFromActivation`); none while inactive, so no segment is processed (plan §4). Tests inject it.
    */
   generationStart?: (organizationId: string) => Promise<YearMonth | null>;
   limits?: Partial<GenerationLimits>;
@@ -379,7 +378,7 @@ async function visitSegment(claim: Claim, deps: MonthlyGenerationRunDeps, limits
     const context = await bounded(limits, (tx) => resolveSystemJobContext(claim.organizationId, GENERATION_JOB_NAME, tx));
     if (!context) return { refused: "organizationNotActive" as const };
     if (!(await (deps.activation ?? ledgerActivation).isActive(claim.organizationId))) return { refused: "ledgerNotActive" as const };
-    const start = await (deps.generationStart ?? (async () => null))(claim.organizationId);
+    const start = await (deps.generationStart ?? ((id: string) => startFromActivation(id, limits)))(claim.organizationId);
     if (!start || compareYearMonth(month, start) < 0) return { refused: "beforeStart" as const };
     return { context };
   });
@@ -609,6 +608,18 @@ async function rollover(claim: Claim, deps: MonthlyGenerationRunDeps, limits: Ge
   } catch (error) {
     return { skipped: "error", code: safeErrorCode(error) };
   }
+}
+
+/**
+ * Stage 9 PR 9-3, the production `generationStart`: the start month S of the organization's EFFECTIVE activation (trusted
+ * organization state, written only by the owner's switch), as one bounded transaction like every other read here. Null while
+ * the organization is not active, so no segment is processed.
+ */
+async function startFromActivation(organizationId: string, limits: GenerationLimits): Promise<YearMonth | null> {
+  const row = await bounded(limits, (tx) =>
+    tx.duesActivation.findFirst({ where: { organizationId, effectiveAt: { not: null } }, select: { startYear: true, startMonth: true } }),
+  );
+  return row ? { year: row.startYear, month: row.startMonth } : null;
 }
 
 function nextMonth(m: YearMonth): YearMonth {

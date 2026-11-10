@@ -1,5 +1,6 @@
 import "dotenv/config";
 import { getTestPrismaClient } from "../helpers/test-db";
+import { forceDeleteForTest } from "../helpers/force-delete";
 import { makeAccountingOrg } from "../helpers/accounting-org";
 import { makeClassStudent, cleanupClassFixtures } from "../helpers/class-fixtures";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -45,7 +46,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  if (fixture) await prisma.duesGenerationProgress.deleteMany({ where: { organizationId: fixture.org.id } });
+  if (fixture) await forceDeleteForTest(prisma, { sql: `DELETE FROM "DuesGenerationProgress" WHERE "organizationId" = $1`, params: [fixture.org.id] });
   await cleanupClassFixtures();
   await fixture?.drop();
 });
@@ -53,9 +54,9 @@ afterAll(async () => {
 describe("the alert detection read (bounded, read-only)", () => {
   it("REQUIRED (test 5): today's production state — an empty progress table — reports nothing, and every check would succeed", async () => {
     const state = await readGenerationAlertState(500, DETECTION_BOUNDS);
-    expect(state).toEqual({ progress: [], branches: [], students: [], organizations: [], overflow: false });
+    expect(state).toEqual({ progress: [], branches: [], students: [], organizations: [], activatedOrganizations: [], overflow: false });
     const report = await detectGenerationAlerts(new Date());
-    expect(report).toMatchObject({ detection: "ok", newMonthAtRisk: [], olderMonthNotClean: [], conditionC: "notEvaluable", workload: { reasons: [] } });
+    expect(report).toMatchObject({ detection: "ok", newMonthAtRisk: [], olderMonthNotClean: [], conditionC: { activatedWithoutProgress: [], progressWithoutActivation: [] }, workload: { reasons: [] } });
   });
 
   it("REQUIRED (test 1): every progress row is read — a SUSPENDED organization's too — and students of ANY status are counted", async () => {
@@ -102,7 +103,7 @@ describe("the alert detection read (bounded, read-only)", () => {
 
   it("REQUIRED (test 2): more rows than the cap is overflow (condition D) — never a partial evaluation", async () => {
     const state = await readGenerationAlertState(1, DETECTION_BOUNDS);
-    expect(state).toEqual({ progress: [], branches: [], students: [], organizations: [], overflow: true });
+    expect(state).toEqual({ progress: [], branches: [], students: [], organizations: [], activatedOrganizations: [], overflow: true });
     expect(evaluateGenerationAlerts(state, new Date()).detection).toBe("overflow");
   });
 

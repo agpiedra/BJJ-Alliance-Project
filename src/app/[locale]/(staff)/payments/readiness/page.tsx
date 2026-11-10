@@ -6,7 +6,7 @@ import { getOrganizationBranding } from "@/lib/branding/get-branding";
 import { EmptyState } from "@/components/ui/empty-state";
 import { getReadinessScreenForOwner } from "@/lib/dues/readiness/screen";
 import { defaultCandidateMonth, parseCandidateParam } from "@/lib/dues/readiness/candidate";
-import { BeforeStart, MonthPicker, StatusAndChecks, Students, Totals } from "./readiness-view";
+import { Activation, BeforeStart, MonthPicker, StatusAndChecks, Students, Totals } from "./readiness-view";
 import { ReadinessClientRoot } from "./use-readiness-action";
 
 // A live report: never statically frozen.
@@ -56,7 +56,8 @@ export default async function DuesReadinessPage({ searchParams }: { searchParams
   const result = await getReadinessScreenForOwner(context.organizationId, parsed);
   if (!result.ok) notFound();
   const { screen } = result;
-  const candidate = parsed ?? screen.defaultCandidate;
+  // The month the report was evaluated for: the one asked for, else a live approval's S (stage 9), else the default.
+  const candidate = screen.report.candidate;
 
   return (
     <main className="flex min-w-0 flex-col gap-6 p-4 sm:p-6">
@@ -73,6 +74,7 @@ export default async function DuesReadinessPage({ searchParams }: { searchParams
         // `asOf` changes on every snapshot: the client forms use it to know a refresh has arrived (stage 8d-2).
         <ReadinessClientRoot asOf={screen.asOf.toISOString()}>
           <StatusAndChecks screen={screen} candidate={candidate} locale={locale} />
+          <Activation screen={screen} candidate={candidate} locale={locale} organizationId={context.organizationId} />
           <Totals screen={screen} candidate={candidate} locale={locale} />
           <BeforeStart screen={screen} candidate={candidate} locale={locale} organizationId={context.organizationId} />
           <Students screen={screen} candidate={candidate} locale={locale} organizationId={context.organizationId} />

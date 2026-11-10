@@ -47,8 +47,8 @@ function base(): ReadinessSnapshot {
       { id: "a3", studentId: "s3", planId: "p-crc", effectiveYear: 2031, effectiveMonth: 3 },
     ],
     legacyPayments: [
-      { id: "l1", studentId: "s1", year: 2031, month: 1, status: "PENDING", amount: "100.00", currency: "USD", planId: "p-usd", promoName: null, promoRecurring: false },
-      { id: "l2", studentId: "s3", year: 2031, month: 2, status: "PAID", amount: "25000.00", currency: "CRC", planId: "p-crc", promoName: null, promoRecurring: false },
+      { id: "l1", studentId: "s1", year: 2031, month: 1, status: "PENDING", amount: "100.00", currency: "USD", planId: "p-usd", promoName: null, promoRecurring: false, method: null, notes: null, recordedAt: "2031-01-15T00:00:00.000Z" },
+      { id: "l2", studentId: "s3", year: 2031, month: 2, status: "PAID", amount: "25000.00", currency: "CRC", planId: "p-crc", promoName: null, promoRecurring: false, method: null, notes: null, recordedAt: "2031-01-15T00:00:00.000Z" },
     ],
     monthlyObligations: [],
     coverage: [],
@@ -71,7 +71,7 @@ describe("fingerprints are deterministic", () => {
       if (Array.isArray(value)) (b as unknown as Record<string, unknown[]>)[key] = [...value].reverse().map((row) => Object.fromEntries(Object.entries(row as object).reverse()));
     }
     expect(organizationFingerprint(b, S)).toBe(organizationFingerprint(a, S));
-    expect(studentFingerprint(b, "s1")).toBe(studentFingerprint(a, "s1"));
+    expect(studentFingerprint(b, "s1", S)).toBe(studentFingerprint(a, "s1", S));
     expect(branchFingerprint(b, "b-usd")).toBe(branchFingerprint(a, "b-usd"));
   });
 
@@ -95,10 +95,10 @@ describe("fingerprints change when reviewed content changes — including in-pla
   it.each(studentEdits)("student fingerprint: %s", (_label, edit) => {
     const changed = clone(base());
     edit(changed);
-    expect(studentFingerprint(changed, "s1")).not.toBe(studentFingerprint(base(), "s1"));
+    expect(studentFingerprint(changed, "s1", S)).not.toBe(studentFingerprint(base(), "s1", S));
     expect(organizationFingerprint(changed, S)).not.toBe(organizationFingerprint(base(), S));
     // Another student's fingerprint is unaffected.
-    expect(studentFingerprint(changed, "s3")).toBe(studentFingerprint(base(), "s3"));
+    expect(studentFingerprint(changed, "s3", S)).toBe(studentFingerprint(base(), "s3", S));
   });
 
   const branchEdits: [string, (s: ReadinessSnapshot) => void][] = [
@@ -128,14 +128,14 @@ describe("fingerprints change when reviewed content changes — including in-pla
 });
 
 describe("confirmation bindings (used by stage 8c)", () => {
-  const studentFp = studentFingerprint(base(), "s1");
+  const studentFp = studentFingerprint(base(), "s1", S);
   const branchFp = branchFingerprint(base(), "b-usd");
   it("a branch price or policy change invalidates the pricing acknowledgement but not the opening review", () => {
     const changed = clone(base());
     changed.policies[0].lateFeeAmount = "15.00";
     const changedBranchFp = branchFingerprint(changed, "b-usd");
     expect(pricingAckBinding(S, studentFp, changedBranchFp)).not.toBe(pricingAckBinding(S, studentFp, branchFp));
-    expect(openingReviewBinding(S, studentFingerprint(changed, "s1"))).toBe(openingReviewBinding(S, studentFp));
+    expect(openingReviewBinding(S, studentFingerprint(changed, "s1", S))).toBe(openingReviewBinding(S, studentFp));
   });
   it("both depend on the candidate month and the student content, and never collide with each other", () => {
     const next = { year: 2031, month: 4 };
@@ -160,7 +160,7 @@ describe("stage 8b: opening-debt drafts in the student fingerprint (format r2)",
     s.withdrawnOpeningItems.push(...gone);
     return s;
   };
-  const binding = (s: ReadinessSnapshot) => openingReviewBinding(S, studentFingerprint(s, "s1"));
+  const binding = (s: ReadinessSnapshot) => openingReviewBinding(S, studentFingerprint(s, "s1", S));
 
   // The binding an owner's "no opening debt" confirmation (B0) was stored with must never come back once a draft has existed.
   it("revival regression: add then withdraw does not return to the no-draft binding", () => {
@@ -199,23 +199,23 @@ describe("stage 8b: opening-debt drafts in the student fingerprint (format r2)",
     const before = state([draft("d1")], []);
     const after = clone(before);
     edit(after.openingItems[0]);
-    expect(studentFingerprint(after, "s1")).not.toBe(studentFingerprint(before, "s1"));
+    expect(studentFingerprint(after, "s1", S)).not.toBe(studentFingerprint(before, "s1", S));
     expect(organizationFingerprint(after, S)).not.toBe(organizationFingerprint(before, S));
     expect(binding(after)).not.toBe(binding(before));
-    expect(studentFingerprint(after, "s3")).toBe(studentFingerprint(before, "s3"));
+    expect(studentFingerprint(after, "s3", S)).toBe(studentFingerprint(before, "s3", S));
   });
 
   it("a withdrawn draft contributes only its id, kind and successor: an amount, currency or note on it is never hashed", () => {
     const plain = state([], [withdrawn("d1", "WITHDRAWN")]);
     const carryingMoney = clone(plain);
     Object.assign(carryingMoney.withdrawnOpeningItems[0], { amount: "999.00", currency: "CRC", note: "should not count" });
-    expect(studentFingerprint(carryingMoney, "s1")).toBe(studentFingerprint(plain, "s1"));
-    expect(studentFingerprint(state([], [withdrawn("d1", "EDITED", "d2")]), "s1")).not.toBe(studentFingerprint(plain, "s1"));
-    expect(studentFingerprint(state([], [withdrawn("d9", "WITHDRAWN")]), "s1")).not.toBe(studentFingerprint(plain, "s1"));
+    expect(studentFingerprint(carryingMoney, "s1", S)).toBe(studentFingerprint(plain, "s1", S));
+    expect(studentFingerprint(state([], [withdrawn("d1", "EDITED", "d2")]), "s1", S)).not.toBe(studentFingerprint(plain, "s1", S));
+    expect(studentFingerprint(state([], [withdrawn("d9", "WITHDRAWN")]), "s1", S)).not.toBe(studentFingerprint(plain, "s1", S));
   });
 
   it("an active draft and a withdrawn row with the same id never hash alike", () => {
-    expect(studentFingerprint(state([draft("d1")], []), "s1")).not.toBe(studentFingerprint(state([], [withdrawn("d1", "WITHDRAWN")]), "s1"));
+    expect(studentFingerprint(state([draft("d1")], []), "s1", S)).not.toBe(studentFingerprint(state([], [withdrawn("d1", "WITHDRAWN")]), "s1", S));
   });
 
   // Recorded from the stage 8a (r1) code on 6c907cf for this exact base() snapshot, before the r2 change.
@@ -225,9 +225,9 @@ describe("stage 8b: opening-debt drafts in the student fingerprint (format r2)",
     organization: "3b69fa6b240a47d2ecf21641336ccd74cff10cdb98bf0e67a32b51291d14f47b",
     openingReview: "c0d823f3ba2417b90b0a53fc1f9752f504d1a350295bcca50005220b9f6322b7",
   };
-  it("format r2: no fingerprint or binding equals the r1 value for the same content", () => {
-    expect(FINGERPRINT_FORMAT).toBe("r2");
-    expect(studentFingerprint(base(), "s1")).not.toBe(R1.student);
+  it("format r3 (stage 9; r2 added drafts): no fingerprint or binding equals the r1 value for the same content", () => {
+    expect(FINGERPRINT_FORMAT).toBe("r3");
+    expect(studentFingerprint(base(), "s1", S)).not.toBe(R1.student);
     expect(branchFingerprint(base(), "b-usd")).not.toBe(R1.branch);
     expect(organizationFingerprint(base(), S)).not.toBe(R1.organization);
     expect(binding(base())).not.toBe(R1.openingReview);
@@ -237,8 +237,8 @@ describe("stage 8b: opening-debt drafts in the student fingerprint (format r2)",
     const s = state([draft("d1")], [withdrawn("d0", "WITHDRAWN")]);
     const changed = clone(s);
     changed.terms[0].priceAmount = "110.00";
-    const studentFp = studentFingerprint(s, "s1");
-    expect(studentFingerprint(changed, "s1")).toBe(studentFp);
+    const studentFp = studentFingerprint(s, "s1", S);
+    expect(studentFingerprint(changed, "s1", S)).toBe(studentFp);
     expect(pricingAckBinding(S, studentFp, branchFingerprint(changed, "b-usd"))).not.toBe(pricingAckBinding(S, studentFp, branchFingerprint(s, "b-usd")));
   });
 
@@ -252,7 +252,7 @@ describe("stage 8b: opening-debt drafts in the student fingerprint (format r2)",
     expect(after.preview).toEqual(before.preview);
     expect(after.checks).toEqual(before.checks);
     expect(after.ready).toBe(false);
-    expect(after.checks.filter((c) => c.status === "notImplemented").map((c) => c.id)).toEqual([12]); // check 10 is computed (G2b): it fails until scheduled; 11 passes since stage 9 PR 9-2 (O2)
+    expect(after.checks.filter((c) => c.status === "notImplemented").map((c) => c.id)).toEqual([]); // check 10 is computed (G2b): it fails until scheduled; 11 passes since PR 9-2 (O2), 12 since PR 9-3
     expect(after.checks.find((c) => c.id === 13)!.status).toBe("pass"); // O4 decided and implemented (2026-11-09)
   });
 });
@@ -327,21 +327,27 @@ describe("readiness: checks 1-5 are computed", () => {
     expect(check(s, 4)).toMatchObject({ status: "fail", items: ["student:s3"] });
   });
 
-  it("5 fails for a legacy row in S or later, never for earlier months", () => {
+  it("5 (stage 9 A8) fails for a recorded payment or an unacknowledged ambiguous row in S or later; an unpaid placeholder only warns; earlier months never count", () => {
     const s = base();
-    s.legacyPayments.push({ ...s.legacyPayments[0], id: "l-march", month: 3 }, { ...s.legacyPayments[0], id: "l-april", month: 4 });
-    expect(check(s, 5)).toMatchObject({ status: "fail", items: ["legacy:l-march", "legacy:l-april"] });
+    const l = s.legacyPayments[0]; // s1, 2031-01, PENDING, no method, no notes: an unpaid placeholder before S
+    s.legacyPayments.push(
+      { ...l, id: "l-march", month: 3, status: "PAID" },
+      { ...l, id: "l-april", month: 4, method: "EFECTIVO" },
+      { ...l, id: "l-may", month: 5 },
+    );
+    expect(check(s, 5)).toMatchObject({ status: "fail", items: ["legacy:l-april", "legacy:l-march"] });
+    expect(evaluateReadiness(s, S).warnings).toContainEqual({ key: "legacyPlaceholderHandledByNewSystem", items: ["legacy:l-may"] });
     expect(check(base(), 5).status).toBe("pass");
   });
 });
 
 describe("readiness: never falsely ready", () => {
-  it("stage 8c: checks 6-9 are computed, 10 fails (computed trigger health, not scheduled), 11 passes (O2, stage 9 PR 9-2), 12 stays notImplemented and 13 passes (O4 decided); 9 fails with no reviews", () => {
+  it("stage 8c: checks 6-9 are computed, 10 fails (computed trigger health, not scheduled), 11 passes (O2, PR 9-2), 12 passes (mechanism, PR 9-3) and 13 passes (O4 decided); 9 fails with no reviews", () => {
     const report = evaluateReadiness(base(), S);
     expect(report.checks.map((c) => [c.id, c.status])).toEqual([
       [1, "pass"], [2, "pass"], [3, "pass"], [4, "pass"], [5, "pass"],
       [6, "pass"], [7, "pass"], [8, "pass"], [9, "fail"],
-      [10, "fail"], [11, "pass"], [12, "notImplemented"], [13, "pass"],
+      [10, "fail"], [11, "pass"], [12, "pass"], [13, "pass"],
     ]);
     expect(report.ready).toBe(false);
   });
@@ -403,12 +409,12 @@ describe("stage 8c: confirmations, checks 6-9, warnings and opening totals", () 
   });
   /** A confirmation bound to `snap` as it is now (what the 8c writer stores after a matching review). */
   const confirm = (snap: ReadinessSnapshot, studentId: string, kind: "OPENING_REVIEWED" | "PRICING_ACKNOWLEDGED", over: Partial<Confirmation> = {}): Confirmation => {
-    const studentFp = studentFingerprint(snap, studentId);
+    const studentFp = studentFingerprint(snap, studentId, S);
     const home = snap.students.find((st) => st.id === studentId)!.homeAcademyId;
     const binding = kind === "OPENING_REVIEWED" ? openingReviewBinding(S, studentFp) : pricingAckBinding(S, studentFp, branchFingerprint(snap, home));
     return {
       id: `c${++n}`, studentId, candidateYear: S.year, candidateMonth: S.month, kind, sequence: 1, fingerprintFormat: FINGERPRINT_FORMAT, binding,
-      declaredNoOpeningDebt: kind === "OPENING_REVIEWED" ? true : null, confirmedAt: "2031-02-20T10:00:00.000Z", ...over,
+      declaredNoOpeningDebt: kind === "OPENING_REVIEWED" ? true : null, legacyPaymentPeriodId: null, confirmedAt: "2031-02-20T10:00:00.000Z", ...over,
     };
   };
   const reviewAll = (snap: ReadinessSnapshot) => {
@@ -429,7 +435,7 @@ describe("stage 8c: confirmations, checks 6-9, warnings and opening totals", () 
   it("check 9 passes when every active student has a valid review; ready stays false with checks 1-9 passing", () => {
     const r = report(reviewAll(clone(base())));
     expect(r.checks.filter((c) => c.id <= 9).every((c) => c.status === "pass")).toBe(true);
-    expect(r.checks.filter((c) => c.status === "notImplemented").map((c) => c.id)).toEqual([12]); // check 10 is computed (G2b): it fails until scheduled; 11 passes since stage 9 PR 9-2 (O2)
+    expect(r.checks.filter((c) => c.status === "notImplemented").map((c) => c.id)).toEqual([]); // check 10 is computed (G2b): it fails until scheduled; 11 passes since PR 9-2 (O2), 12 since PR 9-3
     expect(r.checks.find((c) => c.id === 13)!.status).toBe("pass"); // O4 decided and implemented (2026-11-09)
     expect(r.ready).toBe(false);
   });
@@ -611,7 +617,7 @@ describe("regression: MONTHLY wouldCreate totals above one column's maximum (99,
       ["s2", "created", "0.05 USD"],
       ["s3", "created", "25000.00 CRC"],
     ]);
-    expect(report.checks.filter((c) => c.status === "notImplemented").map((c) => c.id)).toEqual([12]); // check 10 is computed (G2b): it fails until scheduled; 11 passes since stage 9 PR 9-2 (O2)
+    expect(report.checks.filter((c) => c.status === "notImplemented").map((c) => c.id)).toEqual([]); // check 10 is computed (G2b): it fails until scheduled; 11 passes since PR 9-2 (O2), 12 since PR 9-3
     expect(report.ready).toBe(false);
   });
 });
