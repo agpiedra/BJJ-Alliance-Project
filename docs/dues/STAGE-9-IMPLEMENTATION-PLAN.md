@@ -51,10 +51,29 @@ approval; three-PR structure kept. Owner, 2026-11-10 (later): option 2 stays rec
 12. A payment waiting on the gate when the switch commits is refused, nothing written, with the staff member's input kept
     in the form for re-entry (returned in the action response; never put in a URL).
 
-**Refinement made while implementing PR 9-1 (for review):** the exclusive gate mode is `FOR NO KEY UPDATE` rather than
-`FOR UPDATE`. It excludes every `FOR SHARE` participant identically, but does not hold up unrelated inserts that only
-reference the organization through a foreign key (check-ins, attendance), which plain `FOR UPDATE` would block for the
-switch's duration. Proved in `tests/integration/dues-activation-gate.test.ts`.
+**APPROVED by the owner, 2026-11-10 — the switch's exclusive gate mode is `FOR NO KEY UPDATE`** (replacing `FOR UPDATE` in
+concurrency rule 1). Basis: the real-PostgreSQL race tests and the expanded writer guard in PR 9-1.
+- What it changes: `FOR NO KEY UPDATE` blocks every gate participant (`FOR SHARE`) exactly as `FOR UPDATE` would, and also
+  conflicts with any `UPDATE` of the organization row. The only statements it lets through that `FOR UPDATE` would hold up
+  are foreign-key checks (`FOR KEY SHARE`) from inserts into tables that reference the organization.
+- Limits of the guarantee:
+  1. It holds only for the tables readiness, the opening review and activation read (`Organization`, `Academy`,
+     `PaymentPlan`, `PaymentPlanTerms`, `DuesPolicyVersion`, `Student`, `StudentStatusChange`, `StudentPlanAssignment`,
+     `PaymentPeriod`, `DuesObligation`, `DuesCoverage`, `DuesOpeningItem`, `DuesReadinessConfirmation`, `DuesActivation`).
+     Every application write to them takes the gate first; `tests/unit/dues-activation-gate-participation.test.ts` fails on
+     a new unclassified writer. Inserts that pass the switch's lock (attendance, check-ins, audit log, notifications, kiosk
+     attempts, promotions) write tables none of those reads use.
+  2. **Not every readiness input is frozen during the switch.** `JobRun` (check 10, the monthly trigger's health) has no
+     organization column and is written by the platform scheduler outside the gate: a run can start, finish or fail while
+     the switch runs, so the switch decides on the `JobRun` state it reads at that moment, which may already be outdated
+     at commit. This affects only check 10's health signal, never balances, opening debt or the activation record.
+  3. Writes outside the application (seed, data-writing migrations, manual SQL, operator scripts) are not covered
+     (KNOWN_LIMITATIONS).
+  4. Proved for the writer classes 9a–9k with one representative each, plus the structural guard for every writer; not a
+     proof of deadlock freedom in general.
+- Evidence: `tests/integration/dues-activation-gate.test.ts` (writers blocked by the switch, with the blocked statement
+  checked; the switch waits for an in-flight writer and reads what it committed; a writer that waited sees the switch's
+  commit; an `AuditLog` insert passes `FOR NO KEY UPDATE` but waits under `FOR UPDATE`).
 
 ### Revision 4 — supersedes revisions 2 and 3 below wherever they differ
 
@@ -100,7 +119,7 @@ switch's duration. Proved in `tests/integration/dues-activation-gate.test.ts`.
 
 **Complete concurrency rules (proposed):**
 
-1. **The gate.** The `Organization` row lock. Approval, approval withdrawal and the transition take it `FOR UPDATE`.
+1. **The gate.** The `Organization` row lock. Approval, approval withdrawal and the transition take it `FOR NO KEY UPDATE` (approved 2026-11-10; see above).
    Every writer listed in rule 9 takes it `FOR SHARE` as its first locking statement, inside its own transaction, and
    reads the activation state after it. Shared holders never block each other.
 2. **Lock order** (brief §5): Organization → branches in id order → students in id order → version rows → rows written.
@@ -130,7 +149,7 @@ switch's duration. Proved in `tests/integration/dues-activation-gate.test.ts`.
    checks stay as a display shortcut only, never as the authority. After activation, or on lock timeout, the page
    writes nothing and renders anyway (no 500).
 8. **Other cases.** Two transitions: the second waits, then refuses `alreadyActive`. Withdrawal vs transition:
-   serialized by `FOR UPDATE`; whichever commits first wins. Opening-item and confirmation actions (8c) after
+   serialized by `FOR NO KEY UPDATE`; whichever commits first wins. Opening-item and confirmation actions (8c) after
    activation are refused (opening debt is corrected with O2). Ledger writers before activation refuse `notActive`
    (unchanged); after, they take the gate `FOR SHARE` and read active. Monthly generation reads activation under the
    same gate.
@@ -316,7 +335,7 @@ and triggers.
 - **Schema:** `DuesActivation` (one row per organization, unique `organizationId`): `startYear/startMonth` (S),
   `approvedFingerprint`, `approvedById/At`, `effectiveAt`, `effectiveById`, `ledgerStartsOn`. Set-once trigger in the O4
   style (approval columns once; effective columns null → set once; no delete). Brief §7 outline.
-- **Gate helper** `lockOrganizationGate(tx, orgId, mode)`: `Organization` row `FOR SHARE` (writers) / `FOR UPDATE`
+- **Gate helper** `lockOrganizationGate(tx, orgId, mode)`: `Organization` row `FOR SHARE` (writers) / `FOR NO KEY UPDATE`
   (approval, activation), then reads `DuesActivation.effectiveAt`. Lock-order step 1 of brief §5.
 - **Ledger writers:** replace `inactiveLedgerActivation` (`src/lib/dues/ledger/activation.ts:41`) with a database-backed
   `isActive(tx, orgId)` read after the gate lock. **Delete the O4 test-only seam** (`E2E_LEDGER_ACTIVE_ORG_IDS`), its
@@ -360,9 +379,9 @@ and triggers.
 
 ### PR 9-3 — Approval, effective activation, condition C
 
-- **Advance approval** (brief §8.2): before G(S) in every branch timezone; gate `FOR UPDATE`; recompute readiness; store S
+- **Advance approval** (brief §8.2): before G(S) in every branch timezone; gate `FOR NO KEY UPDATE`; recompute readiness; store S
   and fingerprint; switches nothing.
-- **Effective activation** (brief §8.3, one transaction): gate `FOR UPDATE`; recompute; refuse on fingerprint difference,
+- **Effective activation** (brief §8.3, one transaction): gate `FOR NO KEY UPDATE`; recompute; refuse on fingerprint difference,
   any blocker, outside the A1 window, or S ≠ approved S; otherwise create the reviewed `OPENING` obligations
   from active opening items (set `materializedObligationId`), set `effectiveAt` / `ledgerStartsOn = G(S)`, **and insert
   the organization's first `DuesGenerationProgress` row for S in the same transaction**. From the commit: legacy refuses,
