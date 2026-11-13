@@ -19,9 +19,11 @@ $ErrorActionPreference = 'Stop'
 # unique, ordinal sort, joined by "\n". Returns $null when the list would be rejected by the app.
 function Get-NormalizedAllowlist([string]$Raw) {
   if ([string]::IsNullOrWhiteSpace($Raw)) { return $null }
-  $entries = @($Raw.Split(',') | ForEach-Object { $_.Trim().ToLowerInvariant() })
+  $entries = @($Raw.Split(',') | ForEach-Object { $_.Trim() })
   if ($entries.Count -gt 25) { return $null }
-  foreach ($e in $entries) { if ($e -cnotmatch '^[a-z0-9._%+-]+@[a-z0-9-]+(\.[a-z0-9-]+)+$') { return $null } }
+  # ASCII-only, validated before lowercasing (as the app does): non-ASCII letters never fold into a listed address.
+  foreach ($e in $entries) { if ($e -cnotmatch '^[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$') { return $null } }
+  $entries = @($entries | ForEach-Object { $_.ToLowerInvariant() })
   [string[]]$unique = @($entries | Select-Object -Unique)
   [Array]::Sort($unique, [StringComparer]::Ordinal)
   return , $unique

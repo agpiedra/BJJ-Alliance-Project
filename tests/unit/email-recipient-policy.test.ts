@@ -121,7 +121,9 @@ describe("the actual staging configuration: VERCEL_ENV=production, EMAIL_DELIVER
   });
 
   it("recipient strings that are not exactly one listed address are blocked", async () => {
-    for (const to of [`${LISTED}, ${OUTSIDER}`, `Owner <${LISTED}>`, ` ${LISTED}`, `${LISTED}\n`, `${LISTED}\r\nBcc: ${OUTSIDER}`]) {
+    // U+212A KELVIN SIGN lowercases to ASCII "k" with String#toLowerCase; it must not match a listed "k" address.
+    vi.stubEnv("EMAIL_RECIPIENT_ALLOWLIST", `${LISTED},kim@example.test`);
+    for (const to of [`${LISTED}, ${OUTSIDER}`, `Owner <${LISTED}>`, ` ${LISTED}`, `${LISTED}\n`, `${LISTED}\r\nBcc: ${OUTSIDER}`, "Kim@example.test"]) {
       expect(checkRecipient(to), JSON.stringify(to)).toEqual({ allowed: false, reason: "not_allowlisted" });
     }
     expectBlockedEverywhere(await sendBothPaths(`${LISTED}, ${OUTSIDER}`));

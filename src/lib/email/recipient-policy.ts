@@ -35,9 +35,13 @@ export type EmailPolicy =
 // Plain addresses only: no display names, spaces, wildcards, separators or bare domains.
 const ADDRESS = /^[a-z0-9._%+-]+@[a-z0-9-]+(\.[a-z0-9-]+)+$/;
 
+// ASCII-only lowercasing: String#toLowerCase maps some non-ASCII letters to ASCII (U+212A KELVIN SIGN → "k"), which
+// would let a non-ASCII recipient match a listed address and then be sent to the provider unchanged.
+const asciiLower = (value: string) => value.replace(/[A-Z]/g, (c) => c.toLowerCase());
+
 function parseAllowlist(raw: string | undefined): EmailPolicy {
   if (raw === undefined || raw.trim() === "") return { effective: "blocked_all", reason: "allowlist_missing" };
-  const entries = raw.split(",").map((entry) => entry.trim().toLowerCase());
+  const entries = raw.split(",").map((entry) => asciiLower(entry.trim()));
   if (entries.length > MAX_ALLOWLIST_ENTRIES || entries.some((entry) => !ADDRESS.test(entry))) {
     return { effective: "blocked_all", reason: "allowlist_invalid" };
   }
@@ -60,7 +64,7 @@ export function checkRecipient(to: string, env: Env = process.env): { allowed: t
   const policy = resolveEmailPolicy(env);
   if (policy.effective === "unrestricted") return { allowed: true };
   if (policy.effective === "blocked_all") return { allowed: false, reason: policy.reason };
-  return policy.addresses.has(to.toLowerCase()) ? { allowed: true } : { allowed: false, reason: "not_allowlisted" };
+  return policy.addresses.has(asciiLower(to)) ? { allowed: true } : { allowed: false, reason: "not_allowlisted" };
 }
 
 export interface EmailPolicyStatus {
