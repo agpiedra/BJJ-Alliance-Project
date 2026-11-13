@@ -180,7 +180,7 @@ afterAll(async () => {
 
 describe("lifecycle by outcome", () => {
   it("CLI fallback: a rejected or unconfigured send keeps the new link live and leaves the earlier one; accepting the new one retires it", async () => {
-    for (const outcome of ["rejected", "not_configured"] as const) {
+    for (const outcome of ["rejected", "not_configured", "blocked"] as const) {
       const { org, oId } = await approvedOrganization();
       respondWith(outcome);
       const resend = await approveOrganization(org.slug, approverId, { keepLinkOnFailedSend: true });

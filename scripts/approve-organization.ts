@@ -69,6 +69,7 @@ function invitationLines(result: ApproveOrganizationResult): string[] {
     accepted: "Invitation email accepted by the provider (delivery not confirmed).",
     rejected: "Invitation email NOT sent: the provider rejected it.",
     not_configured: "Invitation email NOT sent: email sending is not configured.",
+    blocked: "Invitation email NOT sent: this environment's email recipient policy blocked it.",
     unknown: "Invitation email could not be confirmed as sent.",
   }[result.invitationEmailOutcome!];
   switch (result.invitationSettlement) {

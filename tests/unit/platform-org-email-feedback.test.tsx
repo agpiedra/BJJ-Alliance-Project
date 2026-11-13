@@ -64,7 +64,7 @@ describe("the mapping reuses the existing results — no second classification",
 
   it("REQUIRED copy: accepted+settled adds nothing; failed sends point to the withdrawn link; unknown stays neutral; settlement states never guess", () => {
     expect(invitationFeedbackCopy({ invitationEmail: "accepted", invitationSettlement: "settled" })).toEqual({ email: "email.accepted", needsAttention: false });
-    for (const email of ["rejected", "not_configured"] as const) {
+    for (const email of ["rejected", "not_configured", "blocked"] as const) {
       expect(invitationFeedbackCopy({ invitationEmail: email, invitationSettlement: "settled" })).toEqual({
         email: `email.${email}`,
         settlement: "settlement.withdrawn",
@@ -131,6 +131,7 @@ describe("the notice", () => {
     { report: { invitationEmail: "accepted", invitationSettlement: "settled" }, email: "accepted", settlement: null, attention: false },
     { report: { invitationEmail: "rejected", invitationSettlement: "settled" }, email: "rejected", settlement: "withdrawn", attention: true },
     { report: { invitationEmail: "not_configured", invitationSettlement: "settled" }, email: "not_configured", settlement: "withdrawn", attention: true },
+    { report: { invitationEmail: "blocked", invitationSettlement: "settled" }, email: "blocked", settlement: "withdrawn", attention: true },
     { report: { invitationEmail: "unknown", invitationSettlement: "settled" }, email: "unknown", settlement: "unknownOpen", attention: false },
     { report: { invitationEmail: "accepted", invitationSettlement: "acceptedMeanwhile" }, email: "accepted", settlement: "acceptedMeanwhile", attention: false },
     { report: { invitationEmail: "unknown", invitationSettlement: "unavailable" }, email: "unknown", settlement: "unavailable", attention: true },

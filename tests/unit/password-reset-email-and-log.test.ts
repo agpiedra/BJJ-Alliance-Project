@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { stubStagingEmailPolicy } from "../helpers/email-policy";
 
 /**
  * docs/PASSWORD_RECOVERY_PLAN.md §2.6 / §2.8 — the email helper's classified outcome (Resend mocked; no network) and
@@ -19,6 +20,7 @@ describe("sendTransactionalEmail — classified outcome", () => {
     sendMock.mockReset();
     vi.stubEnv("RESEND_API_KEY", "test-key");
     vi.stubEnv("EMAIL_FROM", "MATROOM <noreply@example.test>");
+    stubStagingEmailPolicy("a@example.test");
   });
   afterEach(() => vi.unstubAllEnvs());
 

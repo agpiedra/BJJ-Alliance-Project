@@ -172,7 +172,7 @@ describe("request: uniform public response", () => {
       results.push(await requestPasswordReset("en", {}, form({ email: throttled.email })));
     }
 
-    for (const outcome of ["accepted", "rejected", "unknown", "not_configured"] as const) {
+    for (const outcome of ["accepted", "rejected", "unknown", "not_configured", "blocked"] as const) {
       const user = await makeUser();
       results.push(await requestPasswordReset("en", {}, form({ email: user.email })));
       sendMock.mockResolvedValueOnce({ success: outcome === "accepted", outcome });
@@ -460,10 +460,11 @@ describe("after-response email step", () => {
     return scheduledTasks.pop()!;
   }
 
-  it("REQUIRED: rejected and not_configured make that token unusable; unknown and accepted keep it valid", async () => {
+  it("REQUIRED: rejected, not_configured and blocked make that token unusable; unknown and accepted keep it valid", async () => {
     for (const [outcome, expectUsable] of [
       ["rejected", false],
       ["not_configured", false],
+      ["blocked", false],
       ["unknown", true],
       ["accepted", true],
     ] as const) {

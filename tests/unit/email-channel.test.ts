@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EmailChannel, type ResendClient } from "@/lib/notifications/email-channel";
 import type { Recipient, RenderedMessage } from "@/lib/notifications/types";
+import { stubStagingEmailPolicy } from "../helpers/email-policy";
 
 const recipient: Recipient = {
   userId: "user-1",
@@ -16,6 +17,7 @@ const message: RenderedMessage = {
 
 beforeEach(() => {
   vi.stubEnv("EMAIL_FROM", "Alliance BJJ <notifications@resend.dev>");
+  stubStagingEmailPolicy(recipient.email);
 });
 
 afterEach(() => {

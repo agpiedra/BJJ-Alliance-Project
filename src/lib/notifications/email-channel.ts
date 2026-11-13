@@ -1,5 +1,6 @@
 import { requireEnv } from "@/lib/env";
 import { classifyProviderError, silenceSdkErrorLogging } from "@/lib/email/provider-errors";
+import { checkRecipient } from "@/lib/email/recipient-policy";
 import type { DeliveryResult, NotificationChannel, Recipient, RenderedMessage } from "@/lib/notifications/types";
 
 /**
@@ -65,6 +66,10 @@ export class EmailChannel implements NotificationChannel {
   // `outcome`/`providerCode` are classified exactly as sendTransactionalEmail does; `error` stays free text and is
   // never logged.
   async send(to: Recipient, message: RenderedMessage): Promise<DeliveryResult> {
+    // First, before the client is called: a blocked recipient is a failed delivery, never counted as sent.
+    const decision = checkRecipient(to.email);
+    if (!decision.allowed) return { success: false, error: `recipient policy: ${decision.reason}`, outcome: "blocked" };
+
     let from: string;
     try {
       from = requireEnv("EMAIL_FROM");

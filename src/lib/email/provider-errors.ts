@@ -2,7 +2,8 @@
  * What may be said about a failed Resend send, shared by `sendTransactionalEmail` and the notification `EmailChannel`.
  * Deliberately import-free: tests mock `send-transactional-email` wholesale, and `EmailChannel` must keep working there.
  */
-export type EmailSendOutcome = "accepted" | "rejected" | "unknown" | "not_configured";
+/** `blocked`: the recipient policy (recipient-policy.ts) stopped the send before the provider was called. Never sent. */
+export type EmailSendOutcome = "accepted" | "rejected" | "unknown" | "not_configured" | "blocked";
 
 /** Every `RESEND_ERROR_CODE_KEY` value in resend@6.27.0. */
 const RESEND_ERROR_CODES = [

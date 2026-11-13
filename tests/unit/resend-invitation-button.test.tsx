@@ -39,6 +39,7 @@ const CASES: Array<{ outcome: string; settlement?: string; keys: Key[]; failed: 
   { outcome: "accepted", settlement: "settled", keys: ["resendInvitationAccepted", "resendInvitationSettledAccepted"], failed: false },
   { outcome: "rejected", settlement: "settled", keys: ["resendInvitationRejected", "resendInvitationSettledWithdrawn"], failed: true },
   { outcome: "not_configured", settlement: "settled", keys: ["resendInvitationNotConfigured", "resendInvitationSettledWithdrawn"], failed: true },
+  { outcome: "blocked", settlement: "settled", keys: ["resendInvitationBlocked", "resendInvitationSettledWithdrawn"], failed: true },
   { outcome: "unknown", settlement: "settled", keys: ["resendInvitationUnknown", "resendInvitationSettledUnknown"], failed: false },
   { outcome: "accepted", settlement: "acceptedMeanwhile", keys: ["resendInvitationAccepted", "resendInvitationAcceptedMeanwhile"], failed: false },
   { outcome: "accepted", settlement: "unavailable", keys: ["resendInvitationAccepted", "resendInvitationUnavailable"], failed: false },

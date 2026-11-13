@@ -186,7 +186,7 @@ describe("staff forms", () => {
           expect(screen.getByDisplayValue(LINK)).toBeTruthy();
         });
 
-        for (const [outcome, key] of [["rejected", "rejected"], ["not_configured", "notConfigured"], ["unknown", "unknown"]] as const) {
+        for (const [outcome, key] of [["rejected", "rejected"], ["not_configured", "notConfigured"], ["blocked", "blocked"], ["unknown", "unknown"]] as const) {
           it(`${outcome} + settled: this resend invalidated nothing; the manual link is offered`, async () => {
             await showResend(delivery({ emailOutcome: outcome }), ["inv-new"], messages, locale);
             expect(screen.getByText(m.link.outcome[key])).toBeTruthy();
