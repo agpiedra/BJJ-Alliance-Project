@@ -17,20 +17,32 @@ import { createHmac } from "node:crypto";
 
 export const MAX_ALLOWLIST_ENTRIES = 25;
 
-export type PolicyBlockReason =
-  | "mode_invalid"
-  | "allowlist_missing"
-  | "allowlist_invalid"
-  | "mode_conflict"
-  | "unrestricted_outside_production"
-  | "not_allowlisted";
+/** Configuration reasons: every send is blocked. */
+export type ConfigBlockReason = "mode_invalid" | "allowlist_missing" | "allowlist_invalid" | "mode_conflict" | "unrestricted_outside_production";
+/** Per-recipient reasons: `recipient_invalid` (not one plain address, any mode) and `not_allowlisted`. */
+export type PolicyBlockReason = ConfigBlockReason | "recipient_invalid" | "not_allowlisted";
 
 type Env = Readonly<Record<string, string | undefined>>;
 
 export type EmailPolicy =
   | { effective: "allowlist"; addresses: ReadonlySet<string> }
   | { effective: "unrestricted" }
-  | { effective: "blocked_all"; reason: Exclude<PolicyBlockReason, "not_allowlisted"> };
+  | { effective: "blocked_all"; reason: ConfigBlockReason };
+
+/**
+ * One plain recipient address, required in EVERY mode before anything can be sent. Rejects whitespace (including
+ * CR/LF, tabs and Unicode spaces), control and invisible format characters, the address-list and display-name
+ * delimiters `,` `;` `<` `>` `:` `(` `)` `[` `]` `\`, and the double quote `"` — "quote" here means the double quote
+ * only. The apostrophe `'` is allowed (o'brien@example.com), as are non-ASCII letters (internationalized local parts
+ * and domains). Requires exactly one `@` with a non-empty local part and a domain of two or more non-empty labels.
+ */
+const NOT_PLAIN = /[\s\p{Cc}\p{Cf},;<>:()[\]\\"]/u;
+export function isPlainAddress(to: string): boolean {
+  const at = to.indexOf("@");
+  if (NOT_PLAIN.test(to) || at <= 0 || at !== to.lastIndexOf("@")) return false;
+  const labels = to.slice(at + 1).split(".");
+  return labels.length >= 2 && labels.every((label) => label.length > 0);
+}
 
 // Plain addresses only: no display names, spaces, wildcards, separators or bare domains.
 const ADDRESS = /^[a-z0-9._%+-]+@[a-z0-9-]+(\.[a-z0-9-]+)+$/;
@@ -59,18 +71,22 @@ export function resolveEmailPolicy(env: Env = process.env): EmailPolicy {
   return { effective: "blocked_all", reason: "mode_invalid" };
 }
 
-/** Whether one send to `to` may proceed. Allowlist matching is exact and case-insensitive; `to` is never trimmed. */
+/**
+ * Whether one send to `to` may proceed. A blocking configuration wins; then `to` must be one plain address in every
+ * mode; only then may a mode allow it. Allowlist matching is exact and case-insensitive; `to` is never trimmed.
+ */
 export function checkRecipient(to: string, env: Env = process.env): { allowed: true } | { allowed: false; reason: PolicyBlockReason } {
   const policy = resolveEmailPolicy(env);
-  if (policy.effective === "unrestricted") return { allowed: true };
   if (policy.effective === "blocked_all") return { allowed: false, reason: policy.reason };
+  if (!isPlainAddress(to)) return { allowed: false, reason: "recipient_invalid" };
+  if (policy.effective === "unrestricted") return { allowed: true };
   return policy.addresses.has(asciiLower(to)) ? { allowed: true } : { allowed: false, reason: "not_allowlisted" };
 }
 
 export interface EmailPolicyStatus {
   mode: "allowlist" | "unrestricted" | "invalid";
   effective: EmailPolicy["effective"];
-  reason: Exclude<PolicyBlockReason, "not_allowlisted"> | null;
+  reason: ConfigBlockReason | null;
   deploymentTarget: "production" | "preview" | "development" | "other";
   allowlistCount: number | null;
   /** HMAC-SHA256 (key: the status route's secret) over the sorted unique addresses joined by "\n"; null unless allowlist is effective. */

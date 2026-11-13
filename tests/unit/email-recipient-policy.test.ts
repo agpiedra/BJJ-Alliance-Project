@@ -120,13 +120,10 @@ describe("the actual staging configuration: VERCEL_ENV=production, EMAIL_DELIVER
     expectBlockedEverywhere(await sendBothPaths(OUTSIDER));
   });
 
-  it("recipient strings that are not exactly one listed address are blocked", async () => {
-    // U+212A KELVIN SIGN lowercases to ASCII "k" with String#toLowerCase; it must not match a listed "k" address.
+  it("a plain address that only folds into a listed one is not_allowlisted (U+212A KELVIN SIGN is not \"k\")", async () => {
     vi.stubEnv("EMAIL_RECIPIENT_ALLOWLIST", `${LISTED},kim@example.test`);
-    for (const to of [`${LISTED}, ${OUTSIDER}`, `Owner <${LISTED}>`, ` ${LISTED}`, `${LISTED}\n`, `${LISTED}\r\nBcc: ${OUTSIDER}`, "Kim@example.test"]) {
-      expect(checkRecipient(to), JSON.stringify(to)).toEqual({ allowed: false, reason: "not_allowlisted" });
-    }
-    expectBlockedEverywhere(await sendBothPaths(`${LISTED}, ${OUTSIDER}`));
+    expect(checkRecipient("Kim@example.test")).toEqual({ allowed: false, reason: "not_allowlisted" });
+    expectBlockedEverywhere(await sendBothPaths("Kim@example.test"));
   });
 
   it("DOCUMENTED LIMITATION: VERCEL_ENV=production cannot tell staging from production — mode unrestricted AND allowlist removed sends to anyone", async () => {
@@ -137,6 +134,84 @@ describe("the actual staging configuration: VERCEL_ENV=production, EMAIL_DELIVER
     const result = await sendBothPaths(OUTSIDER);
     expect(result.transactional).toEqual({ success: true, outcome: "accepted" });
     expect(result.counts.sent).toBe(1);
+  });
+});
+
+describe("one plain recipient address, required in both modes before anything is sent", () => {
+  // Each is rejected as recipient_invalid in allowlist mode (even when built from the listed address) and in
+  // unrestricted mode, through both send paths: never reaches Resend, never counted as sent.
+  const INVALID: Array<[string, string]> = [
+    ["two addresses, comma", `${LISTED}, ${OUTSIDER}`],
+    ["two addresses, comma without space", `${LISTED},${OUTSIDER}`],
+    ["two addresses, semicolon", `${LISTED};${OUTSIDER}`],
+    ["display name", `Owner <${LISTED}>`],
+    ["angle brackets only", `<${LISTED}>`],
+    ["quoted display name", `"Owner" ${LISTED}`],
+    ["double-quoted local part", `"listed"@example.test`],
+    ["leading space", ` ${LISTED}`],
+    ["trailing space", `${LISTED} `],
+    ["inner space", "list ed@example.test"],
+    ["tab", "listed\t@example.test"],
+    ["trailing LF", `${LISTED}\n`],
+    ["CR/LF header injection", `${LISTED}\r\nBcc: ${OUTSIDER}`],
+    ["NUL control character", "listed\u0000@example.test"],
+    ["DEL control character", "listed\u007f@example.test"],
+    ["zero-width space (format character)", "listed​@example.test"],
+    ["right-to-left override (format character)", "listed‮@example.test"],
+    ["no-break space", "listed @example.test"],
+    ["line separator", `${LISTED} `],
+    ["comment parentheses", `(note)${LISTED}`],
+    ["group syntax colon", `team: ${LISTED};`],
+    ["backslash", "list\\ed@example.test"],
+    ["address literal brackets", "listed@[127.0.0.1]"],
+    ["empty", ""],
+    ["no @", "listed.example.test"],
+    ["empty local part", "@example.test"],
+    ["empty domain", "listed@"],
+    ["two @", "listed@@example.test"],
+    ["@ in local part", "list@ed@example.test"],
+    ["single-label domain", "listed@example"],
+    ["empty leading domain label", "listed@.example.test"],
+    ["empty inner domain label", "listed@example..test"],
+    ["trailing dot", `${LISTED}.`],
+  ];
+
+  for (const [mode, configure] of [
+    ["allowlist (staging)", () => stubStagingEmailPolicy(LISTED)],
+    ["unrestricted (production)", () => stubProductionEmailPolicy()],
+  ] as const) {
+    for (const [name, to] of INVALID) {
+      it(`REQUIRED ${mode}: ${name} → recipient_invalid in both paths; never reaches Resend or counts as sent`, async () => {
+        configure();
+        expect(checkRecipient(to)).toEqual({ allowed: false, reason: "recipient_invalid" });
+        expectBlockedEverywhere(await sendBothPaths(to));
+        expect(await sendTransactionalEmail(to, "s", ["l"])).toEqual({ success: false, error: "recipient policy: recipient_invalid", outcome: "blocked" });
+      });
+    }
+  }
+
+  it("valid control, allowlist (staging): the listed address sends through both paths", async () => {
+    const result = await sendBothPaths(LISTED);
+    expect(result.transactional).toEqual({ success: true, outcome: "accepted" });
+    expect(result.direct).toEqual({ success: true });
+    expect(result.counts).toEqual({ attempted: 1, sent: 1, failed: 0 });
+  });
+
+  for (const to of ["o'brien@example.test", "d'angelo.o'neil@sub.example.test", "josé@exämple.test", "用户@例子.广告", "user+tag@xn--bcher-kva.example"]) {
+    it(`valid control, unrestricted (production): ${JSON.stringify(to)} sends through both paths, unchanged`, async () => {
+      stubProductionEmailPolicy();
+      expect(checkRecipient(to)).toEqual({ allowed: true });
+      const result = await sendBothPaths(to);
+      expect(result.transactional).toEqual({ success: true, outcome: "accepted" });
+      expect(result.direct).toEqual({ success: true });
+      expect(result.counts).toEqual({ attempted: 1, sent: 1, failed: 0 });
+      expect(providerSend).toHaveBeenCalledWith(expect.objectContaining({ to }));
+    });
+  }
+
+  it("a blocking configuration still reports its own reason before the recipient is examined", () => {
+    vi.stubEnv("EMAIL_RECIPIENT_ALLOWLIST", undefined);
+    expect(checkRecipient(`Owner <${LISTED}>`)).toEqual({ allowed: false, reason: "allowlist_missing" });
   });
 });
 

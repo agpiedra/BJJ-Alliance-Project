@@ -23,8 +23,21 @@ A unit test fails if `emails.send(` appears anywhere else in `src/`.
 | `allowlist` | any invalid entry | any | every send blocked (`allowlist_invalid`) — the whole list is rejected |
 | `allowlist` | valid | any | only exact listed addresses (case-insensitive); others blocked (`not_allowlisted`) |
 | `unrestricted` | set (even empty) | any | every send blocked (`mode_conflict`) |
-| `unrestricted` | not set | `production` | any address |
+| `unrestricted` | not set | `production` | any plain address (below); others blocked (`recipient_invalid`) |
 | `unrestricted` | not set | anything else | every send blocked (`unrestricted_outside_production`) |
+
+## One plain recipient address (every mode)
+
+Unless the configuration already blocks every send, the recipient must be one plain address before **either** mode can
+allow it; otherwise the send is blocked with reason `recipient_invalid` (`isPlainAddress`):
+
+- rejected: multiple addresses, display-name forms (`Name <a@x.com>`), whitespace (including CR/LF, tabs and Unicode
+  spaces), control and invisible format characters, the delimiters `,` `;` `<` `>` `:` `(` `)` `[` `]` `\`, the
+  **double quote** `"`, and malformed `@` structure (none, more than one, empty local part, a domain without two
+  non-empty labels);
+- allowed: the **apostrophe** `'` (`o'brien@example.com`) and non-ASCII letters (internationalized local parts and
+  domains). In `unrestricted` mode such addresses are sent unchanged. The allowlist itself still accepts only the
+  strict ASCII pattern above.
 
 ## Blocked messages
 
