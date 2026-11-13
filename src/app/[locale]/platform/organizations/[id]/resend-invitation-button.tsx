@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import type { InvitationSettlement } from "@/lib/organizations/approve-organization";
 import { approveOrganizationAction } from "../actions";
 
-type Outcome = "error" | "accepted" | "rejected" | "not_configured" | "unknown" | "notIssued" | "legacyUnresolved";
+type Outcome = "error" | "accepted" | "rejected" | "not_configured" | "blocked" | "unknown" | "notIssued" | "legacyUnresolved";
 type Result = { outcome: Outcome; settlement?: InvitationSettlement } | null;
 
 const OUTCOME_KEY = {
@@ -14,6 +14,7 @@ const OUTCOME_KEY = {
   accepted: "resendInvitationAccepted",
   rejected: "resendInvitationRejected",
   not_configured: "resendInvitationNotConfigured",
+  blocked: "resendInvitationBlocked",
   unknown: "resendInvitationUnknown",
   notIssued: "resendInvitationNotIssued",
   legacyUnresolved: "resendInvitationLegacyUnresolved",
@@ -37,7 +38,7 @@ function settlementKey(outcome: Outcome, settlement: InvitationSettlement) {
 
 /** Results an operator must act on; "accepted", "unknown" and "notIssued" are stated neutrally. */
 function isFailure(result: NonNullable<Result>): boolean {
-  return ["error", "rejected", "not_configured", "legacyUnresolved"].includes(result.outcome) || result.settlement === "failed";
+  return ["error", "rejected", "not_configured", "blocked", "legacyUnresolved"].includes(result.outcome) || result.settlement === "failed";
 }
 
 /**

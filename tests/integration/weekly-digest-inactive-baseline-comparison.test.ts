@@ -1,5 +1,9 @@
 import "dotenv/config";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { stubProductionEmailPolicy } from "../helpers/email-policy";
+
+// Generated recipients through the real EmailChannel: the production policy lets them through for this whole file.
+stubProductionEmailPolicy();
 import { execFileSync } from "node:child_process";
 import { writeFileSync, rmSync, existsSync } from "node:fs";
 import { getTestPrismaClient } from "../helpers/test-db";

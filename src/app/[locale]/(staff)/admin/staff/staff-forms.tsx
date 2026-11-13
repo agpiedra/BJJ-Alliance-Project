@@ -123,6 +123,7 @@ const OUTCOME_KEY: Record<EmailSendOutcome, string> = {
   accepted: "link.outcome.accepted",
   rejected: "link.outcome.rejected",
   not_configured: "link.outcome.notConfigured",
+  blocked: "link.outcome.blocked",
   unknown: "link.outcome.unknown",
 };
 

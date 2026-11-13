@@ -217,7 +217,7 @@ describe("resend by outcome (D1)", () => {
   });
 
   it("REQUIRED rejected / not_configured: this resend invalidates nothing — both links stay, the manual link is returned; accepting either retires the other", async () => {
-    for (const outcome of ["rejected", "not_configured"] as const) {
+    for (const outcome of ["rejected", "not_configured", "blocked"] as const) {
       const { context, academyA } = await organization();
       const p = await invite(context, invitee(outcome), "INSTRUCTOR", [academyA]);
       respondWith(outcome);

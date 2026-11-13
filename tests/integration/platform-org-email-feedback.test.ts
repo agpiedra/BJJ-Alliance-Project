@@ -145,7 +145,7 @@ afterAll(async () => {
 });
 
 describe("Approve: the approval is reported separately from the email outcome", () => {
-  for (const outcome of ["accepted", "rejected", "not_configured", "unknown"] as const) {
+  for (const outcome of ["accepted", "rejected", "not_configured", "blocked", "unknown"] as const) {
     it(`REQUIRED ${outcome}: approved (ACTIVE, academy, owner membership) — the outcome is reported beside ok, never as an error`, async () => {
       const org = await pendingOrganization();
       respondWith(outcome);
@@ -158,7 +158,7 @@ describe("Approve: the approval is reported separately from the email outcome", 
       expect(await prisma.organizationMembership.count({ where: { organizationId: org.id, role: "ADMIN" } })).toBe(1);
       const [invitation] = await invitationsOf(org.id);
       // The existing platform policy: a provably undelivered first link is withdrawn; accepted / unknown stay open.
-      expect(invitation.revokedAt !== null).toBe(outcome === "rejected" || outcome === "not_configured");
+      expect(invitation.revokedAt !== null).toBe(outcome === "rejected" || outcome === "not_configured" || outcome === "blocked");
     });
   }
 
@@ -258,7 +258,7 @@ describe("correction: a withdrawn link says nothing about other invitations", ()
 });
 
 describe("New organization: creation is reported separately from the email outcome", () => {
-  for (const outcome of ["accepted", "rejected", "not_configured", "unknown"] as const) {
+  for (const outcome of ["accepted", "rejected", "not_configured", "blocked", "unknown"] as const) {
     it(`REQUIRED ${outcome}: created (ACTIVE, ranks, academy) — the result carries its id and the outcome beside ok`, async () => {
       respondWith(outcome);
 

@@ -2611,6 +2611,7 @@
           "resendInvitationAccepted": "Nueva invitación emitida. El proveedor de correo aceptó el correo de invitación; la entrega no está confirmada.",
           "resendInvitationRejected": "El correo de invitación no se envió: el proveedor de correo lo rechazó.",
           "resendInvitationNotConfigured": "El correo de invitación no se envió: el envío de correo no está configurado.",
+          "resendInvitationBlocked": "El correo de invitación no se envió: la política de destinatarios de correo de este entorno lo bloqueó.",
           "resendInvitationUnknown": "Nueva invitación emitida, pero no se pudo confirmar el envío del correo de invitación.",
           "resendInvitationSettledAccepted": "Los enlaces de invitación anteriores para esta dirección quedaron retirados.",
           "resendInvitationSettledWithdrawn": "El nuevo enlace se retiró; este reenvío no modificó los enlaces de invitación anteriores.",
@@ -2652,6 +2653,7 @@
           "accepted": "El proveedor de correo aceptó el correo de invitación para el dueño; la entrega no está confirmada.",
           "rejected": "El correo de invitación no se envió: el proveedor de correo lo rechazó.",
           "not_configured": "El correo de invitación no se envió: el envío de correo no está configurado.",
+          "blocked": "El correo de invitación no se envió: la política de destinatarios de correo de este entorno lo bloqueó.",
           "unknown": "No se pudo confirmar si se envió el correo de invitación; aún podría llegar.",
           "notIssued": "No se emitió una invitación: ya se aceptó una invitación a esta dirección.",
           "legacyUnresolved": "No se emitió una invitación. Una invitación anterior a esta dirección figura como usada según las reglas anteriores, y no se puede saber si se aceptó o se reemplazó. Un operador de la plataforma debe resolverlo."
@@ -2932,6 +2934,7 @@
         "accepted": "El proveedor de correo aceptó el mensaje. Eso no confirma la entrega.",
         "rejected": "El proveedor de correo rechazó el mensaje. Copia el enlace de abajo y envíalo tú.",
         "notConfigured": "El envío de correos no está configurado. Copia el enlace de abajo y envíalo tú.",
+        "blocked": "La política de destinatarios de correo de este entorno bloqueó el mensaje. Copia el enlace de abajo y envíalo tú.",
         "unknown": "No pudimos confirmar si se envió el correo; aún podría llegar. Copia el enlace de abajo si lo necesitas."
       },
       "resend": {

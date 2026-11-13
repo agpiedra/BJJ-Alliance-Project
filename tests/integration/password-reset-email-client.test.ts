@@ -1,5 +1,6 @@
 import "dotenv/config";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { stubProductionEmailPolicy } from "../helpers/email-policy";
 import { getTestPrismaClient } from "../helpers/test-db";
 import { hashSecret } from "../../src/lib/crypto";
 
@@ -64,6 +65,8 @@ beforeEach(() => {
   consoleCalls = [];
   vi.stubEnv("RESEND_API_KEY", "re_synthetic_test_key");
   vi.stubEnv("EMAIL_FROM", "MATROOM <noreply@example.test>");
+  // Generated recipients: the production policy lets them through, so these tests keep testing provider logging.
+  stubProductionEmailPolicy();
   for (const method of ["log", "info", "warn", "error", "debug"] as const) {
     vi.spyOn(console, method).mockImplementation((...args: unknown[]) => {
       consoleCalls.push(args);

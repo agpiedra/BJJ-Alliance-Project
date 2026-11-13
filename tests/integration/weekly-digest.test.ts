@@ -6,6 +6,7 @@ import { requireEnv } from "../../src/lib/env";
 import { digestLookupSecret, hashSecret } from "../../src/lib/crypto";
 import { toAttendanceDate, ZONE } from "../../src/lib/scheduling/zone";
 import type { ResendClient } from "../../src/lib/notifications/email-channel";
+import { stubProductionEmailPolicy, stubStagingEmailPolicy } from "../helpers/email-policy";
 import { adultRankId } from "../helpers/belt-ranks";
 
 // Mutable state a hoisted `vi.mock` factory (below) reads at call time, so a
@@ -224,7 +225,10 @@ class FailingResendClient implements ResendClient {
 
 describe("sendWeeklyDigestForAcademy", () => {
   afterAll(cleanup);
-  beforeEach(() => vi.stubEnv("EMAIL_FROM", "Alliance BJJ <notifications@resend.dev>"));
+  beforeEach(() => {
+    vi.stubEnv("EMAIL_FROM", "Alliance BJJ <notifications@resend.dev>");
+    stubProductionEmailPolicy();
+  });
   afterEach(() => vi.unstubAllEnvs());
 
   it("computes correct attendance/inactive/overdue counts, emails only that academy's recipients, and never writes a Notification row", async () => {
@@ -325,6 +329,32 @@ describe("sendWeeklyDigestForAcademy", () => {
     // were processed above.
     const notificationCountAfter = await prisma.notification.count({ where: { type: "WEEKLY_DIGEST" } });
     expect(notificationCountAfter).toBe(notificationCountBefore);
+  });
+
+  it("REQUIRED staging policy (VERCEL_ENV=production, allowlist): only the listed recipient is emailed; every other digest recipient is blocked and counted failed, never sent", async () => {
+    const academy = await makeAcademy("weekly-digest-policy");
+    const admin = await makeStaffUser("ADMIN", "wd-policy-admin", academy.organizationId);
+    const director = await makeStaffUser("DIRECTOR", "wd-policy-director", academy.organizationId, academy.id);
+
+    stubStagingEmailPolicy(director.email);
+    const listed = new RecordingResendClient();
+    const result = await sendWeeklyDigestForAcademy(academy.id, listed);
+    expect(listed.calls.map((call) => call.to)).toEqual([director.email]);
+    expect(findCallTo(listed, admin.email)).toBeUndefined();
+    // At least the ADMIN above is blocked; other ADMIN recipients may pre-exist (same reasoning as the test above).
+    expect(result).toMatchObject({ organizationId: academy.organizationId, sent: 1, skipped: 0 });
+    expect(result.failed).toBeGreaterThanOrEqual(1);
+
+    // The allowlist removed: nothing reaches the provider and nothing is reported as sent.
+    vi.stubEnv("EMAIL_RECIPIENT_ALLOWLIST", undefined);
+    const removed = new RecordingResendClient();
+    expect(await sendWeeklyDigestForAcademy(academy.id, removed)).toEqual({
+      organizationId: academy.organizationId,
+      sent: 0,
+      failed: result.sent + result.failed,
+      skipped: 0,
+    });
+    expect(removed.calls).toEqual([]);
   });
 
   it("sends each recipient the digest in THEIR OWN locale, not a single shared locale for everyone", async () => {

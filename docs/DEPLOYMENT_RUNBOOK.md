@@ -50,6 +50,9 @@ together.
    delivers to the Resend account's own verified address. This is the one item on the
    launch checklist that blocks Alliance's own launch outright — see
    `MULTI_ACADEMY_AND_KIDS_BELTS.md`'s own Launch checklist section.
+   **Production must also set `EMAIL_DELIVERY_MODE=unrestricted` and must NOT set
+   `EMAIL_RECIPIENT_ALLOWLIST`** — without that, the recipient policy blocks every email
+   (`docs/EMAIL_RECIPIENT_POLICY.md`). Confirm with `docs/email-policy-status-check.ps1 -Expect unrestricted`.
 2. **Create a NEW Supabase project for production** in `us-east-1` (above) — **not** the
    project your local `.env` points at. Your local `SUPABASE_URL` points at a real Supabase
    project, so every dev verification that uploads a logo writes a **real object into that
@@ -852,7 +855,8 @@ director's or student's *different* address — which never happens until a real
 is in the system.
 
 Password-reset email (`src/lib/auth/password-reset.ts`) depends on the same verified sending
-domain. Until `RESEND_API_KEY` and `EMAIL_FROM` are set, every reset request answers with the
+domain (and on the recipient policy allowing the address: a `blocked` send also makes the token unusable).
+Until `RESEND_API_KEY` and `EMAIL_FROM` are set, every reset request answers with the
 same public message, logs `{ event: "password_reset.email", outcome: "not_configured" }`, and
 the token it issued is made unusable — no link is ever logged by the app. The link carries the
 token in its query string, so the hosting platform's own request logs may record it: check

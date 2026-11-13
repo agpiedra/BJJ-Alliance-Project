@@ -295,7 +295,7 @@ async function settleInvitation(
         where: { organizationId, id: { in: previousIds }, usedAt: null, revokedAt: null },
         data: { revokedAt: now },
       });
-    } else if ((outcome === "rejected" || outcome === "not_configured") && !options.keepLinkOnFailedSend) {
+    } else if ((outcome === "rejected" || outcome === "not_configured" || outcome === "blocked") && !options.keepLinkOnFailedSend) {
       // Provably not delivered by email; nobody holds it. Earlier links are left usable.
       await tx.invitation.updateMany({ where: { organizationId, id: invitationId, usedAt: null, revokedAt: null }, data: { revokedAt: now } });
     }

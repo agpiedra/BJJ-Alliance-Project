@@ -2,6 +2,7 @@ import { Resend } from "resend";
 import { requireEnv } from "@/lib/env";
 import { bodyToHtml } from "@/lib/notifications/email-channel";
 import { classifyProviderError, silenceSdkErrorLogging, type EmailSendOutcome, type ResendErrorCode } from "@/lib/email/provider-errors";
+import { checkRecipient } from "@/lib/email/recipient-policy";
 
 /**
  * MULTI_ACADEMY_AND_KIDS_BELTS.md Phase 5 — real transactional email for the
@@ -51,6 +52,10 @@ export async function sendTransactionalEmail(
   bodyLines: string[],
   options: SendTransactionalEmailOptions = {},
 ): Promise<TransactionalEmailResult> {
+  // First, before the API key is read or a client exists: a blocked recipient never reaches the provider.
+  const decision = checkRecipient(to);
+  if (!decision.allowed) return { success: false, error: `recipient policy: ${decision.reason}`, outcome: "blocked" };
+
   let apiKey: string;
   let from: string;
   try {

@@ -2611,6 +2611,7 @@
           "resendInvitationAccepted": "New invitation issued. The email provider accepted the invitation email; delivery is not confirmed.",
           "resendInvitationRejected": "The invitation email was not sent: the email provider rejected it.",
           "resendInvitationNotConfigured": "The invitation email was not sent: email sending is not configured.",
+          "resendInvitationBlocked": "The invitation email was not sent: this environment's email recipient policy blocked it.",
           "resendInvitationUnknown": "New invitation issued, but sending the invitation email could not be confirmed.",
           "resendInvitationSettledAccepted": "Earlier invitation links for this address were retired.",
           "resendInvitationSettledWithdrawn": "The new link was withdrawn; earlier invitation links were not changed by this resend.",
@@ -2652,6 +2653,7 @@
           "accepted": "The email provider accepted the invitation email to the owner; delivery is not confirmed.",
           "rejected": "The invitation email was not sent: the email provider rejected it.",
           "not_configured": "The invitation email was not sent: email sending is not configured.",
+          "blocked": "The invitation email was not sent: this environment's email recipient policy blocked it.",
           "unknown": "It could not be confirmed whether the invitation email was sent; it may still arrive.",
           "notIssued": "No invitation was issued: an invitation to this address has already been accepted.",
           "legacyUnresolved": "No invitation was issued. An earlier invitation to this address is recorded as used under the previous rules, and it cannot be told whether it was accepted or replaced. A platform operator must resolve it."
@@ -2932,6 +2934,7 @@
         "accepted": "The email provider accepted the message. That doesn't confirm delivery.",
         "rejected": "The email provider refused the message. Copy the link below and send it yourself.",
         "notConfigured": "Email sending isn't set up. Copy the link below and send it yourself.",
+        "blocked": "This environment's email recipient policy blocked the message. Copy the link below and send it yourself.",
         "unknown": "We couldn't confirm whether the email was sent — it may still arrive. Copy the link below if needed."
       },
       "resend": {

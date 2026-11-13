@@ -26,7 +26,7 @@ export function invitationReportOf(
   return { invitationEmail: result.invitationEmailOutcome ?? undefined, invitationSettlement: result.invitationSettlement ?? undefined };
 }
 
-const EMAIL_REPORTS: readonly InvitationEmailReport[] = ["accepted", "rejected", "not_configured", "unknown", "notIssued", "legacyUnresolved"];
+const EMAIL_REPORTS: readonly InvitationEmailReport[] = ["accepted", "rejected", "not_configured", "blocked", "unknown", "notIssued", "legacyUnresolved"];
 const SETTLEMENTS: readonly InvitationSettlement[] = ["settled", "acceptedMeanwhile", "unavailable", "failed"];
 
 /** The copy for one report, as message keys under `platform.organizations.invitationFeedback`. */

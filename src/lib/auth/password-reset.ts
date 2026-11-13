@@ -114,7 +114,8 @@ async function deliverResetEmail(input: { tokenId: string; to: string; link: str
       ...(result.providerCode ? { providerCode: result.providerCode } : {}),
     });
     if (result.outcome === "rejected") await invalidateIssuedToken(input.tokenId, true);
-    if (result.outcome === "not_configured") await invalidateIssuedToken(input.tokenId, false);
+    // Blocked by the recipient policy: never sent, nobody holds the link — unusable, like an unconfigured provider.
+    if (result.outcome === "not_configured" || result.outcome === "blocked") await invalidateIssuedToken(input.tokenId, false);
   } catch {
     if (sendStarted) {
       logPasswordResetEvent({ event: "password_reset.email", outcome: "unknown" });
