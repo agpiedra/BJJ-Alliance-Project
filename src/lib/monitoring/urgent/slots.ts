@@ -8,8 +8,16 @@
  */
 export const SUPPORTED_BILLING_SCHEDULE = "0 */3 * * *";
 export const SLOT_INTERVAL_MS = 3 * 60 * 60 * 1000;
-/** A slot S is kept only by a run that started in [S, S + 10 min) and finished by S + 10 min (2 min lateness + 5 min run + 3 min margin). */
+/** The approved deadline, unchanged: a slot S is kept only by a run that finished by S + 10 min (2 min lateness + 5 min run + 3 min margin). */
 export const SLOT_DEADLINE_MS = 10 * 60 * 1000;
+/**
+ * Clock tolerance at the window START only (PR-B review R1, disclosed for owner approval): a run may record a start up to
+ * 2 min before S. `JobRun.startedAt` comes from a different clock than the scheduler's, so a scheduler whose clock leads the
+ * database by even 1 ms would otherwise make every slot look missed (false alarms). The deadline above is NOT changed.
+ * Windows stay disjoint: [S − 2 min, S + 10 min) never overlaps the next slot's [S + 3 h − 2 min, …), so one run can satisfy
+ * at most one slot.
+ */
+export const SLOT_EARLY_TOLERANCE_MS = 2 * 60 * 1000;
 /** At most this many slots are judged per monitor run; the checkpoint carries the rest to the next run (no slot is skipped). */
 export const MAX_SLOTS_PER_RUN = 1000;
 
@@ -45,14 +53,20 @@ export interface SlotRun {
   finishedAt: Date | null;
 }
 
-/** Kept: some run started in [S, S + 10 min) and finished by S + 10 min, whatever its status. Missed otherwise. */
+/** Kept: some run started in [S − 2 min, S + 10 min) and finished by S + 10 min, whatever its status. Missed otherwise. */
 export function judgeSlots(slots: Date[], runs: SlotRun[]): { slot: Date; kept: boolean }[] {
   return slots.map((slot) => {
-    const start = slot.getTime();
-    const deadline = start + SLOT_DEADLINE_MS;
+    const start = slot.getTime() - SLOT_EARLY_TOLERANCE_MS;
+    const deadline = slot.getTime() + SLOT_DEADLINE_MS;
     const kept = runs.some((r) => r.startedAt.getTime() >= start && r.startedAt.getTime() < deadline && r.finishedAt !== null && r.finishedAt.getTime() <= deadline);
     return { slot, kept };
   });
+}
+
+/** The `JobRun.startedAt` range that can satisfy any of `slots` (for the read). */
+export function slotRunWindow(slots: Date[]): { from: Date; to: Date } | null {
+  if (slots.length === 0) return null;
+  return { from: new Date(slots[0].getTime() - SLOT_EARLY_TOLERANCE_MS), to: new Date(slots[slots.length - 1].getTime() + SLOT_DEADLINE_MS) };
 }
 
 export const slotKey = (slot: Date) => `SLOT:${slot.toISOString().slice(0, 16)}Z`;

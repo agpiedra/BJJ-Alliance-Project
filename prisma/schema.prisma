@@ -2079,28 +2079,40 @@ model JobRun {
 
 /// Urgent monitor state (urgent monitor PR-B; src/lib/monitoring/urgent; migration 20261118120000). Exactly one row (id 1,
 /// CHECK). Platform-level (no organizationId), written only by the monitor. `leaseId`/`leaseUntil`/`lastRunEndedAt` are written
-/// and compared only in SQL (UTC): one run at a time, ≥ 75 s apart. `slotCheckedThrough` and the findings cursor are the
-/// checkpoints: a schedule fault never moves `slotCheckedThrough`; `watchingSince` is set once.
+/// and compared only in SQL (UTC): one run at a time, ≥ 75 s apart after a clean release, ≥ 125 s after a crash.
+/// `slotCheckedThrough` is the slot checkpoint (a schedule fault never moves it); `watchingSince` is set once;
+/// `findingsHighWater` marks late-committing billing runs (which runs are processed is in `MonitorProcessedRun`).
 model MonitorState {
-  id                     Int       @id @default(1)
-  leaseId                String?
-  leaseUntil             DateTime?
-  lastRunEndedAt         DateTime?
-  watchingSince          DateTime?
-  slotCheckedThrough     DateTime?
-  jobRunCursorFinishedAt DateTime?
-  jobRunCursorId         String?
+  id                 Int       @id @default(1)
+  leaseId            String?
+  leaseUntil         DateTime?
+  lastRunEndedAt     DateTime?
+  watchingSince      DateTime?
+  slotCheckedThrough DateTime?
+  findingsHighWater  DateTime?
   /// "success" | "fail" | "unknown" (CHECK): what M2 last confirmed.
-  m2LastSignal           String    @default("unknown")
-  lastReminderAt         DateTime?
+  m2LastSignal       String    @default("unknown")
+  lastReminderAt     DateTime?
 }
 
-/// One urgent problem (urgent monitor PR-B). Keys: `A:<org>:<yyyy-mm>`, `C:<org>:<kind>`, `RUNERR:<org|global>`, `RUNDET`,
-/// `SLOT:<first missed slot>`, `FAULT:schedule`, `FAULT:findings`. Ids and codes only. `onsetNotBefore`/`evidenceAt` are
-/// evidence bounds (never "the onset"), only ever moved earlier; `firstSeenAt` is the alert age and never changes. A row is
-/// deleted only when cleared AND repeat-accepted. Accepted = Healthchecks HTTP 200 on the `/fail` that counted it, nothing more.
+/// The urgent monitor's processed-run ledger (PR-B review fix B2): one row per monthly-generation `JobRun` whose findings were
+/// applied, written in the same transaction as the resulting occurrences. No foreign key: a deleted JobRun leaves its row.
+model MonitorProcessedRun {
+  jobRunId    String   @id
+  processedAt DateTime @default(now())
+}
+
+/// One OCCURRENCE of an urgent problem (urgent monitor PR-B; review fix B1). `key` = `<problemKey>#<occurrence>` (CHECK).
+/// Problem keys: `A:<org>:<yyyy-mm>`, `C:<org>:<kind>`, `RUNERR:<org|global>`, `RUNDET`, `SLOT:<first missed slot>`,
+/// `FAULT:schedule`, `FAULT:findings`. Ids and codes only. At most one open occurrence per problem (enforced by the monitor
+/// under its lease). `onsetNotBefore`/`evidenceAt` are evidence bounds (never "the onset"), only ever moved earlier;
+/// `firstSeenAt` is the occurrence's age and never changes. A row is deleted only when cleared AND repeat-accepted.
+/// Accepted = Healthchecks HTTP 200 on the `/fail` that counted it, nothing more.
 model UrgentAlertKey {
   key              String    @id
+  problemKey       String
+  /// CHECK >= 1
+  occurrence       Int
   /// "A" | "C" | "SLOT" | "RUNERR" | "RUNDET" | "FAULT" (CHECK)
   category         String
   /// "monitorRead" | "billingRun" | "slot" | "monitor" (CHECK)
@@ -2119,6 +2131,7 @@ model UrgentAlertKey {
   lastAttemptAt    DateTime?
   lastErrorCode    String?
 
+  @@unique([problemKey, occurrence])
   @@index([clearedAt, repeatAcceptedAt])
 }
 

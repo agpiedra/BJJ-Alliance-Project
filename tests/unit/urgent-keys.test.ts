@@ -31,7 +31,10 @@ const run = (urgentFindings: unknown, startedAt = "2031-11-02T00:00:00Z", finish
   urgentFindings,
 });
 const obs = (over: Partial<Observation> & { dbNow: Date }): Observation => ({ runs: [], slotOps: [], scheduleFault: null, read: [], ...over });
-const byKey = (rows: KeyRow[]) => Object.fromEntries(rows.map((r) => [r.key, r]));
+/** Problem key → its latest occurrence. */
+const byKey = (rows: KeyRow[]) => Object.fromEntries([...rows].sort((a, b) => a.occurrence - b.occurrence).map((r) => [r.problemKey, r]));
+const ofProblem = (rows: KeyRow[], problemKey: string) => rows.filter((r) => r.problemKey === problemKey).sort((a, b) => a.occurrence - b.occurrence);
+const clean = () => buildUrgentFindings({ runErrors: NO_ERRORS, alerts: okReport() });
 
 describe("keysFromRead (B-U6)", () => {
   it("A carries its evidence bounds from the detailed detection; C has no known onset and is proven at the read", () => {
@@ -42,9 +45,9 @@ describe("keysFromRead (B-U6)", () => {
       readAt,
     );
     expect(keys).toEqual([
-      { key: "A:org-a:2031-11", category: "A", source: "monitorRead", onsetNotBefore: t(WARNING), evidenceAt: t("2031-11-02T03:04:05.000Z") },
-      { key: "C:org-c:noProgress", category: "C", source: "monitorRead", onsetNotBefore: null, evidenceAt: readAt },
-      { key: "C:org-d:noActivation", category: "C", source: "monitorRead", onsetNotBefore: null, evidenceAt: readAt },
+      { problemKey: "A:org-a:2031-11", category: "A", source: "monitorRead", onsetNotBefore: t(WARNING), evidenceAt: t("2031-11-02T03:04:05.000Z") },
+      { problemKey: "C:org-c:noProgress", category: "C", source: "monitorRead", onsetNotBefore: null, evidenceAt: readAt },
+      { problemKey: "C:org-d:noActivation", category: "C", source: "monitorRead", onsetNotBefore: null, evidenceAt: readAt },
     ]);
   });
 });
@@ -96,14 +99,14 @@ describe("reconcile: billing findings (B-U7) and clearing rules (B-U8)", () => {
     expect(byKey(rows)["RUNDET"].clearedAt).toEqual(now);
   });
 
-  it("a key cleared and already repeat-accepted is deleted; a recurrence after that is a NEW key (a new alert)", () => {
+  it("an occurrence cleared and already repeat-accepted is deleted; a recurrence after that is a NEW occurrence (a new alert)", () => {
     const done: KeyRow = {
-      key: "RUNERR:org-x", category: "RUNERR", source: "billingRun", onsetNotBefore: null, evidenceAt: null,
+      key: "RUNERR:org-x#1", problemKey: "RUNERR:org-x", occurrence: 1, category: "RUNERR", source: "billingRun", onsetNotBefore: null, evidenceAt: null,
       firstSeenAt: t("2031-11-01T00:00:00Z"), lastSeenAt: t("2031-11-01T00:00:00Z"), clearedAt: null,
       firstAcceptedAt: t("2031-11-01T00:10:00Z"), repeatAcceptedAt: t("2031-11-01T00:25:00Z"), lastMissedSlot: null, missedCount: 1, lastAttemptAt: null, lastErrorCode: null,
     };
     const cleared = reconcile([done], obs({ dbNow: now, runs: [run(buildUrgentFindings({ runErrors: NO_ERRORS, alerts: okReport() }))] }));
-    expect(cleared.deletes).toEqual(["RUNERR:org-x"]);
+    expect(cleared.deletes).toEqual(["RUNERR:org-x#1"]);
     const again = reconcile(cleared.rows, obs({ dbNow: t("2031-11-03T00:00:00Z"), runs: [run(buildUrgentFindings({ runErrors: { global: 0, organizations: ["org-x"] }, alerts: okReport() }))] }));
     expect(byKey(again.rows)["RUNERR:org-x"]).toMatchObject({ firstSeenAt: t("2031-11-03T00:00:00Z"), firstAcceptedAt: null });
   });
@@ -116,7 +119,7 @@ describe("binding PR-A decisions", () => {
     const stillA = keysFromRead(okReport({ newMonthAtRisk: [A] }), { "org-a:2031-11": { onsetNotBefore: WARNING, evidenceAt: "2031-11-02T06:05:00.000Z" } }, recovery);
     let rows = reconcile([], obs({ dbNow: recovery, runs: outage, read: stillA })).rows;
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ key: "A:org-a:2031-11", onsetNotBefore: t(WARNING), evidenceAt: t("2031-11-02T00:05:00.000Z"), firstSeenAt: recovery, clearedAt: null });
+    expect(rows[0]).toMatchObject({ key: "A:org-a:2031-11#1", problemKey: "A:org-a:2031-11", onsetNotBefore: t(WARNING), evidenceAt: t("2031-11-02T00:05:00.000Z"), firstSeenAt: recovery, clearedAt: null });
     // A later run and a later read with later evidence move nothing later and do not reset the age.
     rows = reconcile(rows, obs({ dbNow: t("2031-11-02T12:07:00Z"), runs: [run(findingWithA("2031-11-02T09:05:00.000Z"))], read: stillA })).rows;
     expect(rows[0]).toMatchObject({ onsetNotBefore: t(WARNING), evidenceAt: t("2031-11-02T00:05:00.000Z"), firstSeenAt: recovery });
@@ -144,7 +147,7 @@ describe("binding PR-A decisions", () => {
     const s1 = t("2031-11-02T03:00:00Z");
     let rows = reconcile([], obs({ dbNow: now(), slotOps: streakOps(null, [{ slot: s0, kept: false }, { slot: s1, kept: false }]) })).rows;
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ key: "SLOT:2031-11-02T00:00Z", missedCount: 2, lastMissedSlot: s1, onsetNotBefore: t("2031-11-02T00:10:00Z") });
+    expect(rows[0]).toMatchObject({ key: "SLOT:2031-11-02T00:00Z#1", missedCount: 2, lastMissedSlot: s1, onsetNotBefore: t("2031-11-02T00:10:00Z") });
     rows = reconcile(rows, obs({ dbNow: now(), slotOps: streakOps("SLOT:2031-11-02T00:00Z", [{ slot: t("2031-11-02T06:00:00Z"), kept: true }]) })).rows;
     expect(rows[0].clearedAt).not.toBeNull();
   });
@@ -152,4 +155,70 @@ describe("binding PR-A decisions", () => {
   function now() {
     return t("2031-11-02T05:07:00Z");
   }
+});
+
+describe("review fix B1: separate occurrences of one problem", () => {
+  const t0 = t("2031-11-02T05:07:00Z");
+  const t1 = t("2031-11-02T05:22:00Z");
+  const errX = () => buildUrgentFindings({ runErrors: { global: 0, organizations: ["org-x"] }, alerts: okReport() });
+
+  it("B-U26: recurrence after clearing while the first occurrence's REPEAT is still pending → a NEW occurrence (fresh alert); the old one keeps its pending repeat", () => {
+    const first: KeyRow = {
+      key: "RUNERR:org-x#1", problemKey: "RUNERR:org-x", occurrence: 1, category: "RUNERR", source: "billingRun", onsetNotBefore: null, evidenceAt: null,
+      firstSeenAt: t("2031-11-02T04:52:00Z"), lastSeenAt: t("2031-11-02T04:52:00Z"), clearedAt: null,
+      firstAcceptedAt: t("2031-11-02T04:53:00Z"), repeatAcceptedAt: null, lastMissedSlot: null, missedCount: 1, lastAttemptAt: null, lastErrorCode: null,
+    };
+    let rows = reconcile([first], obs({ dbNow: t0, runs: [run(clean())] })).rows;
+    expect(ofProblem(rows, "RUNERR:org-x")).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ clearedAt: t0, firstAcceptedAt: first.firstAcceptedAt, repeatAcceptedAt: null }); // cleared, repeat pending
+    rows = reconcile(rows, obs({ dbNow: t1, runs: [run(errX())] })).rows;
+    const [old, fresh] = ofProblem(rows, "RUNERR:org-x");
+    expect(old).toMatchObject({ key: "RUNERR:org-x#1", clearedAt: t0, firstAcceptedAt: first.firstAcceptedAt, repeatAcceptedAt: null }); // repeat still owed
+    expect(fresh).toMatchObject({ key: "RUNERR:org-x#2", occurrence: 2, clearedAt: null, firstSeenAt: t1, firstAcceptedAt: null }); // fresh alert
+  });
+
+  it("B-U27: clear and recurrence inside ONE batch (error, clean, error) → two occurrences, the first cleared, the second open and new", () => {
+    const rows = reconcile([], obs({ dbNow: t0, runs: [run(errX()), run(clean()), run(errX())] })).rows;
+    const [a, b] = ofProblem(rows, "RUNERR:org-x");
+    expect(a).toMatchObject({ occurrence: 1, clearedAt: t0, firstAcceptedAt: null }); // still owed its own alert
+    expect(b).toMatchObject({ occurrence: 2, clearedAt: null, firstAcceptedAt: null });
+  });
+
+  it("B-U28: the same for unavailable findings: marker, valid, NULL in one batch → two FAULT:findings occurrences", () => {
+    const rows = reconcile([], obs({ dbNow: t0, runs: [run(unavailableFindings("x")), run(clean()), run(null)] })).rows;
+    expect(ofProblem(rows, "FAULT:findings").map((r) => [r.occurrence, r.clearedAt])).toEqual([[1, t0], [2, null]]);
+  });
+
+  it("B-U29: an occurrence is never reopened; at most one is open per problem", () => {
+    let rows = reconcile([], obs({ dbNow: t0, runs: [run(errX())] })).rows;
+    rows = reconcile(rows, obs({ dbNow: t1, runs: [run(errX()), run(errX())] })).rows;
+    expect(ofProblem(rows, "RUNERR:org-x")).toHaveLength(1); // still the same open occurrence
+    expect(rows.filter((r) => r.clearedAt === null && r.problemKey === "RUNERR:org-x")).toHaveLength(1);
+  });
+});
+
+describe("review fix B2: late-committing runs", () => {
+  const t0 = t("2031-11-02T05:07:00Z");
+  const errX = () => buildUrgentFindings({ runErrors: { global: 0, organizations: ["org-x"] }, alerts: okReport() });
+  const late = (r: FinalizedRun): FinalizedRun => ({ ...r, late: true });
+
+  it("B-U30: a late run's findings are reported but never clear what a newer run decided", () => {
+    let rows = reconcile([], obs({ dbNow: t0, runs: [run(errX()), run(unavailableFindings("x"))] })).rows;
+    rows = reconcile(rows, obs({ dbNow: t0, runs: [late(run(clean()))] })).rows;
+    expect(byKey(rows)["RUNERR:org-x"].clearedAt).toBeNull();
+    expect(byKey(rows)["FAULT:findings"].clearedAt).toBeNull();
+  });
+
+  it("B-U31: a late run with an unavailable marker or errors raises the problem when nothing covers it", () => {
+    const rows = reconcile([], obs({ dbNow: t0, runs: [late(run(unavailableFindings("x"))), late(run(errX()))] })).rows;
+    expect(byKey(rows)["FAULT:findings"]).toMatchObject({ occurrence: 1, clearedAt: null, firstAcceptedAt: null });
+    expect(byKey(rows)["RUNERR:org-x"]).toMatchObject({ occurrence: 1, clearedAt: null });
+  });
+
+  it("B-U32: a late run whose problem already cleared moves the cleared occurrence's evidence earlier; no spurious new occurrence", () => {
+    let rows = reconcile([], obs({ dbNow: t0, runs: [run(errX(), "2031-11-02T03:00:00Z", "2031-11-02T03:04:00Z"), run(clean())] })).rows;
+    rows = reconcile(rows, obs({ dbNow: t0, runs: [late(run(errX(), "2031-11-02T00:00:00Z", "2031-11-02T00:03:00Z"))] })).rows;
+    expect(ofProblem(rows, "RUNERR:org-x")).toHaveLength(1);
+    expect(byKey(rows)["RUNERR:org-x"]).toMatchObject({ onsetNotBefore: t("2031-11-02T00:00:00Z"), clearedAt: t0 });
+  });
 });

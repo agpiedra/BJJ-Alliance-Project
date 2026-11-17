@@ -6,13 +6,15 @@ import type { SummaryInput } from "@/lib/monitoring/urgent/summary";
  * - new: never accepted yet. repeat: first accepted in an EARLIER run, not yet repeat-accepted (exactly one repeat each).
  * - reminder: when 60 min or more have passed since the last accepted `/fail`. Every due `/fail` carries the counts of ALL
  *   unresolved problems, so any accepted `/fail` also counts as the reminder.
- * - sequences: `success` (nothing unresolved), `failRefresh` (unresolved, nothing due: refreshes the body, M2 already Down, no
- *   transition), `fail` (due content and M2 last confirmed Up), `rearmFail` (due content otherwise: success first, then `/fail`,
- *   so there is a fresh Down transition and a fresh email).
+ * - sequences: `success` (nothing unresolved), `fail` (due content and M2 last confirmed Up), `rearmFail` (due content otherwise:
+ *   success first, then `/fail`, so there is a fresh Down transition and a fresh email), and for unresolved problems with
+ *   nothing due: `failRefresh` ONLY when M2 is known to be Down (refreshes the body; no transition, no email), else `none`
+ *   (review fix R4: a refresh must never create a Down transition, i.e. an alert with nothing due). Unresolved problems stay
+ *   visible: they are counted in every due `/fail`, and the hourly reminder is due at most 60 min after the last one.
  */
 export const REMINDER_INTERVAL_MS = 60 * 60 * 1000;
 
-export type M2Sequence = "success" | "failRefresh" | "fail" | "rearmFail";
+export type M2Sequence = "success" | "failRefresh" | "fail" | "rearmFail" | "none";
 export type M2Signal = "success" | "fail" | "unknown";
 
 export interface M2Plan {
@@ -61,7 +63,7 @@ export function planM2(p: { rows: KeyRow[]; m2LastSignal: M2Signal; lastReminder
 
   let sequence: M2Sequence;
   if (due) sequence = p.m2LastSignal === "success" ? "fail" : "rearmFail";
-  else if (unresolved.length > 0) sequence = "failRefresh";
+  else if (unresolved.length > 0) sequence = p.m2LastSignal === "fail" ? "failRefresh" : "none";
   else sequence = "success";
   return { sequence, newKeys: newRows.map((r) => r.key), repeatKeys: repeatRows.map((r) => r.key), due, summary };
 }

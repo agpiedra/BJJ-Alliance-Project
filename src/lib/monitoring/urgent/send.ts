@@ -8,7 +8,8 @@ import type { M2Sequence, M2Signal } from "@/lib/monitoring/urgent/plan";
  *   MIN_REMAINING_FOR_RETRY_MS of the run's budget remains. Never after 429 (rate limited) or another 4xx.
  * - `success` is a GET of the check URL; `/fail` is a POST with the ≤ 100-byte body.
  * - At most 4 requests to M2 (rearmFail: success + retry + /fail + retry) and 2 to M1 per run. With one run at a time and
- *   ≥ 75 s between runs (the lease), no 60-second window holds more than 4 requests to one check (limit: 5 per minute).
+ *   ≥ 75 s between runs after a clean release and ≥ 125 s after a crash or failed release (the lease), no 60-second window
+ *   holds more than 4 requests to one check (limit: 5 per minute). This assumes the platform kills a run at maxDuration (60 s).
  * - A `/fail` retry can never cause a second email: if the first `/fail` was in fact accepted, M2 is already Down and the
  *   retry makes no transition; if it was not, the retry makes the one transition.
  */
@@ -16,7 +17,7 @@ export const RETRY_WAIT_MS = 5_000;
 export const MIN_REMAINING_FOR_RETRY_MS = 10_000;
 
 export type PingKind = "success" | "fail";
-export type PingResult = "accepted" | "notAccepted" | "rateLimited" | "notConfigured";
+export type PingResult = "accepted" | "notAccepted" | "rateLimited" | "notConfigured" | "notSent";
 
 export interface SendDeps {
   /** One HTTP request; resolves to the status code, or null after a timeout or network error. Never throws. */
@@ -57,6 +58,7 @@ export interface M2Outcome {
 
 export async function executeM2(sequence: M2Sequence, url: string | undefined, body: string, deps: SendDeps): Promise<M2Outcome> {
   if (!url) return { signal: null, failAccepted: false, result: "notConfigured", requests: 0 };
+  if (sequence === "none") return { signal: null, failAccepted: false, result: "notSent", requests: 0 };
   if (sequence === "success") {
     const s = await ping(url, "success", undefined, deps);
     return { signal: s.result === "accepted" ? "success" : "unknown", failAccepted: false, result: s.result, requests: s.requests };

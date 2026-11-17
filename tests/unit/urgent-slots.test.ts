@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { checkSchedule, judgeSlots, slotKey, slotsDue, streakOps, SLOT_DEADLINE_MS, MAX_SLOTS_PER_RUN } from "../../src/lib/monitoring/urgent/slots";
+import { checkSchedule, judgeSlots, slotKey, slotRunWindow, slotsDue, streakOps, SLOT_DEADLINE_MS, SLOT_EARLY_TOLERANCE_MS, MAX_SLOTS_PER_RUN } from "../../src/lib/monitoring/urgent/slots";
 
 /** PR-B B-U1–B-U5: billing slots owed, judged and deduplicated. Pure; fixed clocks. */
 const t = (iso: string) => new Date(iso);
@@ -64,7 +64,26 @@ describe("judgeSlots (B-U4)", () => {
     expect(judgeSlots([S], [{ startedAt: at(1), finishedAt: at(10) }])).toEqual([{ slot: S, kept: true }]);
     expect(judgeSlots([S], [{ startedAt: at(1), finishedAt: new Date(at(10).getTime() + 1) }])).toEqual([{ slot: S, kept: false }]);
     expect(judgeSlots([S], [{ startedAt: at(1), finishedAt: null }])).toEqual([{ slot: S, kept: false }]);
-    expect(judgeSlots([S], [{ startedAt: new Date(S.getTime() - 1), finishedAt: at(2) }])).toEqual([{ slot: S, kept: false }]);
+  });
+  it("review R1: start tolerance 2 min before S only; the deadline S + 10 min is unchanged", () => {
+    expect(SLOT_EARLY_TOLERANCE_MS).toBe(2 * MIN);
+    expect(SLOT_DEADLINE_MS).toBe(10 * MIN); // the approved deadline
+    expect(judgeSlots([S], [{ startedAt: new Date(S.getTime() - 1), finishedAt: at(2) }])).toEqual([{ slot: S, kept: true }]); // clock lead of 1 ms
+    expect(judgeSlots([S], [{ startedAt: at(-2), finishedAt: at(2) }])).toEqual([{ slot: S, kept: true }]);
+    expect(judgeSlots([S], [{ startedAt: new Date(at(-2).getTime() - 1), finishedAt: at(2) }])).toEqual([{ slot: S, kept: false }]);
+    expect(judgeSlots([S], [{ startedAt: at(-1), finishedAt: new Date(at(10).getTime() + 1) }])).toEqual([{ slot: S, kept: false }]);
+  });
+  it("review R1: one run never satisfies two slots; windows are disjoint even at the edges", () => {
+    const next = new Date(S.getTime() + 3 * 60 * MIN);
+    for (const startedAt of [at(-2), at(0), at(9), new Date(next.getTime() - 2 * MIN), next]) {
+      const kept = judgeSlots([S, next], [{ startedAt, finishedAt: startedAt }]).filter((j) => j.kept);
+      expect(kept.length).toBeLessThanOrEqual(1);
+    }
+    // A run just before the next slot's tolerance counts for neither.
+    const between = new Date(next.getTime() - 2 * MIN - 1);
+    expect(judgeSlots([S, next], [{ startedAt: between, finishedAt: between }]).filter((j) => j.kept)).toEqual([]);
+    expect(slotRunWindow([S, next])).toEqual({ from: at(-2), to: new Date(next.getTime() + 10 * MIN) });
+    expect(slotRunWindow([])).toBeNull();
   });
   it("duplicate deliveries in one window count once; a run in the next window counts for the next slot only", () => {
     const next = new Date(S.getTime() + 3 * 60 * MIN);

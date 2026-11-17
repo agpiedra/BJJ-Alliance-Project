@@ -8,7 +8,7 @@ import { detectGenerationAlertsDetailed, type GenerationAlertDetail } from "@/li
 import { resolveJobSchedule } from "@/lib/jobs/job-health";
 import { requestHealthcheck, urgentMonitorUrl } from "@/lib/jobs/heartbeat";
 import { keysFromRead, reconcile, FAULT_FINDINGS, FAULT_SCHEDULE, type KeyRow } from "@/lib/monitoring/urgent/keys";
-import { checkSchedule, judgeSlots, slotsDue, streakOps, SLOT_DEADLINE_MS } from "@/lib/monitoring/urgent/slots";
+import { checkSchedule, judgeSlots, slotRunWindow, slotsDue, streakOps } from "@/lib/monitoring/urgent/slots";
 import { planM2 } from "@/lib/monitoring/urgent/plan";
 import { encodeMonitorFault, encodeSummary } from "@/lib/monitoring/urgent/summary";
 import { executeM2, ping, type PingResult, type SendDeps } from "@/lib/monitoring/urgent/send";
@@ -17,8 +17,8 @@ import * as defaultStore from "@/lib/monitoring/urgent/store";
 /**
  * The urgent monitor (docs/dues/URGENT-ALERTING-ONE-HOUR-PROPOSAL.md revision 5.1; implementation plan PR-B). One run, every
  * 15 minutes (`7,22,37,52 * * * *`):
- *  1. lease (one run at a time, ≥ 75 s apart) → 2. schedule check → 3. reads (billing data only through the existing READ ONLY
- *  detection; `JobRun` read-only) → 4. ONE fenced transaction (keys, slot checkpoint, findings cursor) BEFORE any ping →
+ *  1. lease (one run at a time, ≥ 75 s apart; ≥ 125 s after a crash) → 2. schedule check → 3. reads (billing data only through the existing READ ONLY
+ *  detection; `JobRun` read-only) → 4. ONE fenced transaction (occurrences, processed-run ledger, slot checkpoint) BEFORE any ping →
  *  5. M2 sequence → 6. record acceptance (only after HTTP 200 on the `/fail` that counted the keys) → 7. M1 → 8. release.
  * A failed read (D) sends M1 `/fail` and changes no key and no checkpoint. It never uses `runScheduledJob`: no `JobRun` rows.
  * Delivery is never confirmed: "accepted" is Healthchecks' HTTP 200, nothing more (hosted behavior unverified until drill X1).
@@ -61,7 +61,7 @@ class DetectionFailed extends Error {
 }
 
 const faultParts = (rows: KeyRow[], scheduleReason: string | null) => {
-  const open = new Set(rows.filter((r) => r.category === "FAULT" && r.clearedAt === null).map((r) => r.key));
+  const open = new Set(rows.filter((r) => r.category === "FAULT" && r.clearedAt === null).map((r) => r.problemKey));
   const parts: string[] = [];
   if (open.has(FAULT_SCHEDULE)) parts.push(`schedule=${scheduleReason ?? "unsupported"}`);
   if (open.has(FAULT_FINDINGS)) parts.push("findings=unavailable");
@@ -82,15 +82,13 @@ export async function runUrgentMonitor(deps: UrgentMonitorDeps): Promise<UrgentM
     const scheduleReason = schedule.ok ? null : schedule.reason;
     const watchingSince = state.watchingSince ?? dbNow;
     const slots = schedule.ok ? slotsDue({ watchingSince, checkedThrough: state.slotCheckedThrough, dbNow }) : [];
-    const cursor = state.jobRunCursorFinishedAt && state.jobRunCursorId ? { finishedAt: state.jobRunCursorFinishedAt, id: state.jobRunCursorId } : null;
 
     let detail: GenerationAlertDetail;
     let jobRuns: Awaited<ReturnType<Store["readJobRuns"]>>;
     try {
       detail = await deps.detect(dbNow);
       if (detail.report.detection !== "ok") throw new DetectionFailed(detail.report.detection);
-      const slotWindow = slots.length > 0 ? { from: slots[0], to: new Date(slots[slots.length - 1].getTime() + SLOT_DEADLINE_MS) } : null;
-      jobRuns = await store.readJobRuns(deps.db, { since: watchingSince, cursor, slotWindow });
+      jobRuns = await store.readJobRuns(deps.db, { highWater: state.findingsHighWater, slotWindow: slotRunWindow(slots) });
     } catch (error) {
       // D: the monitor cannot see. No key and no checkpoint changes; M1 /fail.
       const code = error instanceof DetectionFailed ? error.code : safeErrorCode(error);
@@ -101,10 +99,13 @@ export async function runUrgentMonitor(deps: UrgentMonitorDeps): Promise<UrgentM
 
     const judged = judgeSlots(slots, jobRuns.slotRuns);
     const read = keysFromRead(detail.report, detail.atRisk, dbNow);
-    const lastRun = jobRuns.finalized[jobRuns.finalized.length - 1];
+    const highWater = [state.findingsHighWater, ...jobRuns.finalized.map((r) => r.finishedAt)].reduce<Date | null>(
+      (max, d) => (d !== null && (max === null || d.getTime() > max.getTime()) ? d : max),
+      null,
+    );
     const rows = await store.persist(deps.db, leaseId, {
       reconcile: (existing) => {
-        const open = existing.find((r) => r.category === "SLOT" && r.clearedAt === null)?.key ?? null;
+        const open = existing.find((r) => r.category === "SLOT" && r.clearedAt === null)?.problemKey ?? null;
         return reconcile(existing, {
           dbNow,
           runs: jobRuns.finalized,
@@ -115,7 +116,8 @@ export async function runUrgentMonitor(deps: UrgentMonitorDeps): Promise<UrgentM
       },
       watchingSince: state.watchingSince ? undefined : dbNow,
       slotCheckedThrough: schedule.ok && slots.length > 0 ? slots[slots.length - 1] : undefined,
-      cursor: lastRun ? { finishedAt: lastRun.finishedAt, id: lastRun.id } : undefined,
+      processedRunIds: jobRuns.finalized.map((r) => r.id),
+      findingsHighWater: highWater ?? undefined,
     });
     await deps.afterPersist?.();
 

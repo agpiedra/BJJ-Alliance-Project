@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { executeM2, ping, RETRY_WAIT_MS, MIN_REMAINING_FOR_RETRY_MS, type SendDeps } from "../../src/lib/monitoring/urgent/send";
 import type { M2Sequence } from "../../src/lib/monitoring/urgent/plan";
+import { LEASE_SECONDS, RUN_SPACING_SECONDS } from "../../src/lib/monitoring/urgent/store";
+import { MONITOR_FUNCTION_MAX_SECONDS } from "../../src/lib/monitoring/urgent/run";
 
 /** PR-B B-U16–B-U20: exact request sequences, retries, rate limits, and the five-per-minute model. No network, no real waits. */
 const M2 = "https://hc-ping.example/m2-uuid";
@@ -100,6 +102,10 @@ describe("executeM2: every sequence of design §7 (B-U16, B-U17)", () => {
     expect((await run("fail", [null, null])).outcome).toMatchObject({ signal: "unknown", failAccepted: false });
   });
 
+  it("none (review fix R4): no request, signal left unchanged, not counted as a failure", async () => {
+    expect(await run("none", [200])).toEqual({ outcome: { signal: null, failAccepted: false, result: "notSent", requests: 0 }, calls: [] });
+  });
+
   it("M2 not configured: no request, signal left unchanged (null)", async () => {
     const f = fake([]);
     expect(await executeM2("rearmFail", undefined, BODY, f.deps)).toEqual({ signal: null, failAccepted: false, result: "notConfigured", requests: 0 });
@@ -107,25 +113,30 @@ describe("executeM2: every sequence of design §7 (B-U16, B-U17)", () => {
 
   it("never more than 4 requests to M2 in any sequence and any failure pattern", async () => {
     const patterns: (number | null)[][] = [[null, null, null, null], [500, 500, 500, 500], [200, null, 500], [429], [404, 200], [null, 200, 429]];
-    for (const sequence of ["success", "failRefresh", "fail", "rearmFail"] as const) {
+    for (const sequence of ["success", "failRefresh", "fail", "rearmFail", "none"] as const) {
       for (const p of patterns) expect((await run(sequence, [...p])).calls.length).toBeLessThanOrEqual(4);
     }
   });
 });
 
-describe("B-U20: the five-per-minute model (lease + 75 s spacing over 24 h of random deliveries)", () => {
-  /** Request offsets of one run, worst case: M2 at p0+0/10/15/25 s with p0 = 5 s; the run ends at 52 s. */
-  const M2_OFFSETS = [5, 15, 20, 30].map((s) => s * 1000);
-  const RUN_MS = 52_000;
+describe("B-U20: the five-per-minute model (lease + spacing over 24 h of random deliveries, crashes and failed releases)", () => {
+  /**
+   * One run: up to 4 M2 requests at any time in [0, 60 s) (the platform kills a run at maxDuration = 60 s). Each run ends one
+   * of three ways (review R2): a clean release (lastRunEndedAt = its end), a CRASH (killed at a random time; only the requests
+   * before it happen; the lease is kept, lastRunEndedAt unchanged) or a FAILED RELEASE (all requests; lease kept).
+   */
+  const FUNCTION_MS = MONITOR_FUNCTION_MAX_SECONDS * 1000;
+  type Ending = "clean" | "crash" | "releaseFailed";
 
-  function simulate(spacingMs: number, leaseMs: number, seed: number) {
+  function simulate(spacingMs: number, leaseMs: number, seed: number, endings: Ending[] = ["clean", "crash", "releaseFailed"]) {
     let s = seed;
     const rnd = () => (s = (s * 1103515245 + 12345) % 2 ** 31) / 2 ** 31;
-    // Scheduled ticks every 15 min, each delivered 1–3 times (duplicates, catch-ups) within ±90 s.
+    // Scheduled ticks every 15 min, each delivered 1–3 times (duplicates, catch-ups) within ±150 s: copies land on the
+    // earliest takeover instant often enough to probe it.
     const deliveries: number[] = [];
     for (let tick = 0; tick < 24 * 4; tick++) {
       const copies = 1 + Math.floor(rnd() * 3);
-      for (let c = 0; c < copies; c++) deliveries.push(tick * 900_000 + Math.floor(rnd() * 180_000) - 90_000);
+      for (let c = 0; c < copies; c++) deliveries.push(tick * 900_000 + Math.floor(rnd() * 300_000) - 150_000);
     }
     deliveries.sort((a, b) => a - b);
     let leaseUntil = -Infinity;
@@ -134,23 +145,51 @@ describe("B-U20: the five-per-minute model (lease + 75 s spacing over 24 h of ra
     for (const start of deliveries) {
       if (start < leaseUntil || start <= lastEnd + spacingMs) continue; // the acquireLease predicate
       leaseUntil = start + leaseMs;
-      for (const o of M2_OFFSETS) m2.push(start + o);
-      lastEnd = start + RUN_MS;
+      const ending = endings[Math.floor(rnd() * endings.length)];
+      const end = start + Math.floor(rnd() * FUNCTION_MS); // where it ends or is killed, < 60 s
+      // Worst case for the window: the requests bunched just before the end.
+      for (let i = 0; i < 4; i++) m2.push(Math.max(start, end - i * 1000));
+      if (ending === "clean") {
+        lastEnd = end;
+        leaseUntil = -Infinity;
+      }
     }
     return m2;
   }
   const maxInMinute = (times: number[]) => {
+    const sorted = [...times].sort((a, b) => a - b);
     let max = 0;
-    for (let i = 0; i < times.length; i++) max = Math.max(max, times.filter((x) => x >= times[i] && x < times[i] + 60_000).length);
+    for (let i = 0; i < sorted.length; i++) max = Math.max(max, sorted.filter((x) => x >= sorted[i] && x < sorted[i] + 60_000).length);
     return max;
   };
+  const lease = LEASE_SECONDS * 1000;
+  const spacing = RUN_SPACING_SECONDS * 1000;
 
-  it("with the real rule (lease 90 s, spacing 75 s): never more than 4 requests to M2 in any 60-s window", () => {
-    for (let seed = 1; seed <= 50; seed++) expect(maxInMinute(simulate(75_000, 90_000, seed))).toBeLessThanOrEqual(4);
+  it("lease ≥ function limit + 65 s: a crashed run's last request and the earliest takeover's first are > 60 s apart", () => {
+    expect(lease).toBeGreaterThanOrEqual(FUNCTION_MS + 65_000);
+    expect(spacing).toBeGreaterThan(60_000);
   });
 
-  it("positive control: without the spacing rule the same deliveries DO exceed 5 per minute (the test can fail)", () => {
-    const worst = Math.max(...Array.from({ length: 50 }, (_, i) => maxInMinute(simulate(-Infinity, 0, i + 1))));
+  it("with the real rule (lease 125 s, spacing 75 s): never more than 4 requests to M2 in any 60-s window, with crashes and failed releases", () => {
+    for (let seed = 1; seed <= 100; seed++) expect(maxInMinute(simulate(spacing, lease, seed))).toBeLessThanOrEqual(4);
+  });
+
+  it("earliest takeover after a crash at 59 s (deterministic): the next run starts at the lease end and stays within 4 per minute", () => {
+    const crashed = [56_000, 57_000, 58_000, 59_000];
+    const takeover = [0, 1_000, 2_000, 3_000].map((o) => lease + o);
+    expect(maxInMinute([...crashed, ...takeover])).toBe(4);
+  });
+
+  it("positive control: the OLD 90 s lease with the same crash DOES put 8 requests in one minute (the test can fail)", () => {
+    const crashed = [56_000, 57_000, 58_000, 59_000];
+    const takeover = [0, 1_000, 2_000, 3_000].map((o) => 90_000 + o);
+    expect(maxInMinute([...crashed, ...takeover])).toBe(8);
+    const worst = Math.max(...Array.from({ length: 100 }, (_, i) => maxInMinute(simulate(spacing, 90_000, i + 1, ["crash"]))));
+    expect(worst).toBeGreaterThan(4);
+  });
+
+  it("positive control: without the spacing rule clean runs DO exceed 5 per minute", () => {
+    const worst = Math.max(...Array.from({ length: 50 }, (_, i) => maxInMinute(simulate(-Infinity, 0, i + 1, ["clean"]))));
     expect(worst).toBeGreaterThan(5);
   });
 });

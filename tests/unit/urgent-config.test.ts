@@ -54,15 +54,17 @@ describe("read-only boundary (B-U22)", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("the monitor never writes any model except its own two (no create/update/upsert/delete on billing or JobRun models)", () => {
+  it("the monitor never writes any model except its own three (no create/update/upsert/delete on billing or JobRun models)", () => {
     const writes: string[] = [];
+    const own = new Set(["urgentAlertKey", "monitorState", "monitorProcessedRun"]);
+    const ownTables = new Set(["MonitorState", "UrgentAlertKey", "MonitorProcessedRun"]);
     for (const file of readdirSync(MONITOR_DIR)) {
       const text = stripComments(readFileSync(path.join(MONITOR_DIR, file), "utf8"));
       for (const m of text.matchAll(/\.(\w+)\s*\.\s*(create|createMany|update|updateMany|upsert|delete|deleteMany)\s*\(/g)) {
-        if (m[1] !== "urgentAlertKey" && m[1] !== "monitorState") writes.push(`${file}: ${m[1]}.${m[2]}`);
+        if (!own.has(m[1])) writes.push(`${file}: ${m[1]}.${m[2]}`);
       }
       for (const m of text.matchAll(/(UPDATE|INSERT\s+INTO|DELETE\s+FROM)\s+"(\w+)"/g)) {
-        if (m[2] !== "MonitorState" && m[2] !== "UrgentAlertKey") writes.push(`${file}: ${m[1]} ${m[2]}`);
+        if (!ownTables.has(m[2])) writes.push(`${file}: ${m[1]} ${m[2]}`);
       }
     }
     expect(writes).toEqual([]);

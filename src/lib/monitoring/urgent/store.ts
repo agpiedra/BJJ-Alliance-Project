@@ -14,10 +14,15 @@ import type { SlotRun } from "@/lib/monitoring/urgent/slots";
  */
 export type Db = typeof prisma;
 
-export const LEASE_SECONDS = 90;
-/** A run starts only this long after the previous run ended: with ≤ 4 requests per run to one check, no minute holds 5. */
+/**
+ * Lease length (PR-B review R2): longer than the function limit (60 s) plus one full minute plus 5 s. A run that crashes or fails
+ * to release keeps the lease, so the earliest takeover starts ≥ 125 s after it, i.e. ≥ 65 s after its last possible request:
+ * no 60-second window ever holds requests of both, so the ≤ 4-per-minute bound holds through crashes too.
+ */
+export const LEASE_SECONDS = 125;
+/** After a clean release, a run starts only this long after the previous run ended (≤ 4 requests per run to one check). */
 export const RUN_SPACING_SECONDS = 75;
-/** Finalized billing runs turned into keys per monitor run; the cursor carries the rest to the next run. */
+/** Finalized billing runs turned into keys per monitor run; the rest are taken by the next run (none is ever skipped). */
 export const FINDINGS_BATCH = 500;
 /** More `JobRun` rows than this in the due-slot window is a read failure (D): at most a few runs per slot are expected. */
 export const SLOT_RUNS_CAP = 1000;
@@ -35,8 +40,8 @@ export class LeaseLostError extends Error {
 export interface MonitorState {
   watchingSince: Date | null;
   slotCheckedThrough: Date | null;
-  jobRunCursorFinishedAt: Date | null;
-  jobRunCursorId: string | null;
+  /** The latest `finishedAt` among processed billing runs: a run that finished earlier and commits later is processed as late. */
+  findingsHighWater: Date | null;
   m2LastSignal: M2Signal;
   lastReminderAt: Date | null;
 }
@@ -57,8 +62,7 @@ export async function acquireLease(db: Db, leaseId: string): Promise<{ dbNow: Da
     state: {
       watchingSince: s.watchingSince,
       slotCheckedThrough: s.slotCheckedThrough,
-      jobRunCursorFinishedAt: s.jobRunCursorFinishedAt,
-      jobRunCursorId: s.jobRunCursorId,
+      findingsHighWater: s.findingsHighWater,
       m2LastSignal: s.m2LastSignal as M2Signal,
       lastReminderAt: s.lastReminderAt,
     },
@@ -79,20 +83,34 @@ async function bounded(tx: Parameters<Parameters<Db["$transaction"]>[0]>[0], rea
   await tx.$executeRawUnsafe("SET LOCAL idle_in_transaction_session_timeout = 2000");
 }
 
-/** Step 4 (read-only): finalized billing runs after the findings cursor, and the runs inside the due-slot window. */
+/**
+ * Step 4 (read-only): finalized billing runs NOT yet in the processed ledger (review fix B2), and the runs inside the due-slot
+ * window. The ledger, not a time cursor, decides what is new: a run that finished earlier but committed after a newer run was
+ * processed is still unprocessed, so it is read here. No commit-delay bound is assumed. Only runs finished at or after
+ * `watchingSince` count (before the monitor's first run, nothing is owed). Ids are selected in SQL (both timestamps compared in
+ * the database, no parameter conversion), then read through Prisma.
+ */
 export async function readJobRuns(
   db: Db,
-  p: { since: Date; cursor: { finishedAt: Date; id: string } | null; slotWindow: { from: Date; to: Date } | null },
+  p: { highWater: Date | null; slotWindow: { from: Date; to: Date } | null },
 ): Promise<{ finalized: FinalizedRun[]; slotRuns: SlotRun[] }> {
   return db.$transaction(async (tx) => {
     await bounded(tx, true);
-    const after = p.cursor ? { OR: [{ finishedAt: { gt: p.cursor.finishedAt } }, { finishedAt: p.cursor.finishedAt, id: { gt: p.cursor.id } }] } : {};
-    const finalized = await tx.jobRun.findMany({
-      where: { jobName: GENERATION, finishedAt: { not: null, gte: p.since }, ...after },
-      orderBy: [{ finishedAt: "asc" }, { id: "asc" }],
-      take: FINDINGS_BATCH,
-      select: { id: true, startedAt: true, finishedAt: true, urgentFindings: true },
-    });
+    const ids = await tx.$queryRaw<{ id: string }[]>`
+      SELECT j.id FROM "JobRun" j, "MonitorState" s
+       WHERE s.id = 1 AND j."jobName" = ${GENERATION} AND j."finishedAt" IS NOT NULL
+         AND j."finishedAt" >= COALESCE(s."watchingSince", now() AT TIME ZONE 'UTC')
+         AND NOT EXISTS (SELECT 1 FROM "MonitorProcessedRun" p WHERE p."jobRunId" = j.id)
+       ORDER BY j."finishedAt", j.id
+       LIMIT ${FINDINGS_BATCH}`;
+    const rows = ids.length
+      ? await tx.jobRun.findMany({
+          where: { id: { in: ids.map((r) => r.id) } },
+          orderBy: [{ finishedAt: "asc" }, { id: "asc" }],
+          select: { id: true, startedAt: true, finishedAt: true, urgentFindings: true },
+        })
+      : [];
+    const finalized = rows.map((r) => ({ ...r, finishedAt: r.finishedAt!, late: p.highWater !== null && r.finishedAt!.getTime() < p.highWater.getTime() }));
     let slotRuns: SlotRun[] = [];
     if (p.slotWindow) {
       slotRuns = await tx.jobRun.findMany({
@@ -102,7 +120,7 @@ export async function readJobRuns(
       });
       if (slotRuns.length > SLOT_RUNS_CAP) throw Object.assign(new Error("slot window over cap"), { code: "overflow" });
     }
-    return { finalized: finalized.map((r) => ({ ...r, finishedAt: r.finishedAt! })), slotRuns };
+    return { finalized, slotRuns };
   }, READ_BOUNDS);
 }
 
@@ -112,6 +130,8 @@ async function fence(tx: Parameters<Parameters<Db["$transaction"]>[0]>[0], lease
 }
 
 const toRow = (r: KeyRow) => ({
+  problemKey: r.problemKey,
+  occurrence: r.occurrence,
   category: r.category,
   source: r.source,
   onsetNotBefore: r.onsetNotBefore,
@@ -128,9 +148,11 @@ const toRow = (r: KeyRow) => ({
 });
 
 /**
- * Step 5: ONE fenced transaction, committed before any ping: the keys (reconciled from the rows as they are inside this
- * transaction), the slot checkpoint and the findings cursor change together or not at all. Returns the rows after the writes.
- * Checkpoints are written only when given: a schedule fault passes no `slotCheckedThrough`, so the slot checkpoint is preserved.
+ * Step 5: ONE fenced transaction, committed before any ping: the occurrences (reconciled from the rows as they are inside this
+ * transaction), the processed-run ledger, the findings high-water mark and the slot checkpoint change together or not at all.
+ * A run is marked processed only in the transaction that applied its findings, so it is applied exactly once (a crash before
+ * commit leaves it unprocessed; `skipDuplicates` makes a replay of the same commit harmless). Checkpoints are written only when
+ * given: a schedule fault passes no `slotCheckedThrough`, so the slot checkpoint is preserved. Returns the rows after the writes.
  */
 export async function persist(
   db: Db,
@@ -139,7 +161,8 @@ export async function persist(
     reconcile: (existing: KeyRow[]) => Reconciled;
     watchingSince?: Date;
     slotCheckedThrough?: Date;
-    cursor?: { finishedAt: Date; id: string };
+    processedRunIds?: string[];
+    findingsHighWater?: Date;
   },
 ): Promise<KeyRow[]> {
   return db.$transaction(async (tx) => {
@@ -147,14 +170,17 @@ export async function persist(
     await fence(tx, leaseId);
     const existing = (await tx.urgentAlertKey.findMany()) as KeyRow[];
     const r = p.reconcile(existing);
-    for (const row of r.upserts) await tx.urgentAlertKey.upsert({ where: { key: row.key }, create: { key: row.key, ...toRow(row) }, update: toRow(row) });
     if (r.deletes.length > 0) await tx.urgentAlertKey.deleteMany({ where: { key: { in: r.deletes } } });
+    for (const row of r.upserts) await tx.urgentAlertKey.upsert({ where: { key: row.key }, create: { key: row.key, ...toRow(row) }, update: toRow(row) });
+    if (p.processedRunIds && p.processedRunIds.length > 0) {
+      await tx.monitorProcessedRun.createMany({ data: p.processedRunIds.map((jobRunId) => ({ jobRunId })), skipDuplicates: true });
+    }
     await tx.monitorState.update({
       where: { id: 1 },
       data: {
         ...(p.watchingSince ? { watchingSince: p.watchingSince } : {}),
         ...(p.slotCheckedThrough ? { slotCheckedThrough: p.slotCheckedThrough } : {}),
-        ...(p.cursor ? { jobRunCursorFinishedAt: p.cursor.finishedAt, jobRunCursorId: p.cursor.id } : {}),
+        ...(p.findingsHighWater ? { findingsHighWater: p.findingsHighWater } : {}),
       },
     });
     return r.rows;

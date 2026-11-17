@@ -7,7 +7,7 @@ import type { GenerationAlertReport, GenerationAlertDetail } from "../../src/lib
 /**
  * Urgent monitor PR-B, integration tests B-I1–B-I27 (docs/dues/URGENT-MONITOR-IMPLEMENTATION-PLAN.md) against the real local
  * (disposable) test database. Healthchecks is a fake transport injected into the monitor: nothing leaves the machine.
- * Detection is injected unless a test needs the real read (B-I22). Every test resets the monitor's own two tables and the
+ * Detection is injected unless a test needs the real read (B-I22). Every test resets the monitor's own three tables and the
  * monthly-generation JobRun rows.
  */
 const { runUrgentMonitor, handleUrgentMonitorRequest } = await import("../../src/lib/monitoring/urgent/run");
@@ -76,7 +76,14 @@ async function dbNow() {
 const lastDueSlot = (now: Date) => new Date(Math.floor((now.getTime() - 10 * MIN) / H3) * H3);
 const slotKeyOf = (d: Date) => `SLOT:${d.toISOString().slice(0, 16)}Z`;
 const state = () => prisma.monitorState.findUniqueOrThrow({ where: { id: 1 } });
-const keys = async () => Object.fromEntries((await prisma.urgentAlertKey.findMany()).map((k) => [k.key, k]));
+/** Problem key → its LATEST occurrence (most tests have one occurrence per problem). */
+const keys = async () => Object.fromEntries((await prisma.urgentAlertKey.findMany({ orderBy: { occurrence: "asc" } })).map((k) => [k.problemKey, k]));
+const occurrences = (problemKey: string) => prisma.urgentAlertKey.findMany({ where: { problemKey }, orderBy: { occurrence: "asc" } });
+const processed = () => prisma.monitorProcessedRun.count();
+/** A row as an earlier monitor run would have written it (occurrence 1). */
+const keyRow = (problemKey: string, category: string, at: Date, over: object = {}) => ({
+  key: `${problemKey}#1`, problemKey, occurrence: 1, category, source: "billingRun", firstSeenAt: at, lastSeenAt: at, ...over,
+});
 const setState = (data: Parameters<typeof prisma.monitorState.update>[0]["data"]) => prisma.monitorState.update({ where: { id: 1 }, data });
 async function billingRun(startedAt: Date, finishedAt: Date | null, urgentFindings?: object | null) {
   return prisma.jobRun.create({
@@ -86,8 +93,9 @@ async function billingRun(startedAt: Date, finishedAt: Date | null, urgentFindin
 
 async function reset() {
   await prisma.urgentAlertKey.deleteMany();
+  await prisma.monitorProcessedRun.deleteMany();
   await prisma.$executeRaw`UPDATE "MonitorState" SET "leaseId" = NULL, "leaseUntil" = NULL, "lastRunEndedAt" = NULL, "watchingSince" = NULL,
-    "slotCheckedThrough" = NULL, "jobRunCursorFinishedAt" = NULL, "jobRunCursorId" = NULL, "m2LastSignal" = 'unknown', "lastReminderAt" = NULL WHERE id = 1`;
+    "slotCheckedThrough" = NULL, "findingsHighWater" = NULL, "m2LastSignal" = 'unknown', "lastReminderAt" = NULL WHERE id = 1`;
   await prisma.jobRun.deleteMany({ where: { jobName: "monthly-generation" } });
 }
 beforeEach(reset);
@@ -98,10 +106,13 @@ describe("schema and lease (B-I1–B-I5)", () => {
     expect(await prisma.monitorState.count()).toBe(1);
     await expect(prisma.$executeRawUnsafe(`INSERT INTO "MonitorState" (id) VALUES (2)`)).rejects.toThrow(/MonitorState_singleton/);
     await expect(prisma.$executeRawUnsafe(`UPDATE "MonitorState" SET "m2LastSignal" = 'maybe' WHERE id = 1`)).rejects.toThrow(/MonitorState_m2LastSignal/);
-    const base = `"key", "source", "firstSeenAt", "lastSeenAt"`;
-    await expect(prisma.$executeRawUnsafe(`INSERT INTO "UrgentAlertKey" (${base}, "category") VALUES ('x', 'monitor', now(), now(), 'Z')`)).rejects.toThrow(/UrgentAlertKey_category/);
-    await expect(prisma.$executeRawUnsafe(`INSERT INTO "UrgentAlertKey" (${base}, "category", "missedCount") VALUES ('x', 'monitor', now(), now(), 'A', 0)`)).rejects.toThrow(/UrgentAlertKey_missedCount/);
-    await expect(prisma.$executeRawUnsafe(`INSERT INTO "UrgentAlertKey" (${base}, "category", "repeatAcceptedAt") VALUES ('x', 'monitor', now(), now(), 'A', now())`)).rejects.toThrow(/UrgentAlertKey_repeat_after_first/);
+    const base = `"key", "problemKey", "occurrence", "source", "firstSeenAt", "lastSeenAt"`;
+    const v = `'x#1', 'x', 1, 'monitor', now(), now()`;
+    await expect(prisma.$executeRawUnsafe(`INSERT INTO "UrgentAlertKey" (${base}, "category") VALUES (${v}, 'Z')`)).rejects.toThrow(/UrgentAlertKey_category/);
+    await expect(prisma.$executeRawUnsafe(`INSERT INTO "UrgentAlertKey" (${base}, "category", "missedCount") VALUES (${v}, 'A', 0)`)).rejects.toThrow(/UrgentAlertKey_missedCount/);
+    await expect(prisma.$executeRawUnsafe(`INSERT INTO "UrgentAlertKey" (${base}, "category", "repeatAcceptedAt") VALUES (${v}, 'A', now())`)).rejects.toThrow(/UrgentAlertKey_repeat_after_first/);
+    await expect(prisma.$executeRawUnsafe(`INSERT INTO "UrgentAlertKey" (${base}, "category") VALUES ('x#2', 'x', 1, 'monitor', now(), now(), 'A')`)).rejects.toThrow(/UrgentAlertKey_key_shape/);
+    await expect(prisma.$executeRawUnsafe(`INSERT INTO "UrgentAlertKey" (${base}, "category") VALUES ('x#0', 'x', 0, 'monitor', now(), now(), 'A')`)).rejects.toThrow(/UrgentAlertKey_occurrence/);
   });
 
   it("B-I2: five concurrent runs: exactly one runs; the others are skipped and send nothing", async () => {
@@ -238,7 +249,7 @@ describe("crashes, retries and acceptance (B-I10–B-I16)", () => {
     const hc = fakeHc(async (c) => {
       if (c.kind === "fail" && c.check === "M2") {
         const now = await dbNow();
-        await prisma.urgentAlertKey.create({ data: { key: "RUNERR:late", category: "RUNERR", source: "billingRun", firstSeenAt: now, lastSeenAt: now } });
+        await prisma.urgentAlertKey.create({ data: keyRow("RUNERR:late", "RUNERR", now) });
       }
       return 200;
     });
@@ -271,7 +282,7 @@ describe("crashes, retries and acceptance (B-I10–B-I16)", () => {
     expect((await state()).lastReminderAt!.getTime()).toBeGreaterThan(before.getTime());
   });
 
-  it("B-I16: findings cursor: three finalized runs processed once; a crash before commit reprocesses them idempotently", async () => {
+  it("B-I16: processed-run ledger: three finalized runs processed once; a crash before commit reprocesses them idempotently", async () => {
     const now = await dbNow();
     await setState({ watchingSince: new Date(now.getTime() - 4 * H3) });
     for (let i = 3; i >= 1; i--) {
@@ -280,21 +291,24 @@ describe("crashes, retries and acceptance (B-I10–B-I16)", () => {
     }
     await expect(monitor(deps({ scheduleExpr: () => null, store: { persist: () => Promise.reject(new Error("crash before commit")) } }).deps)).rejects.toThrow();
     expect(await prisma.urgentAlertKey.count()).toBe(0);
-    expect((await state()).jobRunCursorId).toBeNull();
+    expect(await processed()).toBe(0);
+    expect((await state()).findingsHighWater).toBeNull();
     await monitor(deps({ scheduleExpr: () => null }).deps);
     const k = await keys();
     expect(Object.keys(k).filter((x) => x.startsWith("RUNERR:")).sort()).toEqual(["RUNERR:org-1", "RUNERR:org-2", "RUNERR:org-3"]);
     expect(k["RUNERR:org-3"].clearedAt).not.toBeNull(); // cleared by the later runs without it, still a reported problem
     expect(k["RUNERR:org-3"].firstAcceptedAt).not.toBeNull();
-    const cursor = (await state()).jobRunCursorId;
-    expect(cursor).not.toBeNull();
-    // Second run: org-2 and org-3 get their one repeat and, being cleared, are deleted. If the cursor reprocessed the three
-    // runs they would come back as NEW keys; they do not.
+    expect(await processed()).toBe(3);
+    const highWater = (await state()).findingsHighWater;
+    expect(highWater).not.toBeNull();
+    // Second run: org-2 and org-3 get their one repeat and, being cleared, are deleted. If the ledger let the three runs be
+    // processed again they would come back as NEW occurrences; they do not.
     await monitor(deps({ scheduleExpr: () => null }).deps);
     const after = await keys();
     expect(Object.keys(after).filter((x) => x.startsWith("RUNERR:"))).toEqual(["RUNERR:org-1"]);
     expect(after["RUNERR:org-1"].firstSeenAt).toEqual(k["RUNERR:org-1"].firstSeenAt);
-    expect((await state()).jobRunCursorId).toBe(cursor);
+    expect(await processed()).toBe(3);
+    expect((await state()).findingsHighWater).toEqual(highWater);
   });
 });
 
@@ -304,7 +318,7 @@ describe("faults, recovery, limitations (B-I17–B-I27)", () => {
     const slot = lastDueSlot(now);
     await setState({ watchingSince: new Date(slot.getTime() - 3 * H3), slotCheckedThrough: new Date(slot.getTime() - 2 * H3) });
     const pendingAt = await dbNow();
-    await prisma.urgentAlertKey.create({ data: { key: "RUNERR:org-p", category: "RUNERR", source: "billingRun", firstSeenAt: pendingAt, lastSeenAt: pendingAt } });
+    await prisma.urgentAlertKey.create({ data: keyRow("RUNERR:org-p", "RUNERR", pendingAt) });
     await billingRun(new Date(now.getTime() - 20 * MIN), new Date(now.getTime() - 17 * MIN), buildUrgentFindings({ runErrors: { global: 0, organizations: ["org-f"] }, alerts: okReport() }));
     const before = await state();
     const fault = deps({ scheduleExpr: () => "0 */2 * * *" });
@@ -318,7 +332,7 @@ describe("faults, recovery, limitations (B-I17–B-I27)", () => {
     expect(after.watchingSince).toEqual(before.watchingSince);
     expect(Object.keys(k).filter((x) => x.startsWith("SLOT:"))).toEqual([]); // judging paused
     expect(k["RUNERR:org-f"]).toBeDefined(); // durable findings still processed...
-    expect(after.jobRunCursorId).not.toBeNull(); // ...and the cursor advanced
+    expect(await processed()).toBe(1); // ...and recorded as processed
     expect(k["RUNERR:org-p"].firstAcceptedAt).not.toBeNull(); // pending work still sent
   });
 
@@ -348,7 +362,8 @@ describe("faults, recovery, limitations (B-I17–B-I27)", () => {
     expect(await prisma.urgentAlertKey.count()).toBe(0);
     const after = await state();
     expect(after.slotCheckedThrough).toEqual(before.slotCheckedThrough);
-    expect(after.jobRunCursorId).toBe(before.jobRunCursorId);
+    expect(after.findingsHighWater).toEqual(before.findingsHighWater);
+    expect(await processed()).toBe(0);
   });
 
   it("B-I20: durable recovery: a billing run during an outage recorded A and RUNERR; A cleared since; both still reported", async () => {
@@ -462,5 +477,95 @@ describe("faults, recovery, limitations (B-I17–B-I27)", () => {
     const later = (await keys())["A:org-a:2031-11"];
     expect(later.firstSeenAt).toEqual(first.firstSeenAt);
     expect(later.evidenceAt).toEqual(new Date("2031-11-02T00:05:00.000Z"));
+  });
+});
+
+describe("PR-B review fixes (B-I28–B-I32)", () => {
+  const errX = () => buildUrgentFindings({ runErrors: { global: 0, organizations: ["org-x"] }, alerts: okReport() });
+  const clean = () => buildUrgentFindings({ runErrors: NO_ERRORS, alerts: okReport() });
+  const noSchedule = (hc = fakeHc()) => deps({ scheduleExpr: () => null }, hc);
+
+  it("B-I28 (B1): recurrence while the cleared occurrence's REPEAT is pending → a fresh alert for occurrence 2; occurrence 1 still gets its repeat", async () => {
+    const now = await dbNow();
+    await setState({ watchingSince: new Date(now.getTime() - 2 * H3) });
+    await billingRun(new Date(now.getTime() - 60 * MIN), new Date(now.getTime() - 57 * MIN), errX());
+    await monitor(noSchedule().deps); // occurrence 1 alerted (accepted)
+    expect((await occurrences("RUNERR:org-x"))[0].firstAcceptedAt).not.toBeNull();
+    await billingRun(new Date(now.getTime() - 40 * MIN), new Date(now.getTime() - 37 * MIN), clean());
+    // The run that clears it fails to deliver its /fail: the repeat stays pending.
+    await monitor(noSchedule(fakeHc((c) => (c.check === "M2" && c.kind === "fail" ? 500 : 200))).deps);
+    expect((await occurrences("RUNERR:org-x"))[0]).toMatchObject({ clearedAt: expect.any(Date), repeatAcceptedAt: null });
+    await billingRun(new Date(now.getTime() - 20 * MIN), new Date(now.getTime() - 17 * MIN), errX()); // it comes back
+    const recur = noSchedule();
+    const r = await monitor(recur.deps);
+    expect(r.counts).toMatchObject({ new: 1 }); // occurrence 2: a FRESH alert
+    expect(r.counts!.repeat).toBeGreaterThanOrEqual(1); // occurrence 1's pending repeat, in the same /fail
+    expect(recur.hc.calls.find((c) => c.check === "M2" && c.kind === "fail")?.body).toMatch(/new=1 rep=[1-9]/);
+    // Occurrence 1 is complete (cleared + repeat-accepted) and deleted at acceptance; occurrence 2 is open and alerted.
+    const left = await occurrences("RUNERR:org-x");
+    expect(left).toHaveLength(1);
+    expect(left[0]).toMatchObject({ key: "RUNERR:org-x#2", clearedAt: null, firstAcceptedAt: expect.any(Date), repeatAcceptedAt: null });
+  });
+
+  it("B-I29 (B1): clear and recurrence inside one batch (error, clean, error) → two occurrences, both alerted", async () => {
+    const now = await dbNow();
+    await setState({ watchingSince: new Date(now.getTime() - 2 * H3) });
+    for (const [m, f] of [[60, errX()], [40, clean()], [20, errX()]] as const) await billingRun(new Date(now.getTime() - m * MIN), new Date(now.getTime() - (m - 3) * MIN), f);
+    const r = await monitor(noSchedule().deps);
+    const [o1, o2] = await occurrences("RUNERR:org-x");
+    expect(o1).toMatchObject({ occurrence: 1, clearedAt: expect.any(Date), firstAcceptedAt: expect.any(Date) });
+    expect(o2).toMatchObject({ occurrence: 2, clearedAt: null, firstAcceptedAt: expect.any(Date) });
+    expect(r.counts!.new).toBeGreaterThanOrEqual(2);
+  });
+
+  it("B-I30 (B2): out-of-order commit: a run that FINISHED earlier but committed after a newer run was processed is still processed, including unavailable findings", async () => {
+    const now = await dbNow();
+    await setState({ watchingSince: new Date(now.getTime() - 2 * H3) });
+    await billingRun(new Date(now.getTime() - 12 * MIN), new Date(now.getTime() - 10 * MIN), clean()); // B: commits first
+    await monitor(noSchedule().deps);
+    const highWater = (await state()).findingsHighWater!;
+    expect(highWater).toEqual(new Date(now.getTime() - 10 * MIN));
+    // A and A': finished BEFORE B's finish, committed only now (the old time cursor skipped these forever).
+    await billingRun(new Date(now.getTime() - 25 * MIN), new Date(now.getTime() - 20 * MIN), unavailableFindings("unrecognized_error"));
+    await billingRun(new Date(now.getTime() - 24 * MIN), new Date(now.getTime() - 19 * MIN), errX());
+    const r = await monitor(noSchedule().deps);
+    const k = await keys();
+    expect(k["FAULT:findings"]).toMatchObject({ clearedAt: null, firstAcceptedAt: expect.any(Date) });
+    expect(k["RUNERR:org-x"]).toMatchObject({ clearedAt: null, firstAcceptedAt: expect.any(Date) });
+    expect(r.faults).toContain("findings=unavailable");
+    expect(await processed()).toBe(3);
+    expect((await state()).findingsHighWater).toEqual(highWater); // late runs never move the high-water mark back
+    // Processed exactly once: nothing new on the next run.
+    const again = await monitor(noSchedule().deps);
+    expect(again.counts!.new).toBe(0);
+    expect(await processed()).toBe(3);
+    expect((await occurrences("FAULT:findings"))).toHaveLength(1);
+  });
+
+  it("B-I31 (B2): a run committing DURING a monitor run (after its read) is picked up by the next run, not skipped", async () => {
+    const now = await dbNow();
+    await setState({ watchingSince: new Date(now.getTime() - 2 * H3) });
+    await billingRun(new Date(now.getTime() - 12 * MIN), new Date(now.getTime() - 10 * MIN), clean());
+    // Commits after this monitor run's read, with an EARLIER finish than the run it just processed.
+    await monitor(deps({ scheduleExpr: () => null, afterPersist: async () => void (await billingRun(new Date(now.getTime() - 30 * MIN), new Date(now.getTime() - 15 * MIN), null)) }).deps);
+    expect(await processed()).toBe(1);
+    await monitor(noSchedule().deps);
+    expect(await processed()).toBe(2);
+    expect((await keys())["FAULT:findings"]).toMatchObject({ clearedAt: null }); // the NULL is a fault, not "no problems"
+  });
+
+  it("B-I32 (R4): unresolved problems with nothing due and M2 not known Down → no M2 request; the next due /fail still counts them", async () => {
+    await setState({ watchingSince: await dbNow() });
+    const withA = detectWith(okReport({ newMonthAtRisk: [A] }));
+    await monitor(deps({ detect: withA }).deps); // first alert
+    await monitor(deps({ detect: withA }).deps); // repeat
+    await setState({ m2LastSignal: "unknown" }); // e.g. the last refresh timed out
+    const quiet = deps({ detect: withA });
+    expect(await monitor(quiet.deps)).toMatchObject({ sequence: "none", m2: "notSent", counts: { unresolved: 1 } });
+    expect(quiet.hc.m2()).toEqual([]); // no request, so no empty alert email
+    expect((await state()).m2LastSignal).toBe("unknown");
+    await prisma.$executeRaw`UPDATE "MonitorState" SET "lastReminderAt" = "lastReminderAt" - interval '61 minutes' WHERE id = 1`;
+    const reminder = deps({ detect: withA });
+    expect(await monitor(reminder.deps)).toMatchObject({ sequence: "rearmFail", counts: { reminder: 1 } });
   });
 });

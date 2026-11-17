@@ -72,6 +72,8 @@ describe("planM2 (B-U12–B-U15)", () => {
   const now = t("2031-11-02T05:07:00Z");
   const row = (key: string, over: Partial<KeyRow> = {}): KeyRow => ({
     key,
+    problemKey: key,
+    occurrence: 1,
     category: key.split(":")[0] as KeyRow["category"],
     source: "monitorRead",
     onsetNotBefore: null,
@@ -93,6 +95,19 @@ describe("planM2 (B-U12–B-U15)", () => {
   it("B-U12: nothing unresolved → success; unresolved but nothing due → failRefresh; due with M2 Up → fail; otherwise → rearmFail", () => {
     expect(planM2({ rows: [], m2LastSignal: "fail", lastReminderAt: null, dbNow: now }).sequence).toBe("success");
     expect(planM2({ rows: [done("A:x:2031-11")], m2LastSignal: "fail", lastReminderAt: t("2031-11-02T05:00:00Z"), dbNow: now }).sequence).toBe("failRefresh");
+  });
+
+  it("B-U12b (review fix R4): unresolved, nothing due, M2 NOT known Down → no request at all (a refresh would be an empty alert)", () => {
+    for (const signal of ["success", "unknown"] as const) {
+      const p = planM2({ rows: [done("A:x:2031-11")], m2LastSignal: signal, lastReminderAt: t("2031-11-02T05:00:00Z"), dbNow: now });
+      expect(p).toMatchObject({ sequence: "none", due: false });
+    }
+    // Still visible: the problem is counted by the next due /fail, and the reminder becomes due at 60 min.
+    const later = planM2({ rows: [done("A:x:2031-11")], m2LastSignal: "unknown", lastReminderAt: t("2031-11-02T05:00:00Z"), dbNow: t("2031-11-02T06:00:00Z") });
+    expect(later).toMatchObject({ sequence: "rearmFail", due: true, summary: { reminder: 1, counts: { A: 1 } } });
+  });
+
+  it("B-U12c: due content always sends; with M2 Up it is a plain fail", () => {
     expect(planM2({ rows: [row("A:x:2031-11")], m2LastSignal: "success", lastReminderAt: null, dbNow: now }).sequence).toBe("fail");
     for (const signal of ["fail", "unknown"] as const) expect(planM2({ rows: [row("A:x:2031-11")], m2LastSignal: signal, lastReminderAt: null, dbNow: now }).sequence).toBe("rearmFail");
   });
