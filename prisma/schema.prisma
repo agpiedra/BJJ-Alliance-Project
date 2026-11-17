@@ -2077,6 +2077,51 @@ model JobRun {
   @@index([jobName, startedAt])
 }
 
+/// Urgent monitor state (urgent monitor PR-B; src/lib/monitoring/urgent; migration 20261118120000). Exactly one row (id 1,
+/// CHECK). Platform-level (no organizationId), written only by the monitor. `leaseId`/`leaseUntil`/`lastRunEndedAt` are written
+/// and compared only in SQL (UTC): one run at a time, ≥ 75 s apart. `slotCheckedThrough` and the findings cursor are the
+/// checkpoints: a schedule fault never moves `slotCheckedThrough`; `watchingSince` is set once.
+model MonitorState {
+  id                     Int       @id @default(1)
+  leaseId                String?
+  leaseUntil             DateTime?
+  lastRunEndedAt         DateTime?
+  watchingSince          DateTime?
+  slotCheckedThrough     DateTime?
+  jobRunCursorFinishedAt DateTime?
+  jobRunCursorId         String?
+  /// "success" | "fail" | "unknown" (CHECK): what M2 last confirmed.
+  m2LastSignal           String    @default("unknown")
+  lastReminderAt         DateTime?
+}
+
+/// One urgent problem (urgent monitor PR-B). Keys: `A:<org>:<yyyy-mm>`, `C:<org>:<kind>`, `RUNERR:<org|global>`, `RUNDET`,
+/// `SLOT:<first missed slot>`, `FAULT:schedule`, `FAULT:findings`. Ids and codes only. `onsetNotBefore`/`evidenceAt` are
+/// evidence bounds (never "the onset"), only ever moved earlier; `firstSeenAt` is the alert age and never changes. A row is
+/// deleted only when cleared AND repeat-accepted. Accepted = Healthchecks HTTP 200 on the `/fail` that counted it, nothing more.
+model UrgentAlertKey {
+  key              String    @id
+  /// "A" | "C" | "SLOT" | "RUNERR" | "RUNDET" | "FAULT" (CHECK)
+  category         String
+  /// "monitorRead" | "billingRun" | "slot" | "monitor" (CHECK)
+  source           String
+  onsetNotBefore   DateTime?
+  evidenceAt       DateTime?
+  firstSeenAt      DateTime
+  lastSeenAt       DateTime
+  clearedAt        DateTime?
+  firstAcceptedAt  DateTime?
+  /// CHECK: NULL unless firstAcceptedAt is set, and not earlier than it.
+  repeatAcceptedAt DateTime?
+  lastMissedSlot   DateTime?
+  /// CHECK >= 1
+  missedCount      Int       @default(1)
+  lastAttemptAt    DateTime?
+  lastErrorCode    String?
+
+  @@index([clearedAt, repeatAcceptedAt])
+}
+
 /// Stage 9 activation record (docs/dues/STAGE-9-IMPLEMENTATION-PLAN.md, A1; migration 20261111120000). One row per advance
 /// approval: start month S, the configuration fingerprint and per-student fingerprints approved, and who approved when. It
 /// is later either withdrawn or made effective (the atomic switch, PR 9-3), never both, each set once; the row is never
