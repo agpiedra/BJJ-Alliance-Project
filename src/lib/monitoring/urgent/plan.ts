@@ -56,6 +56,8 @@ export function planM2(p: { rows: KeyRow[]; m2LastSignal: M2Signal; lastReminder
     new: newRows.length,
     repeat: repeatRows.length,
     reminder: [...included.keys()].filter((k) => !listed.has(k)).length,
+    // Unresolved at this run's observation, among the problems represented in this email (not a live count at send time).
+    open: [...included.values()].filter((r) => r.clearedAt === null).length,
     counts,
     slotStreak,
     oldest,

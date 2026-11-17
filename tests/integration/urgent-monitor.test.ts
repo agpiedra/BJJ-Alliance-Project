@@ -554,6 +554,21 @@ describe("PR-B review fixes (B-I28–B-I32)", () => {
     expect((await keys())["FAULT:findings"]).toMatchObject({ clearedAt: null }); // the NULL is a fault, not "no problems"
   });
 
+  it("B-I33 (open=N): a delayed alert about problems that have already cleared says open=0; a live one counts it", async () => {
+    const now = await dbNow();
+    await setState({ watchingSince: new Date(now.getTime() - 2 * H3), slotCheckedThrough: lastDueSlot(now) }); // no slot due
+    await billingRun(new Date(now.getTime() - 60 * MIN), new Date(now.getTime() - 57 * MIN), errX());
+    await billingRun(new Date(now.getTime() - 40 * MIN), new Date(now.getTime() - 37 * MIN), clean()); // cleared before the monitor saw it
+    const past = deps();
+    await monitor(past.deps);
+    expect(past.hc.calls.find((c) => c.check === "M2" && c.kind === "fail")?.body).toMatch(/^URG new=1 rep=0 rem=0 open=0 \| .*RUN=1/);
+    await billingRun(new Date(now.getTime() - 20 * MIN), new Date(now.getTime() - 17 * MIN), errX()); // a new, open occurrence
+    const live = deps();
+    await monitor(live.deps);
+    // Represented: occurrence 1's repeat (cleared) and occurrence 2 (new, open).
+    expect(live.hc.calls.find((c) => c.check === "M2" && c.kind === "fail")?.body).toMatch(/^URG new=1 rep=1 rem=0 open=1 \| .*RUN=2/);
+  });
+
   it("B-I32 (R4): unresolved problems with nothing due and M2 not known Down → no M2 request; the next due /fail still counts them", async () => {
     await setState({ watchingSince: await dbNow() });
     const withA = detectWith(okReport({ newMonthAtRisk: [A] }));

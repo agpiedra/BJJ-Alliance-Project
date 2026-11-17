@@ -6,7 +6,7 @@ import { MONITOR_FUNCTION_MAX_SECONDS } from "../../src/lib/monitoring/urgent/ru
 
 /** PR-B B-U16–B-U20: exact request sequences, retries, rate limits, and the five-per-minute model. No network, no real waits. */
 const M2 = "https://hc-ping.example/m2-uuid";
-const BODY = "URG new=1 rep=0 rem=0 | A=1 C=0 SLOT=0 RUN=0 F=0 | r=7f3a";
+const BODY = "URG new=1 rep=0 rem=0 open=1 | A=1 C=0 SLOT=0 RUN=0 F=0 | r=7f3a";
 
 /** A fake transport answering from a script; null = timeout / network error. Records every request with its virtual time. */
 function fake(statuses: (number | null)[], remaining = 50_000) {

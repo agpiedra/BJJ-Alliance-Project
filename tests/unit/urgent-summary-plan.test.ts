@@ -12,32 +12,35 @@ describe("encodeSummary (B-U9–B-U11)", () => {
     new: 3,
     repeat: 1,
     reminder: 0,
+    open: 2,
     counts: { A: 2, C: 0, SLOT: 1, RUN: 1, F: 0 },
     slotStreak: 2,
     oldest: t("2026-12-01T21:00:00Z"),
     runRef: "7f3a",
   };
 
-  it("B-U9: the design example, exactly, 88 bytes", () => {
+  it("B-U9: the design example with open=N, exactly, 95 bytes", () => {
     const s = encodeSummary(example);
-    expect(s).toBe("URG new=3 rep=1 rem=0 | A=2 C=0 SLOT=1(x2) RUN=1 F=0 | oldest 2026-12-01T21:00Z | r=7f3a");
-    expect(bytes(s)).toBe(88);
+    expect(s).toBe("URG new=3 rep=1 rem=0 open=2 | A=2 C=0 SLOT=1(x2) RUN=1 F=0 | oldest 2026-12-01T21:00Z | r=7f3a");
+    expect(bytes(s)).toBe(95);
   });
 
-  it("B-U10: when space runs short, r= is dropped first, then oldest; the totals and category counts never", () => {
-    // Core 65 bytes: core + oldest = 92 fits, + r= = 101 does not → only r= is dropped.
-    const mid = encodeSummary({ ...example, new: 9999, repeat: 9999, reminder: 9999, counts: { A: 99, C: 99, SLOT: 9, RUN: 99, F: 99 } });
-    expect(mid).toBe("URG new=9999 rep=9999 rem=9999 | A=99 C=99 SLOT=9(x2) RUN=99 F=99 | oldest 2026-12-01T21:00Z");
-    expect(bytes(mid)).toBe(92);
-    // Core 78 bytes: core + oldest = 105 does not fit → oldest is dropped too.
-    const big = encodeSummary({ ...example, new: 9999, repeat: 9999, reminder: 9999, counts: { A: 9999, C: 9999, SLOT: 9999, RUN: 9999, F: 9999 }, slotStreak: 999 });
-    expect(big).toBe("URG new=9999 rep=9999 rem=9999 | A=9999 C=9999 SLOT=9999(x999) RUN=9999 F=9999");
+  it("B-U10: when space runs short, r= is dropped first, then oldest; the totals, open and category counts never", () => {
+    // Core 72 bytes: core + oldest = 99 fits, + r= = 108 does not → only r= is dropped.
+    const mid = encodeSummary({ ...example, new: 9999, repeat: 9999, reminder: 9999, open: 9, counts: { A: 99, C: 99, SLOT: 9, RUN: 99, F: 99 } });
+    expect(mid).toBe("URG new=9999 rep=9999 rem=9999 open=9 | A=99 C=99 SLOT=9(x2) RUN=99 F=99 | oldest 2026-12-01T21:00Z");
+    expect(bytes(mid)).toBe(99);
+    // Core 88 bytes: core + oldest = 115 does not fit → oldest is dropped too; open stays.
+    const big = encodeSummary({ ...example, new: 9999, repeat: 9999, reminder: 9999, open: 9999, counts: { A: 9999, C: 9999, SLOT: 9999, RUN: 9999, F: 9999 }, slotStreak: 999 });
+    expect(big).toBe("URG new=9999 rep=9999 rem=9999 open=9999 | A=9999 C=9999 SLOT=9999(x999) RUN=9999 F=9999");
+    expect(bytes(big)).toBe(88);
   });
 
-  it("values above the display limits are clamped (`9999+`, `999+`), never truncating a field away", () => {
-    const s = encodeSummary({ ...example, new: 1e9, counts: { A: 1e9, C: 1e9, SLOT: 1e9, RUN: 1e9, F: 1e9 }, slotStreak: 1e6, repeat: 1e9, reminder: 1e9 });
-    expect(s).toBe("URG new=9999+ rep=9999+ rem=9999+ | A=9999+ C=9999+ SLOT=9999+(x999+) RUN=9999+ F=9999+");
-    expect(bytes(s)).toBe(87);
+  it("maximum counts: values above the display limits are clamped (`9999+`, `999+`), open included; 98 bytes, never truncating a field away", () => {
+    const s = encodeSummary({ ...example, new: 1e9, open: 1e9, counts: { A: 1e9, C: 1e9, SLOT: 1e9, RUN: 1e9, F: 1e9 }, slotStreak: 1e6, repeat: 1e9, reminder: 1e9 });
+    expect(s).toBe("URG new=9999+ rep=9999+ rem=9999+ open=9999+ | A=9999+ C=9999+ SLOT=9999+(x999+) RUN=9999+ F=9999+");
+    expect(bytes(s)).toBe(98);
+    expect(bytes(s)).toBeLessThanOrEqual(SUMMARY_MAX_BYTES);
   });
 
   it("B-U11 (property): 1,000 random inputs are always ≤ 100 UTF-8 bytes and printable ASCII, even with a non-ASCII run reference", () => {
@@ -52,6 +55,7 @@ describe("encodeSummary (B-U9–B-U11)", () => {
         new: pick(),
         repeat: pick(),
         reminder: pick(),
+        open: pick(),
         counts: { A: pick(), C: pick(), SLOT: pick(), RUN: pick(), F: pick() },
         slotStreak: pick(),
         oldest: rnd(1) ? new Date(Date.UTC(2030 + rnd(5), rnd(11), 1 + rnd(27), rnd(23), rnd(59))) : null,
@@ -95,6 +99,32 @@ describe("planM2 (B-U12–B-U15)", () => {
   it("B-U12: nothing unresolved → success; unresolved but nothing due → failRefresh; due with M2 Up → fail; otherwise → rearmFail", () => {
     expect(planM2({ rows: [], m2LastSignal: "fail", lastReminderAt: null, dbNow: now }).sequence).toBe("success");
     expect(planM2({ rows: [done("A:x:2031-11")], m2LastSignal: "fail", lastReminderAt: t("2031-11-02T05:00:00Z"), dbNow: now }).sequence).toBe("failRefresh");
+  });
+
+  it("open=N: all represented problems cleared → open=0 (a delayed alert about past problems)", () => {
+    const cleared = t("2031-11-02T05:05:00Z");
+    const p = planM2({ rows: [row("A:x:2031-11", { clearedAt: cleared }), row("RUNERR:org-x", { clearedAt: cleared })], m2LastSignal: "success", lastReminderAt: null, dbNow: now });
+    expect(p.summary).toMatchObject({ new: 2, open: 0, counts: { A: 1, RUN: 1 } });
+    expect(encodeSummary({ ...p.summary, runRef: "7f3a" })).toMatch(/^URG new=2 rep=0 rem=0 open=0 \| /);
+  });
+
+  it("open=N: mixed open and cleared problems → only the unresolved ones counted; category totals count both", () => {
+    const p = planM2({
+      rows: [row("A:x:2031-11"), row("RUNERR:org-x", { clearedAt: t("2031-11-02T05:05:00Z") }), done("C:org-c:noProgress")],
+      m2LastSignal: "success",
+      lastReminderAt: null,
+      dbNow: now,
+    });
+    // Represented: two new (one open, one cleared) and one unresolved reminder-only problem.
+    expect(p.summary).toMatchObject({ new: 2, repeat: 0, reminder: 1, open: 2, counts: { A: 1, C: 1, RUN: 1 } });
+  });
+
+  it("open=N: a cleared problem's pending repeat is represented but not open", () => {
+    const cleared = t("2031-11-02T05:05:00Z");
+    const onlyCleared = planM2({ rows: [accepted("RUNERR:org-x", { clearedAt: cleared })], m2LastSignal: "fail", lastReminderAt: now, dbNow: now });
+    expect(onlyCleared).toMatchObject({ due: true, repeatKeys: ["RUNERR:org-x"], summary: { repeat: 1, open: 0 } });
+    const withOpen = planM2({ rows: [accepted("RUNERR:org-x", { clearedAt: cleared }), done("A:x:2031-11")], m2LastSignal: "fail", lastReminderAt: now, dbNow: now });
+    expect(withOpen.summary).toMatchObject({ repeat: 1, reminder: 1, open: 1 });
   });
 
   it("B-U12b (review fix R4): unresolved, nothing due, M2 NOT known Down → no request at all (a refresh would be an empty alert)", () => {
