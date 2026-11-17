@@ -78,6 +78,8 @@ describe("the monthly-generation runner and visit loop are not reachable from pr
     expect(crons).toEqual([
       { path: "/api/cron/weekly-digest", schedule: "0 13 * * 1" },
       { path: "/api/cron/monthly-generation", schedule: "0 */3 * * *" },
+      // Urgent monitor PR-B (owner-approved plan, 2026-11-17): read-only monitor, never the generation loop.
+      { path: "/api/cron/monthly-generation-monitor", schedule: "7,22,37,52 * * * *" },
     ]);
     expect(readFileSync("src/lib/jobs/job-names.ts", "utf8")).toContain('"monthly-generation"');
     const { STALE_AFTER_HOURS, resolveJobSchedule } = await import("../../src/lib/jobs/job-health");

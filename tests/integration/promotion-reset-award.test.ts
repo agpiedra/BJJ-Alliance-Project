@@ -372,8 +372,8 @@ describe("manual awards only", () => {
     expect(existsSync(path.join(root, "src/app/api/cron/promotion-auto-award/route.ts"))).toBe(false);
     expect(existsSync(path.join(root, "src/lib/promotion/automation.ts"))).toBe(false);
     const vercel = JSON.parse(readFileSync(path.join(root, "vercel.json"), "utf8")) as { crons: Array<{ path: string }> };
-    // D5 scheduled monthly generation; no promotion cron entry may ever exist.
-    expect(vercel.crons.map((c) => c.path)).toEqual(["/api/cron/weekly-digest", "/api/cron/monthly-generation"]);
+    // D5 scheduled monthly generation; the urgent monitor (PR-B) reads billing state only; no promotion cron entry may ever exist.
+    expect(vercel.crons.map((c) => c.path)).toEqual(["/api/cron/weekly-digest", "/api/cron/monthly-generation", "/api/cron/monthly-generation-monitor"]);
     expect(vercel.crons.some((c) => /promotion/i.test(c.path))).toBe(false);
     // G2b registered monthly-generation; no promotion job may ever be registered.
     expect([...JOB_NAMES]).toEqual(["weekly-digest", "monthly-generation"]);

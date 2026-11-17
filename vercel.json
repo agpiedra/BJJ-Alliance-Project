@@ -7,6 +7,10 @@
     {
       "path": "/api/cron/monthly-generation",
       "schedule": "0 */3 * * *"
+    },
+    {
+      "path": "/api/cron/monthly-generation-monitor",
+      "schedule": "7,22,37,52 * * * *"
     }
   ]
 }

@@ -60,16 +60,43 @@ export async function pingAlertCheck(check: AlertCheck, success: boolean, fetchI
 async function pingConfiguredUrl(baseUrl: string | undefined, success: boolean, fetchImpl: typeof fetch, label: Record<string, string>): Promise<HeartbeatOutcome> {
   if (!baseUrl) return "not_configured";
   const url = success ? baseUrl : `${baseUrl}/fail`;
+  const status = await requestHealthcheck(url, { method: "GET" }, fetchImpl, { ...label, success });
+  return status !== null && status >= 200 && status < 300 ? "ok" : "failed";
+}
+
+/**
+ * One Healthchecks request (urgent monitor PR-B generalization of the ping above, which keeps its exact behavior): aborted at
+ * HEARTBEAT_TIMEOUT_MS, never throws. Resolves to the HTTP status, or null after a timeout or network error (logged with a safe
+ * code only: a fetch error can carry the ping URL, which embeds the check's secret UUID). The body is sent only when given.
+ */
+export async function requestHealthcheck(
+  url: string,
+  init: { method: "GET" | "POST"; body?: string },
+  fetchImpl: typeof fetch,
+  label: Record<string, string | boolean>,
+): Promise<number | null> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), HEARTBEAT_TIMEOUT_MS);
   try {
-    const response = await fetchImpl(url, { method: "GET", signal: controller.signal });
-    return response.ok ? "ok" : "failed";
+    const response = await fetchImpl(url, { method: init.method, signal: controller.signal, ...(init.body !== undefined ? { body: init.body } : {}) });
+    return response.status;
   } catch (error) {
-    // Safe code only (G2a): a fetch error can carry the ping URL (which embeds the check's secret UUID) or provider text.
-    console.error("[pingHeartbeat] failed to reach Healthchecks.io", { ...label, success, error: safeErrorCode(error) });
-    return "failed";
+    console.error("[pingHeartbeat] failed to reach Healthchecks.io", { ...label, error: safeErrorCode(error) });
+    return null;
   } finally {
     clearTimeout(timeout);
   }
+}
+
+/**
+ * The urgent monitor's two checks (docs/dues/URGENT-ALERTING-ONE-HOUR-PROPOSAL.md §9): M1 = monitor alive and able to read,
+ * M2 = new urgent problems. Unset until a person creates the checks; the monitor then reports `notConfigured`.
+ */
+export type UrgentMonitorCheck = "monitor" | "new";
+const URGENT_MONITOR_ENV: Record<UrgentMonitorCheck, string> = {
+  monitor: "HEALTHCHECK_URGENT_MONITOR_URL",
+  new: "HEALTHCHECK_URGENT_NEW_URL",
+};
+export function urgentMonitorUrl(check: UrgentMonitorCheck): string | undefined {
+  return process.env[URGENT_MONITOR_ENV[check]] || undefined;
 }

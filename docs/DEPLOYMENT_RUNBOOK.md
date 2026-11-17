@@ -776,6 +776,34 @@ and `monthly-generation` is a registered job, but `vercel.json` has **no** entry
 3. Verify the first scheduled run as described above, and that its `JobRun` shows `heartbeatStatus: "ok"` and
    `alertPings` all `"ok"` (the requests reached the four checks). That proves configuration, not alert delivery.
 
+**Urgent monitor** (`/api/cron/monthly-generation-monitor`, `7,22,37,52 * * * *`; docs/dues/URGENT-ALERTING-ONE-HOUR-PROPOSAL.md
+revision 5.1). Every 15 min it reads billing state read-only and sends urgent problems to two more checks
+(Production only, Sensitive):
+
+| Check | Variable | Healthchecks schedule | Integrations | Goes down when |
+|---|---|---|---|---|
+| **M1 monitor** | `HEALTHCHECK_URGENT_MONITOR_URL` | simple, period 15 min, grace 15 min | primary + backup (down and up) | the monitor stops, cannot read (D), or has a monitoring fault (`FAULT:schedule`, `FAULT:findings`) |
+| **M2 new urgent problems** | `HEALTHCHECK_URGENT_NEW_URL` | simple, period 7 days, grace 1 day | M2-primary + M2-backup, **down only** | a new urgent problem, its one repeat, or the hourly reminder: one ≤ 100-byte summary per run |
+
+- **Migrations and order:** it needs migrations `20261117120000` (`JobRun.urgentFindings`) and `20261118120000` (its own
+  `MonitorState`, `MonitorProcessedRun` and `UrgentAlertKey`). Both are additive.
+- **Unset variables:** the monitor reports `notConfigured` and keeps every problem pending.
+- **Configuration only:** none of this verifies hosted Healthchecks behavior or delivery. Drill X1 is mandatory before
+  activation.
+- **M1 already Down:** while M1 is Down for a fault or a failed read, a monitor stop sends no new M1 email. A
+  `FAULT:findings` can keep M1 Down for as long as billing runs keep finishing without findings, so there is **no
+  unconditional bound** on how long a stopped monitor goes unannounced in that state (owner-accepted limitation).
+- **Rollback (step 1 always):** deploy code without the monitor first and wait until no run is in flight (≤ 60 s; a crashed
+  run's lease lapses after 125 s). Then either:
+  - **Keep the tables** (nothing lost). A later re-enable **catches up**: every slot since the kept checkpoint is judged
+    (crons off during the rollback = ONE missed-slot alert counting the whole gap); every billing run since `watchingSince`
+    that is not in `MonitorProcessedRun` is processed, 500 per run, none skipped (problems that cleared meanwhile still get
+    their alert and one repeat); every occurrence not yet accepted or repeat-accepted is sent on the first run, and an
+    overdue hourly reminder is sent at once. Set `MonitorState.m2LastSignal` to `'unknown'` before re-enabling. To start
+    fresh instead, the reset statements are in the migration file (same loss as dropping).
+  - **Drop the tables:** loses every pending and unresolved occurrence, the slot checkpoint and the processed-run ledger;
+    unaccepted alerts are never sent; a re-enable starts watching anew. The exact statements are in the migration file.
+
 **Reading a run:**
 - **The `JobRun` row, the Healthchecks ping and `/api/health/jobs` are the liveness signal.** The HTTP status is only
   logged.
