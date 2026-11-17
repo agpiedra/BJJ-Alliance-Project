@@ -5,13 +5,13 @@ import type { MonthlyGenerationRunReport, SegmentVisitReport } from "../../src/l
 // Importing the route module constructs the Prisma client (never connected here), which requires DATABASE_URL.
 process.env.DATABASE_URL ??= "postgresql://unit-test-placeholder/db";
 vi.mock("@/auth", () => ({ auth: () => Promise.resolve(null), signIn: vi.fn() }));
-const { buildUrgentFindings, FINDINGS_LIST_CAP } = await import("../../src/lib/dues/urgent-findings");
+const { buildUrgentFindings, unavailableFindings, earliestAtRiskEvidence, FINDINGS_LIST_CAP } = await import("../../src/lib/dues/urgent-findings");
 const { summarizeMonthlyGenerationRun } = await import("../../src/lib/dues/monthly-generation-route");
 const { atRiskKey } = await import("../../src/lib/dues/monthly-generation-alerts");
 
 /**
- * PR-A (docs/dues/URGENT-MONITOR-IMPLEMENTATION-PLAN.md, tests A-U1–A-U8): the durable urgent findings a monthly-generation
- * run stores in `JobRun.urgentFindings`. Pure; no database.
+ * PR-A (docs/dues/URGENT-MONITOR-IMPLEMENTATION-PLAN.md, tests A-U1–A-U8 and the review fixes): the durable urgent findings a
+ * monthly-generation run stores in `JobRun.urgentFindings`. Pure; no database.
  */
 const okAlerts = (over: Partial<GenerationAlertReport> = {}): GenerationAlertReport => ({
   detection: "ok",
@@ -43,10 +43,46 @@ const visit = (organizationId: string, over: Partial<SegmentVisitReport> = {}): 
   ...over,
 });
 const run = (over: Partial<MonthlyGenerationRunReport> = {}): MonthlyGenerationRunReport => ({ visits: [], claimErrors: 0, stoppedBy: "noClaimableSegment", ...over });
+const NO_ERRORS = { global: 0, organizations: [] };
+const A = { organizationId: "org-a", year: 2031, month: 11 };
+const WARNING = "2031-11-01T21:00:00.000Z"; // Costa Rica: T_open 06:00Z + 15 h
+
+describe("summarizeMonthlyGenerationRun: run errors for the findings come from the same loop as the urgent signal", () => {
+  it("A-U2: per academy (visit error, skipped rollover; sorted, unique) and global (claim, discovery); a successful rollover or an unclean pass is not a run error", () => {
+    const report = run({
+      visits: [
+        visit("org-y", { rollover: { skipped: "configurationTooLarge" }, ended: "error" }),
+        visit("org-x", { error: { stage: "page", code: "timeout" as never }, ended: "error" }),
+        visit("org-x", { error: { stage: "passEnd", code: "timeout" as never }, ended: "error" }),
+        visit("org-z", { rollover: { inserted: 1 } }),
+        visit("org-w", { passFinished: { ineligible: 0, covered: 0, unpriced: 2, pending: 0, clean: false }, ended: "passEnd" }),
+      ],
+      claimErrors: 2,
+      discoveryError: "timeout" as never,
+    });
+    expect(summarizeMonthlyGenerationRun(report, okAlerts()).runErrors).toEqual({ global: 3, organizations: ["org-x", "org-y"] });
+  });
+
+  it("the split adds up EXACTLY to runLevelErrors (global + one per erroring visit), for every kind of run-level error", () => {
+    const cases: [MonthlyGenerationRunReport, number][] = [
+      [run(), 0],
+      [run({ claimErrors: 3 }), 0],
+      [run({ discoveryError: "timeout" as never }), 0],
+      [run({ visits: [visit("org-a", { error: { stage: "marker", code: "timeout" as never }, ended: "error" })] }), 1],
+      [run({ visits: [visit("org-a", { rollover: { skipped: "error", code: "timeout" as never } })] }), 1],
+      [run({ visits: [visit("org-a", { rollover: { skipped: "configurationTooLarge" }, error: { stage: "gate", code: "timeout" as never }, ended: "error" })] }), 2],
+    ];
+    for (const [report, erroringVisitEvents] of cases) {
+      const { runLevelErrors, runErrors } = summarizeMonthlyGenerationRun(report, okAlerts());
+      expect(runLevelErrors).toBe(runErrors.global + erroringVisitEvents);
+      expect(runErrors.global > 0 || runErrors.organizations.length > 0).toBe(runLevelErrors > 0);
+    }
+  });
+});
 
 describe("buildUrgentFindings", () => {
-  it("A-U1: a clean run: detection ok, nothing urgent, zero run errors", () => {
-    expect(buildUrgentFindings({ report: run(), alerts: okAlerts() })).toEqual({
+  it("A-U1: a clean run: detection ok, nothing urgent, zero run errors (an object, never NULL)", () => {
+    expect(buildUrgentFindings({ runErrors: NO_ERRORS, alerts: okAlerts() })).toEqual({
       v: 1,
       detection: "ok",
       newMonthAtRisk: [],
@@ -55,61 +91,47 @@ describe("buildUrgentFindings", () => {
     });
   });
 
-  it("A-U2: per-academy run errors (visit error, skipped rollover) are listed sorted and unique; claim and discovery errors are global", () => {
-    const report = run({
-      visits: [
-        visit("org-y", { rollover: { skipped: "configurationTooLarge" }, ended: "error" }),
-        visit("org-x", { error: { stage: "page", code: "timeout" as never }, ended: "error" }),
-        visit("org-x", { error: { stage: "passEnd", code: "timeout" as never }, ended: "error" }),
-        visit("org-z", { rollover: { inserted: 1 } }), // a successful rollover is not an error
-      ],
-      claimErrors: 2,
-      discoveryError: "timeout" as never,
-    });
-    expect(buildUrgentFindings({ report, alerts: okAlerts() }).runErrors).toEqual({ global: 3, organizations: ["org-x", "org-y"] });
-  });
-
   it("A-U3: detection failed: its safe code is kept, A is empty and C is null (neither passed nor failed)", () => {
-    const f = buildUrgentFindings({ report: run(), alerts: failedAlerts("timeout") });
-    expect(f).toMatchObject({ detection: "timeout", newMonthAtRisk: [], conditionC: null });
+    expect(buildUrgentFindings({ runErrors: NO_ERRORS, alerts: failedAlerts("timeout") })).toMatchObject({ detection: "timeout", newMonthAtRisk: [], conditionC: null });
   });
 
-  it("A-U4/A-U5: each A entry carries its atRiskSince from the detailed detection, keyed by organization and month", () => {
-    const a = [
-      { organizationId: "org-a", year: 2031, month: 11 },
-      { organizationId: "org-b", year: 2031, month: 11 },
-    ];
-    const since = { [atRiskKey(a[0])]: "2031-11-01T21:00:00.000Z", [atRiskKey(a[1])]: "2031-11-02T03:04:05.000Z" };
-    expect(buildUrgentFindings({ report: run(), alerts: okAlerts({ newMonthAtRisk: a }), atRiskSince: since }).newMonthAtRisk).toEqual([
-      { organizationId: "org-a", year: 2031, month: 11, atRiskSince: "2031-11-01T21:00:00.000Z" },
-      { organizationId: "org-b", year: 2031, month: 11, atRiskSince: "2031-11-02T03:04:05.000Z" },
+  it("A-U4/A-U5: each A entry carries BOTH evidence bounds, never a single 'onset'", () => {
+    const atRisk = { [atRiskKey(A)]: { onsetNotBefore: WARNING, evidenceAt: "2031-11-02T03:04:05.000Z" } };
+    expect(buildUrgentFindings({ runErrors: NO_ERRORS, alerts: okAlerts({ newMonthAtRisk: [A] }), atRisk }).newMonthAtRisk).toEqual([
+      { ...A, onsetNotBefore: WARNING, evidenceAt: "2031-11-02T03:04:05.000Z" },
     ]);
-    // Without the detail (a test seam), the entry is kept with an explicit null rather than dropped or guessed.
-    expect(buildUrgentFindings({ report: run(), alerts: okAlerts({ newMonthAtRisk: [a[0]] }) }).newMonthAtRisk).toEqual([{ ...a[0], atRiskSince: null }]);
+    // Without the detail (a test seam), the entry is kept with explicit nulls rather than dropped or guessed.
+    expect(buildUrgentFindings({ runErrors: NO_ERRORS, alerts: okAlerts({ newMonthAtRisk: [A] }) }).newMonthAtRisk).toEqual([{ ...A, onsetNotBefore: null, evidenceAt: null }]);
   });
 
   it("A-U6: condition C of both kinds is copied", () => {
     const conditionC = { activatedWithoutProgress: ["org-c"], progressWithoutActivation: ["org-d", "org-e"] };
-    expect(buildUrgentFindings({ report: run(), alerts: okAlerts({ conditionC }) }).conditionC).toEqual(conditionC);
+    expect(buildUrgentFindings({ runErrors: NO_ERRORS, alerts: okAlerts({ conditionC }) }).conditionC).toEqual(conditionC);
   });
 
   it("A-U7: lists are capped at the detection cap and marked truncated; uncapped findings carry no truncated key", () => {
-    const visits = Array.from({ length: 600 }, (_, i) => visit(`org-${String(i).padStart(4, "0")}`, { error: { stage: "gate", code: "timeout" as never }, ended: "error" }));
-    const f = buildUrgentFindings({ report: run({ visits }), alerts: okAlerts() });
+    const organizations = Array.from({ length: 600 }, (_, i) => `org-${String(i).padStart(4, "0")}`);
+    const f = buildUrgentFindings({ runErrors: { global: 0, organizations }, alerts: okAlerts() });
     expect(FINDINGS_LIST_CAP).toBe(500);
     expect(f.runErrors.organizations).toHaveLength(500);
     expect(f.truncated).toBe(true);
-    expect("truncated" in buildUrgentFindings({ report: run(), alerts: okAlerts() })).toBe(false);
+    expect("truncated" in buildUrgentFindings({ runErrors: NO_ERRORS, alerts: okAlerts() })).toBe(false);
   });
 
-  it("A-U8: only the documented keys; ids, months, counts and codes only (no names, messages or URLs)", () => {
-    const f = buildUrgentFindings({ report: run(), alerts: okAlerts() });
-    expect(Object.keys(f).sort()).toEqual(["conditionC", "detection", "newMonthAtRisk", "runErrors", "v"]);
-    expect(Object.keys(buildUrgentFindings({ thrown: true })).sort()).toEqual(["conditionC", "detection", "newMonthAtRisk", "runErrors", "thrown", "v"]);
+  it("A-U8: only the documented keys; ids, months, counts, ISO times and codes only", () => {
+    expect(Object.keys(buildUrgentFindings({ runErrors: NO_ERRORS, alerts: okAlerts() })).sort()).toEqual(["conditionC", "detection", "newMonthAtRisk", "runErrors", "v"]);
+    expect(Object.keys(buildUrgentFindings({ runErrors: { global: 1, organizations: [] }, thrown: true })).sort()).toEqual([
+      "conditionC",
+      "detection",
+      "newMonthAtRisk",
+      "runErrors",
+      "thrown",
+      "v",
+    ]);
   });
 
-  it("a thrown job before detection: notEvaluated, one global run error", () => {
-    expect(buildUrgentFindings({ thrown: true })).toEqual({
+  it("a thrown job before detection: notEvaluated, the caller's one global run error", () => {
+    expect(buildUrgentFindings({ runErrors: { global: 1, organizations: [] }, thrown: true })).toEqual({
       v: 1,
       thrown: true,
       detection: "notEvaluated",
@@ -120,32 +142,50 @@ describe("buildUrgentFindings", () => {
   });
 
   it("a thrown job AFTER detection keeps the detection results (A and C survive the failure)", () => {
-    const a = { organizationId: "org-a", year: 2031, month: 11 };
     const f = buildUrgentFindings({
-      alerts: okAlerts({ newMonthAtRisk: [a], conditionC: { activatedWithoutProgress: ["org-c"], progressWithoutActivation: [] } }),
-      atRiskSince: { [atRiskKey(a)]: "2031-11-01T21:00:00.000Z" },
+      runErrors: { global: 1, organizations: [] },
+      alerts: okAlerts({ newMonthAtRisk: [A], conditionC: { activatedWithoutProgress: ["org-c"], progressWithoutActivation: [] } }),
+      atRisk: { [atRiskKey(A)]: { onsetNotBefore: WARNING, evidenceAt: WARNING } },
       thrown: true,
     });
     expect(f).toMatchObject({ thrown: true, detection: "ok", runErrors: { global: 1, organizations: [] } });
-    expect(f.newMonthAtRisk).toEqual([{ ...a, atRiskSince: "2031-11-01T21:00:00.000Z" }]);
+    expect(f.newMonthAtRisk).toEqual([{ ...A, onsetNotBefore: WARNING, evidenceAt: WARNING }]);
     expect(f.conditionC).toEqual({ activatedWithoutProgress: ["org-c"], progressWithoutActivation: [] });
+  });
+
+  it("the unavailable marker is an object distinguishable from both a clean result and NULL", () => {
+    const marker = unavailableFindings("unrecognized_error");
+    expect(marker).toEqual({ v: 1, unavailable: "builderFailed", code: "unrecognized_error" });
+    expect(marker).not.toHaveProperty("detection");
+    expect(marker).not.toEqual(buildUrgentFindings({ runErrors: NO_ERRORS, alerts: okAlerts() }));
   });
 });
 
-describe("findings agree with the urgent signal the billing run already sends", () => {
-  it("run errors are present in the findings exactly when summarizeMonthlyGenerationRun counts run-level errors", () => {
-    const cases: MonthlyGenerationRunReport[] = [
-      run(),
-      run({ claimErrors: 1 }),
-      run({ discoveryError: "timeout" as never }),
-      run({ visits: [visit("org-a", { error: { stage: "marker", code: "timeout" as never }, ended: "error" })] }),
-      run({ visits: [visit("org-a", { rollover: { skipped: "error", code: "timeout" as never } })] }),
-      run({ visits: [visit("org-a", { passFinished: { ineligible: 0, covered: 0, unpriced: 2, pending: 0, clean: false }, ended: "passEnd" })] }), // B, not run-level
-    ];
-    for (const report of cases) {
-      const { runLevelErrors } = summarizeMonthlyGenerationRun(report, okAlerts());
-      const { runErrors } = buildUrgentFindings({ report, alerts: okAlerts() });
-      expect(runErrors.global > 0 || runErrors.organizations.length > 0).toBe(runLevelErrors > 0);
+describe("earliestAtRiskEvidence: repeated unclean passes and recovery after a monitoring outage never make A look younger", () => {
+  const finding = (evidenceAt: string, onsetNotBefore = WARNING) =>
+    buildUrgentFindings({ runErrors: NO_ERRORS, alerts: okAlerts({ newMonthAtRisk: [A] }), atRisk: { [atRiskKey(A)]: { onsetNotBefore, evidenceAt } } });
+  // Three billing runs while the monitor was down: each later unclean pass moves the run's own evidenceAt later.
+  const runs = [finding("2031-11-02T00:05:00.000Z"), finding("2031-11-02T03:05:00.000Z"), finding("2031-11-02T06:05:00.000Z")];
+
+  it("the earliest bounds win, whatever order the stored findings are read in", () => {
+    const expected = { [atRiskKey(A)]: { onsetNotBefore: WARNING, evidenceAt: "2031-11-02T00:05:00.000Z" } };
+    expect(earliestAtRiskEvidence(runs)).toEqual(expected);
+    expect(earliestAtRiskEvidence([...runs].reverse())).toEqual(expected);
+  });
+
+  it("onsetNotBefore never moves (it is the approved 15 h point); evidenceAt only ever moves EARLIER as evidence is added", () => {
+    let previous = earliestAtRiskEvidence([runs[2]])[atRiskKey(A)];
+    for (const extra of [runs[1], runs[0]]) {
+      const merged = earliestAtRiskEvidence([runs[2], extra])[atRiskKey(A)];
+      expect(merged.onsetNotBefore).toBe(WARNING);
+      expect(Date.parse(merged.evidenceAt)).toBeLessThanOrEqual(Date.parse(previous.evidenceAt));
+      previous = merged;
     }
+  });
+
+  it("unavailable markers, NULLs and seam entries without bounds contribute nothing (they are faults, not evidence)", () => {
+    const noBounds = buildUrgentFindings({ runErrors: NO_ERRORS, alerts: okAlerts({ newMonthAtRisk: [A] }) });
+    expect(earliestAtRiskEvidence([null, unavailableFindings("x"), noBounds])).toEqual({});
+    expect(earliestAtRiskEvidence([null, runs[1], unavailableFindings("x")])).toEqual({ [atRiskKey(A)]: { onsetNotBefore: WARNING, evidenceAt: "2031-11-02T03:05:00.000Z" } });
   });
 });

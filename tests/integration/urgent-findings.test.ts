@@ -15,6 +15,7 @@ import type { GenerationAlertDetail, GenerationAlertReport } from "../../src/lib
 const { handleMonthlyGenerationRequest } = await import("../../src/lib/dues/monthly-generation-route");
 const { runScheduledJob } = await import("../../src/lib/jobs/run-scheduled-job");
 const { atRiskKey } = await import("../../src/lib/dues/monthly-generation-alerts");
+const { earliestAtRiskEvidence } = await import("../../src/lib/dues/urgent-findings");
 
 const prisma = getTestPrismaClient();
 const SECRET = "test-cron-secret";
@@ -117,12 +118,13 @@ describe("JobRun.urgentFindings: written by the monthly-generation route in the 
     expect(urls).toContain(`${URLS.HEALTHCHECK_MONTHLY_GENERATION_URGENT_URL}/fail`);
   });
 
-  it("condition A is stored with its atRiskSince from the detailed detection", async () => {
+  it("condition A is stored with BOTH evidence bounds from the detailed detection", async () => {
     stubEnvAndFetch();
     const a = { organizationId: "org-a", year: 2031, month: 11 };
-    const detail: GenerationAlertDetail = { report: okReport({ newMonthAtRisk: [a] }), atRiskSince: { [atRiskKey(a)]: "2031-11-01T21:00:00.000Z" } };
+    const bounds = { onsetNotBefore: "2031-11-01T21:00:00.000Z", evidenceAt: "2031-11-02T03:04:05.000Z" };
+    const detail: GenerationAlertDetail = { report: okReport({ newMonthAtRisk: [a] }), atRisk: { [atRiskKey(a)]: bounds } };
     await handleMonthlyGenerationRequest(mg(), performance.now(), { run: async () => emptyReport(), detectDetailed: async () => detail });
-    expect((await latest("monthly-generation"))!.urgentFindings).toMatchObject({ newMonthAtRisk: [{ ...a, atRiskSince: "2031-11-01T21:00:00.000Z" }] });
+    expect((await latest("monthly-generation"))!.urgentFindings).toMatchObject({ newMonthAtRisk: [{ ...a, ...bounds }] });
   });
 
   it("A-I2 (preserved across a failure): generation throws AFTER detection: FAILED, 500, and the detection findings are kept", async () => {
@@ -130,7 +132,7 @@ describe("JobRun.urgentFindings: written by the monthly-generation route in the 
     const a = { organizationId: "org-a", year: 2031, month: 11 };
     const detail: GenerationAlertDetail = {
       report: okReport({ newMonthAtRisk: [a], conditionC: { activatedWithoutProgress: ["org-c"], progressWithoutActivation: [] } }),
-      atRiskSince: { [atRiskKey(a)]: "2031-11-01T21:00:00.000Z" },
+      atRisk: { [atRiskKey(a)]: { onsetNotBefore: "2031-11-01T21:00:00.000Z", evidenceAt: "2031-11-01T21:00:00.000Z" } },
     };
     const response = await handleMonthlyGenerationRequest(mg(), performance.now(), {
       detectDetailed: async () => detail,
@@ -145,7 +147,7 @@ describe("JobRun.urgentFindings: written by the monthly-generation route in the 
         v: 1,
         thrown: true,
         detection: "ok",
-        newMonthAtRisk: [{ ...a, atRiskSince: "2031-11-01T21:00:00.000Z" }],
+        newMonthAtRisk: [{ ...a, onsetNotBefore: "2031-11-01T21:00:00.000Z", evidenceAt: "2031-11-01T21:00:00.000Z" }],
         conditionC: { activatedWithoutProgress: ["org-c"], progressWithoutActivation: [] },
         runErrors: { global: 1, organizations: [] },
       },
@@ -170,7 +172,7 @@ describe("JobRun.urgentFindings: written by the monthly-generation route in the 
   it("a failed detection read is stored as its safe code (RUNDET); C null", async () => {
     stubEnvAndFetch();
     const failed: GenerationAlertReport = { ...okReport(), detection: "timeout", conditionC: null, workload: null };
-    await handleMonthlyGenerationRequest(mg(), performance.now(), { run: async () => emptyReport(), detectDetailed: async () => ({ report: failed, atRiskSince: {} }) });
+    await handleMonthlyGenerationRequest(mg(), performance.now(), { run: async () => emptyReport(), detectDetailed: async () => ({ report: failed, atRisk: {} }) });
     expect((await latest("monthly-generation"))!.urgentFindings).toMatchObject({ detection: "timeout", newMonthAtRisk: [], conditionC: null });
   });
 
@@ -213,6 +215,82 @@ describe("JobRun.urgentFindings: written by the monthly-generation route in the 
     const run = await latest("monthly-generation");
     expect(run).toMatchObject({ status: "RUNNING", finishedAt: null, urgentFindings: null });
   }, 30_000);
+
+  describe("a findings-builder failure never changes the run's real outcome", () => {
+    const boom = () => {
+      throw Object.assign(new Error("builder exploded with secret-text-9917"), { code: "secret-code-9917" });
+    };
+    function captureConsole() {
+      const logged: string[] = [];
+      const spies = (["log", "info", "warn", "error", "debug"] as const).map((level) =>
+        vi.spyOn(console, level).mockImplementation((...args: unknown[]) => void logged.push(args.map((x) => (typeof x === "string" ? x : JSON.stringify(x))).join(" "))),
+      );
+      return { logged, restore: () => spies.forEach((s) => s.mockRestore()) };
+    }
+
+    it("successful billing: same status, counts, response body and pings as without the failure; findings = the unavailable marker; only a safe code is logged", async () => {
+      const report = emptyReport({ visits: [errorVisit("org-1")] });
+      const urlsReal = stubEnvAndFetch();
+      const real = await (await handleMonthlyGenerationRequest(mg(), performance.now(), { run: async () => report })).json();
+      const realRun = await latest("monthly-generation");
+      await prisma.jobRun.deleteMany({ where: { jobName: "monthly-generation" } });
+      vi.unstubAllGlobals();
+
+      const urls = stubEnvAndFetch();
+      const captured = captureConsole();
+      let body: Record<string, unknown>;
+      try {
+        body = await (await handleMonthlyGenerationRequest(mg(), performance.now(), { run: async () => report, buildFindings: boom })).json();
+      } finally {
+        captured.restore();
+      }
+      const run = await latest("monthly-generation");
+      expect(body).toEqual(real); // the response body is unchanged
+      expect(urls).toEqual(urlsReal); // the same urgent signal and checks
+      expect(run).toMatchObject({ status: realRun!.status, sent: realRun!.sent, failed: realRun!.failed, skipped: realRun!.skipped, errorSummary: realRun!.errorSummary });
+      expect(run!.urgentFindings).toEqual({ v: 1, unavailable: "builderFailed", code: expect.any(String) });
+      expect(run!.urgentFindings).not.toEqual(CLEAN_FINDINGS);
+      const text = captured.logged.join("\n");
+      expect(text).toContain("urgent findings unavailable");
+      expect(text).not.toMatch(/secret-text-9917|secret-code-9917|exploded/);
+    });
+
+    it("a throwing job whose findings builder also fails: still FAILED with the real error; findings = the unavailable marker", async () => {
+      stubEnvAndFetch();
+      const captured = captureConsole();
+      try {
+        await handleMonthlyGenerationRequest(mg(), performance.now(), {
+          detectDetailed: async () => ({ report: okReport(), atRisk: {} }),
+          run: async () => {
+            throw new Error("generation exploded");
+          },
+          buildFindings: boom,
+        });
+      } finally {
+        captured.restore();
+      }
+      const run = await latest("monthly-generation");
+      expect(run).toMatchObject({ status: "FAILED", urgentFindings: { v: 1, unavailable: "builderFailed" } });
+      expect(captured.logged.join("\n")).not.toMatch(/secret-text-9917|secret-code-9917/);
+    });
+  });
+
+  it("recovery after a monitoring outage: three runs with repeated unclean passes are all stored, and the earliest evidence is recoverable", async () => {
+    const a = { organizationId: "org-a", year: 2031, month: 11 };
+    const WARNING = "2031-11-01T21:00:00.000Z";
+    for (const evidenceAt of ["2031-11-02T00:05:00.000Z", "2031-11-02T03:05:00.000Z", "2031-11-02T06:05:00.000Z"]) {
+      stubEnvAndFetch();
+      const detail: GenerationAlertDetail = { report: okReport({ newMonthAtRisk: [a] }), atRisk: { [atRiskKey(a)]: { onsetNotBefore: WARNING, evidenceAt } } };
+      await handleMonthlyGenerationRequest(mg(), performance.now(), { run: async () => emptyReport(), detectDetailed: async () => detail });
+      vi.unstubAllGlobals();
+    }
+    // What PR-B reads when it comes back: every finalized run's findings, in any order.
+    const stored = await prisma.jobRun.findMany({ where: { jobName: "monthly-generation", finishedAt: { not: null } }, orderBy: { startedAt: "desc" } });
+    expect(stored).toHaveLength(3);
+    expect(earliestAtRiskEvidence(stored.map((r) => r.urgentFindings as never))).toEqual({
+      [atRiskKey(a)]: { onsetNotBefore: WARNING, evidenceAt: "2031-11-02T00:05:00.000Z" },
+    });
+  });
 
   it("A-I3: the weekly digest never writes findings", async () => {
     stubEnvAndFetch();

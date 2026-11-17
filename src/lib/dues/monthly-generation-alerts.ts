@@ -82,16 +82,31 @@ function monthOpensAt(m: YearMonth, zone: string): number {
 }
 
 /**
- * The report plus, for each condition-A entry, `atRiskSince` (ISO): the earliest time the data read shows A was true. That is
- * `T_open + 15 h`, or the end of the current month's unclean last pass when it finished later (a later unclean pass
- * re-triggers A; it never moves the 15 h point). Keyed by `atRiskKey`. Kept OUTSIDE the report so the report, the route's
- * response body and every existing consumer stay byte-for-byte unchanged (urgent monitor PR-A,
- * docs/dues/URGENT-MONITOR-IMPLEMENTATION-PLAN.md). The organization's status-change time is not read, so an academy that became
- * ACTIVE after that point gets the earlier estimate.
+ * Evidence bounds for one condition-A entry (urgent monitor PR-A). The TRUE onset of A cannot always be reconstructed: a
+ * progress row keeps only its LAST finished pass, so whether the month was clean at `T_open + 15 h` is unknown once a later
+ * pass has finished. These are therefore bounds, never "the onset":
+ * - `onsetNotBefore` (ISO): `T_open + 15 h`, the approved warning point. A cannot have started earlier. It depends only on the
+ *   branches' calendars, so later passes never move it.
+ * - `evidenceAt` (ISO): the time from which the stored data alone proves A held up to this read. It equals `onsetNotBefore`
+ *   when no pass of the month finished after that point (row missing, no finished pass, or an unclean pass that ended before
+ *   it): then A has held since the warning point. When an unclean pass finished later, it is that pass's end: A may have
+ *   started anywhere in [onsetNotBefore, evidenceAt] (an earlier pass may or may not have been clean), so the true onset is
+ *   unknown and `evidenceAt` is only an upper bound. Repeated unclean passes move `evidenceAt` later; that NEVER means A
+ *   began later. A consumer keeps the earliest bounds it has seen for a problem (urgent monitor PR-B).
+ * Both assume the academy was ACTIVE throughout (its status-change time is not stored).
+ */
+export interface AtRiskEvidence {
+  onsetNotBefore: string;
+  evidenceAt: string;
+}
+
+/**
+ * The report plus `atRisk`: evidence bounds per condition-A entry, keyed by `atRiskKey`. Kept OUTSIDE the report so the report,
+ * the route's response body and every existing consumer stay byte-for-byte unchanged.
  */
 export interface GenerationAlertDetail {
   report: GenerationAlertReport;
-  atRiskSince: Record<string, string>;
+  atRisk: Record<string, AtRiskEvidence>;
 }
 
 /** `<organizationId>:<yyyy-mm>`: the key of `GenerationAlertDetail.atRiskSince`. */
@@ -104,8 +119,8 @@ export function evaluateGenerationAlerts(state: GenerationAlertState, now: Date)
 }
 
 export function evaluateGenerationAlertsDetailed(state: GenerationAlertState, now: Date): GenerationAlertDetail {
-  const atRiskSince: Record<string, string> = {};
-  const done = (report: GenerationAlertReport): GenerationAlertDetail => ({ report, atRiskSince });
+  const atRisk: Record<string, AtRiskEvidence> = {};
+  const done = (report: GenerationAlertReport): GenerationAlertDetail => ({ report, atRisk });
   if (state.overflow) return done(failed("overflow"));
   const zones = new Map<string, string[]>();
   for (const b of state.branches) zones.set(b.organizationId, [...(zones.get(b.organizationId) ?? []), b.timezone]);
@@ -154,8 +169,12 @@ export function evaluateGenerationAlertsDetailed(state: GenerationAlertState, no
       const entry = { organizationId, ...currentMin };
       newMonthAtRisk.push(entry);
       const warningPoint = opensAt + NEW_MONTH_WARNING_MS;
-      const uncleanEnd = current?.lastPassCompletedAt?.getTime();
-      atRiskSince[atRiskKey(entry)] = new Date(uncleanEnd !== undefined && uncleanEnd > warningPoint ? uncleanEnd : warningPoint).toISOString();
+      // `current` is unclean here (or missing); its last pass's end matters only when it is after the warning point.
+      const passEnd = current?.lastPassCompletedAt?.getTime();
+      atRisk[atRiskKey(entry)] = {
+        onsetNotBefore: new Date(warningPoint).toISOString(),
+        evidenceAt: new Date(passEnd !== undefined && passEnd > warningPoint ? passEnd : warningPoint).toISOString(),
+      };
     }
     for (const r of rows) {
       if (compareYearMonth(r, currentMin) < 0 && notClean(r)) olderMonthNotClean.push({ organizationId, year: r.year, month: r.month });
@@ -192,13 +211,13 @@ export async function detectGenerationAlerts(now: Date, read: typeof readGenerat
   return (await detectGenerationAlertsDetailed(now, read)).report;
 }
 
-/** `detectGenerationAlerts` plus `atRiskSince` (see GenerationAlertDetail). Never throws. */
+/** `detectGenerationAlerts` plus `atRisk` evidence bounds (see AtRiskEvidence). Never throws. */
 export async function detectGenerationAlertsDetailed(now: Date, read: typeof readGenerationAlertState = readGenerationAlertState): Promise<GenerationAlertDetail> {
   let state: GenerationAlertState;
   try {
     state = await read(DETECTION_CAP, DETECTION_BOUNDS);
   } catch (error) {
-    return { report: failed(safeErrorCode(error)), atRiskSince: {} };
+    return { report: failed(safeErrorCode(error)), atRisk: {} };
   }
   return evaluateGenerationAlertsDetailed(state, now);
 }

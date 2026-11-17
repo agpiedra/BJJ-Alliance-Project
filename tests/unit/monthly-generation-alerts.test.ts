@@ -236,7 +236,7 @@ describe("alertSignalsFor: which check gets what", () => {
   });
 });
 
-describe("urgent monitor PR-A: the detailed evaluation adds atRiskSince and leaves the report unchanged", () => {
+describe("urgent monitor PR-A: the detailed evaluation adds evidence bounds and leaves the report unchanged", () => {
   const { evaluateGenerationAlertsDetailed, detectGenerationAlertsDetailed, atRiskKey } = alertsModule;
   const KEY = atRiskKey({ organizationId: ORG, year: 2031, month: 11 });
 
@@ -251,24 +251,43 @@ describe("urgent monitor PR-A: the detailed evaluation adds atRiskSince and leav
     for (const [s, now] of cases) expect(evaluateGenerationAlertsDetailed(s, now).report).toEqual(evaluateGenerationAlerts(s, now));
   });
 
-  it("A-U4: no finished pass in the new month: atRiskSince is T_open + 15 h exactly (Costa Rica: 21:00Z)", () => {
+  const WARNING = "2031-11-01T21:00:00.000Z"; // Costa Rica: T_open 06:00Z + 15 h
+  const exact = { onsetNotBefore: WARNING, evidenceAt: WARNING };
+
+  it("A-U4: row missing, no finished pass, or an unclean pass that ended BEFORE the warning point: both bounds are the 15 h point (onset known exactly)", () => {
     expect(atRiskKey({ organizationId: ORG, year: 2031, month: 1 })).toBe(`${ORG}:2031-01`);
-    expect(evaluateGenerationAlertsDetailed(state(), at("2031-11-02T05:00:00Z")).atRiskSince).toEqual({ [KEY]: "2031-11-01T21:00:00.000Z" });
-    expect(evaluateGenerationAlertsDetailed(state({ progress: [row(2031, 10)] }), at("2031-11-02T05:00:00Z")).atRiskSince).toEqual({ [KEY]: "2031-11-01T21:00:00.000Z" });
+    const now = at("2031-11-02T05:00:00Z");
+    expect(evaluateGenerationAlertsDetailed(state(), now).atRisk).toEqual({ [KEY]: exact });
+    expect(evaluateGenerationAlertsDetailed(state({ progress: [row(2031, 10)] }), now).atRisk).toEqual({ [KEY]: exact });
+    const before = state({ progress: [row(2031, 10), row(2031, 11, { lastPassClean: false, lastPassCompletedAt: at("2031-11-01T12:00:00Z") })] });
+    expect(evaluateGenerationAlertsDetailed(before, now).atRisk).toEqual({ [KEY]: exact });
   });
 
-  it("A-U5: an unclean pass that ended AFTER the 15 h point re-triggers A at its own end; one that ended before does not move the point", () => {
+  it("A-U5: an unclean pass that ended AFTER the warning point: onsetNotBefore stays the 15 h point, evidenceAt is only an upper bound", () => {
     const after = state({ progress: [row(2031, 10), row(2031, 11, { lastPassClean: false, lastPassCompletedAt: at("2031-11-02T03:04:05Z") })] });
-    expect(evaluateGenerationAlertsDetailed(after, at("2031-11-02T05:00:00Z")).atRiskSince).toEqual({ [KEY]: "2031-11-02T03:04:05.000Z" });
-    const before = state({ progress: [row(2031, 10), row(2031, 11, { lastPassClean: false, lastPassCompletedAt: at("2031-11-01T12:00:00Z") })] });
-    expect(evaluateGenerationAlertsDetailed(before, at("2031-11-02T05:00:00Z")).atRiskSince).toEqual({ [KEY]: "2031-11-01T21:00:00.000Z" });
+    expect(evaluateGenerationAlertsDetailed(after, at("2031-11-02T05:00:00Z")).atRisk).toEqual({
+      [KEY]: { onsetNotBefore: WARNING, evidenceAt: "2031-11-02T03:04:05.000Z" },
+    });
+  });
+
+  it("REPEATED unclean passes at successive reads: the 15 h point never moves; only the evidence bound does (it never implies a later onset)", () => {
+    const reads = ["2031-11-02T00:05:00Z", "2031-11-02T03:05:00Z", "2031-11-02T06:05:00Z"].map((passEnd) => {
+      const s = state({ progress: [row(2031, 10), row(2031, 11, { lastPassClean: false, lastPassCompletedAt: at(passEnd) })] });
+      return evaluateGenerationAlertsDetailed(s, at("2031-11-02T07:00:00Z"));
+    });
+    for (const r of reads) {
+      expect(r.report.newMonthAtRisk).toEqual([{ organizationId: ORG, year: 2031, month: 11 }]); // A itself: unchanged at every read
+      expect(r.atRisk[KEY].onsetNotBefore).toBe(WARNING);
+      expect(Date.parse(r.atRisk[KEY].evidenceAt)).toBeGreaterThanOrEqual(Date.parse(r.atRisk[KEY].onsetNotBefore));
+    }
+    expect(reads.map((r) => r.atRisk[KEY].evidenceAt)).toEqual(["2031-11-02T00:05:00.000Z", "2031-11-02T03:05:00.000Z", "2031-11-02T06:05:00.000Z"]);
   });
 
   it("no A, no entry; a failed detection has no entries", async () => {
-    expect(evaluateGenerationAlertsDetailed(state(), at("2031-11-01T20:59:59Z")).atRiskSince).toEqual({});
-    expect(evaluateGenerationAlertsDetailed(state({ overflow: true }), at("2031-11-02T05:00:00Z")).atRiskSince).toEqual({});
+    expect(evaluateGenerationAlertsDetailed(state(), at("2031-11-01T20:59:59Z")).atRisk).toEqual({});
+    expect(evaluateGenerationAlertsDetailed(state({ overflow: true }), at("2031-11-02T05:00:00Z")).atRisk).toEqual({});
     const failing = await detectGenerationAlertsDetailed(at("2031-11-02T05:00:00Z"), () => Promise.reject(new Error("boom")));
-    expect(failing.atRiskSince).toEqual({});
+    expect(failing.atRisk).toEqual({});
     expect(failing.report.detection).not.toBe("ok");
   });
 });

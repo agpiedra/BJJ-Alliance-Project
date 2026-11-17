@@ -8,7 +8,8 @@ import {
   type GenerationAlertDetail,
   type GenerationAlertReport,
 } from "@/lib/dues/monthly-generation-alerts";
-import { buildUrgentFindings } from "@/lib/dues/urgent-findings";
+import { buildUrgentFindings, unavailableFindings, type UrgentFindingsInput } from "@/lib/dues/urgent-findings";
+import { safeErrorCode } from "@/lib/auth/password-reset-log";
 import type { Prisma } from "@/generated/prisma/client";
 import {
   DEFAULT_GENERATION_LIMITS,
@@ -87,15 +88,20 @@ export function monthlyGenerationRouteBudget(functionMaxMs = MONTHLY_GENERATION_
  * which corrected §8): a `remainingSegments` or completeness field — a deadline stop shows `stoppedBy`, each visit's `ended`,
  * and its codes. `runLevelErrors` (claim, discovery, visit-stage and skipped-rollover errors) feed the urgent alert check.
  * Only ids, months, reason codes and counts leave this function (plan §10).
+ * `runErrors` (urgent monitor PR-A) is the same run-level errors, split for the durable findings: `global` = claim and
+ * discovery errors, `organizations` = academies with a visit-stage error or a skipped rollover. Computed in the same loop as
+ * `runLevelErrors`, so the two cannot drift.
  */
 export function summarizeMonthlyGenerationRun(
   report: MonthlyGenerationRunReport,
   alerts?: GenerationAlertReport,
-): { outcome: JobOutcome; body: Record<string, unknown>; runLevelErrors: number } {
+): { outcome: JobOutcome; body: Record<string, unknown>; runLevelErrors: number; runErrors: { global: number; organizations: string[] } } {
   let sent = 0;
   let skipped = 0;
   let failed = 0;
   let runLevelErrors = 0;
+  let globalRunErrors = 0;
+  const runErrorOrganizations = new Set<string>();
   const errors: string[] = [];
   const byOrganization = new Map<string, JobOrgBreakdown>();
 
@@ -110,11 +116,13 @@ export function summarizeMonthlyGenerationRun(
     if (visit.rollover && "skipped" in visit.rollover) {
       visitFailed++;
       runLevelErrors++;
+      runErrorOrganizations.add(visit.organizationId);
       errors.push(`${where} rolloverSkipped=${visit.rollover.skipped}${visit.rollover.skipped === "error" ? `:${visit.rollover.code}` : ""}`);
     }
     if (visit.error) {
       visitFailed++;
       runLevelErrors++;
+      runErrorOrganizations.add(visit.organizationId);
       errors.push(`${where} stage=${visit.error.stage} code=${visit.error.code}`);
     }
     const visitSkipped = visit.classes.INELIGIBLE + visit.classes.COVERED;
@@ -130,11 +138,13 @@ export function summarizeMonthlyGenerationRun(
   if (report.claimErrors > 0) {
     failed += report.claimErrors;
     runLevelErrors += report.claimErrors;
+    globalRunErrors += report.claimErrors;
     errors.push(`claimErrors=${report.claimErrors}`);
   }
   if (report.discoveryError) {
     failed += 1;
     runLevelErrors += 1;
+    globalRunErrors += 1;
     errors.push(`discovery code=${report.discoveryError}`);
   }
   if (alerts) {
@@ -192,6 +202,7 @@ export function summarizeMonthlyGenerationRun(
     outcome: { sent, failed, skipped, organizationsProcessed: byOrganization.size, organizationBreakdown: [...byOrganization.values()], errors },
     body,
     runLevelErrors,
+    runErrors: { global: globalRunErrors, organizations: [...runErrorOrganizations].sort() },
   };
 }
 
@@ -199,10 +210,27 @@ export function summarizeMonthlyGenerationRun(
 export interface MonthlyGenerationRouteTestOverrides {
   functionMaxMs?: number;
   run?: (deps: MonthlyGenerationRunDeps) => Promise<MonthlyGenerationRunReport>;
-  /** Report only: findings then carry `atRiskSince: null` (existing tests). `detectDetailed` wins when both are given. */
+  /** Report only: findings then carry null evidence bounds (existing tests). `detectDetailed` wins when both are given. */
   detect?: (now: Date) => Promise<GenerationAlertReport>;
   detectDetailed?: (now: Date) => Promise<GenerationAlertDetail>;
   now?: () => Date;
+  /** Test seam: replaces the findings builder (to prove a builder failure never changes the run's outcome). */
+  buildFindings?: typeof buildUrgentFindings;
+}
+
+/**
+ * Builds the durable findings without ever throwing: a builder failure is logged with a safe code only and stored as the
+ * explicit `unavailable` marker, never as NULL and never as a clean result, and it never changes the run's own outcome
+ * (urgent monitor PR-A; PR-B treats the marker, and an unexpected NULL, as a monitoring fault).
+ */
+function safeFindings(build: typeof buildUrgentFindings, input: UrgentFindingsInput): Prisma.InputJsonValue {
+  try {
+    return build(input) as unknown as Prisma.InputJsonValue;
+  } catch (error) {
+    const code = safeErrorCode(error);
+    console.error("[cron:monthly-generation] urgent findings unavailable", { error: code });
+    return unavailableFindings(code) as unknown as Prisma.InputJsonValue;
+  }
 }
 
 /**
@@ -217,11 +245,11 @@ export function handleMonthlyGenerationRequest(
   const elapsedMs = () => performance.now() - startedAtMs;
   const run = overrides.run ?? runMonthlyGeneration;
   const detect = overrides.detectDetailed
-    ?? (overrides.detect ? async (at: Date) => ({ report: await overrides.detect!(at), atRiskSince: {} }) : (at: Date) => detectGenerationAlertsDetailed(at));
+    ?? (overrides.detect ? async (at: Date) => ({ report: await overrides.detect!(at), atRisk: {} }) : (at: Date) => detectGenerationAlertsDetailed(at));
   const now = overrides.now ?? (() => new Date());
   // Set once detection has finished, so a later throw still stores what detection found (urgent monitor PR-A).
   let detected: GenerationAlertDetail | undefined;
-  const findings = (input: Parameters<typeof buildUrgentFindings>[0]) => buildUrgentFindings(input) as unknown as Prisma.InputJsonValue;
+  const findings = (input: UrgentFindingsInput) => safeFindings(overrides.buildFindings ?? buildUrgentFindings, input);
   return runScheduledJob(
     "monthly-generation",
     request,
@@ -235,18 +263,18 @@ export function handleMonthlyGenerationRequest(
       // Production defaults only: activation and the start month S come from the organization's effective `DuesActivation`
       // (stage 9), never from the request. D3 = Reopen (approved): no month closes.
       const report = await run({ closurePolicy: "reopen", limits: { deadlineMs: budget.generationDeadlineMs }, elapsedMs });
-      const { outcome, body, runLevelErrors } = summarizeMonthlyGenerationRun(report, alerts);
+      const { outcome, body, runLevelErrors, runErrors } = summarizeMonthlyGenerationRun(report, alerts);
       return {
         outcome,
         body,
         alerts: alertSignalsFor(alerts, runLevelErrors),
-        urgentFindings: findings({ report, alerts, atRiskSince: detected.atRiskSince }),
+        urgentFindings: findings({ runErrors, alerts, atRisk: detected.atRisk }),
       };
     },
     {
       bookkeeping: MONTHLY_GENERATION_BOOKKEEPING,
       alerting: true,
-      urgentFindingsOnThrow: () => findings({ alerts: detected?.report, atRiskSince: detected?.atRiskSince, thrown: true }),
+      urgentFindingsOnThrow: () => findings({ runErrors: { global: 1, organizations: [] }, alerts: detected?.report, atRisk: detected?.atRisk, thrown: true }),
     },
   );
 }
