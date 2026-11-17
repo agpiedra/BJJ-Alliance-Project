@@ -81,8 +81,32 @@ function monthOpensAt(m: YearMonth, zone: string): number {
   return DateTime.fromObject({ year: m.year, month: m.month, day: 1 }, { zone }).toMillis();
 }
 
+/**
+ * The report plus, for each condition-A entry, `atRiskSince` (ISO): the earliest time the data read shows A was true. That is
+ * `T_open + 15 h`, or the end of the current month's unclean last pass when it finished later (a later unclean pass
+ * re-triggers A; it never moves the 15 h point). Keyed by `atRiskKey`. Kept OUTSIDE the report so the report, the route's
+ * response body and every existing consumer stay byte-for-byte unchanged (urgent monitor PR-A,
+ * docs/dues/URGENT-MONITOR-IMPLEMENTATION-PLAN.md). The organization's status-change time is not read, so an academy that became
+ * ACTIVE after that point gets the earlier estimate.
+ */
+export interface GenerationAlertDetail {
+  report: GenerationAlertReport;
+  atRiskSince: Record<string, string>;
+}
+
+/** `<organizationId>:<yyyy-mm>`: the key of `GenerationAlertDetail.atRiskSince`. */
+export function atRiskKey(m: OrganizationMonth): string {
+  return `${m.organizationId}:${m.year}-${String(m.month).padStart(2, "0")}`;
+}
+
 export function evaluateGenerationAlerts(state: GenerationAlertState, now: Date): GenerationAlertReport {
-  if (state.overflow) return failed("overflow");
+  return evaluateGenerationAlertsDetailed(state, now).report;
+}
+
+export function evaluateGenerationAlertsDetailed(state: GenerationAlertState, now: Date): GenerationAlertDetail {
+  const atRiskSince: Record<string, string> = {};
+  const done = (report: GenerationAlertReport): GenerationAlertDetail => ({ report, atRiskSince });
+  if (state.overflow) return done(failed("overflow"));
   const zones = new Map<string, string[]>();
   for (const b of state.branches) zones.set(b.organizationId, [...(zones.get(b.organizationId) ?? []), b.timezone]);
   const rowsByOrganization = new Map<string, GenerationAlertState["progress"]>();
@@ -99,7 +123,7 @@ export function evaluateGenerationAlerts(state: GenerationAlertState, now: Date)
     const active = (status.get(organizationId) ?? "ACTIVE") === "ACTIVE";
     // Only an ACTIVE organization's broken configuration is a detection failure (D); a non-ACTIVE one owes no billing.
     if (branchZones.length === 0) {
-      if (active) return failed("noBranches");
+      if (active) return done(failed("noBranches"));
       notActiveOrganizations.push(organizationId);
       continue;
     }
@@ -113,7 +137,7 @@ export function evaluateGenerationAlerts(state: GenerationAlertState, now: Date)
       // Aligned = the branch's month opening falls on a `0 */3 * * *` UTC slot (Costa Rica: 06:00 UTC).
       if (openings.some((t) => t % THREE_HOURS_MS !== 0)) unaligned = true;
     } catch {
-      if (active) return failed("invalidTimezone");
+      if (active) return done(failed("invalidTimezone"));
       notActiveOrganizations.push(organizationId);
       continue;
     }
@@ -127,7 +151,11 @@ export function evaluateGenerationAlerts(state: GenerationAlertState, now: Date)
     const current = rows.find((r) => compareYearMonth(r, currentMin) === 0);
     // A month before the organization's first row (its start month S) is never owed, so it cannot be at risk.
     if (now.getTime() >= opensAt + NEW_MONTH_WARNING_MS && compareYearMonth(earliest, currentMin) <= 0 && (!current || notClean(current))) {
-      newMonthAtRisk.push({ organizationId, ...currentMin });
+      const entry = { organizationId, ...currentMin };
+      newMonthAtRisk.push(entry);
+      const warningPoint = opensAt + NEW_MONTH_WARNING_MS;
+      const uncleanEnd = current?.lastPassCompletedAt?.getTime();
+      atRiskSince[atRiskKey(entry)] = new Date(uncleanEnd !== undefined && uncleanEnd > warningPoint ? uncleanEnd : warningPoint).toISOString();
     }
     for (const r of rows) {
       if (compareYearMonth(r, currentMin) < 0 && notClean(r)) olderMonthNotClean.push({ organizationId, year: r.year, month: r.month });
@@ -156,18 +184,23 @@ export function evaluateGenerationAlerts(state: GenerationAlertState, now: Date)
     activatedWithoutProgress: [...activated].filter((id) => !rowsByOrganization.has(id)).sort(),
     progressWithoutActivation: [...rowsByOrganization.keys()].filter((id) => !activated.has(id)).sort(),
   };
-  return { detection: "ok", newMonthAtRisk, olderMonthNotClean, notActiveOrganizations, conditionC, workload: { reasons, counts } };
+  return done({ detection: "ok", newMonthAtRisk, olderMonthNotClean, notActiveOrganizations, conditionC, workload: { reasons, counts } });
 }
 
 /** The bounded read plus the evaluation. Never throws: any read failure becomes condition D with a safe code. */
 export async function detectGenerationAlerts(now: Date, read: typeof readGenerationAlertState = readGenerationAlertState): Promise<GenerationAlertReport> {
+  return (await detectGenerationAlertsDetailed(now, read)).report;
+}
+
+/** `detectGenerationAlerts` plus `atRiskSince` (see GenerationAlertDetail). Never throws. */
+export async function detectGenerationAlertsDetailed(now: Date, read: typeof readGenerationAlertState = readGenerationAlertState): Promise<GenerationAlertDetail> {
   let state: GenerationAlertState;
   try {
     state = await read(DETECTION_CAP, DETECTION_BOUNDS);
   } catch (error) {
-    return failed(safeErrorCode(error));
+    return { report: failed(safeErrorCode(error)), atRiskSince: {} };
   }
-  return evaluateGenerationAlerts(state, now);
+  return evaluateGenerationAlertsDetailed(state, now);
 }
 
 /**

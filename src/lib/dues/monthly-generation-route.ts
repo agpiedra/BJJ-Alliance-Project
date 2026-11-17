@@ -1,7 +1,15 @@
 import type { NextResponse } from "next/server";
 import { runScheduledJob, type BookkeepingBounds, type JobOrgBreakdown, type JobOutcome } from "@/lib/jobs/run-scheduled-job";
 import { planRouteBudget, type RouteBudget } from "@/lib/dues/monthly-generation-route-budget";
-import { alertSignalsFor, detectGenerationAlerts, DETECTION_READ_WORST_MS, type GenerationAlertReport } from "@/lib/dues/monthly-generation-alerts";
+import {
+  alertSignalsFor,
+  detectGenerationAlertsDetailed,
+  DETECTION_READ_WORST_MS,
+  type GenerationAlertDetail,
+  type GenerationAlertReport,
+} from "@/lib/dues/monthly-generation-alerts";
+import { buildUrgentFindings } from "@/lib/dues/urgent-findings";
+import type { Prisma } from "@/generated/prisma/client";
 import {
   DEFAULT_GENERATION_LIMITS,
   runMonthlyGeneration,
@@ -191,7 +199,9 @@ export function summarizeMonthlyGenerationRun(
 export interface MonthlyGenerationRouteTestOverrides {
   functionMaxMs?: number;
   run?: (deps: MonthlyGenerationRunDeps) => Promise<MonthlyGenerationRunReport>;
+  /** Report only: findings then carry `atRiskSince: null` (existing tests). `detectDetailed` wins when both are given. */
   detect?: (now: Date) => Promise<GenerationAlertReport>;
+  detectDetailed?: (now: Date) => Promise<GenerationAlertDetail>;
   now?: () => Date;
 }
 
@@ -206,8 +216,12 @@ export function handleMonthlyGenerationRequest(
 ): Promise<NextResponse> {
   const elapsedMs = () => performance.now() - startedAtMs;
   const run = overrides.run ?? runMonthlyGeneration;
-  const detect = overrides.detect ?? ((now: Date) => detectGenerationAlerts(now));
+  const detect = overrides.detectDetailed
+    ?? (overrides.detect ? async (at: Date) => ({ report: await overrides.detect!(at), atRiskSince: {} }) : (at: Date) => detectGenerationAlertsDetailed(at));
   const now = overrides.now ?? (() => new Date());
+  // Set once detection has finished, so a later throw still stores what detection found (urgent monitor PR-A).
+  let detected: GenerationAlertDetail | undefined;
+  const findings = (input: Parameters<typeof buildUrgentFindings>[0]) => buildUrgentFindings(input) as unknown as Prisma.InputJsonValue;
   return runScheduledJob(
     "monthly-generation",
     request,
@@ -216,13 +230,23 @@ export function handleMonthlyGenerationRequest(
       if (!budget.ok) throw new RouteBudgetInfeasibleError();
       // The detection read runs first, so its result does not depend on generation finishing. It never throws (a failure is
       // condition D), and a failed detection never stops generation. Its real duration is charged through `elapsedMs`.
-      const alerts = await detect(now());
+      detected = await detect(now());
+      const alerts = detected.report;
       // Production defaults only: activation and the start month S come from the organization's effective `DuesActivation`
       // (stage 9), never from the request. D3 = Reopen (approved): no month closes.
       const report = await run({ closurePolicy: "reopen", limits: { deadlineMs: budget.generationDeadlineMs }, elapsedMs });
       const { outcome, body, runLevelErrors } = summarizeMonthlyGenerationRun(report, alerts);
-      return { outcome, body, alerts: alertSignalsFor(alerts, runLevelErrors) };
+      return {
+        outcome,
+        body,
+        alerts: alertSignalsFor(alerts, runLevelErrors),
+        urgentFindings: findings({ report, alerts, atRiskSince: detected.atRiskSince }),
+      };
     },
-    { bookkeeping: MONTHLY_GENERATION_BOOKKEEPING, alerting: true },
+    {
+      bookkeeping: MONTHLY_GENERATION_BOOKKEEPING,
+      alerting: true,
+      urgentFindingsOnThrow: () => findings({ alerts: detected?.report, atRiskSince: detected?.atRiskSince, thrown: true }),
+    },
   );
 }

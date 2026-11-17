@@ -3,9 +3,8 @@ import { describe, expect, it, vi } from "vitest";
 // Pure evaluation; importing the module constructs the Prisma client (never connected here), which requires DATABASE_URL.
 process.env.DATABASE_URL ??= "postgresql://unit-test-placeholder/db";
 vi.mock("@/auth", () => ({ auth: () => Promise.resolve(null), signIn: vi.fn() }));
-const { evaluateGenerationAlerts, detectGenerationAlerts, alertSignalsFor, NEW_MONTH_WARNING_MS, WORKLOAD_THRESHOLDS, DETECTION_CAP } = await import(
-  "../../src/lib/dues/monthly-generation-alerts"
-);
+const alertsModule = await import("../../src/lib/dues/monthly-generation-alerts");
+const { evaluateGenerationAlerts, detectGenerationAlerts, alertSignalsFor, NEW_MONTH_WARNING_MS, WORKLOAD_THRESHOLDS, DETECTION_CAP } = alertsModule;
 type State = Parameters<typeof evaluateGenerationAlerts>[0];
 type Row = State["progress"][number];
 
@@ -234,5 +233,42 @@ describe("alertSignalsFor: which check gets what", () => {
     const b = evaluateGenerationAlerts(state({ progress: [row(2031, 10, { lastPassClean: false }), row(2031, 11)] }), now);
     expect(alertSignalsFor(b, 0)).toEqual({ urgent: true, data: false, workload: true });
     expect(alertSignalsFor(evaluateGenerationAlerts(state({ progress: [row(2031, 11)] }), now), 1)).toEqual({ urgent: false, data: true, workload: true });
+  });
+});
+
+describe("urgent monitor PR-A: the detailed evaluation adds atRiskSince and leaves the report unchanged", () => {
+  const { evaluateGenerationAlertsDetailed, detectGenerationAlertsDetailed, atRiskKey } = alertsModule;
+  const KEY = atRiskKey({ organizationId: ORG, year: 2031, month: 11 });
+
+  it("the detailed report is identical to evaluateGenerationAlerts for every case in this file's fixtures", () => {
+    const cases: [State, Date][] = [
+      [state(), at("2031-11-01T20:59:59Z")],
+      [state(), at("2031-11-01T21:00:00Z")],
+      [state({ progress: [row(2031, 10), row(2031, 11, { lastPassClean: false })] }), at("2031-11-02T00:00:00Z")],
+      [state({ overflow: true }), at("2031-11-02T00:00:00Z")],
+      [state({ branches: [] }), at("2031-11-02T00:00:00Z")],
+    ];
+    for (const [s, now] of cases) expect(evaluateGenerationAlertsDetailed(s, now).report).toEqual(evaluateGenerationAlerts(s, now));
+  });
+
+  it("A-U4: no finished pass in the new month: atRiskSince is T_open + 15 h exactly (Costa Rica: 21:00Z)", () => {
+    expect(atRiskKey({ organizationId: ORG, year: 2031, month: 1 })).toBe(`${ORG}:2031-01`);
+    expect(evaluateGenerationAlertsDetailed(state(), at("2031-11-02T05:00:00Z")).atRiskSince).toEqual({ [KEY]: "2031-11-01T21:00:00.000Z" });
+    expect(evaluateGenerationAlertsDetailed(state({ progress: [row(2031, 10)] }), at("2031-11-02T05:00:00Z")).atRiskSince).toEqual({ [KEY]: "2031-11-01T21:00:00.000Z" });
+  });
+
+  it("A-U5: an unclean pass that ended AFTER the 15 h point re-triggers A at its own end; one that ended before does not move the point", () => {
+    const after = state({ progress: [row(2031, 10), row(2031, 11, { lastPassClean: false, lastPassCompletedAt: at("2031-11-02T03:04:05Z") })] });
+    expect(evaluateGenerationAlertsDetailed(after, at("2031-11-02T05:00:00Z")).atRiskSince).toEqual({ [KEY]: "2031-11-02T03:04:05.000Z" });
+    const before = state({ progress: [row(2031, 10), row(2031, 11, { lastPassClean: false, lastPassCompletedAt: at("2031-11-01T12:00:00Z") })] });
+    expect(evaluateGenerationAlertsDetailed(before, at("2031-11-02T05:00:00Z")).atRiskSince).toEqual({ [KEY]: "2031-11-01T21:00:00.000Z" });
+  });
+
+  it("no A, no entry; a failed detection has no entries", async () => {
+    expect(evaluateGenerationAlertsDetailed(state(), at("2031-11-01T20:59:59Z")).atRiskSince).toEqual({});
+    expect(evaluateGenerationAlertsDetailed(state({ overflow: true }), at("2031-11-02T05:00:00Z")).atRiskSince).toEqual({});
+    const failing = await detectGenerationAlertsDetailed(at("2031-11-02T05:00:00Z"), () => Promise.reject(new Error("boom")));
+    expect(failing.atRiskSince).toEqual({});
+    expect(failing.report.detection).not.toBe("ok");
   });
 });
