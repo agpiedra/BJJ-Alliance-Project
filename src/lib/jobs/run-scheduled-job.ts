@@ -57,6 +57,12 @@ export interface ScheduledJobOptions {
    * Without it (the weekly digest), nothing changes.
    */
   alerting?: boolean;
+  /**
+   * With `alerting` only (urgent monitor PR-A): the durable urgent findings to store when the job THROWS, so findings already
+   * established before the throw (the detection read) survive the failure. Called once, in the catch path; if it throws itself,
+   * nothing is stored for the findings (the run is still finalized FAILED). A job that returns supplies `urgentFindings` itself.
+   */
+  urgentFindingsOnThrow?: () => Prisma.InputJsonValue;
 }
 
 /** Per alert check: true = success ping, false = `/fail`, absent = not evaluated by this run, so nothing is sent. */
@@ -152,7 +158,7 @@ function bookkeep<T>(bounds: BookkeepingBounds | undefined, write: (db: Prisma.T
 export async function runScheduledJob(
   jobName: JobName,
   request: Request,
-  fn: () => Promise<{ outcome: JobOutcome; body: Record<string, unknown>; alerts?: AlertSignals }>,
+  fn: () => Promise<{ outcome: JobOutcome; body: Record<string, unknown>; alerts?: AlertSignals; urgentFindings?: Prisma.InputJsonValue }>,
   options: ScheduledJobOptions = {},
 ): Promise<NextResponse> {
   // Validated as executed, before anything else: an invalid configuration (a zero or truncated timeout would disable a bound)
@@ -186,14 +192,22 @@ export async function runScheduledJob(
   let body: Record<string, unknown>;
   let threw: SafeErrorCode | null = null;
   let alerts: AlertSignals = {};
+  let urgentFindings: Prisma.InputJsonValue | undefined;
   try {
-    ({ outcome, body, alerts = {} } = await fn());
+    ({ outcome, body, alerts = {}, urgentFindings } = await fn());
   } catch (error) {
     threw = safeErrorCode(error);
     outcome = { sent: 0, failed: 1, skipped: 0, organizationsProcessed: 0, errors: [threw] };
     body = { ok: false, error: threw };
     // A thrown job is a run-level failure: urgent `/fail`. The other checks were not evaluated, so they get nothing.
     alerts = { urgent: false };
+    if (options.alerting && options.urgentFindingsOnThrow) {
+      try {
+        urgentFindings = options.urgentFindingsOnThrow();
+      } catch (findingsError) {
+        console.error(`[cron:${jobName}] urgent findings not built`, { error: safeErrorCode(findingsError) });
+      }
+    }
   }
 
   const status = deriveStatus(threw !== null, outcome);
@@ -207,6 +221,8 @@ export async function runScheduledJob(
     organizationsProcessed: outcome.organizationsProcessed,
     organizationBreakdown: outcome.organizationBreakdown?.slice(0, MAX_BREAKDOWN_ENTRIES) as unknown as Prisma.InputJsonValue | undefined,
     errorSummary,
+    // Urgent monitor PR-A: in the SAME update as status and finishedAt, so findings exist exactly for finalized runs.
+    ...(options.alerting && urgentFindings !== undefined ? { urgentFindings } : {}),
   };
 
   if (!bounds) {

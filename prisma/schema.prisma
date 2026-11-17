@@ -2068,6 +2068,11 @@ model JobRun {
   /// `heartbeatStatus` above keeps its meaning: the job's own (scheduler) ping. Request outcomes only, never a URL or a body.
   /// Written in the same update as `heartbeatStatus`.
   alertPings             Json?
+  /// Monthly generation only (urgent monitor PR-A; src/lib/dues/urgent-findings.ts `UrgentFindingsV1`): the durable urgent
+  /// findings of the run (detection result, conditions A and C seen at run start, run-level errors). Written in the SAME
+  /// finalize update as `status` and `finishedAt`, so a finalized run has them and an unfinished one never does. Ids, months,
+  /// counts and safe codes only. Null for every other job and every earlier run. CHECK: NULL or a JSON object.
+  urgentFindings         Json?
 
   @@index([jobName, startedAt])
 }
