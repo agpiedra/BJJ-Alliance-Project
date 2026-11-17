@@ -53,6 +53,11 @@ together.
    **Production must also set `EMAIL_DELIVERY_MODE=unrestricted` and must NOT set
    `EMAIL_RECIPIENT_ALLOWLIST`** — without that, the recipient policy blocks every email
    (`docs/EMAIL_RECIPIENT_POLICY.md`). Confirm with `docs/email-policy-status-check.ps1 -Expect unrestricted`.
+   **The weekly digest is OFF unless `WEEKLY_DIGEST_ENABLED=true`** (`src/lib/jobs/digest-switch.ts`): unset or `false`
+   = intentionally disabled (the route answers `200 { disabled: true }` after the bearer check and does no work: no JobRun,
+   no database access, no email, no heartbeat); any other value = configuration error (still no work; `/api/health/jobs`
+   reports it and its `ok` is false). Enabling it in production is its own, separately approved step. Staging sets it
+   explicitly to `false` (owner decision 2026-11-17) and keeps billing and the urgent monitor running.
 2. **Create a NEW Supabase project for production** in `us-east-1` (above) — **not** the
    project your local `.env` points at. Your local `SUPABASE_URL` points at a real Supabase
    project, so every dev verification that uploads a logo writes a **real object into that

@@ -2720,7 +2720,9 @@
           "on_schedule": "A tiempo",
           "overdue": "Atrasada",
           "no_recorded_run": "Sin ejecuciones registradas",
-          "not_scheduled": "Sin programar"
+          "not_scheduled": "Sin programar",
+          "disabled": "Desactivada en este entorno",
+          "misconfigured": "Error de configuración"
         },
         "latestRun": "Última ejecución",
         "latestSuccess": "Última ejecución exitosa",
@@ -2739,6 +2741,8 @@
         "threshold": "Una ejecución se considera vigente durante {hours} horas desde que inicia.",
         "neverRan": "Esta tarea nunca ha registrado una ejecución. Considérala no saludable hasta que lo haga.",
         "notScheduled": "Esta tarea aún no tiene programación (su programación es una decisión pendiente del propietario), así que nunca se cuenta como atrasada. Solo se ejecuta si alguien la invoca.",
+        "disabledNote": "Esta tarea está desactivada a propósito en este entorno (WEEKLY_DIGEST_ENABLED). No hace ningún trabajo ni envía correos, y no se cuenta como atrasada.",
+        "misconfiguredNote": "WEEKLY_DIGEST_ENABLED tiene un valor no reconocido. La tarea no hace ningún trabajo hasta que se corrija (solo se aceptan true o false).",
         "yes": "Sí",
         "no": "No"
       },

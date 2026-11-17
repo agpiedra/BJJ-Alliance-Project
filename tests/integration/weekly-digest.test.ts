@@ -469,7 +469,12 @@ describe("GET /api/cron/weekly-digest", () => {
     await cleanup();
     await prisma.jobRun.deleteMany({ where: { jobName: "weekly-digest", id: { notIn: [...jobRunIdsBeforeSuite] } } });
   });
-  beforeEach(() => vi.stubEnv("CRON_SECRET", "test-cron-secret"));
+  beforeEach(() => {
+    vi.stubEnv("CRON_SECRET", "test-cron-secret");
+    // These tests describe the ENABLED digest (its pre-switch behavior); the switched-off states have their own tests
+    // (tests/integration/weekly-digest-switch.test.ts).
+    vi.stubEnv("WEEKLY_DIGEST_ENABLED", "true");
+  });
   afterEach(() => vi.unstubAllEnvs());
 
   it("returns 401 when the Authorization header is missing", async () => {

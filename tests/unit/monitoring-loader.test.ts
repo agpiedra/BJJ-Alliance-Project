@@ -42,6 +42,8 @@ function allQueryMocks() {
 }
 
 beforeEach(() => {
+  // These tests describe the ENABLED digest (its pre-switch behavior); the switched-off states have their own tests.
+  vi.stubEnv("WEEKLY_DIGEST_ENABLED", "true");
   requireSuperAdmin.mockReset().mockResolvedValue({ actorUserId: "super-1" });
   getDatabaseHealth.mockReset().mockResolvedValue({ ok: true, checkedAt: new Date(NOW.getTime() - 2_000) });
   lookups.countKioskAttemptsByOutcome.mockReset().mockResolvedValue({ recordedSuccessful: 0, countedTowardPinLimit: 0, other: 0 });

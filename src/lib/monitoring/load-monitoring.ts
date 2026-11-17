@@ -2,6 +2,7 @@ import { requireSuperAdmin } from "@/lib/auth/require-super-admin";
 import { getDatabaseHealth } from "@/lib/health/database-check";
 import { JOB_NAMES, type JobName } from "@/lib/jobs/job-names";
 import { isJobStale, isJobStuck, resolveJobSchedule, STALE_AFTER_HOURS, type JobSchedule } from "@/lib/jobs/job-health";
+import { digestSwitch, type DigestSwitch } from "@/lib/jobs/digest-switch";
 import {
   countDuesPaymentRecordEvents,
   countKioskAttemptsByOutcome,
@@ -39,8 +40,11 @@ export const PRIVILEGED_CHANGE_ACTIONS = [
 /** A panel either loaded or could not — "could not load" is never shown as zero or as "no history". */
 export type Panel<T> = { status: "ok"; data: T } | { status: "unavailable" };
 
-/** `not_scheduled`: the job has no stale threshold because it has no schedule yet (monthly-generation until D5). */
-export type JobFreshness = "no_recorded_run" | "overdue" | "on_schedule" | "not_scheduled";
+/**
+ * `not_scheduled`: the job has no stale threshold because it has no schedule yet (monthly-generation until D5).
+ * `disabled` / `misconfigured`: the weekly digest's per-environment switch (`WEEKLY_DIGEST_ENABLED`) is off / unrecognized.
+ */
+export type JobFreshness = "no_recorded_run" | "overdue" | "on_schedule" | "not_scheduled" | "disabled" | "misconfigured";
 
 export interface JobStatusView {
   jobName: JobName;
@@ -66,11 +70,15 @@ export interface MonitoringSnapshot {
   privilegedChanges: Panel<MonitoringAuditEvent[]>;
 }
 
-export function classifyJob(jobName: JobName, summary: JobRunSummary, now: number): JobStatusView {
+export function classifyJob(jobName: JobName, summary: JobRunSummary, now: number, digest: DigestSwitch = digestSwitch()): JobStatusView {
   const { latestRun, latestSuccess } = summary;
   const staleAfterHours = STALE_AFTER_HOURS[jobName];
-  const freshness: JobFreshness =
-    staleAfterHours === null
+  // The digest's per-environment switch: when it is not enabled the digest is not expected to run, so it is neither
+  // overdue nor stuck (same rule as /api/health/jobs).
+  const off = jobName === "weekly-digest" && digest.state !== "enabled" ? digest.state : null;
+  const freshness: JobFreshness = off
+    ? off
+    : staleAfterHours === null
       ? "not_scheduled"
       : !latestRun
         ? "no_recorded_run"
@@ -84,8 +92,8 @@ export function classifyJob(jobName: JobName, summary: JobRunSummary, now: numbe
     latestRun,
     latestSuccess,
     freshness,
-    freshUntil: latestRun && staleAfterHours !== null ? new Date(latestRun.startedAt.getTime() + staleAfterHours * 3_600_000) : null,
-    stuck: isJobStuck(latestRun?.status ?? null, latestRun?.startedAt ?? null, now),
+    freshUntil: !off && latestRun && staleAfterHours !== null ? new Date(latestRun.startedAt.getTime() + staleAfterHours * 3_600_000) : null,
+    stuck: !off && isJobStuck(latestRun?.status ?? null, latestRun?.startedAt ?? null, now),
   };
 }
 

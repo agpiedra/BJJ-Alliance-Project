@@ -145,7 +145,7 @@ const EXTERNAL_SIGNALS = [
 ] as const;
 
 function jobsTone(jobs: JobStatusView[]): "bad" | "warn" | undefined {
-  if (jobs.some((job) => job.freshness === "overdue" || job.stuck || job.latestRun?.status === "FAILED")) return "bad";
+  if (jobs.some((job) => job.freshness === "overdue" || job.freshness === "misconfigured" || job.stuck || job.latestRun?.status === "FAILED")) return "bad";
   if (jobs.some((job) => job.freshness === "no_recorded_run" || job.latestRun?.status === "PARTIAL")) return "warn";
   return undefined;
 }
@@ -198,7 +198,13 @@ function JobStatus({ job, t, f }: { job: JobStatusView; t: Translate; f: Formatt
   const { latestRun, latestSuccess } = job;
   const outcomeVariant = !latestRun ? "plain" : latestRun.status === "SUCCEEDED" ? "ok" : latestRun.status === "FAILED" ? "bad" : latestRun.status === "PARTIAL" ? "warn" : "plain";
   const freshnessVariant =
-    job.freshness === "on_schedule" ? "ok" : job.freshness === "overdue" ? "bad" : job.freshness === "not_scheduled" ? "plain" : "warn";
+    job.freshness === "on_schedule"
+      ? "ok"
+      : job.freshness === "overdue" || job.freshness === "misconfigured"
+        ? "bad"
+        : job.freshness === "not_scheduled" || job.freshness === "disabled"
+          ? "plain"
+          : "warn";
   const notApplicable = "—";
 
   return (
@@ -235,7 +241,11 @@ function JobStatus({ job, t, f }: { job: JobStatusView; t: Translate; f: Formatt
         )}
       </dl>
       <p className="text-xs text-muted-foreground">
-        {job.staleAfterHours === null
+        {job.freshness === "disabled"
+          ? t("jobs.disabledNote")
+          : job.freshness === "misconfigured"
+            ? t("jobs.misconfiguredNote")
+            : job.staleAfterHours === null
           ? t("jobs.notScheduled")
           : job.freshness === "no_recorded_run"
             ? t("jobs.neverRan")

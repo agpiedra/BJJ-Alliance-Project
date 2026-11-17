@@ -1,7 +1,10 @@
-import type { NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { listActiveAcademyIdsForDigest } from "@/lib/tenant/platform-lookups";
 import { sendWeeklyDigestForAcademy } from "@/lib/notifications/weekly-digest";
 import { runScheduledJob, type JobOrgBreakdown } from "@/lib/jobs/run-scheduled-job";
+import { digestSwitch } from "@/lib/jobs/digest-switch";
+import { requireEnv } from "@/lib/env";
+import { bearerMatches } from "@/lib/auth/secrets-match";
 
 // This route touches Prisma (via sendWeeklyDigestForAcademy), which requires
 // the Node runtime — do not add `export const runtime = "edge"` here.
@@ -19,8 +22,21 @@ import { runScheduledJob, type JobOrgBreakdown } from "@/lib/jobs/run-scheduled-
  * list, matching the locations panel's precedent) — one academy's digest
  * failing is caught and reported, never allowed to abort the rest, matching
  * this whole phase's best-effort ethos.
+ *
+ * Per-environment switch (`WEEKLY_DIGEST_ENABLED`, src/lib/jobs/digest-switch.ts): only `true` runs the digest, through the
+ * unchanged `runScheduledJob` path below. Otherwise the caller is authenticated FIRST (same constant-time check and the same
+ * 401 body as `runScheduledJob`), then the route answers without any digest work: no JobRun row, no database access, no
+ * email, no heartbeat ping.
  */
 export async function GET(request: Request): Promise<NextResponse> {
+  const digest = digestSwitch();
+  if (digest.state !== "enabled") {
+    if (!bearerMatches(request.headers.get("authorization"), requireEnv("CRON_SECRET"))) {
+      return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
+    }
+    if (digest.state === "misconfigured") return NextResponse.json({ ok: false, disabled: true, error: "digestMisconfigured" }, { status: 200 });
+    return NextResponse.json({ ok: true, disabled: true, reason: digest.reason }, { status: 200 });
+  }
   return runScheduledJob("weekly-digest", request, async () => {
     // This job iterates every organization on the platform by design — see
     // platform-lookups.ts's listActiveAcademyIdsForDigest.

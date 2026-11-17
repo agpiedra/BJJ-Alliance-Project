@@ -150,3 +150,49 @@ describe("G2b: an unscheduled job on the monitoring page", () => {
     expect(html).toContain("Esta tarea aún no tiene programación");
   });
 });
+
+describe("Weekly digest switch on the monitoring page (WEEKLY_DIGEST_ENABLED)", () => {
+  function withDigest(freshness: "disabled" | "misconfigured"): MonitoringSnapshot {
+    const base = baseSnapshot();
+    if (base.jobs.status !== "ok") throw new Error("unreachable");
+    return { ...base, jobs: { status: "ok", data: [{ ...base.jobs.data[0], freshness, freshUntil: null, stuck: false }] } };
+  }
+  const badBorders = (html: string) => (html.match(/border-bad-line/g) ?? []).length;
+
+  it("disabled renders its own neutral state and explanation (EN), never 'Overdue' or a configuration error", async () => {
+    locale = "en";
+    snapshot = baseSnapshot();
+    const baseline = badBorders(await renderPage());
+    snapshot = withDigest("disabled");
+    const html = await renderPage();
+    expect(html).toContain("Disabled on this environment");
+    expect(html).toContain("This job is intentionally turned off on this environment (WEEKLY_DIGEST_ENABLED).");
+    expect(html).not.toContain("Overdue");
+    expect(html).not.toContain("Configuration error");
+    expect(badBorders(html)).toBe(baseline); // not flagged as bad
+  });
+
+  it("misconfigured renders a configuration error (EN), flagged bad", async () => {
+    locale = "en";
+    snapshot = baseSnapshot();
+    const baseline = badBorders(await renderPage());
+    snapshot = withDigest("misconfigured");
+    const html = await renderPage();
+    expect(html).toContain("Configuration error");
+    expect(html).toContain("WEEKLY_DIGEST_ENABLED has an unrecognized value.");
+    expect(html).not.toContain("Disabled on this environment");
+    expect(badBorders(html)).toBeGreaterThan(baseline);
+  });
+
+  it("renders the Spanish copy for both states", async () => {
+    locale = "es";
+    snapshot = withDigest("disabled");
+    let html = await renderPage();
+    expect(html).toContain("Desactivada en este entorno");
+    expect(html).toContain("Esta tarea está desactivada a propósito en este entorno (WEEKLY_DIGEST_ENABLED).");
+    snapshot = withDigest("misconfigured");
+    html = await renderPage();
+    expect(html).toContain("Error de configuración");
+    expect(html).toContain("WEEKLY_DIGEST_ENABLED tiene un valor no reconocido.");
+  });
+});

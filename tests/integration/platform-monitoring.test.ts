@@ -226,6 +226,8 @@ describe("/platform/monitoring — activity window, limits and selected fields",
 
 describe("/platform/monitoring — scheduled jobs over all history", () => {
   beforeEach(async () => {
+    // These tests describe the ENABLED digest (its pre-switch behavior); the switched-off states have their own tests.
+    vi.stubEnv("WEEKLY_DIGEST_ENABLED", "true");
     await clearFixtures();
     const superAdmin = await makeUser({ isSuperAdmin: true });
     currentSession = { user: { id: superAdmin.id } };
