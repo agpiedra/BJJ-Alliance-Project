@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { productionSourceFiles, stripComments } from "../helpers/source-files";
 
 /**
@@ -51,6 +51,8 @@ beforeEach(() => {
   lookups.listRecentAuditEvents.mockReset().mockResolvedValue([]);
   lookups.getJobRunSummary.mockReset().mockResolvedValue({ latestRun: null, latestSuccess: null });
 });
+// Restores WEEKLY_DIGEST_ENABLED to its value before the test (deleted again if it was absent).
+afterEach(() => vi.unstubAllEnvs());
 
 describe("loadMonitoringSnapshot — authorization", () => {
   it("REQUIRED: a refusal propagates unchanged (never becomes 'panel unavailable') and no monitoring query starts", async () => {

@@ -80,7 +80,9 @@ describe("GET /api/cron/weekly-digest when the switch is off", () => {
 
   for (const [name, value, body] of offStates) {
     it(`${name}: authenticated call answers ${JSON.stringify(body)} with no query, no request, no email, no runner`, async () => {
-      if (value !== undefined) vi.stubEnv("WEEKLY_DIGEST_ENABLED", value);
+      // `undefined` deletes the variable ("unset" is truly absent); afterEach's unstubAllEnvs restores the original.
+      vi.stubEnv("WEEKLY_DIGEST_ENABLED", value);
+      if (value === undefined) expect("WEEKLY_DIGEST_ENABLED" in process.env).toBe(false);
       const runsBefore = await prisma.jobRun.count({ where: { jobName: "weekly-digest" } });
       const seen = await observe(() => digestGET(request(`Bearer ${SECRET}`)));
       expect(seen.result.status).toBe(200);
@@ -94,7 +96,8 @@ describe("GET /api/cron/weekly-digest when the switch is off", () => {
     });
 
     it(`${name}: authentication comes first: missing or wrong bearer is 401 with the usual body, and still no work`, async () => {
-      if (value !== undefined) vi.stubEnv("WEEKLY_DIGEST_ENABLED", value);
+      vi.stubEnv("WEEKLY_DIGEST_ENABLED", value);
+      if (value === undefined) expect("WEEKLY_DIGEST_ENABLED" in process.env).toBe(false);
       for (const auth of [undefined, "Bearer wrong-secret", SECRET]) {
         const seen = await observe(() => digestGET(request(auth)));
         expect(seen.result.status).toBe(401);
@@ -141,10 +144,16 @@ describe("GET /api/health/jobs: switched off is not failed or stale", () => {
     expect(enabled.jobs["weekly-digest"]).toMatchObject({ state: "enabled", stale: true });
     expect(enabled.ok).toBe(false); // an enabled digest that never ran is stale, as before
 
-    vi.stubEnv("WEEKLY_DIGEST_ENABLED", "");
+    vi.stubEnv("WEEKLY_DIGEST_ENABLED", undefined); // truly absent
+    expect("WEEKLY_DIGEST_ENABLED" in process.env).toBe(false);
     const unset = await health();
     expect(unset.jobs["weekly-digest"]).toMatchObject({ state: "disabled", reason: "unset", stale: false, stuck: false });
     expect(unset.ok).toBe(true);
+
+    vi.stubEnv("WEEKLY_DIGEST_ENABLED", ""); // present but empty: the same "unset" state
+    const empty = await health();
+    expect(empty.jobs["weekly-digest"]).toMatchObject({ state: "disabled", reason: "unset", stale: false, stuck: false });
+    expect(empty.ok).toBe(true);
 
     vi.stubEnv("WEEKLY_DIGEST_ENABLED", "false");
     const off = await health();
@@ -159,7 +168,7 @@ describe("GET /api/health/jobs: switched off is not failed or stale", () => {
 
     // The billing entry is byte-identical in every state, and carries no digest fields.
     const billing = JSON.stringify(enabled.jobs["monthly-generation"]);
-    for (const h of [unset, off, bad]) expect(JSON.stringify(h.jobs["monthly-generation"])).toBe(billing);
+    for (const h of [unset, empty, off, bad]) expect(JSON.stringify(h.jobs["monthly-generation"])).toBe(billing);
     expect(enabled.jobs["monthly-generation"]).not.toHaveProperty("state");
   });
 });

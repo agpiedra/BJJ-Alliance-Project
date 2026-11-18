@@ -232,6 +232,8 @@ describe("/platform/monitoring — scheduled jobs over all history", () => {
     const superAdmin = await makeUser({ isSuperAdmin: true });
     currentSession = { user: { id: superAdmin.id } };
   });
+  // Restores WEEKLY_DIGEST_ENABLED to its value before the test (deleted again if it was absent).
+  afterEach(() => vi.unstubAllEnvs());
 
   async function weeklyDigest() {
     const snapshot = await loadMonitoringSnapshot(SNAPSHOT);
