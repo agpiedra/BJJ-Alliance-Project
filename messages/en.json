@@ -2720,7 +2720,9 @@
           "on_schedule": "On schedule",
           "overdue": "Overdue",
           "no_recorded_run": "No recorded run",
-          "not_scheduled": "Not scheduled"
+          "not_scheduled": "Not scheduled",
+          "disabled": "Disabled on this environment",
+          "misconfigured": "Configuration error"
         },
         "latestRun": "Latest run",
         "latestSuccess": "Latest successful run",
@@ -2739,6 +2741,8 @@
         "threshold": "A run counts as fresh for {hours} hours after it starts.",
         "neverRan": "This job has never recorded a run. Treat it as unhealthy until it does.",
         "notScheduled": "This job has no schedule yet (its schedule is an open owner decision), so it is never counted as late. It runs only if someone calls it.",
+        "disabledNote": "This job is intentionally turned off on this environment (WEEKLY_DIGEST_ENABLED). It does no work, sends no email and is not counted as late.",
+        "misconfiguredNote": "WEEKLY_DIGEST_ENABLED has an unrecognized value. The job does no work until it is fixed (only true or false are accepted).",
         "yes": "Yes",
         "no": "No"
       },

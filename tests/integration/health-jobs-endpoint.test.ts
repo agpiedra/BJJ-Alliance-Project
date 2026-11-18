@@ -51,6 +51,8 @@ async function createRun(overrides: {
 // merely cleaned of what a PREVIOUS test created (which depends on test execution order,
 // something this file has no control over and must not assume).
 beforeEach(async () => {
+  // These tests describe the ENABLED digest (its pre-switch behavior); the switched-off states have their own tests.
+  vi.stubEnv("WEEKLY_DIGEST_ENABLED", "true");
   await prisma.jobRun.deleteMany({ where: { jobName: { in: ["weekly-digest", "promotion-auto-award"] } } });
   createdRunIds = [];
 });

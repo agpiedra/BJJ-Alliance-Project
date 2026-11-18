@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { productionSourceFiles, stripComments } from "../helpers/source-files";
 
 /**
@@ -42,6 +42,8 @@ function allQueryMocks() {
 }
 
 beforeEach(() => {
+  // These tests describe the ENABLED digest (its pre-switch behavior); the switched-off states have their own tests.
+  vi.stubEnv("WEEKLY_DIGEST_ENABLED", "true");
   requireSuperAdmin.mockReset().mockResolvedValue({ actorUserId: "super-1" });
   getDatabaseHealth.mockReset().mockResolvedValue({ ok: true, checkedAt: new Date(NOW.getTime() - 2_000) });
   lookups.countKioskAttemptsByOutcome.mockReset().mockResolvedValue({ recordedSuccessful: 0, countedTowardPinLimit: 0, other: 0 });
@@ -49,6 +51,8 @@ beforeEach(() => {
   lookups.listRecentAuditEvents.mockReset().mockResolvedValue([]);
   lookups.getJobRunSummary.mockReset().mockResolvedValue({ latestRun: null, latestSuccess: null });
 });
+// Restores WEEKLY_DIGEST_ENABLED to its value before the test (deleted again if it was absent).
+afterEach(() => vi.unstubAllEnvs());
 
 describe("loadMonitoringSnapshot — authorization", () => {
   it("REQUIRED: a refusal propagates unchanged (never becomes 'panel unavailable') and no monitoring query starts", async () => {
