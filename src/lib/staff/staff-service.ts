@@ -559,12 +559,15 @@ export async function removeStaffMembership(context: TenantContext, membershipId
     // ones too, so none can be resent. Not exact: addresses are not normalized on every path (signup, registration and
     // login keep the typed casing; User.email is unique case-sensitively), and acceptance looks the account up by the
     // invitation's exact address, so a surviving case-variant link would CREATE a second account for the same mailbox
-    // with a fresh membership here. Same comparison `inviteStaffMember` uses to find an existing account or pending
-    // invitation. Accepted and already-revoked rows stay as they are.
-    const pending = await tx.invitation.findMany({
-      where: { organizationId, email: { equals: target.user.email, mode: "insensitive" }, usedAt: null, revokedAt: null },
-      select: { id: true },
-    });
+    // with a fresh membership here. Accepted and already-revoked rows stay as they are.
+    // LITERAL comparison, deliberately not Prisma's `mode: "insensitive"`: that compiles to an unescaped `ILIKE`, where
+    // `_`, `%` and `\` in an address act as pattern characters, so removing `john_doe@…` would also revoke an unrelated
+    // `johnxdoe@…` invitation. `lower() = lower()` compares the whole address as text. Only ids come back; every other
+    // condition and the write stay in typed Prisma queries below.
+    const pending = await tx.$queryRaw<{ id: string }[]>`
+      SELECT id FROM "Invitation"
+      WHERE "organizationId" = ${organizationId} AND lower(email) = lower(${target.user.email})
+        AND "usedAt" IS NULL AND "revokedAt" IS NULL`;
     const revokedInvitationIds = pending.map((invitation) => invitation.id);
     if (revokedInvitationIds.length > 0) {
       await tx.invitation.updateMany({ where: { organizationId, id: { in: revokedInvitationIds }, usedAt: null, revokedAt: null }, data: { revokedAt: new Date() } });

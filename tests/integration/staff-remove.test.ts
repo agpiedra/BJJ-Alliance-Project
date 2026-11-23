@@ -329,6 +329,39 @@ describe("remove from academy", () => {
       expect((audit.after as { revokedInvitationIds: string[] }).revokedInvitationIds.sort()).toEqual([live.invitation.id, expired.invitation.id].sort());
     });
 
+    it("REQUIRED: the address is compared LITERALLY — _, % and \\ never act as wildcards; only case variants of the address are revoked", async () => {
+      const other = await newOrganization();
+      // Each case: the removed account's address, a case variant (must be revoked), and an address that the same text
+      // would match as an ILIKE PATTERN (must stay live). In ILIKE `\` escapes: the pattern `wild\_card` means `wild_card`.
+      const cases = [
+        { label: "underscore", address: `wild_card-${suffix}@example.com`, variant: `WILD_CARD-${suffix}@EXAMPLE.COM`, lookalike: `wildXcard-${suffix}@example.com` },
+        { label: "percent", address: `wild%card-${suffix}@example.com`, variant: `Wild%Card-${suffix}@Example.com`, lookalike: `wildANYTHINGcard-${suffix}@example.com` },
+        { label: "backslash", address: `wild\\_card-${suffix}@example.com`, variant: `WILD\\_CARD-${suffix}@example.com`, lookalike: `wild_card-${suffix}@example.com` },
+      ];
+      for (const c of cases) {
+        // Its own academy per case, so each removal and its audit row stand alone.
+        const caseOrg = await newOrganization();
+        actAs(caseOrg.ownerId, caseOrg.organizationId);
+        const user = await prisma.user.create({ data: { email: c.address, passwordHash: await hashSecret("member-password-123"), role: "INSTRUCTOR" } });
+        userIds.push(user.id);
+        const membership = await prisma.organizationMembership.create({ data: { userId: user.id, organizationId: caseOrg.organizationId, role: "INSTRUCTOR", active: false } });
+        const exact = await pendingInvitation(caseOrg, c.address);
+        const variant = await pendingInvitation(caseOrg, c.variant);
+        const lookalike = await pendingInvitation(caseOrg, c.lookalike);
+        const otherAcademy = await pendingInvitation(other, c.address);
+
+        expect(await removeStaffMember(caseOrg.organizationId, membership.id), c.label).toEqual({ ok: true });
+
+        const revoked = async (id: string) => (await prisma.invitation.findUniqueOrThrow({ where: { id } })).revokedAt !== null;
+        expect(await revoked(exact.invitation.id), `${c.label}: exact address`).toBe(true);
+        expect(await revoked(variant.invitation.id), `${c.label}: case variant`).toBe(true);
+        expect(await revoked(lookalike.invitation.id), `${c.label}: pattern lookalike must stay live`).toBe(false);
+        expect(await revoked(otherAcademy.invitation.id), `${c.label}: same address, other academy`).toBe(false);
+        const [audit] = await auditRows(caseOrg.organizationId, "staff.remove");
+        expect((audit.after as { revokedInvitationIds: string[] }).revokedInvitationIds.sort(), c.label).toEqual([exact.invitation.id, variant.invitation.id].sort());
+      }
+    });
+
     it("leaves a preference that points at ANOTHER academy alone", async () => {
       const org = await newOrganization();
       const other = await newOrganization();
