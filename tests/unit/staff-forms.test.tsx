@@ -93,6 +93,17 @@ describe("staff forms", () => {
       expect((screen.getByLabelText("Email") as HTMLInputElement).value).toBe("coach@example.com");
     });
 
+    it("REQUIRED: an address matching several accounts that differ only by case is refused in words (EN and ES)", async () => {
+      inviteStaff.mockResolvedValue({ error: "ambiguousAccount" });
+      render(withProviders(<InviteForm organizationId="org-1" academies={ACADEMIES} />));
+      fireEvent.change(screen.getByLabelText("Email"), { target: { value: "dup@example.com" } });
+      fireEvent.click(screen.getByRole("button", { name: "Send invitation" }));
+      await screen.findByText(en.error.ambiguousAccount);
+      expect((screen.getByLabelText("Email") as HTMLInputElement).value).toBe("dup@example.com");
+      expect(esMessages.staffManagement.error.ambiguousAccount).toMatch(/mayúsculas/);
+      expect(esMessages.staffManagement.error.ambiguousAccount).not.toBe(en.error.ambiguousAccount);
+    });
+
     it("clears the form after a successful invitation and shows the link to copy, labelled with who it is for", async () => {
       inviteStaff.mockResolvedValue(delivery({ invitationId: "inv-first", invitationLink: "http://localhost/accept?token=first", emailOutcome: "rejected" }));
       render(withProviders(<><InviteForm organizationId="org-1" academies={ACADEMIES} /><LatestInvitationLink usableIds={["inv-first"]} /></>));
