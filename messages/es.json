@@ -2964,6 +2964,11 @@
     "reactivate": {
       "button": "Reactivar"
     },
+    "remove": {
+      "button": "Quitar de la academia",
+      "confirm": "¿Quitar a esta persona de {organization}? Sale del equipo. Se quitan sus asignaciones de sede aquí. Cualquier invitación pendiente para ella aquí deja de funcionar. Se conservan su cuenta, su inicio de sesión y su acceso a cualquier otra academia, y los registros pasados de aquí (que pueden seguir mostrando su correo). Para volver necesita una nueva invitación.",
+      "success": "Se quitó de la academia."
+    },
     "resend": {
       "button": "Reenviar"
     },
@@ -2983,7 +2988,10 @@
       "selfChange": "No puedes desactivar ni cambiar tu propio acceso.",
       "lastOwner": "Una academia siempre debe conservar al menos un Dueño activo.",
       "notPending": "Esta invitación ya no está pendiente.",
-      "ambiguousAccount": "Más de una cuenta usa esta dirección con distintas mayúsculas, así que no podemos saber a cuál invitar. Contacta a soporte."
+      "ambiguousAccount": "Más de una cuenta usa esta dirección con distintas mayúsculas, así que no podemos saber a cuál invitar. Contacta a soporte.",
+      "removeActive": "Desactiva a esta persona antes de quitarla de la academia.",
+      "linkedStudent": "Esta persona también entrena aquí, así que no se puede quitar. Para retirarle el acceso de personal y conservar su entrenamiento, elige Solo alumno en Editar.",
+      "linkedStudentInactive": "Esta persona tiene un registro de alumno aquí que no está activo (pendiente de aprobación, inactivo o archivado), así que no se puede quitar. Su registro de alumno se conserva; sigue desactivada."
     }
   }
 }
