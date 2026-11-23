@@ -2982,7 +2982,8 @@
       "noStudentRecord": "This person has no active student record here, so there is nothing to keep. Deactivate them instead.",
       "selfChange": "You can't deactivate or change your own access.",
       "lastOwner": "An academy must always keep at least one active Owner.",
-      "notPending": "This invitation is no longer pending."
+      "notPending": "This invitation is no longer pending.",
+      "ambiguousAccount": "More than one account uses this address with different capital letters, so we can't tell which one to invite. Contact support."
     }
   }
 }

@@ -2982,7 +2982,8 @@
       "noStudentRecord": "Esta persona no tiene un registro de alumno activo aquí, así que no hay nada que conservar. Desactivala en su lugar.",
       "selfChange": "No puedes desactivar ni cambiar tu propio acceso.",
       "lastOwner": "Una academia siempre debe conservar al menos un Dueño activo.",
-      "notPending": "Esta invitación ya no está pendiente."
+      "notPending": "Esta invitación ya no está pendiente.",
+      "ambiguousAccount": "Más de una cuenta usa esta dirección con distintas mayúsculas, así que no podemos saber a cuál invitar. Contacta a soporte."
     }
   }
 }

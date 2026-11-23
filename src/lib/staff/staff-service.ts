@@ -45,7 +45,8 @@ export type StaffError =
   | "noStudentRecord"
   | "selfChange"
   | "lastOwner"
-  | "notPending";
+  | "notPending"
+  | "ambiguousAccount";
 
 export type StaffResult<T extends object = object> = ({ ok: true } & T) | { error: StaffError };
 
@@ -295,10 +296,17 @@ export async function inviteStaffMember(context: TenantContext, input: InviteSta
     // The address may already be an account (its exact casing is the one on
     // the User row — the invitation must carry THAT, or acceptance would not
     // find the account and would create a second identity).
-    const existingUser = await tx.user.findFirst({
-      where: { email: { equals: input.email, mode: "insensitive" } },
-      select: { id: true, email: true },
-    });
+    //
+    // Matched case-insensitively but LITERALLY: `lower() = lower()`, never Prisma's `mode: "insensitive"`, which compiles
+    // to an unescaped `ILIKE` where `_`, `%` and `\` in an address are pattern characters — inviting `john_doe@…` then
+    // bound the invitation to an unrelated `johnxdoe@…` account and sent the link there.
+    // ponytail: no index on lower(email) — a full scan of User per invite; add an expression index if accounts grow large.
+    const accounts = await tx.$queryRaw<{ id: string; email: string }[]>`
+      SELECT id, email FROM "User" WHERE lower(email) = lower(${input.email}) LIMIT 2`;
+    // User.email is unique case-SENSITIVELY, so two accounts can differ only by case. Which one the Owner means cannot be
+    // known from the address: refuse rather than pick one. Reconciling such accounts is out of scope here.
+    if (accounts.length > 1) return { error: "ambiguousAccount" as const };
+    const existingUser = accounts[0] ?? null;
 
     const email = existingUser?.email ?? input.email;
     if (existingUser) {
@@ -314,10 +322,13 @@ export async function inviteStaffMember(context: TenantContext, input: InviteSta
       if (membership && !promotable) return { error: membership.active ? ("alreadyMember" as const) : ("alreadyMemberInactive" as const) };
     }
 
-    const pending = await tx.invitation.findFirst({
-      where: { organizationId, email: { equals: email, mode: "insensitive" }, usedAt: null, revokedAt: null, expiresAt: { gt: new Date() } },
-      select: { id: true },
-    });
+    // Same literal comparison for "already invited". Only ids come back from SQL; the expiry check stays a typed query.
+    const sameAddress = await tx.$queryRaw<{ id: string }[]>`
+      SELECT id FROM "Invitation"
+      WHERE "organizationId" = ${organizationId} AND lower(email) = lower(${email}) AND "usedAt" IS NULL AND "revokedAt" IS NULL`;
+    const pending =
+      sameAddress.length > 0 &&
+      (await tx.invitation.count({ where: { organizationId, id: { in: sameAddress.map((row) => row.id) }, expiresAt: { gt: new Date() } } })) > 0;
     if (pending) return { error: "alreadyInvited" as const };
 
     const rawToken = generateRandomToken();
