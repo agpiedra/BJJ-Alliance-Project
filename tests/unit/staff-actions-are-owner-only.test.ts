@@ -28,7 +28,7 @@ export function actionsWithoutOwnerGate(text: string): string[] {
 // Adding a location is Owner-only too: it mints a device credential and a new
 // tenant-scoped place, so it is held to the same scan.
 const OWNER_ONLY_FILES = [
-  { file: "src/lib/staff/staff-actions.ts", minActions: 6 },
+  { file: "src/lib/staff/staff-actions.ts", minActions: 7 },
   { file: "src/lib/locations/location-actions.ts", minActions: 1 },
 ];
 

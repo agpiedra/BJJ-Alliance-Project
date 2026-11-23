@@ -46,7 +46,10 @@ export type StaffError =
   | "selfChange"
   | "lastOwner"
   | "notPending"
-  | "ambiguousAccount";
+  | "ambiguousAccount"
+  | "removeActive"
+  | "linkedStudent"
+  | "linkedStudentInactive";
 
 export type StaffResult<T extends object = object> = ({ ok: true } & T) | { error: StaffError };
 
@@ -497,6 +500,84 @@ export async function updateStaffMembership(
         entityId: target.id,
         before: { email: target.user.email, role: target.role, academyIds: beforeAcademyIds },
         after: { email: target.user.email, role, academyIds: academies.academyIds },
+      },
+    });
+    return { ok: true as const };
+  });
+}
+
+/**
+ * "Remove from academy": ends ONE organization's staff membership of an already-deactivated member. The account is
+ * kept — login, password, sessions, `User.active`, other organizations and every historical record that references
+ * the user are untouched; coming back takes a fresh invitation and acceptance (a NEW membership row). No email is sent.
+ *
+ * Refused before any write: a stale actor (re-read under the lock — no longer an active Owner, or their account
+ * disabled), self, a missing/foreign/non-staff target, an ACTIVE target (deactivate first), the last active Owner, and
+ * anyone with a linked `Student` record here in ANY status (their student membership and data must survive; for an
+ * active one "Student only" under Edit is the way to take staff access away).
+ *
+ * A repeated submission after success finds no membership with that id and returns `notFound` — no second audit, and
+ * never a replacement membership created by a later invitation (it has a different id).
+ */
+export async function removeStaffMembership(context: TenantContext, membershipId: string): Promise<StaffResult> {
+  assertOwner(context);
+  const { organizationId } = context;
+
+  return prisma.$transaction(async (tx) => {
+    // First lock, as everywhere: serializes against reactivate, edit, invitation issue/resend/revoke/settle and acceptance.
+    await lockOrganizationStaff(tx, organizationId);
+
+    // The context was resolved before the lock; re-check that the actor is still an active Owner with a usable account.
+    const actor = await tx.organizationMembership.findUnique({
+      where: { userId_organizationId: { userId: context.actorUserId, organizationId } },
+      select: { role: true, active: true, user: { select: { active: true } } },
+    });
+    if (!actor || actor.role !== "ADMIN" || !actor.active || !actor.user.active) return { error: "notFound" as const };
+
+    const target = await findStaffMembership(tx, organizationId, membershipId);
+    if (!target) return { error: "notFound" as const };
+    if (target.userId === context.actorUserId) return { error: "selfChange" as const };
+    if (target.active) return { error: "removeActive" as const };
+    // Defensive: an inactive Owner is not counted, so this cannot trip while the re-checked actor is an active Owner.
+    if (target.role === "ADMIN" && (await otherActiveOwners(tx, organizationId, target.id)) === 0) {
+      return { error: "lastOwner" as const };
+    }
+    // Student.userId is globally unique; links are only written when a new account signs up, never to an existing one.
+    // ACTIVE → "Student only" under Edit is the way to drop staff access; PENDING / INACTIVE / ARCHIVED → explained refusal.
+    const student = await tx.student.findFirst({ where: { userId: target.userId, organizationId }, select: { status: true } });
+    if (student) return { error: student.status === "ACTIVE" ? ("linkedStudent" as const) : ("linkedStudentInactive" as const) };
+
+    const academyIds = await assignedAcademyIds(tx, target.userId, organizationId);
+    await tx.staffAssignment.deleteMany({ where: { userId: target.userId, organizationId } });
+    await tx.organizationMembership.delete({ where: { id: target.id, organizationId } });
+    // Only if it still points here — never overwrite a concurrent choice of another academy.
+    await tx.user.updateMany({
+      where: { id: target.userId, lastActiveOrganizationId: organizationId },
+      data: { lastActiveOrganizationId: null },
+    });
+    // Every unconsumed, unrevoked link here to this person's MAILBOX — the address compared case-insensitively — expired
+    // ones too, so none can be resent. Not exact: addresses are not normalized on every path (signup, registration and
+    // login keep the typed casing; User.email is unique case-sensitively), and acceptance looks the account up by the
+    // invitation's exact address, so a surviving case-variant link would CREATE a second account for the same mailbox
+    // with a fresh membership here. Same comparison `inviteStaffMember` uses to find an existing account or pending
+    // invitation. Accepted and already-revoked rows stay as they are.
+    const pending = await tx.invitation.findMany({
+      where: { organizationId, email: { equals: target.user.email, mode: "insensitive" }, usedAt: null, revokedAt: null },
+      select: { id: true },
+    });
+    const revokedInvitationIds = pending.map((invitation) => invitation.id);
+    if (revokedInvitationIds.length > 0) {
+      await tx.invitation.updateMany({ where: { organizationId, id: { in: revokedInvitationIds }, usedAt: null, revokedAt: null }, data: { revokedAt: new Date() } });
+    }
+    await tx.auditLog.create({
+      data: {
+        actorId: context.actorUserId,
+        organizationId,
+        action: "staff.remove",
+        entityType: "OrganizationMembership",
+        entityId: target.id,
+        before: { userId: target.userId, email: target.user.email, role: target.role, active: target.active, academyIds },
+        after: { removed: true, revokedInvitationIds },
       },
     });
     return { ok: true as const };

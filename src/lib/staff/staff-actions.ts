@@ -7,6 +7,7 @@ import { resolveActionContext } from "@/lib/tenant/context";
 import type { ActionState } from "@/lib/action-state";
 import {
   inviteStaffMember,
+  removeStaffMembership,
   resendStaffInvitation,
   revokeStaffInvitation,
   setMembershipActive,
@@ -111,6 +112,17 @@ export async function reactivateStaffMember(organizationId: string, membershipId
   if (!auth.ok) return { error: "notFound" };
 
   const result = toState(await setMembershipActive(auth.context, membershipId, true));
+  if (result.ok) await refreshStaffPage();
+  return result;
+}
+
+/** "Remove from academy" for an already-deactivated member — see `removeStaffMembership`. */
+export async function removeStaffMember(organizationId: string, membershipId: string): Promise<ActionState> {
+  const auth = await resolveActionContext(organizationId, ["ADMIN"]);
+  if (!auth.ok) return { error: "notFound" };
+  if (typeof membershipId !== "string" || membershipId.length === 0 || membershipId.length > 100) return { error: "invalid" };
+
+  const result = toState(await removeStaffMembership(auth.context, membershipId));
   if (result.ok) await refreshStaffPage();
   return result;
 }

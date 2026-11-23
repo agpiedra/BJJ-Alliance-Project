@@ -20,7 +20,7 @@ vi.mock("@/auth", () => ({
 const { sendTransactionalEmail } = await import("../../src/lib/email/send-transactional-email");
 const { approveOrganization } = await import("../../src/lib/organizations/approve-organization");
 const { acceptInvitation } = await import("../../src/app/[locale]/accept-invitation/actions");
-const { inviteStaff, resendInvitation, revokeInvitation, updateStaffMember, deactivateStaffMember, reactivateStaffMember } = await import(
+const { inviteStaff, resendInvitation, revokeInvitation, updateStaffMember, deactivateStaffMember, reactivateStaffMember, removeStaffMember } = await import(
   "../../src/lib/staff/staff-actions"
 );
 const { setMembershipActive } = await import("../../src/lib/staff/staff-service");
@@ -160,6 +160,7 @@ describe("staff management", () => {
         await expect(updateStaffMember(org.organizationId, {}, form({ membershipId: target.membership.id, role: "DIRECTOR", academyIds: [org.academyA] }))).rejects.toThrow("FORBIDDEN");
         await expect(deactivateStaffMember(org.organizationId, target.membership.id)).rejects.toThrow("FORBIDDEN");
         await expect(reactivateStaffMember(org.organizationId, target.membership.id)).rejects.toThrow("FORBIDDEN");
+        await expect(removeStaffMember(org.organizationId, target.membership.id)).rejects.toThrow("FORBIDDEN");
         await expect(resendInvitation(org.organizationId, "any")).rejects.toThrow("FORBIDDEN");
         await expect(revokeInvitation(org.organizationId, "any")).rejects.toThrow("FORBIDDEN");
       }

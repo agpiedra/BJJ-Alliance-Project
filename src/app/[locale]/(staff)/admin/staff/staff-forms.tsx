@@ -9,6 +9,7 @@ import {
   deactivateStaffMember,
   inviteStaff,
   reactivateStaffMember,
+  removeStaffMember,
   resendInvitation,
   revokeInvitation,
   updateStaffMember,
@@ -317,9 +318,24 @@ export function MemberRowActions({
   const t = useTranslations("staffManagement");
   const [editing, setEditing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [removed, setRemoved] = useState(false);
   const [isPending, startTransition] = useTransition();
 
   if (isSelf) return <span className="text-xs text-muted-foreground">{t("selfNote")}</span>;
+
+  /** Only offered for a deactivated member; the server refuses an active one too. The page refresh drops the row. */
+  function remove() {
+    if (!window.confirm(t("remove.confirm", { organization: organizationName }))) return;
+    setError(null);
+    startTransition(async () => {
+      const result = await removeStaffMember(organizationId, member.membershipId);
+      if (result.error) setError(result.error);
+      else {
+        setEditing(false);
+        setRemoved(true);
+      }
+    });
+  }
 
   function toggleActive() {
     if (member.active && !window.confirm(t("deactivate.confirm", { organization: organizationName }))) return;
@@ -335,15 +351,21 @@ export function MemberRowActions({
   return (
     <div className="flex flex-col gap-2">
       <div className="flex flex-wrap gap-2">
-        <Button type="button" variant="outline" size="sm" onClick={() => setEditing((v) => !v)}>
+        <Button type="button" variant="outline" size="sm" onClick={() => setEditing((v) => !v)} disabled={isPending || removed}>
           {t("edit.open")}
         </Button>
-        <Button type="button" variant="outline" size="sm" onClick={toggleActive} disabled={isPending}>
+        <Button type="button" variant="outline" size="sm" onClick={toggleActive} disabled={isPending || removed}>
           {member.active ? t("deactivate.button") : t("reactivate.button")}
         </Button>
+        {!member.active && (
+          <Button type="button" variant="outline" size="sm" onClick={remove} disabled={isPending || removed} className="text-bad">
+            {t("remove.button")}
+          </Button>
+        )}
       </div>
-      {error && <p className="text-sm text-bad">{t(`error.${error}` as never)}</p>}
-      {editing && <EditMemberForm organizationId={organizationId} member={member} academies={academies} onDone={() => setEditing(false)} />}
+      {error && <p className="text-sm text-bad" role="alert">{t(`error.${error}` as never)}</p>}
+      {removed && <p className="text-sm text-ok" role="status">{t("remove.success")}</p>}
+      {editing && !removed && <EditMemberForm organizationId={organizationId} member={member} academies={academies} onDone={() => setEditing(false)} />}
     </div>
   );
 }

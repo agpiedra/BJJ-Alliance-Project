@@ -25,6 +25,7 @@ vi.mock("@/lib/staff/staff-actions", () => ({
   updateStaffMember: vi.fn(),
   deactivateStaffMember: vi.fn(),
   reactivateStaffMember: vi.fn(),
+  removeStaffMember: vi.fn(),
 }));
 
 const actions = await import("@/lib/staff/staff-actions");
@@ -354,5 +355,86 @@ describe("Student only", () => {
 
   it("deactivating tells the Owner that Student only keeps their training", () => {
     expect(enMessages.staffManagement.deactivate.confirm).toMatch(/Student only/);
+  });
+});
+
+/** "Remove from academy" — only on a deactivated row, behind a confirmation; refusals said in words; nothing else runs meanwhile. */
+describe("Remove from academy", () => {
+  const removeStaffMember = vi.mocked(actions.removeStaffMember);
+  const member = (active: boolean) => ({ membershipId: "m9", userId: "u9", email: "gone@example.com", role: "INSTRUCTOR" as const, active, academies: ACADEMIES });
+  const row = (active: boolean, messages = enMessages, locale = "en") => (
+    <NextIntlClientProvider locale={locale} messages={messages}>
+      <MemberRowActions organizationId="org-1" member={member(active)} academies={ACADEMIES} isSelf={false} organizationName="Alliance" />
+    </NextIntlClientProvider>
+  );
+  const removeButton = () => screen.queryByRole("button", { name: en.remove.button });
+
+  afterEach(() => {
+    cleanup();
+    removeStaffMember.mockReset();
+    vi.restoreAllMocks();
+  });
+
+  it("REQUIRED: offered only on a deactivated member — an active row must be deactivated first", () => {
+    render(row(true));
+    expect(removeButton()).toBeNull();
+    cleanup();
+    render(row(false));
+    const button = removeButton()!;
+    expect(button.tagName).toBe("BUTTON"); // a real button: focusable and keyboard-operable
+    expect(button.getAttribute("type")).toBe("button");
+  });
+
+  it("REQUIRED: the confirmation names the academy and says what is kept; Cancel does nothing", () => {
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    render(row(false));
+    fireEvent.click(removeButton()!);
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining("Alliance"));
+    expect(confirm.mock.calls[0][0]).toContain("Their location assignments here are removed.");
+    expect(confirm.mock.calls[0][0]).toMatch(/account[\s\S]*login[\s\S]*access to any other academy remain[\s\S]*new invitation/);
+    expect(removeStaffMember).not.toHaveBeenCalled();
+  });
+
+  it("REQUIRED: while removal is pending every row action is disabled; success is announced", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    let finish: (value: { ok: true }) => void = () => {};
+    removeStaffMember.mockReturnValue(new Promise((resolve) => (finish = resolve)));
+    render(row(false));
+    fireEvent.click(removeButton()!);
+
+    await waitFor(() => expect(removeButton()!.hasAttribute("disabled")).toBe(true));
+    expect(screen.getByRole("button", { name: en.edit.open }).hasAttribute("disabled")).toBe(true);
+    expect(screen.getByRole("button", { name: en.reactivate.button }).hasAttribute("disabled")).toBe(true);
+    expect(removeStaffMember).toHaveBeenCalledWith("org-1", "m9");
+
+    finish({ ok: true });
+    expect((await screen.findByRole("status")).textContent).toBe(en.remove.success);
+  });
+
+  for (const key of ["linkedStudent", "linkedStudentInactive", "removeActive", "selfChange", "notFound"] as const) {
+    it(`a ${key} refusal is said in words and leaves the actions usable`, async () => {
+      vi.spyOn(window, "confirm").mockReturnValue(true);
+      removeStaffMember.mockResolvedValue({ error: key });
+      render(row(false));
+      fireEvent.click(removeButton()!);
+      expect((await screen.findByRole("alert")).textContent).toBe(en.error[key]);
+      // The refusal renders when the action returns; the transition's pending flag clears in a LATER render, so under load
+      // the alert can be visible while the buttons are still disabled for a moment (reproduced: 3 of 18 parallel runs).
+      // What matters is that they become usable again — wait for that, do not assume it is simultaneous.
+      await waitFor(() => expect(removeButton()!.hasAttribute("disabled")).toBe(false));
+    });
+  }
+
+  it("Spanish copy", () => {
+    const es = esMessages.staffManagement;
+    render(row(false, esMessages, "es"));
+    expect(screen.getByRole("button", { name: es.remove.button })).toBeTruthy();
+    for (const key of ["button", "confirm", "success"] as const) expect(es.remove[key]).not.toBe(en.remove[key]);
+    expect(es.remove.confirm).toContain("Se quitan sus asignaciones de sede aquí.");
+    expect(es.remove.confirm).toMatch(/cuenta[\s\S]*inicio de sesión[\s\S]*acceso a cualquier otra academia/);
+    // Neither language may read as if the locations themselves were deleted.
+    expect(en.remove.confirm).not.toMatch(/locations here are cleared/);
+    expect(es.remove.confirm).not.toMatch(/se borran sus sedes/);
+    for (const key of ["removeActive", "linkedStudent", "linkedStudentInactive"] as const) expect(es.error[key]).not.toBe(en.error[key]);
   });
 });

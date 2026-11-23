@@ -2964,6 +2964,11 @@
     "reactivate": {
       "button": "Reactivate"
     },
+    "remove": {
+      "button": "Remove from academy",
+      "confirm": "Remove this person from {organization}? They leave the team. Their location assignments here are removed. Any pending invitation to them here stops working. Their account, their login and their access to any other academy remain, and past records here (which may still show their email) are kept. To come back they need a new invitation.",
+      "success": "Removed from the academy."
+    },
     "resend": {
       "button": "Resend"
     },
@@ -2983,7 +2988,10 @@
       "selfChange": "You can't deactivate or change your own access.",
       "lastOwner": "An academy must always keep at least one active Owner.",
       "notPending": "This invitation is no longer pending.",
-      "ambiguousAccount": "More than one account uses this address with different capital letters, so we can't tell which one to invite. Contact support."
+      "ambiguousAccount": "More than one account uses this address with different capital letters, so we can't tell which one to invite. Contact support.",
+      "removeActive": "Deactivate this person before removing them from the academy.",
+      "linkedStudent": "This person also trains here, so they can't be removed. To take away their staff access and keep their training, choose Student only under Edit.",
+      "linkedStudentInactive": "This person has a student record here that isn't active (pending approval, inactive or archived), so they can't be removed. Their student record is kept; they stay deactivated."
     }
   }
 }
